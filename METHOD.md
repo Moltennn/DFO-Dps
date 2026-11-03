@@ -58,6 +58,12 @@ A gear skill line is modelled at the legendary maximum of 30 points (`AFFIX_RANG
 
 The level-45 gate is `240 x 50 = 12,000 HP` with a `12 x 50 = 600` per-hit cap and two 3s shields. The fully geared long blade is about **1,198 uncapped DPS**, but the cap binds almost every blow: **~821 capped DPS** and **~20.6 s TTK**. The marginal value of another skill line is therefore near zero at the gate, which is the practical answer to "how far can it be pushed".
 
+### The Firmament's channels
+
+`statMods.js` caps a base attribute at `MAX_STAT_VALUE = 100` plus `statMaxMods`; `firmamentPowers.js` sets `statMax` equal to the star gain, so a +15 channel reads 115. A gear stat affix is only `_mods.stats`, so it fills that headroom but cannot create it. `skillSoftcap.js` hard-caps raw skill at 200 and `effectiveSkill(200) = 140`; `firmamentPowers.js` adds its +15 to the post-softcap value, and gear skill adds on the same channel. The sheet prints `permanentSkillValue + skillModOf`, which is why a 200 raw skill can show 215 with stars or 455 with gear, while the formula reads 155 or 395. In the damage model, the Long Blade post-cap channel is converted at 0.44% per point, capped at +320% (`weaponGearPct`); Critical Strike's post-cap points add 0.01 to the critical multiplier each. The sky's separate weapon-blow channels (`firmamentLaw.js blowPct`) add up to +30% general, or +50% with the unaware/rage conditions, and are modelled as another blow multiplier.
+
+The `theory` command prices each star channel from +0 to +15. At the ceiling, Strength is the only attribute that still pays (damage plus RRI swing speed); Speed is clamped to 98/100; Agility moves only on integer thresholds; Luck's critical divisor steps at 125, so +15 from 100 does nothing.
+
 ## Backstab and the cap
 
 `combatStats` carries `Backstab: skillValue(Backstabbing)% ×3`. A front crit of 120–183 (sustained) becomes a **360–549** critical backstab; with the live card's opening First Blood it is 567–870, which the simulation deliberately excludes. `--behind` sets 100% uptime; `--backstab 0.5` uses the expected multiplier `1 + 2 × uptime × chance`.

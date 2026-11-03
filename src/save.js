@@ -159,7 +159,8 @@ export function liveStat(ch, name) {
     else if ((a.kind === 'drainAttribute' || a.kind === 'transferAttribute') && a.stat === name) mod -= a.magnitude ?? 0;
   }
   mod += ch._mods?.stats?.[name] ?? 0;
-  return Math.max(0, Math.min(100, base + mod));
+  const maxMod = Math.max(0, ch._mods?.statMax?.[name] ?? 0);
+  return Math.max(0, Math.min(100 + maxMod, base + mod));
 }
 
 function addMap(obj, key, value) {

@@ -83,7 +83,11 @@ Common options:
   --line-points <n>                   points per skill line (default 30, legendary max)
   --gear-lb <n> --gear-cs <n>         theory gear points on Long Blade / Critical Strike
   --vampire                           add the vampire +30 Critical Strike
-  --series <a,b>                      graph series: stat:strength,skill:29,gear:29
+  --firmament                         apply the +15 channel ceiling to STR/AGI/SPEED/LUCK and LB/CS/Backstab
+  --star-stat <name=n,...>            Firmament attribute points (max +15 each)
+  --star-skill <id=n,...>             Firmament skill points (max +15 each)
+  --star-damage <pct>                 Firmament weapon-blow percent (cap +30)
+  --series <a,b>                      graph series: stat:strength,skill:29,gear:29,star:strength
   --uncapped                          graph raw DPS instead of gate-capped DPS
   --no-rri                            use the vanilla swing law instead of RRI weapon balance
   --damage-pct <n>                    add N% weapon damage (theorycraft)
@@ -127,6 +131,10 @@ const optsSpec = {
   'gear-lb': { type: 'string' },
   'gear-cs': { type: 'string' },
   vampire: { type: 'boolean', default: false },
+  firmament: { type: 'boolean', default: false },
+  'star-stat': { type: 'string', multiple: true },
+  'star-skill': { type: 'string', multiple: true },
+  'star-damage': { type: 'string' },
   'no-rri': { type: 'boolean', default: false },
   all: { type: 'boolean', default: false },
   from: { type: 'string' },
@@ -169,6 +177,7 @@ function loadCharacter(values) {
       if (WEAPONS[tpl]) blade = tpl;
       if (Number.isFinite(mat)) material = mat;
     }
+    const { starStats, starSkills } = starOptions(values);
     let ch = theoryCharacter({
       level: n(values.level, THEORY_LEVEL),
       race: values.race ?? 'darkelf',
@@ -178,6 +187,9 @@ function loadCharacter(values) {
       gearCS: n(values['gear-cs'], GEAR_CS_LINES * GEAR_LINE_MAX),
       damagePct: n(values['damage-pct'], DAMAGE_AFFIX_MAX),
       vampire: values.vampire,
+      starStats,
+      starSkills,
+      starDamage: values['star-damage'] != null ? n(values['star-damage'], 0) : (values.firmament ? 30 : 0),
     });
     if (values['no-effects']) ch.activeEffects = [];
     if (values['base-stats'] != null) {
@@ -215,6 +227,36 @@ function bareCharacter(ch) {
 
 function traitsOf(values) {
   return String(values.traits ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+}
+
+const STAT_KEYS = ['strength', 'intelligence', 'willpower', 'agility', 'endurance', 'personality', 'speed', 'luck'];
+const FIRM_CHANNEL_MAX = 15;
+const FIRM_PRESET_STATS = Object.freeze({ strength: 15, agility: 15, speed: 15, luck: 15 });
+const FIRM_PRESET_SKILLS = Object.freeze({ 29: 15, 34: 15, 19: 15 });
+
+function starOptions(values) {
+  const starStats = { ...(values.firmament ? FIRM_PRESET_STATS : {}) };
+  const starSkills = { ...(values.firmament ? FIRM_PRESET_SKILLS : {}) };
+  const pairs = (v) => (Array.isArray(v) ? v : v == null ? [] : [v]).flatMap((x) => String(x).split(',')).map((x) => x.trim()).filter(Boolean);
+  for (const part of pairs(values['star-stat'])) {
+    const m = /^([a-z]+)=(-?\d+)$/i.exec(part);
+    if (!m) throw new Error(`--star-stat expects name=value, got ${part}`);
+    const key = m[1].toLowerCase();
+    if (!STAT_KEYS.includes(key)) throw new Error(`unknown attribute ${key}`);
+    const v = Number(m[2]);
+    if (!(v >= -FIRM_CHANNEL_MAX && v <= FIRM_CHANNEL_MAX)) throw new Error(`Firmament attribute channel is capped at +-${FIRM_CHANNEL_MAX}`);
+    starStats[key] = v;
+  }
+  for (const part of pairs(values['star-skill'])) {
+    const m = /^(\d+)=(-?\d+)$/.exec(part);
+    if (!m) throw new Error(`--star-skill expects id=value, got ${part}`);
+    const id = Number(m[1]);
+    if (!(id >= 0 && id < 35)) throw new Error(`bad skill id ${id}`);
+    const v = Number(m[2]);
+    if (!(v >= -FIRM_CHANNEL_MAX && v <= FIRM_CHANNEL_MAX)) throw new Error(`Firmament skill channel is capped at +-${FIRM_CHANNEL_MAX}`);
+    starSkills[id] = v;
+  }
+  return { starStats, starSkills };
 }
 
 function targetOf(ch, values, traits) {
@@ -259,6 +301,7 @@ function scenarioOf(ch, values, traits, target) {
     firstBlow: values['first-blow'],
     healthShare: n(values['health-share'], 1),
     backstabUptime: values.behind ? 1 : n(values.backstab, 0),
+    firmamentDamagePct: ch.firmamentDamagePct ?? 0,
     weapon: values.theory ? undefined : weaponOverride(values),
   };
 }
@@ -447,8 +490,15 @@ export async function main(argv = process.argv.slice(2)) {
     const lines = Math.min(GEAR_SKILL_LINES, Math.max(0, n(values['gear-lines'], GEAR_SKILL_LINES)));
     const linePts = Math.max(1, n(values['line-points'], GEAR_LINE_MAX));
     const damage = values['damage-pct'] != null ? n(values['damage-pct'], 0) : DAMAGE_AFFIX_MAX;
-    const baseOpts = { level, race: values.race ?? 'darkelf', blade, material, vampire: values.vampire };
-    const make = (over = {}) => theoryCharacter({ ...baseOpts, ...over });
+    const { starStats: baseStarStats, starSkills: baseStarSkills } = starOptions(values);
+    const starDamage = values['star-damage'] != null ? n(values['star-damage'], 0) : (values.firmament ? 30 : 0);
+    const baseOpts = { level, race: values.race ?? 'darkelf', blade, material, vampire: values.vampire, starDamage };
+    const make = (over = {}) => theoryCharacter({
+      ...baseOpts,
+      ...over,
+      starStats: { ...baseStarStats, ...(over.starStats ?? {}) },
+      starSkills: { ...baseStarSkills, ...(over.starSkills ?? {}) },
+    });
     const sc = (c, extra = {}) => ({ ...scenarioOf(c, values, traits, target), ...extra });
     const run = (c, extra = {}) => analyze(c, sc(c, extra));
     const behind = (c) => run(c, { backstabUptime: 1 });
@@ -493,6 +543,9 @@ export async function main(argv = process.argv.slice(2)) {
       const at = (v) => {
         const c = JSON.parse(JSON.stringify(maxCh));
         c.stats[k] = v;
+        // Isolate the base attribute: drop this channel's star so 50..100 means the sheet, not 65..115.
+        if (c._mods?.stats) c._mods.stats[k] = 0;
+        if (c._mods?.statMax) c._mods.statMax[k] = 0;
         const rr = run(c);
         return { dps: rr.dps, capped: rr.cappedDps };
       };
@@ -505,8 +558,13 @@ export async function main(argv = process.argv.slice(2)) {
     const addSkill = (label, kind, id, values_, extra = {}) => {
       for (const v of values_) {
         const c = JSON.parse(JSON.stringify(maxCh));
-        if (kind === 'raw') c.skills[id] = v;
-        else {
+        if (kind === 'raw') {
+          c.skills[id] = v;
+          // Keep the gear line but drop the star, so the raw curve is raw.
+          c._mods = c._mods ?? { stats: {}, skills: {} };
+          c._mods.skills = c._mods.skills ?? {};
+          c._mods.skills[id] = Math.max(0, (c._mods.skills[id] ?? 0) - (baseStarSkills[id] ?? 0));
+        } else {
           c._mods = c._mods ?? { stats: {}, skills: {} };
           c._mods.skills = c._mods.skills ?? {};
           c._mods.skills[id] = v;
@@ -543,11 +601,12 @@ export async function main(argv = process.argv.slice(2)) {
     console.log(`overhaul / online${values['no-rri'] ? '' : ' / RRI'}  |  target ${targetName} level ${r.target.level}, ${r.health.toLocaleString()} HP, ${r.cap || 'no'} per-hit cap`);
     console.log('');
     console.log(table([
-      ['Attributes', 'all 100 (live cap)', 'strength, agility, speed, luck; endurance/int/wil/per buy no DPS'],
-      ['Raw skills', 'Long Blade 200, Critical Strike 200, Backstabbing 200', 'mastered; effectiveSkill = 140 each'],
+      ['Attributes', STAT_KEYS.map((k) => `${k} ${liveStat(maxCh, k)}`).filter((x, i) => ['strength', 'agility', 'speed', 'luck'].includes(STAT_KEYS[i])).join(', '), 'live values; Firmament lifts the 100 ceiling, gear stat affixes do not'],
+      ['Raw skills', `Long Blade raw ${maxCh.skills[29]}, mod +${maxCh._mods?.skills?.[29] ?? 0}, sheet ${maxCh.skills[29] + (maxCh._mods?.skills?.[29] ?? 0)}, formula ${skillValue(maxCh, 29)}; Critical Strike raw ${maxCh.skills[34]}, mod +${maxCh._mods?.skills?.[34] ?? 0}, sheet ${maxCh.skills[34] + (maxCh._mods?.skills?.[34] ?? 0)}, formula ${skillValue(maxCh, 34)}`, 'the sheet prints raw + mods; the formula reads effectiveSkill(raw) + mods'],
       ['Gear skill lines', `${lines} x ${linePts} points`, explicitGear ? `explicit ${maxLb} Long Blade / ${maxCs} Critical Strike` : `${best.lb} Long Blade / ${best.cs} Critical Strike is the best split`],
       ['Weapon', `Daedric ${WEAPONS[blade].name}`, `RRI ${r.weapon.min}-${r.weapon.max}, weight ${r.weapon.twoHanded ? '2H' : '1H'}`],
       ['Damage affix', `${damage}%`, `legendary maximum ${DAMAGE_AFFIX_MAX}%`],
+      ['Firmament blow', `${starDamage}%`, 'general weapon-blow channel, cap +30% (+50% with conditions)'],
       ['Mastery / gear', `${fmt(p.mastery)}%`, `raw climb + gear channel`],
       ['Hit / crit', `${pc(r.hit.hit)} / ${pc(r.hit.crit.chance)} x${fmt2(r.hit.crit.damageMult)}`, `critical damage multiplier`],
     ], ['Term', 'Value', 'Notes']));
@@ -559,10 +618,45 @@ export async function main(argv = process.argv.slice(2)) {
 
     console.log('\nAttribute scaling (everything else at the ceiling)');
     console.log(table(statScaled.map((x) => [x.stat, fmt(x.d50), fmt(x.d75), fmt(x.d100), fmt(x.capped100), `${x.delta >= 0 ? '+' : ''}${fmt(x.delta)}`, `${x.last10 >= 0 ? '+' : ''}${fmt(x.last10)}`]), ['Attribute', 'DPS 50', 'DPS 75', 'DPS 100', 'Capped 100', '50 -> 100', '90 -> 100'], ['left', 'right', 'right', 'right', 'right', 'right', 'right']));
-    console.log('The DPS columns are uncapped so the stat slope is visible; Capped 100 is the gate reality. Luck is flat here only because Critical Strike already holds chance at 100%.');
+    console.log('The DPS columns are uncapped and isolate the varied attribute (its star is dropped so 50..100 means the sheet); Capped 100 is the full build at the gate. Luck is flat here only because Critical Strike already holds chance at 100%.');
 
     console.log('\nSkill and gear scaling');
     console.log(table(skillRows.map((x) => [x.label, x.value, fmt(x.dps), fmt(x.cappedDps), fmt(x.behind), fmt(x.perSwing), x.ttk ? `${fmt(x.ttk)} s` : '-']), ['Channel', 'Value', 'DPS', 'Capped', 'Behind', 'Per swing', 'TTK'], ['left', 'right', 'right', 'right', 'right', 'right', 'right']));
+
+    // Firmament: the star tree's channels, 0..+15. The tree's stat gain also lifts the live
+    // ceiling; its skill gain sits on top of effectiveSkill(raw).
+    const firmValues = [0, 5, 10, 15];
+    const firmBase = { gearLB: maxLb, gearCS: maxCs, damagePct: damage };
+    const statFirmRows = ['strength', 'speed', 'agility', 'luck'].map((k) => {
+      const cells = firmValues.map((v) => run(make({ ...firmBase, starStats: { ...baseStarStats, [k]: v } })));
+      const atMax = make({ ...firmBase, starStats: { ...baseStarStats, [k]: 15 } });
+      return { channel: k, cells, live: liveStat(atMax, k) };
+    });
+    const skillFirmRows = [[29, 'Long Blade'], [34, 'Critical Strike'], [19, 'Backstabbing']].map(([id, name]) => {
+      const cells = firmValues.map((v) => {
+        const c = make({ ...firmBase, starSkills: { ...baseStarSkills, [id]: v } });
+        const r = run(c, id === 19 ? { backstabUptime: 1 } : {});
+        const sheet = (c.skills[id] ?? 0) + (c._mods?.skills?.[id] ?? 0);
+        return { r, sheet, formula: skillValue(c, id) };
+      });
+      return { id, name, cells };
+    });
+
+    console.log('\nFirmament attributes (the tree caps a channel at +15; the gain also lifts the 100 ceiling)');
+    console.log('--firmament is the per-channel ceiling, not a legal 98-star allocation: the tree budget is 98 stars. Use --star-stat/--star-skill for the channels you actually own.');
+    console.log(table(statFirmRows.map((x) => [x.channel, ...x.cells.map((r) => fmt(r.dps)), ...x.cells.map((r) => fmt(r.cappedDps)), x.live]), ['Attribute', '+0 DPS', '+5 DPS', '+10 DPS', '+15 DPS', '+0 cap', '+5 cap', '+10 cap', '+15 cap', 'Live +15'], ['left', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right']));
+    console.log('Speed is clamped to 98/100 by the swing law, so Speed past 100 does nothing for cadence. Luck\'s critical divisor steps at 125, so +15 Luck from 100 is dead for critical chance. Strength is the one that keeps paying: it adds damage and RRI swing speed.');
+    console.log('\nFirmament skills (the +15 sits on top of effectiveSkill(raw); the sheet prints raw + mods)');
+    console.log(table(skillFirmRows.map((x) => [x.name, ...x.cells.map((c) => fmt(c.r.dps)), ...x.cells.map((c) => fmt(c.r.cappedDps)), x.cells[x.cells.length - 1].sheet, x.cells[x.cells.length - 1].formula]), ['Skill', '+0 DPS', '+5 DPS', '+10 DPS', '+15 DPS', '+0 cap', '+5 cap', '+10 cap', '+15 cap', 'Sheet +15', 'Formula +15'], ['left', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right']));
+    console.log('The sheet showing 215 is raw 200 + 15; the formula reads 155 (effectiveSkill(200)=140 + 15). Gear skill adds on top of both, and for Long Blade it converts at 0.44% per point, capped at +320%.');
+
+    const firmDmgValues = [0, 10, 20, 30];
+    const firmDmgCells = firmDmgValues.map((v) => run(make({ ...firmBase, starDamage: v })));
+    console.log('\nFirmament weapon blow (general channel cap +30%; conditions can take the total to +50%)');
+    console.log(table([
+      ['DPS', ...firmDmgCells.map((r) => fmt(r.dps))],
+      ['Capped', ...firmDmgCells.map((r) => fmt(r.cappedDps))],
+    ], ['', ...firmDmgValues.map((v) => `+${v}% DPS`), ...firmDmgValues.map((v) => `+${v}% cap`)], ['left', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right']));
 
     console.log(`\nGear line budget (${linePts} points per line; best feasible split)`);
     console.log(table(budgetRows.map((x) => [x.lines, `${x.lb} / ${x.cs}`, x.lbPts, x.csPts, fmt(x.dps), fmt(x.cappedDps), fmt(x.perSwing), x.ttk ? `${fmt(x.ttk)} s` : '-']), ['Lines', 'LB / CS', 'LB points', 'CS points', 'DPS', 'Capped', 'Per swing', 'TTK'], ['right', 'left', 'right', 'right', 'right', 'right', 'right', 'right']));
@@ -633,15 +727,28 @@ export async function main(argv = process.argv.slice(2)) {
         from = n(values.from, kind === 'skill' ? 100 : current);
         to = n(values.to, kind === 'skill' ? 200 : current + 100);
         label = kind === 'skill' ? `skill ${id}` : `gear ${id}`;
+      } else if (kind === 'star') {
+        id = String(id).toLowerCase();
+        if (!STAT_KEYS.includes(id)) throw new Error(`bad star attribute ${idRaw}`);
+        current = ch._mods?.stats?.[id] ?? 0;
+        from = n(values.from, 0);
+        to = n(values.to, FIRM_CHANNEL_MAX);
+        label = `star ${id}`;
       } else {
-        throw new Error(`graph series must be stat:name, skill:id or gear:id (${spec})`);
+        throw new Error(`graph series must be stat:name, skill:id, gear:id or star:name (${spec})`);
       }
       const points = [];
       for (const value of scaleRange(values, from, to)) {
         const c = JSON.parse(JSON.stringify(ch));
         if (kind === 'stat') c.stats[id] = value;
         else if (kind === 'skill') c.skills[id] = value;
-        else {
+        else if (kind === 'star') {
+          c._mods = c._mods ?? { stats: {}, skills: {} };
+          c._mods.stats = c._mods.stats ?? {};
+          c._mods.statMax = c._mods.statMax ?? {};
+          c._mods.stats[id] = value;
+          c._mods.statMax[id] = Math.max(0, value);
+        } else {
           c._mods = c._mods ?? { stats: {}, skills: {} };
           c._mods.skills = c._mods.skills ?? {};
           c._mods.skills[id] = value;
@@ -673,7 +780,13 @@ export async function main(argv = process.argv.slice(2)) {
         const c = JSON.parse(JSON.stringify(ch));
         if (kind === 'stat') c.stats[id] = value;
         else if (kind === 'skill') c.skills[id] = value;
-        else {
+        else if (kind === 'star') {
+          c._mods = c._mods ?? { stats: {}, skills: {} };
+          c._mods.stats = c._mods.stats ?? {};
+          c._mods.statMax = c._mods.statMax ?? {};
+          c._mods.stats[id] = value;
+          c._mods.statMax[id] = Math.max(0, value);
+        } else {
           c._mods = c._mods ?? { stats: {}, skills: {} };
           c._mods.skills = c._mods.skills ?? {};
           c._mods.skills[id] = value;

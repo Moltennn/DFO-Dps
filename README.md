@@ -88,6 +88,29 @@ The practical skill-line ceiling comes from the item rules, not a made-up budget
 
 At the level-45 gate the **600 per-hit cap**, not the character sheet, is the wall: the fully geared build is **~1,198 uncapped DPS**, but only **~821 capped DPS** and **~20.6 s TTK**. Past about 24 skill lines the extra damage is almost entirely eaten by the cap.
 
+### The Firmament (star tree) and values past the base caps
+
+The base caps are not the whole story, but they are not gear's either:
+
+| channel | base cap | what lifts it | formula past the cap |
+|---|---|---|---|
+| attributes | 100 | **Firmament only** (+15, `statMax`) | `liveStat` reads up to 115; the same `/10` Strength, proficiency and RRI terms apply |
+| raw skills | 200 | nothing | `effectiveSkill(200)` = 140; the Firmament and gear add **on top** of that |
+| displayed skill | 200 raw + mods | Firmament (+15) and gear | the sheet prints raw + mods, so 215 or 455; the formula reads 155 or 395 |
+| weapon blow | gear affix 40% | Firmament (+30% general, +50% with conditions) | a separate multiplier from gear skill and the affix |
+
+A gear **stat** affix is a mod, not a `statMax`: at 100 it is wasted, and it can only fill headroom the Firmament already opened. A gear **skill** affix is different: it joins the post-softcap mod channel and is not limited by the 200 raw cap.
+
+Use `--firmament` for the +15 channel ceiling, or enter your own stars:
+
+```bash
+./dfo-dps theory --firmament
+./dfo-dps theory --star-stat strength=15,speed=8 --star-skill 29=15,34=10
+./dfo-dps graph --theory --firmament --series stat:strength,stat:speed   --from 100 --to 115 --step 5 --out stars.html
+```
+
+The `theory` output prices every star channel from +0 to +15 at the ceiling, and the blow channel from +0% to +30%. The short version: **Strength** is the only attribute that keeps paying past 100 (damage and RRI swing speed); **Speed** is clamped to 98/100 by the swing law; **Agility** only moves on integer thresholds; **Luck** needs 125 to move the critical divisor, so +15 is dead. Skill stars are small: Long Blade +15 is +6.6% mastery, Critical Strike +15 is +0.15 critical multiplier, and Backstabbing is already at 100% chance.
+
 ## Graphs
 
 `graph` emits a standalone SVG chart. The live lines can be flat because gear stat affixes already hit the 100 cap; `--theory` lowers one channel at a time from that ceiling, so it shows what each point was buying.
@@ -107,7 +130,7 @@ At the level-45 gate the **600 per-hit cap**, not the character sheet, is the wa
   --from 0 --to 540 --step 30 --out theory-gear.html
 ```
 
-Series syntax is `stat:strength`, `stat:agility`, `skill:29`, `gear:29`, etc. The Y axis is capped DPS against the selected target, so the gate's per-hit cap is in the line, not hidden. Add `--uncapped` to plot raw DPS and see the full stat slope before the cap flattens it.
+Series syntax is `stat:strength`, `stat:agility`, `skill:29`, `gear:29`, `star:strength`, etc. A `star:` series varies the Firmament channel from 0 to +15 while the base stays 100. The Y axis is capped DPS against the selected target, so the gate's per-hit cap is in the line, not hidden. Add `--uncapped` to plot raw DPS and see the full stat slope before the cap flattens it.
 
 ## Backstab and the 600s
 

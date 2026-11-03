@@ -238,7 +238,9 @@ function passiveStat(ch, name, opts) {
   return 0;
 }
 function stat(ch, name, opts = {}) {
-  return clamp(liveStat(ch, name) + passiveStat(ch, name, opts), 0, 100);
+  // The live value already holds the 100 ceiling plus whatever lifts it (the
+  // Firmament's statMax, the Mace of Molag Bal). Do not clamp it back to 100.
+  return Math.max(0, liveStat(ch, name) + passiveStat(ch, name, opts));
 }
 function skill(ch, id, opts = {}) {
   return skillValue(ch, id) + (opts.passiveOn !== false && ch.martialPath === 'shadowdancer' && id === SKILLS.Dodging ? 15 : 0);
@@ -488,6 +490,8 @@ export function weaponBlow(ch, w, damage, target, opts = {}) {
   if (slayer > 0) d = applyPct(d, slayer);
   const theory = num(opts.damagePct, 0);
   if (theory) d = applyPct(d, theory);
+  const firm = num(opts.firmamentDamagePct, 0);
+  if (firm) d = applyPct(d, firm);
   return d;
 }
 
@@ -562,7 +566,7 @@ export function analyze(ch, {
   }
   const t = target ?? { ...referenceFoe(ch.level, 'tough') };
   const tgt = { ...t, group: t.group ?? null, affinity: t.affinity ?? null };
-  const simOpts = { ...opts, passiveOn, critDamage, healthShare: opts.healthShare ?? t.healthShare ?? 1 };
+  const simOpts = { ...opts, passiveOn, critDamage, healthShare: opts.healthShare ?? t.healthShare ?? 1, firmamentDamagePct: opts.firmamentDamagePct ?? ch.firmamentDamagePct ?? 0 };
   const hit = hitModel(ch, w, tgt, swing, core, simOpts);
   const dmg = damageModel(ch, w, tgt, swing, core, simOpts);
   const c = hit.crit.chance;

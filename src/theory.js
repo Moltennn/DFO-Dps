@@ -11,6 +11,12 @@
  * The character is deliberately at the live ceiling, not at a community
  * benchmark: attributes 100, a mastered Long Blade and Critical Strike at
  * raw 200, a Daedric Dai-katana, and a chosen number of gear skill lines.
+ *
+ * `starStats` / `starSkills` are the FIRMAMENT's channels. The tree caps an
+ * attribute or combat skill channel at +15; an attribute gain also lifts the
+ * live ceiling by that much (statMods.js FIRM-MAX), so Strength 100 + 15
+ * reads 115. A skill's +15 sits ON TOP of effectiveSkill(200)=140, so the
+ * formula reads 155 while the skill screen prints raw 200 + 15 = 215.
  */
 import { SKILLS, WEAPONS } from './data.js';
 import { characterFromSave } from './save.js';
@@ -65,6 +71,9 @@ export function theoryCharacter({
   rawBackstab = 200,
   damagePct = 0,
   vampire = false,
+  starStats = {},
+  starSkills = {},
+  starDamage = 0,
 } = {}) {
   const raceId = typeof race === 'number' ? race : (THEORY_RACES[String(race).toLowerCase()] ?? THEORY_RACES.darkelf);
   const templateIndex = Number(blade);
@@ -114,7 +123,25 @@ export function theoryCharacter({
     _mods: { stats: {}, skills: { [SKILLS.LongBlade]: gearLB, [SKILLS.CriticalStrike]: gearCS } },
     _enchantMods: { skillMods: {}, chanceToHitMod: 0 },
   };
+  const firmStats = {};
+  for (const [k, v] of Object.entries(starStats ?? {})) {
+    if (Number.isFinite(v) && v !== 0) firmStats[k] = Math.max(-15, Math.min(15, v));
+  }
+  const firmSkills = {};
+  for (const [k, v] of Object.entries(starSkills ?? {})) {
+    const id = Number(k);
+    if (Number.isInteger(id) && id >= 0 && id < 35 && Number.isFinite(v) && v !== 0) {
+      firmSkills[id] = Math.max(-15, Math.min(15, v));
+    }
+  }
+  const skillMods = { ...firmSkills };
+  skillMods[SKILLS.LongBlade] = (skillMods[SKILLS.LongBlade] ?? 0) + gearLB;
+  skillMods[SKILLS.CriticalStrike] = (skillMods[SKILLS.CriticalStrike] ?? 0) + gearCS;
+  // FIRM-MAX: only a positive gain lifts the ceiling; a price reduces the stat alone.
+  const firmMax = Object.fromEntries(Object.entries(firmStats).filter(([, v]) => v > 0));
+  save._mods = { stats: firmStats, statMax: firmMax, skills: skillMods };
   const ch = characterFromSave(save, { online: true });
+  ch.firmamentDamagePct = Math.max(-20, Math.min(30, Number.isFinite(starDamage) ? starDamage : 0));
   ch.name = 'Level 45 theory long blade';
   return ch;
 }
@@ -139,21 +166,21 @@ export function theoryBlade(character, templateIndex, material = 9) {
 export const THEORY_CAPS = Object.freeze([
   {
     channel: 'Attributes',
-    cap: '100',
-    formula: 'liveStat clamps 0..100',
-    note: 'A hard live cap. Anything past 100 on the character sheet is wasted; gear stat affixes are dead once the bar reads 100.',
+    cap: '100 base, 115 with the Firmament',
+    formula: 'liveStat clamps to 100 + statMax',
+    note: 'A hard 100 base cap. The Firmament channel is +15 and its gain also lifts the live ceiling (statMax), so 100 + 15 = 115. A gear stat affix is a mod, not a statMax: it fills headroom the stars created, but cannot create it.',
   },
   {
     channel: 'Raw Long Blade',
-    cap: '200 (mastered)',
+    cap: '200 hard (sheet can print 200+mods)',
     formula: 'effectiveSkill(200) = 140',
-    note: 'Raw 200 is the hard skill ceiling. The softcap turns 100..200 into 40 effective points, plus the mastery milestones.',
+    note: 'Raw 200 is the hard skill ceiling. The softcap turns 100..200 into 40 effective points, plus the mastery milestones. The Firmament +15 and gear skill sit ON TOP of the formula value, so the sheet can print 215 or 455 while the formula reads 155 or 395.',
   },
   {
     channel: 'Raw Critical Strike',
-    cap: '200 (mastered)',
+    cap: '200 hard (sheet can print 200+mods)',
     formula: 'effectiveSkill(200) = 140',
-    note: 'Without the mastered flag the raw value stops at 100. Critical Strike is a primary skill for this build.',
+    note: 'Without the mastered flag the raw value stops at 100. Critical Strike is a primary skill for this build. The same post-cap mod channel applies.',
   },
   {
     channel: 'Raw Backstabbing',
@@ -184,6 +211,12 @@ export const THEORY_CAPS = Object.freeze([
     cap: `${DAMAGE_AFFIX_MAX}%`,
     formula: 'AFFIX_RANGES.damage.legendary = 20..40',
     note: 'Only a weapon can roll it, so 40% is the whole affix channel. It multiplies the weapon roll before mastery and criticals.',
+  },
+  {
+    channel: 'Firmament blow',
+    cap: '+30% general, +50% with conditions',
+    formula: 'firmamentLaw.js blowPct / BLOW_CAP',
+    note: 'The sky\'s weapon-blow channels (weaponDmg, meleeDmg, longDmg and the foe-kind line) cap at +30% together; the unaware/rage conditions can take the total to +50%. It is a separate multiplier from gear skill and the weapon affix.',
   },
   {
     channel: 'Hit chance',

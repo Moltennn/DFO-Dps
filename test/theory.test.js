@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { effectiveSkill } from '../src/save.js';
+import { effectiveSkill, liveStat, skillValue } from '../src/save.js';
 import { analyze, gateTarget } from '../src/model.js';
 import {
   GEAR_CS_LINES, GEAR_LB_LINES, GEAR_SKILL_LINES, LONG_BLADES, theoryBlade, theoryCharacter,
@@ -58,4 +58,32 @@ test('a different long blade keeps the damage affix and changes the template', (
     assert.equal(c.weapon.templateIndex, idx);
     assert.equal(c.weapon.affixes.find((a) => a.id === 'damage').value, 40);
   }
+});
+
+
+test('the Firmament lifts the live attribute ceiling and adds to the formula skill', () => {
+  const ch = theoryCharacter({ starStats: { strength: 15, speed: 15 }, starSkills: { 29: 15, 34: 15 } });
+  assert.equal(liveStat(ch, 'strength'), 115);
+  assert.equal(liveStat(ch, 'speed'), 115);
+  assert.equal(skillValue(ch, 29), 155); // effectiveSkill(200)=140 + 15
+  assert.equal(skillValue(ch, 34), 155);
+  assert.equal(ch.skills[29] + ch._mods.skills[29], 215); // the sheet's raw + mods
+  const r = analyze(ch, { target: gateTarget(45), core: 'overhaul', rri: true });
+  assert.equal(r.damage.parts.strMod, 12); // 115 Strength, two-handed
+});
+
+test('a gear stat affix fills headroom but does not lift the 100 ceiling', () => {
+  const ch = theoryCharacter();
+  ch._mods.stats.strength = 15;
+  assert.equal(liveStat(ch, 'strength'), 100);
+  ch._mods.statMax.strength = 15;
+  assert.equal(liveStat(ch, 'strength'), 115);
+});
+
+
+test('the Firmament blow channel raises uncapped DPS and is priced apart from gear skill', () => {
+  const base = analyze(theoryCharacter(), { target: gateTarget(45), core: 'overhaul', rri: true });
+  const star = analyze(theoryCharacter({ starDamage: 30 }), { target: gateTarget(45), core: 'overhaul', rri: true });
+  assert.ok(star.dps > base.dps);
+  assert.ok(Math.abs(star.dps / base.dps - 1.3) < 0.02, `${base.dps} -> ${star.dps}`);
 });
