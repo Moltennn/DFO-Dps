@@ -377,18 +377,22 @@ export function analyzeSpell(spell, ch, target, {
 
 /** A fight of `seconds`, spending the pool on this one spell. A DoT is
  *  renewed, never stacked, so its ticks cover only the fight it is up. */
-export function spellRotation(spell, ch, target, { seconds = 30, ...opts } = {}) {
+export function spellRotation(spell, ch, target, { seconds = 30, manaSolved = true, ...opts } = {}) {
   const card = analyzeSpell(spell, ch, target, opts);
-  const maxCasts = card.cost > 0 ? Math.floor(card.magicka / card.cost) : Infinity;
-  const wanted = card.castSeconds > 0 ? Math.ceil(seconds / card.castSeconds) : 0;
+  const maxCasts = manaSolved ? Infinity : (card.cost > 0 ? Math.floor(card.magicka / card.cost) : Infinity);
+  const dotOnly = card.instant === 0 && card.dotRounds > 0;
+  const wanted = dotOnly
+    ? Math.max(1, Math.ceil(seconds / Math.max(1, card.dotSeconds)))
+    : (card.castSeconds > 0 ? Math.ceil(seconds / card.castSeconds) : 0);
   const casts = Math.max(0, Math.min(maxCasts, wanted));
-  const fight = Math.min(seconds, casts * card.castSeconds);
+  const fight = manaSolved ? seconds : Math.min(seconds, casts * card.castSeconds);
   const active = Math.min(fight, card.dotSeconds);
   const instantDamage = card.instant * casts;
   const dotDamage = card.dotPerTick * (active / MAGIC_ROUND_SECONDS);
   const total = instantDamage + dotDamage;
   const timeToEmpty = casts * card.castSeconds;
-  const manaDps = timeToEmpty > 0 ? total / timeToEmpty : 0;
+  const dotDps = dotDamage / Math.max(1e-9, active);
+  const manaDps = dotOnly ? dotDps : (timeToEmpty > 0 ? total / timeToEmpty : 0);
   const windowDps = seconds > 0 ? total / seconds : 0;
   return {
     ...card,
@@ -401,9 +405,12 @@ export function spellRotation(spell, ch, target, { seconds = 30, ...opts } = {})
     totalDamage: total,
     manaDps,
     windowDps,
+    dotDps,
+    manaSolved,
     sustainedDps: windowDps,
-    manaLeft: card.magicka - casts * card.cost,
-    poolKill: opts.health > 0 ? total >= opts.health : null,
-    ttk: opts.health > 0 && total >= opts.health && manaDps > 0 ? opts.health / manaDps : null,
+    manaLeft: manaSolved ? null : card.magicka - casts * card.cost,
+    poolKill: manaSolved ? (opts.health > 0 ? total >= opts.health : null) : (opts.health > 0 ? total >= opts.health : null),
+    ttk: opts.health > 0 && (dotOnly ? dotDps : manaDps) > 0 && (manaSolved || total >= opts.health)
+      ? opts.health / (dotOnly ? dotDps : manaDps) : null,
   };
 }

@@ -130,6 +130,7 @@ export const WEAPONS = Object.freeze({
   560: { name: 'Thunderlock', min: 7, max: 26, skill: 'Archery', type: 17, weight: 6, shortBlade: false, twoHanded: true, ranged: true, gun: true },
   561: { name: 'Dwemer Pellet', min: 0, max: 0, skill: 'Archery', type: 19, weight: 0.2, shortBlade: false, twoHanded: false, ammo: true },
   562: { name: 'Pistolet', min: 4, max: 15, skill: 'Archery', type: 19, weight: 2.5, shortBlade: false, twoHanded: false, ranged: true, gun: true },
+  563: { name: 'Hand Wraps', min: 0, max: 0, skill: 'HandToHand', type: 15, weight: 0.5, shortBlade: false, twoHanded: false, wraps: true },
 });
 
 export const WEAPON_SKILL_IDS = Object.freeze(

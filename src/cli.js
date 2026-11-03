@@ -19,6 +19,7 @@ import { buildReport } from './report.js';
 import { barChart, graphPage, lineChart, multiGraphPage } from './graph.js';
 import { analyzeSpell, resolveSpells, spellCost, spellRotation, standardSpells } from './spells.js';
 import { ENCHANTMENT_TYPES, castWhenStrikes, enchantDps, procsBeforeBreak, strikeEnchantments } from './enchants.js';
+import { perfectSockets } from './sockets.js';
 import {
   DAMAGE_AFFIX_MAX, DEFAULT_BLADE, GEAR_CS_LINES, GEAR_H2H_LINES, GEAR_LB_LINES, GEAR_LINE_MAX, GEAR_MASTERY_POINTS,
   GEAR_SKILL_LINES, LONG_BLADES,
@@ -29,7 +30,7 @@ import {
   syntheticWeapon, weaponOf,
 } from './model.js';
 import {
-  characterFromSave, characterLabel, listSaves, liveStat, loadSave, resolveSave,
+  characterFromSave, characterLabel, effectiveSkill, listSaves, liveStat, loadSave, resolveSave,
   skillName, skillValue,
 } from './save.js';
 
@@ -73,6 +74,7 @@ Common options:
   --players <n>                       gate boss group size (health per player; default 1)
   --blow-x <n>                        gate relayBlowX (Elite/Vestiges cap multiplier; default 1)
   --pair                              paired Pistolets (2 shots per cycle, off hand x0.8)
+  --dual                              dual wield the left-hand weapon (off hand x0.8, -5 hit)
   --spam                              bow spam (BOW_FAST stacks to x0.2; default paced)
   --health-share <0..1>               foe's health share for Axe/Blunt mastery (default: 1)
   --no-crit-damage                    overhaul crit adds hit only
@@ -85,7 +87,7 @@ Common options:
   --gear-skill <id>                   scale one gear skill affix (with scale)
   --from <n> --to <n> --step <n>      scale range (default: current to cap)
   --all                               scale/compare every relevant channel
-  --theory                            use the level-45 long-blade theory character
+  --theory                            use the level-45 theory character (caster for spell/spells)
   --race <name>                       theory race (darkelf, redguard, nord, ...)
   --blade <template>                  theory long blade (default 123, Dai-katana)
   --gear-lines <n>                    theory gear skill lines (default 26: 8 LB + 18 crit)
@@ -105,6 +107,7 @@ Common options:
   --cast-speed <pct>                  cast speed percent
   --magicka <n>                       override the magicka pool
   --seconds <n>                       fight length for spell sustain (default 30)
+  --mana-limit                        price the magicka pool (default: mana is solved)
   --data <dir>                        ARENA2 directory holding SPELLS.STD
   --series <a,b>                      graph series: stat:strength,skill:29,gear:29,star:strength
   --uncapped                          graph raw DPS instead of gate-capped DPS
@@ -141,6 +144,7 @@ const optsSpec = {
   players: { type: 'string', default: '1' },
   'blow-x': { type: 'string', default: '1' },
   pair: { type: 'boolean', default: false },
+  dual: { type: 'boolean', default: false },
   spam: { type: 'boolean', default: false },
   series: { type: 'string' },
   uncapped: { type: 'boolean', default: false },
@@ -165,6 +169,7 @@ const optsSpec = {
   'cast-speed': { type: 'string', default: '0' },
   magicka: { type: 'string' },
   seconds: { type: 'string' },
+  'mana-limit': { type: 'boolean', default: false },
   data: { type: 'string' },
   'no-rri': { type: 'boolean', default: false },
   all: { type: 'boolean', default: false },
@@ -335,6 +340,7 @@ function scenarioOf(ch, values, traits, target) {
     backstabUptime: values.behind ? 1 : n(values.backstab, 0),
     firmamentDamagePct: ch.firmamentDamagePct ?? 0,
     pair: values.pair,
+    dual: values.dual,
     bowSpam: values.spam,
     potencyPct: n(values.potency, 0),
     pierce: n(values.pierce, 0),
@@ -368,7 +374,7 @@ function summary(ch, r, extra = {}) {
     },
     result: {
       hit: r.hit.hit, critChance: r.hit.crit.chance, critMult: r.hit.crit.damageMult,
-      backstab: r.backstab,
+      backstab: r.backstab, dual: !!r.dual, pair: !!r.pair,
       damage: { min: r.damage.min, max: r.damage.max, avg: r.damage.avg, critMin: r.damage.critMin, critMax: r.damage.critMax, critAvg: r.damage.critAvg },
       perSwing: r.perSwing, aps: r.cadence.aps, swingSeconds: r.cadence.seconds,
       dps: r.dps, cappedDps: r.cappedDps, cap: r.cap, capLoss: r.capLoss,
@@ -399,7 +405,7 @@ function printBuild(ch, r, targetPreset, values) {
   const w = r.weapon;
   const traits = r.traits;
   console.log(`${characterLabel(ch)}`);
-  console.log(`${weaponLabel(w)}  |  ${r.core}${ch.online ? ' / online' : ' / offline'}${ch.martialPath ? ` / ${MARTIAL_PATHS[ch.martialPath]?.name ?? ch.martialPath}` : ''}`);
+  console.log(`${weaponLabel(w)}${r.dual ? ' / dual' : ''}${r.pair ? ' / pair' : ''}  |  ${r.core}${ch.online ? ' / online' : ' / offline'}${ch.martialPath ? ` / ${MARTIAL_PATHS[ch.martialPath]?.name ?? ch.martialPath}` : ''}`);
   console.log(`target: ${targetPreset}${r.target.isClass ? ' (class)' : ''}, level ${r.target.level}${r.health ? `, ${r.health.toLocaleString()} HP` : ''}${traits.length ? `, traits: ${traits.join(', ')}` : ''}`);
   console.log('');
   console.log(table([
@@ -556,7 +562,7 @@ export async function main(argv = process.argv.slice(2)) {
     const spellTarget = values.target === 'armoured' ? gateTarget(level, { traits }) : target;
     const opts = {
       level, online: ch.online !== false, potencyPct: n(values.potency, 0), pierce: n(values.pierce, 0),
-      castSpeedPct: n(values['cast-speed'], 0), magicka: values.magicka != null ? n(values.magicka, 0) : undefined,
+      castSpeedPct: n(values['cast-speed'], 0), manaSolved: !values['mana-limit'], magicka: values.magicka != null ? n(values.magicka, 0) : undefined,
       health: spellTarget.isBoss ? spellTarget.maxHealth : 0, traits: spellTarget.bossTraits ?? [],
     };
     const list = pool.map((sp) => ({ sp, r: spellRotation(sp, ch, spellTarget, { ...opts, seconds: n(values.seconds, 30) }) }))
@@ -566,13 +572,13 @@ export async function main(argv = process.argv.slice(2)) {
     const top = list.slice(0, 20);
     const dpsChart = barChart({ title: 'Sustained spell DPS (30s window)', labels: top.map((x) => x.sp.name), series: [{ name: 'DPS', values: top.map((x) => x.r.windowDps) }] });
     const effChart = barChart({ title: 'Damage per spell point', labels: top.map((x) => x.sp.name), series: [{ name: 'dmg/SP', values: top.map((x) => x.r.damage / Math.max(1, x.r.cost)) }] });
-    const tableHtml = `<table><thead><tr><th>Spell</th><th>School</th><th>Cost</th><th>Damage</th><th>Window DPS</th><th>Mana DPS</th><th>dmg/SP</th><th>DoT</th></tr></thead><tbody>${top.map(({ sp, r }) => `<tr><td class="k">${sp.name}</td><td>${skillName(r.school)}</td><td>${r.cost}</td><td>${fmt(r.damage)}</td><td>${fmt(r.windowDps)}</td><td>${fmt(r.manaDps)}</td><td>${fmt(r.damage / Math.max(1, r.cost))}</td><td>${r.dotRounds ? `${r.dotRounds} r` : '-'}</td></tr>`).join('')}</tbody></table>`;
+    const tableHtml = `<table><thead><tr><th>Spell</th><th>School</th><th>Cost</th><th>Damage</th><th>Window DPS</th><th>Cast DPS</th><th>DoT DPS</th><th>dmg/SP</th><th>DoT</th></tr></thead><tbody>${top.map(({ sp, r }) => `<tr><td class="k">${sp.name}</td><td>${skillName(r.school)}</td><td>${r.cost}</td><td>${fmt(r.damage)}</td><td>${fmt(r.windowDps)}</td><td>${fmt(r.manaDps)}</td><td>${fmt(r.dotDps ?? 0)}</td><td>${fmt(r.damage / Math.max(1, r.cost))}</td><td>${r.dotRounds ? `${r.dotRounds} r` : '-'}</td></tr>`).join('')}</tbody></table>`;
     const subtitle = `${characterLabel(ch)} | ${list.length} standard damage spells | ${spellTarget.isBoss ? `gate ${spellTarget.maxHealth.toLocaleString()} HP` : `level ${spellTarget.level}`} | ${n(values.seconds, 30)}s window | potency ${n(values.potency, 0)}% | pierce ${n(values.pierce, 0)}`;
     const html = multiGraphPage({
       title: 'DFO spell ceiling',
       subtitle,
       sections: [
-        { title: 'Sustained DPS', note: 'Mana-limited: no in-combat regeneration. A DoT is one instance per target and renews, never stacks.', chart: dpsChart, table: tableHtml },
+        { title: 'Sustained DPS', note: 'Mana is treated as solved by default; --mana-limit prices the pool. A DoT is one instance per target and renews, never stacks.', chart: dpsChart, table: tableHtml },
         { title: 'Damage per spell point', note: 'The metric that binds a long fight. A 30s window may not spend the whole pool.', chart: effChart },
       ],
     });
@@ -601,6 +607,7 @@ export async function main(argv = process.argv.slice(2)) {
       potencyPct: n(values.potency, 0),
       pierce: n(values.pierce, 0),
       castSpeedPct: n(values['cast-speed'], 0),
+      manaSolved: !values['mana-limit'],
       magicka: values.magicka != null ? n(values.magicka, 0) : undefined,
       health: spellTarget.isBoss ? spellTarget.maxHealth : 0,
       traits: spellTarget.bossTraits ?? [],
@@ -644,18 +651,16 @@ export async function main(argv = process.argv.slice(2)) {
       ['Damage / cast', fmt(r.damage)],
       ['Cast time', `${fmt2(r.castSeconds)} s`],
       ['Burst DPS', fmt(r.burstDps)],
-      ...(r.dotRounds ? [['DoT DPS', fmt(r.dotDps)]] : []),
       ['DPS', fmt(r.dps)],
       ['Magicka pool', r.magicka],
       ['Fight window', `${fmt(r.seconds)} s`],
       ['Casts used', r.casts],
       ['Total damage', fmt(r.totalDamage)],
-      ['Mana DPS', fmt(r.manaDps)],
+      ['Cast DPS', fmt(r.manaDps)],
       ['Window DPS', fmt(r.windowDps)],
-      ['Time to empty', `${fmt(r.timeToEmpty)} s`],
-      ['Pool kill', r.poolKill == null ? '-' : (r.poolKill ? 'yes' : 'no')],
-      ['Mana left', fmt(r.manaLeft)],
-      ['Casts per pool', r.castsPerPool],
+      ...(r.dotRounds ? [['DoT DPS', fmt(r.dotDps)]] : []),
+      ['Mana solved', r.manaSolved ? 'yes' : 'no'],
+      ...(r.manaSolved ? [] : [['Time to empty', `${fmt(r.timeToEmpty)} s`], ['Pool kill', r.poolKill == null ? '-' : (r.poolKill ? 'yes' : 'no')], ['Mana left', fmt(r.manaLeft)]]),
       ['Saving throw', `${pc(r.saving)} lands`],
       ['Power multiplier', `x${fmt2(r.powerMult)}`],
       ['Target', `${spellTarget.isBoss ? 'gate' : values.target}, level ${spellTarget.level}${spellTarget.isBoss ? `, ${spellTarget.maxHealth.toLocaleString()} HP` : ''}`],
@@ -684,8 +689,8 @@ export async function main(argv = process.argv.slice(2)) {
     const gearMaxOf = (t) => (familyOf(t) === 'HandToHand' ? maxH2HGear : maxWeaponGear);
     const maxTarget = referenceFoe(level, 'tough');
     const gate = gateTarget(level);
-    const maxRun = (ch, share = 1) => analyze(ch, { target: maxTarget, core: 'overhaul', rri: true, healthShare: share, passiveOn: true, stacks: 5, pair: !!ch?._pair });
-    const gateRun = (ch) => analyze(ch, { target: gate, core: 'overhaul', rri: true, health: gate.maxHealth, healthShare: 1, passiveOn: true, stacks: 5, pair: !!ch?._pair });
+    const maxRun = (ch, share = 1) => analyze(ch, { target: maxTarget, core: 'overhaul', rri: true, healthShare: share, passiveOn: true, stacks: 5, pair: !!ch?._pair, dual: !!ch?._dual });
+    const gateRun = (ch) => analyze(ch, { target: gate, core: 'overhaul', rri: true, health: gate.maxHealth, healthShare: 1, passiveOn: true, stacks: 5, pair: !!ch?._pair, dual: !!ch?._dual });
     const martialFor = (t) => (familyOf(t) === 'Axe' || familyOf(t) === 'HandToHand' ? 'berserker' : 'blademaster');
     const shareFor = (t) => (familyOf(t) === 'Axe' || familyOf(t) === 'HandToHand' ? 0.49 : 1);
 
@@ -697,7 +702,7 @@ export async function main(argv = process.argv.slice(2)) {
         const starSkills = firmament ? { [SKILLS.HandToHand]: 15, [SKILLS.CriticalStrike]: 15, [SKILLS.Backstabbing]: 15 } : {};
         const ch = theoryFists({
           race, rawH2H: raw, gearH2H: gear ?? maxH2HGear, gearCrit: critGear,
-          starStats, starSkills, starDamage: firmament ? 30 : 0, vampire,
+          starStats, starSkills, starDamage: firmament ? 30 : 0, vampire, wraps: true,
         });
         ch.martialPath = martial;
         ch.name = 'Level 45 Hand-to-Hand';
@@ -709,7 +714,7 @@ export async function main(argv = process.argv.slice(2)) {
       const starSkills = firmament ? { [skillId]: 15, [SKILLS.CriticalStrike]: 15, [SKILLS.Backstabbing]: 15 } : {};
       const ch = theoryCharacter({
         blade: t, race, gearLB: 0, gearCS: 0, damagePct: DAMAGE_AFFIX_MAX,
-        vampire, starStats, starSkills, starDamage: firmament ? 30 : 0,
+        vampire, starStats, starSkills, starDamage: firmament ? 30 : 0, sockets: perfectSockets(t),
       });
       ch.career = { ...(ch.career ?? {}), weaponArmorShieldsBitfield: (PROF_OF[tpl.skill] ?? 0) << 16 };
       ch.skills[skillId] = raw;
@@ -725,17 +730,25 @@ export async function main(argv = process.argv.slice(2)) {
       return ch;
     };
 
-    const bestRace = (t, { firmament = false } = {}) => {
+    const makeDual = (t, opts = {}) => {
+      const ch = makeMax(t, { ...opts, martial: martialFor(t) });
+      ch.offWeapon = { ...ch.weapon, equipSlot: 21 };
+      ch._dual = true;
+      return ch;
+    };
+
+    const bestRace = (t, { firmament = false, dual = false } = {}) => {
       if (fixedRace) return fixedRace;
       let best = null;
       for (const race of RACE_KEYS) {
-        const r = maxRun(makeMax(t, { race, firmament }), shareFor(t));
+        const c = dual ? makeDual(t, { race, firmament }) : makeMax(t, { race, firmament });
+        const r = maxRun(c, shareFor(t));
         if (!best || r.dps > best.dps) best = { race, dps: r.dps };
       }
       return best.race;
     };
 
-    const nameOf = (t) => (familyOf(t) === 'HandToHand' ? 'Hand-to-Hand' : WEAPONS[t].name);
+    const nameOf = (t) => (familyOf(t) === 'HandToHand' ? 'H2H (wraps)' : WEAPONS[t].name);
     const rows = MELEE.map((t) => {
       const race = bestRace(t, { firmament: false });
       const raceF = bestRace(t, { firmament: true });
@@ -755,9 +768,28 @@ export async function main(argv = process.argv.slice(2)) {
       };
     }).sort((a, b) => b.maxDpsF - a.maxDpsF || b.maxDps - a.maxDps);
 
+    // Dual pairs: the one-handed templates, both hands of the same weapon.
+    for (const t of [113, 114, 116, 117, 118, 119, 120, 121, 124, 127]) {
+      const race = bestRace(t, { firmament: false, dual: true });
+      const raceF = bestRace(t, { firmament: true, dual: true });
+      const ch = makeDual(t, { race, firmament: false });
+      const chF = makeDual(t, { race: raceF, firmament: true });
+      const r = maxRun(ch, shareFor(t));
+      const rF = maxRun(chF, shareFor(t));
+      const g = gateRun(ch);
+      const gF = gateRun(chF);
+      rows.push({
+        template: t, name: `Dual ${nameOf(t)}`, skill: familyOf(t), twoHanded: false, dual: true,
+        path: martialFor(t), race, raceF, maxDps: r.dps, maxDpsF: rF.dps, full: r.dps,
+        gateDps: g.cappedDps, gateDpsF: gF.cappedDps, gateTtk: g.ttk, gateTtkF: gF.ttk,
+        perSwing: r.perSwing, aps: r.cadence.aps,
+      });
+    }
+    rows.sort((a, b) => b.maxDpsF - a.maxDpsF || b.maxDps - a.maxDps);
+
     const cell = (v) => (Number.isFinite(v) ? fmt(v) : '-');
     const pctCell = (v) => (Number.isFinite(v) ? pc(v) : '-');
-    const maxTable = `<table><thead><tr><th>Weapon</th><th>Skill</th><th>Hands</th><th>Path</th><th>Max gear</th><th>Full gear</th><th>+ Firmament</th><th>Gate</th><th>Gate + Firm</th><th>Gate TTK</th><th>Best race</th></tr></thead><tbody>${rows.map((r) => `<tr><td class="k">${r.name}</td><td>${r.skill}</td><td>${r.twoHanded ? '2H' : '1H'}</td><td>${r.path}</td><td>${cell(r.maxDps)}</td><td>${cell(r.full)}</td><td>${cell(r.maxDpsF)}</td><td>${cell(r.gateDps)}</td><td>${cell(r.gateDpsF)}</td><td>${r.gateTtk ? `${cell(r.gateTtk)} s` : '-'}</td><td>${RACE_NAMES[({ darkelf: 4, redguard: 2, nord: 3, breton: 1, highelf: 5, woodelf: 6, khajiit: 7, argonian: 8 })[r.raceF] ?? r.raceF]}</td></tr>`).join('')}</tbody></table>`;
+    const maxTable = `<table><thead><tr><th>Weapon</th><th>Skill</th><th>Hands</th><th>Path</th><th>Max gear</th><th>Full gear</th><th>+ Firmament</th><th>Gate</th><th>Gate + Firm</th><th>Gate TTK</th><th>Best race</th></tr></thead><tbody>${rows.map((r) => `<tr><td class="k">${r.name}</td><td>${r.skill}</td><td>${r.dual ? 'Dual' : r.skill === 'HandToHand' ? 'Fists' : r.twoHanded ? '2H' : '1H'}</td><td>${r.path}</td><td>${cell(r.maxDps)}</td><td>${cell(r.full)}</td><td>${cell(r.maxDpsF)}</td><td>${cell(r.gateDps)}</td><td>${cell(r.gateDpsF)}</td><td>${r.gateTtk ? `${cell(r.gateTtk)} s` : '-'}</td><td>${RACE_NAMES[({ darkelf: 4, redguard: 2, nord: 3, breton: 1, highelf: 5, woodelf: 6, khajiit: 7, argonian: 8 })[r.raceF] ?? r.raceF]}</td></tr>`).join('')}</tbody></table>`;
     const top = rows[0];
     const topGear = rows.slice().sort((a, b) => b.maxDps - a.maxDps)[0];
     const gateTop = rows.slice().sort((a, b) => b.gateDpsF - a.gateDpsF)[0];
@@ -786,31 +818,27 @@ export async function main(argv = process.argv.slice(2)) {
       const gearMax = f.key === 'HandToHand' ? maxH2HGear : maxWeaponGear;
       const rangedNote = f.key === 'Archery' ? ' Bows use the paced BOW_FAST window; the Pistolet is a pair.' : '';
       const gearVals = f.key === 'HandToHand' ? [0, 60, 120, 180, 240, 300, 360, 420, 480, 510] : [0, 30, 60, 90, 120, 150, 180, 210, 240];
-      const rawSeries = f.templates.map((t) => {
+      const skillSeries = f.templates.map((t) => {
         const race = bestRace(t, { firmament: firmCharts });
-        return {
-          name: nameOf(t),
-          points: rawVals.map((v) => ({ x: v, y: maxRun(makeMax(t, { race, firmament: firmCharts, raw: v }), shareFor(t)).dps })),
-        };
+        const points = [];
+        for (const v of rawVals) {
+          points.push({ x: effectiveSkill(v), y: maxRun(makeMax(t, { race, firmament: firmCharts, raw: v, gear: 0 }), shareFor(t)).dps });
+        }
+        for (const v of gearVals) {
+          if (v === 0) continue; // the raw-200 point already stands at effective 140
+          points.push({ x: 140 + v, y: maxRun(makeMax(t, { race, firmament: firmCharts, raw: 200, gear: v }), shareFor(t)).dps });
+        }
+        return { name: nameOf(t), points };
       });
-      const gearSeries = f.templates.map((t) => {
-        const race = bestRace(t, { firmament: firmCharts });
-        return {
-          name: nameOf(t),
-          points: gearVals.map((v) => ({ x: v, y: maxRun(makeMax(t, { race, firmament: firmCharts, gear: v }), shareFor(t)).dps })),
-        };
-      });
-      const note = `${f.key === 'HandToHand' ? 'H2H gear 0 -> 510.' : `Gear 0 -> ${gearMax}.`} Top: raw skill 100 -> 200. Bottom: gear skill. Max gear, best race, career expertise, best path, 40% damage affix, no per-hit cap.${f.key === 'Axe' ? ' Axe uses Berserker and is measured below half health for its 2x climb.' : f.key === 'BluntWeapon' ? ' Blunt uses Blademaster and is measured at or above half health for its 2x climb.' : f.key === 'HandToHand' ? ' H2H uses Berserker and is measured below half health; the reported ~450 sits around 240 gear points with the Firmament channels, or around 450 without them (run --firmament to see the star version).' : ''}${firmCharts ? ' Firmament channels on.' : ''}${rangedNote}`;
+      const note = `One line per weapon: raw training 100 -> 200 is effective 100 -> 140; gear lines continue from effective 140 to ${140 + gearMax}. Max gear, best race, career expertise, best path, 40% damage affix, sockets, no per-hit cap.${f.key === 'Axe' ? ' Axe uses Berserker and is measured below half health for its 2x climb.' : f.key === 'BluntWeapon' ? ' Blunt uses Blademaster and is measured at or above half health for its 2x climb.' : f.key === 'HandToHand' ? ' H2H uses Berserker and is measured below half health; the row is Hand Wraps, which carry damage, sockets and procs onto the fist blow. Bare fists without wrap lines sit around the reported ~450 band.' : ''}${firmCharts ? ' Firmament channels on.' : ''}${rangedNote}`;
       return {
         title: f.title,
         note,
-        chart: lineChart({ title: `${f.title}: raw skill`, xLabel: 'Raw skill', yLabel: 'DPS', series: rawSeries })
-          + `<div style="height:14px"></div>`
-          + lineChart({ title: `${f.title}: gear skill`, xLabel: 'Gear skill points', yLabel: 'DPS', series: gearSeries }),
+        chart: lineChart({ title: `${f.title}: effective skill`, xLabel: 'Effective weapon skill', yLabel: 'DPS', series: skillSeries }),
       };
     });
 
-    const topPerFamily = families.map((f) => rows.find((r) => familyOf(r.template) === f.key)).filter(Boolean);
+    const topPerFamily = families.map((f) => rows.find((r) => familyOf(r.template) === f.key && !r.dual)).filter(Boolean);
     const csVals = [0, 60, 120, 180, 240, 300, 360, 420, 480, 540];
     const csSeries = topPerFamily.map((row) => ({
       name: row.name,
@@ -849,7 +877,7 @@ export async function main(argv = process.argv.slice(2)) {
     const damage = values['damage-pct'] != null ? n(values['damage-pct'], 0) : DAMAGE_AFFIX_MAX;
     const { starStats: baseStarStats, starSkills: baseStarSkills } = starOptions(values);
     const starDamage = values['star-damage'] != null ? n(values['star-damage'], 0) : (values.firmament ? 30 : 0);
-    const baseOpts = { level, race: values.race ?? 'darkelf', blade, material, vampire: values.vampire, starDamage };
+    const baseOpts = { level, race: values.race ?? 'darkelf', blade, material, vampire: values.vampire, starDamage, sockets: perfectSockets(blade) };
     const make = (over = {}) => theoryCharacter({
       ...baseOpts,
       ...over,
@@ -882,13 +910,13 @@ export async function main(argv = process.argv.slice(2)) {
     const maxBehind = behind(maxCh);
 
     const stages = [
-      { label: 'Naked skills', raw: 100, gearLB: 0, gearCS: 0, damage: 0, vampire: false },
-      { label: 'Mastered skills', raw: 200, gearLB: 0, gearCS: 0, damage: 0, vampire: false },
+      { label: 'Naked skills', raw: 100, gearLB: 0, gearCS: 0, damage: 0, vampire: false, sockets: [] },
+      { label: 'Mastered skills', raw: 200, gearLB: 0, gearCS: 0, damage: 0, vampire: false, sockets: [] },
       { label: 'Perfect skill lines', raw: 200, gearLB: maxLb, gearCS: maxCs, damage: 0, vampire: false },
       { label: 'Perfect weapon line', raw: 200, gearLB: maxLb, gearCS: maxCs, damage, vampire: false },
       { label: 'Vampire', raw: 200, gearLB: maxLb, gearCS: maxCs, damage, vampire: true },
     ].map((s) => {
-      const c = make({ rawBlade: s.raw, rawCrit: s.raw, rawBackstab: s.raw, gearLB: s.gearLB, gearCS: s.gearCS, damagePct: s.damage, vampire: s.vampire });
+      const c = make({ rawBlade: s.raw, rawCrit: s.raw, rawBackstab: s.raw, gearLB: s.gearLB, gearCS: s.gearCS, damagePct: s.damage, vampire: s.vampire, ...(s.sockets !== undefined ? { sockets: s.sockets } : {}) });
       const r = run(c);
       const b = behind(c);
       return { ...s, dps: r.dps, cappedDps: r.cappedDps, behind: b.cappedDps, perSwing: r.perSwing, aps: r.cadence.aps, ttk: r.ttk, ch: c, r };
@@ -963,6 +991,7 @@ export async function main(argv = process.argv.slice(2)) {
       ['Gear skill lines', `${lines} x ${linePts} points`, explicitGear ? `explicit ${maxLb} Long Blade / ${maxCs} Critical Strike` : `${best.lb} Long Blade / ${best.cs} Critical Strike is the best split`],
       ['Weapon', `Daedric ${WEAPONS[blade].name}`, `RRI ${r.weapon.min}-${r.weapon.max}, weight ${r.weapon.twoHanded ? '2H' : '1H'}`],
       ['Damage affix', `${damage}%`, `legendary maximum ${DAMAGE_AFFIX_MAX}%`],
+      ['Sockets', `${perfectSockets(blade).length} x perfect diamond`, `+${12 * perfectSockets(blade).length}% damage; a two-hander has 3, a one-hander 2, a short blade 1`],
       ['Firmament blow', `${starDamage}%`, 'general weapon-blow channel, cap +30% (+50% with conditions)'],
       ['Mastery / gear', `${fmt(p.mastery)}%`, `raw climb + gear channel`],
       ['Hit / crit', `${pc(r.hit.hit)} / ${pc(r.hit.crit.chance)} x${fmt2(r.hit.crit.damageMult)}`, `critical damage multiplier`],

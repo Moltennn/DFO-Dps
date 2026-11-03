@@ -23,6 +23,7 @@ import {
   BOW_DRAW_LOOSE_S, GUN_FPS, GUN_RELOAD_S, PISTOLET_FPS, PISTOLET_RELOAD_S, THUNDERLOCK_FRAMES, PISTOLET_FRAMES, thunderlockReloadSeconds,
 } from './data.js';
 import { enchantDps, procsBeforeBreak } from './enchants.js';
+import { socketAffixes } from './sockets.js';
 import {
   effectiveSkill, liveStat, masterCappedSkill, PROFICIENCY_FLAG, skillModOf,
   skillValue, WEAPON_SKILL,
@@ -50,6 +51,7 @@ export function weaponOf(item, { rri = false } = {}) {
   if (!item) return null;
   const t = WEAPONS[item.templateIndex];
   if (!t) return null;
+  const affixes = [...(item.affixes ?? []), ...socketAffixes(item)];
   return {
     item,
     templateIndex: item.templateIndex,
@@ -66,14 +68,15 @@ export function weaponOf(item, { rri = false } = {}) {
     ranged: !!(t.ranged || item.ranged),
     gun: !!(t.gun || item.gun),
     ammo: !!(t.ammo || item.ammo),
+    wraps: !!(t.wraps || item.wraps),
     bowPull: t.bowPull ?? 1,
     bowWithin: t.bowWithin ?? 1,
     material: num(item.material, 0),
     materialName: MATERIALS[num(item.material, 0)] ?? 'Iron',
-    damagePct: (item.affixes ?? []).filter((a) => a?.id === 'damage').reduce((s, a) => s + num(a.value), 0),
-    slayer: (item.affixes ?? []).filter((a) => a?.id === 'slayer').reduce((s, a) => s + num(a.value), 0),
-    slayerByGroup: Object.fromEntries((item.affixes ?? []).filter((a) => a?.id === 'slayer').map((a) => [String(a.param), num(a.value)])),
-    elemental: (item.affixes ?? []).filter((a) => a?.id === 'elemental').reduce((s, a) => s + num(a.value), 0),
+    damagePct: affixes.filter((a) => a?.id === 'damage').reduce((s, a) => s + num(a.value), 0),
+    slayer: affixes.filter((a) => a?.id === 'slayer').reduce((s, a) => s + num(a.value), 0),
+    slayerByGroup: Object.fromEntries(affixes.filter((a) => a?.id === 'slayer').map((a) => [String(a.param), num(a.value)])),
+    elemental: affixes.filter((a) => a?.id === 'elemental').reduce((s, a) => s + num(a.value), 0),
     conditionPct: item.maxCondition > 0 ? clamp(num(item.currentCondition, item.maxCondition) / item.maxCondition, 0, 1) : 1,
     bonusDamage: num(item.__bonusDamage, 0),
   };
@@ -306,6 +309,7 @@ export function masteryPace(ch, w, opts = {}) {
 /** The swing cadence, in seconds per swing (a fresh main-hand strike). */
 export function cadence(ch, w, opts = {}) {
   const speed = stat(ch, 'speed', opts);
+  const weight = w ? w.weight * (opts.offHand ? 1.5 : 1) : 0;
   if (!w) {
     const tick = swingFrameSeconds(speed, { heft: 1, handling: swingHandling(null) });
     return { seconds: 5 * tick, tick, aps: 1 / (5 * tick), speed, heft: 1, handling: swingHandling(null), pace: 0 };
@@ -318,12 +322,12 @@ export function cadence(ch, w, opts = {}) {
   if (opts.rri) {
     // Roleplay & Realism: Items GetMeleeWeaponAnimTime, restated over the port's swing law.
     const capped = Math.min(speed, 98);
-    const adjustedWeight = ((150 - strength) * w.weight) / 100;
+    const adjustedWeight = ((150 - strength) * weight) / 100;
     const reduction = adjustedWeight * RRI_SPEED_REDUCTION_FACTOR;
     usedSpeed = Math.trunc(capped - (capped * reduction) / 90);
     tick = swingFrameSeconds(usedSpeed, { handling });
   } else {
-    heft = swingHeft(w.weight, strength);
+    heft = swingHeft(weight, strength);
     tick = swingFrameSeconds(speed, { heft, handling });
   }
   const pace = clamp(martialPace(ch, opts) + masteryPace(ch, w, opts) + num(opts.attackSpeedPct, 0), 0, 50);
@@ -536,12 +540,14 @@ function conditionMultiplier(w, powerful = false) {
 /** The blow's damage after the registered blow modifiers (martial, mastery, slayer, gear). */
 export function weaponBlow(ch, w, damage, target, opts = {}) {
   let d = damage;
+  const lines = w ?? opts.wraps ?? null;
   const mastery = masteryPct(ch, w, target, opts);
   if (mastery > 0) d = applyPct(d, mastery);
   const martial = martialBlowPct(ch, target, opts);
   if (martial > 0) d = applyPct(d, martial);
-  const slayer = w?.slayerByGroup?.[String(target?.group ?? '')] ?? 0;
+  const slayer = lines?.slayerByGroup?.[String(target?.group ?? '')] ?? 0;
   if (slayer > 0) d = applyPct(d, slayer);
+  if (lines?.elemental) d += lines.elemental;
   const theory = num(opts.damagePct, 0);
   if (theory) d = applyPct(d, theory);
   const firm = num(opts.firmamentDamagePct, 0);
@@ -567,7 +573,8 @@ export function damageModel(ch, w, target, swingKey, core, opts = {}) {
     const lo = floor(h2h / 10) + 1;
     const hi = floor(h2h / 5) + 1;
     rolls = [];
-    for (let r = lo; r <= hi; r++) rolls.push(r);
+    const wrapsPct = opts.wraps?.damagePct ?? 0;
+    for (let r = lo; r <= hi; r++) rolls.push(wrapsPct ? trunc(r * (1 + wrapsPct / 100)) : r);
     strMod = core === 'overhaul' ? pcaaoDamageModifier(str) : damageModifier(str);
   } else {
     const lo = w.min;
@@ -624,6 +631,29 @@ export function analyze(ch, {
   }
   const t = target ?? { ...referenceFoe(ch.level, 'tough') };
   const tgt = { ...t, group: t.group ?? null, affinity: t.affinity ?? null };
+  const wraps = !w && ch.wraps ? weaponOf(ch.wraps, { rri: !!opts.rri }) : null;
+  if (opts.dual && ch.offWeapon && !w?.twoHanded && !w?.gun && !WEAPONS[ch.offWeapon.templateIndex]?.twoHanded) {
+    const offWeapon = weaponOf(ch.offWeapon, { rri: !!opts.rri });
+    const base = { ...opts, dual: false, target: t, traits, health, core, swing, critDamage };
+    const main = analyze(ch, { ...base, weapon: w, offHand: false });
+    const off = analyze({ ...ch, weapon: ch.offWeapon }, { ...base, weapon: offWeapon, offHand: true });
+    const perSwing = (main.perSwing + off.perSwing) / 2;
+    const cappedPerSwing = (main.cappedPerSwing + off.cappedPerSwing) / 2;
+    const aps = main.cadence.aps * 2;
+    const dps = perSwing * aps;
+    const cappedDps = cappedPerSwing * aps;
+    const enchantPerSwing = (main.enchantPerSwing + off.enchantPerSwing) / 2;
+    const enchantDpsValue = enchantPerSwing * aps;
+    const totalDps = dps + enchantDpsValue;
+    const bossHealth = main.health ?? 0;
+    const ttk = bossHealth > 0 && cappedDps > 0 ? (bossHealth + main.ward) / cappedDps + main.shields : null;
+    const totalTtk = bossHealth > 0 && (cappedDps + enchantDpsValue) > 0 ? (bossHealth + main.ward) / (cappedDps + enchantDpsValue) + main.shields : null;
+    return {
+      ...main, dual: true, perSwing, cappedPerSwing, dps, cappedDps, enchantPerSwing, enchantDps: enchantDpsValue,
+      totalDps, ttk, totalTtk, capLoss: dps > 0 ? 1 - cappedDps / dps : 0,
+      cadence: { ...main.cadence, seconds: main.cadence.seconds / 2, aps, dual: true },
+    };
+  }
   if (opts.pair && w?.templateIndex === 562) {
     const base = { ...opts, core, target: t, traits, health, swing, critDamage, weapon: w };
     const main = analyze(ch, { ...base, pair: false, offHand: false });
@@ -656,7 +686,7 @@ export function analyze(ch, {
     };
   }
   const bowPull = w?.ranged && !w?.gun ? (opts.bowSpam ? 0.2 * (w?.bowPull ?? 1) : (w?.bowPull ?? 1)) : 1;
-  const simOpts = { ...opts, passiveOn, critDamage, healthShare: opts.healthShare ?? t.healthShare ?? 1, firmamentDamagePct: opts.firmamentDamagePct ?? ch.firmamentDamagePct ?? 0, bowPull };
+  const simOpts = { ...opts, passiveOn, critDamage, healthShare: opts.healthShare ?? t.healthShare ?? 1, firmamentDamagePct: opts.firmamentDamagePct ?? ch.firmamentDamagePct ?? 0, bowPull, wraps };
   const hit = hitModel(ch, w, tgt, swing, core, simOpts);
   const dmg = damageModel(ch, w, tgt, swing, core, simOpts);
   const c = hit.crit.chance;
@@ -689,7 +719,7 @@ export function analyze(ch, {
 
   const dps = perSwing * cad.aps;
   const cappedDps = cappedPerSwing * cad.aps;
-  const ench = opts.enchants === false ? null : enchantDps(w?.item ?? ch.weapon, ch, tgt, { hit: hit.hit, aps: cad.aps, level: ch.level, potencyPct: opts.potencyPct, pierce: opts.pierce });
+  const ench = opts.enchants === false ? null : enchantDps(w?.item ?? ch.wraps ?? ch.weapon, ch, tgt, { hit: hit.hit, aps: cad.aps, level: ch.level, potencyPct: opts.potencyPct, pierce: opts.pierce });
   const enchantPerSwing = ench?.perSwing ?? 0;
   const enchantDpsValue = ench?.dps ?? 0;
   const totalDps = dps + enchantDpsValue;
@@ -701,7 +731,7 @@ export function analyze(ch, {
   return {
     core, weapon: w, target: tgt, swing, hit, damage: dmg, cadence: cad,
     perSwing, dps, cappedPerSwing, cappedDps, cap, capSource, capLoss: dps > 0 ? 1 - cappedDps / dps : 0,
-    enchantPerSwing, enchantDps: enchantDpsValue, totalDps, totalTtk, enchantProcs: ench?.procs ?? [], procsBeforeBreak: procsBeforeBreak(w?.item ?? ch.weapon),
+    enchantPerSwing, enchantDps: enchantDpsValue, totalDps, totalTtk, enchantProcs: ench?.procs ?? [], procsBeforeBreak: procsBeforeBreak(w?.item ?? ch.wraps ?? ch.weapon),
     resist, health: bossHealth || null, ward, shields, ttk, wrath, wrathAt: WRATH_AFTER_S,
     backstab: { skill: backSkill, chance: backChance, multiplier: 3, uptime: backUptime, expectedMult: backMult, min: Math.round(dmg.min * resist * 3), max: Math.round(dmg.max * resist * 3), critMin: Math.round(dmg.critMin * resist * 3), critMax: Math.round(dmg.critMax * resist * 3) },
     traits, healthShare: simOpts.healthShare,

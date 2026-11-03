@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { RACE_NAMES, SKILL_NAMES, SKILLS } from './data.js';
+import { socketAffixes } from './sockets.js';
 
 export function userDataDir(home = os.homedir()) {
   if (process.env.DAGGER_USER_DATA) return path.resolve(process.env.DAGGER_USER_DATA);
@@ -117,7 +118,7 @@ export const WEAPON_SKILL = Object.freeze({
   121: SKILLS.LongBlade, 122: SKILLS.LongBlade, 123: SKILLS.LongBlade, 124: SKILLS.BluntWeapon,
   125: SKILLS.BluntWeapon, 126: SKILLS.BluntWeapon, 127: SKILLS.Axe, 128: SKILLS.Axe,
   129: SKILLS.Archery, 130: SKILLS.Archery, 131: SKILLS.Archery,
-  560: SKILLS.Archery, 561: SKILLS.Archery, 562: SKILLS.Archery,
+  560: SKILLS.Archery, 561: SKILLS.Archery, 562: SKILLS.Archery, 563: SKILLS.HandToHand,
 });
 
 /** Proficiency flag per weapon skill (systems/equip.js). */
@@ -210,7 +211,7 @@ export function rebuildMods(items) {
   const armoredParts = new Array(7).fill(0);
   for (const it of items) {
     if (!it || it.equipSlot == null) continue;
-    for (const a of ARRAY(it.affixes)) {
+    for (const a of [...ARRAY(it.affixes), ...socketAffixes(it)]) {
       if (!a || !Number.isFinite(a.value)) continue;
       switch (a.id) {
         case 'stat': addMap(stats, a.param, a.value); break;
@@ -252,9 +253,11 @@ export function characterFromSave(save, { online = true, martialPath, ...opts } 
     ? rebuildMods(liveWorn)
     : (save._mods ? { stats: save._mods.stats ?? {}, skills: save._mods.skills ?? {} } : rebuildMods(items));
   const legendaries = worn.filter((it) => it?.legendary).map((it) => ({ id: it.legendary, name: it.name }));
-  const right = worn.find((it) => it.group === 'Weapons' && it.equipSlot === SLOT.RightHand)
-    ?? worn.find((it) => it.group === 'Weapons' && it.equipSlot === SLOT.LeftHand)
+  const wraps = worn.find((it) => it.group === 'Weapons' && it.templateIndex === 563) ?? null;
+  const right = worn.find((it) => it.group === 'Weapons' && it.templateIndex !== 563 && it.equipSlot === SLOT.RightHand)
+    ?? worn.find((it) => it.group === 'Weapons' && it.templateIndex !== 563 && it.equipSlot === SLOT.LeftHand)
     ?? null;
+  const offWeapon = worn.find((it) => it.group === 'Weapons' && it !== right && it.templateIndex !== 563 && (it.equipSlot === SLOT.LeftHand || it.equipSlot === SLOT.RightHand)) ?? null;
   const ch = {
     name: save.name || 'Adventurer',
     level: NUM(save.level, 1),
@@ -277,6 +280,8 @@ export function characterFromSave(save, { online = true, martialPath, ...opts } 
     martialPath: martialPath !== undefined ? martialPath : (save.martialPath ?? null),
     online: online !== false,
     weapon: right,
+    offWeapon,
+    wraps,
     items,
     worn,
     _mods: liveWorn ? { stats: mods.stats, skills: mods.skills } : (save._mods ? { ...save._mods, stats: { ...(save._mods.stats ?? {}) }, skills: { ...(save._mods.skills ?? {}) } } : { stats: mods.stats, skills: mods.skills }),

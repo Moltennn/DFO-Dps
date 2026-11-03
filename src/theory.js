@@ -20,6 +20,7 @@
  */
 import { SKILLS, WEAPONS } from './data.js';
 import { characterFromSave } from './save.js';
+import { perfectSockets } from './sockets.js';
 
 export const THEORY_LEVEL = 45;
 export const THEORY_STATS = Object.freeze({
@@ -76,6 +77,7 @@ export function theoryCharacter({
   starStats = {},
   starSkills = {},
   starDamage = 0,
+  sockets = [],
 } = {}) {
   const raceId = typeof race === 'number' ? race : (THEORY_RACES[String(race).toLowerCase()] ?? THEORY_RACES.darkelf);
   const templateIndex = Number(blade);
@@ -95,6 +97,7 @@ export function theoryCharacter({
     currentCondition: 100,
     equipSlot: 19,
     affixes: damagePct > 0 ? [{ id: 'damage', value: damagePct }] : [],
+    sockets: Array.isArray(sockets) ? [...sockets] : [],
   };
   const activeEffects = vampire
     ? [{ kind: 'racialOverride', racial: 'vampirism', skillMods: { [SKILLS.HandToHand]: 30, [SKILLS.CriticalStrike]: 30 } }]
@@ -157,6 +160,7 @@ export function theoryBlade(character, templateIndex, material = 9) {
     templateIndex,
     material,
     affixes: (c.weapon?.affixes ?? []).filter((a) => a?.id === 'damage'),
+    sockets: perfectSockets(templateIndex),
   };
   c.weapon = weapon;
   c.items = [weapon];
@@ -177,6 +181,7 @@ export function theoryFists({
   starSkills = {},
   starDamage = 0,
   vampire = false,
+  wraps = false,
 } = {}) {
   const raceId = typeof race === 'number' ? race : (THEORY_RACES[String(race).toLowerCase()] ?? THEORY_RACES.darkelf);
   const skills = Array.from({ length: 35 }, () => 100);
@@ -228,7 +233,16 @@ export function theoryFists({
   };
   const ch = characterFromSave(save, { online: true });
   ch.firmamentDamagePct = Math.max(-20, Math.min(30, Number.isFinite(starDamage) ? starDamage : 0));
-  ch.name = 'Level 45 theory fists';
+  if (wraps) {
+    ch.wraps = typeof wraps === 'object' ? wraps : {
+      name: 'Hand Wraps', group: 'Weapons', templateIndex: 563, material: 0,
+      maxCondition: 400, currentCondition: 400, equipSlot: 19,
+      affixes: [{ id: 'damage', value: 40 }, { id: 'elemental', param: 'fire', value: 10 }],
+      sockets: perfectSockets(563),
+      enchantments: [{ type: 2, param: 25 }],
+    };
+  }
+  ch.name = wraps ? 'Level 45 theory fists (wraps)' : 'Level 45 theory fists';
   return ch;
 }
 

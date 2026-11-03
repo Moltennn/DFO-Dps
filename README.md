@@ -122,9 +122,9 @@ The `theory` output prices every star channel from +0 to +15 at the ceiling, and
 ./dfo-dps weapons --out ~/dfo-weapons.html
 ```
 
-The max profile is: attributes 100 (115 with `--firmament`), raw weapon skill and Critical Strike 200 mastered, weapon skill gear 240 (8 lines), Critical Strike gear 540 (18 lines), 40% damage affix, the weapon's own career expertise, the best race for that weapon, and the best martial path for its family (Blademaster for blades/blunt, Berserker for axe/H2H). The `Max gear` column is that build; `+ Firmament` adds the star-tree channel ceiling (+15 attributes, +15 skill, +30% blow). The gate column is the same build against the level-45 gate's 600 per-hit cap.
+The max profile is: attributes 100 (115 with `--firmament`), raw weapon skill and Critical Strike 200 mastered, weapon skill gear 240 (8 lines), Critical Strike gear 540 (18 lines), 40% damage affix, **perfect diamond sockets** (short blade 1, one-handed 2, two-handed 3, +12% damage each), the weapon's own career expertise, the best race for that weapon, and the best martial path for its family (Blademaster for blades/blunt, Berserker for axe/H2H). Hand-to-Hand uses a pair of **Hand Wraps** (damage/sockets/procs carry the fist blow). The table also includes dual-wield pairs, both hands of the same one-handed weapon at the off-hand x0.8 / -5 hit terms. The `Max gear` column is that build; `+ Firmament` adds the star-tree channel ceiling (+15 attributes, +15 skill, +30% blow). The gate column is the same build against the level-45 gate's 600 per-hit cap.
 
-The page has a max-DPS bar chart and table, then two charts per family (raw skill 100 -> 200 and gear skill 0 -> its cap), and one Critical Strike chart across the best weapon of each family. The Hand-to-Hand row is included as the sanity check: with H2H expertise, Berserker below half and no Critical Strike gear it reaches the reported ~450 band around 240 gear points with the Firmament channels, or around 450 without them.
+The page has a max-DPS bar chart and table, then one combined chart per family: raw training 100 -> 200 is effective 100 -> 140, and gear lines continue from effective 140 to 140 + the gear cap. One Critical Strike chart covers the best weapon of each family. The Hand-to-Hand row is the wrapped ceiling. Bare fists without Hand Wrap lines are the ~450 band the community tests saw.
 
 `skills` is kept as an alias for the same page.
 
@@ -137,10 +137,12 @@ The same model now covers the other damage lanes:
 ./dfo-dps build --save /tmp/live.json --weapon 129:9 --target gate
 ./dfo-dps build --save /tmp/live.json --weapon 562:4 --pair --target gate
 ./dfo-dps build --save /tmp/live.json --weapon 129:9 --spam --target gate
+./dfo-dps build --save /tmp/live.json --dual --target gate
 
 # spells: the live formula, standard SPELLS.STD records, cost, cast time and mana
 ./dfo-dps spell --save /tmp/live.json --spell Fireball
 ./dfo-dps spells --save /tmp/live.json --out spells.html
+./dfo-dps spells --theory --potency 30 --pierce 10 --cast-speed 15 --out spells-max.html
 ./dfo-dps spell --save /tmp/live.json --spell Wildfire --seconds 60 --potency 30 --pierce 10
 
 # the equipped weapon's Cast When Strikes / Potent Vs rows
@@ -149,7 +151,7 @@ The same model now covers the other damage lanes:
 
 Ranged laws: a bow's cycle is the port's five-frame swing law with the BOW-LAW reload, and the BOW_FAST window (`--spam` stacks it to x0.2). A Pistolet pair is two shots per 1.9 s, the off hand at x0.8 damage and -5 to hit; the Thunderlock is one shot per `0.5 s + reload`. Arrows and pellets carry no damage and are spent one per shot.
 
-Spells: magnitude is `Range(base) + Range(level) * floor(level/perLevel)`; the target's saving throw and the school's past-100 potency (x1.4 at 200) are applied; PvE spells do not crit and armour does not reduce them. One magic round is 5 real seconds, so a DoT is modelled as per-tick DPS, not burst. A 0.7 s cast recovery is the throughput floor, and there is no in-combat magicka regeneration, so the pool — not the cast rate — binds a long fight.
+Spells: magnitude is `Range(base) + Range(level) * floor(level/perLevel)`; the target's saving throw and the school's past-100 potency (x1.4 at 200) are applied; PvE spells do not crit and armour does not reduce them. One magic round is 5 real seconds, so a DoT is priced as per-tick DPS; the page shows that separately. A 0.7 s cast recovery is the throughput floor. **Mana is treated as solved by default**; `--mana-limit` prices the pool instead.
 
 Enchantments: a `Cast When Strikes` row fires its `SPELLS.STD` spell on every landed blow (no proc chance), with the target's save and the caster's spell power. `Potent Vs` is a flat +5 against its affinity; `Enhances Skill` is +15; `elemental` is flat per blow and `slayer` is group-specific. `build` and `report` show weapon DPS, enchant DPS and total DPS; the condition budget is reported as procs before break.
 
