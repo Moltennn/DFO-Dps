@@ -37,7 +37,11 @@ test('the one-piece effects are placed on one piece, and skills stack across pie
     assert.equal(pieces.length, 1, type);
   }
   const repairs = plan.rows.filter((r) => r.effects.some((e) => e.type === 'RepairsObjects'));
-  assert.ok(repairs.length > 1, 'Repairs Objects stacks per piece');
+  assert.equal(repairs.length, 1, 'one Repairs Objects by default');
+  const moreRepairs = planEnchants({ weapon: 123, soulGem: true, repairs: 3 }).rows.filter((r) => r.effects.some((e) => e.type === 'RepairsObjects'));
+  assert.equal(moreRepairs.length, 3);
+  const regen = planEnchants({ weapon: 123, soulGem: true, regen: 1 }).rows.filter((r) => r.effects.some((e) => e.type === 'RegensHealth'));
+  assert.equal(regen.length, 1);
   const skillPieces = planEnchants({ weapon: 117, soulGem: true }).rows.filter((r) => r.effects.some((e) => e.type === 'EnhancesSkill'));
   assert.ok(skillPieces.length > 1);
   assert.ok(!plan.rows.some((r) => r.effects.some((e) => e.type === 'EnhancesSkill' && e.paramName === 'Backstabbing')));

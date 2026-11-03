@@ -32,16 +32,16 @@ const SLOT_NAMES = Object.freeze({
 const GROUP_PARAM = Object.freeze({ undead: 0, daedra: 1, humanoid: 2, animal: 3 });
 
 const ONE_PIECE = Object.freeze([
-  { type: 'StrengthensArmor', why: 'the armor channel is a min-set: a second copy still gives -5' },
-  { type: 'AbsorbsSpells', why: 'a boolean: one piece already absorbs' },
-  { type: 'IncreasedWeightAllowance', param: 1, why: 'the carry channel takes the maximum, not the sum' },
+  { type: 'StrengthensArmor', why: 'the armor channel is a min-set: a second copy still gives -5', benefit: '-5 armor value' },
+  { type: 'AbsorbsSpells', why: 'a boolean: one piece already absorbs', benefit: 'spell absorb' },
+  { type: 'IncreasedWeightAllowance', param: 1, why: 'the carry channel takes the maximum, not the sum', benefit: '+50% carry' },
 ]);
 
 const STACKS = Object.freeze([
   { type: 'EnhancesSkill', why: 'each piece adds +15 to the skill, and different skills can share a piece' },
   { type: 'ExtraSpellPts', why: 'each piece adds its +75 spell points while its condition holds' },
-  { type: 'RegensHealth', why: 'each piece ticks its own +1 every 4 rounds' },
-  { type: 'RepairsObjects', why: 'each piece runs its own mend tick, so extra copies mend more often' },
+  { type: 'RegensHealth', why: 'each piece ticks its own +1 every 4 rounds; weak beside a heal spell', benefit: '+1 HP / 4 rounds (≈0.05 HP/s)' },
+  { type: 'RepairsObjects', why: 'each piece runs its own mend tick; one or a few is a player choice', benefit: '1 mend / 4 rounds' },
 ]);
 
 const WEAPON_ONLY = Object.freeze([
@@ -80,12 +80,12 @@ export function gearPieces({ weapon = 123, shield = 'auto' } = {}) {
   return pieces;
 }
 
-function addEffect(p, type, param, cost) {
+function addEffect(p, type, param, cost, benefit = '') {
   const value = param === undefined ? defaultParam(type) : param;
   if (p.effects.some((e) => e.type === type && e.param === value)) return false;
   if (p.effects.length >= ITEM_ENCHANTMENT_MAX) return false;
   if (cost > p.budget - p.spent) return false;
-  p.effects.push({ type, param: value, cost, name: enchantmentName(type), paramName: enchantmentParamName(type, value) });
+  p.effects.push({ type, param: value, cost, benefit, name: enchantmentName(type), paramName: enchantmentParamName(type, value) });
   p.spent += cost;
   return true;
 }
@@ -126,7 +126,7 @@ function weaponCandidates(ch, base, group, target) {
   }
   const pv = GROUP_PARAM[String(group).toLowerCase()] ?? 2;
   const pvValue = Math.max(0, cappedDpsWith(base, { flat: 5 }) - base.cappedDps);
-  if (pvValue > 0) out.push({ type: 'PotentVs', param: pv, cost: enchantmentCost('PotentVs', pv), value: pvValue, label: enchantmentParamName('PotentVs', pv) });
+  if (pvValue > 0) out.push({ type: 'PotentVs', param: pv, cost: enchantmentCost('PotentVs', pv), value: pvValue, label: `${enchantmentName('PotentVs')}: ${enchantmentParamName('PotentVs', pv)}` });
   for (const id of skillIdsFor(ch._template)) {
     const value = skillGain(ch, base, id, {}, target);
     if (value > 0) out.push({ type: 'EnhancesSkill', param: id, cost: enchantmentCost('EnhancesSkill', id), value, label: enchantmentParamName('EnhancesSkill', id) });
@@ -135,7 +135,7 @@ function weaponCandidates(ch, base, group, target) {
 }
 
 /** A priority plan: one-piece utilities first, then skills, then regeneration. */
-export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, skill = null, group = 'humanoid', target = gateTarget(THEORY_LEVEL) } = {}) {
+export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, skill = null, group = 'humanoid', repairs = 1, regen = 0, target = gateTarget(THEORY_LEVEL) } = {}) {
   const pieces = gearPieces({ weapon, shield });
   for (const p of pieces) {
     p.soul = soulGem ? SOUL_GEM_POINTS : 0;
@@ -153,11 +153,12 @@ export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, s
   const maxProcs = Math.max(1, Math.min(3, Math.floor(hitPointsOf(w.template) / (10 * swings))));
 
   // Weapon: strike procs first, limited by the condition a fight can pay, then skills.
+  const weaponCands = weaponCandidates(ch, base, group, target);
   let procs = 0;
-  for (const c of weaponCandidates(ch, base, group, target)) {
+  for (const c of weaponCands) {
     if (w.effects.length >= ITEM_ENCHANTMENT_MAX) break;
     if (c.type === 'CastWhenStrikes' && procs >= maxProcs) continue;
-    if (addEffect(w, c.type, c.param, c.cost)) {
+    if (addEffect(w, c.type, c.param, c.cost, `${Math.round(c.value)} DPS`)) {
       if (c.type === 'EnhancesSkill') extra[c.param] = (extra[c.param] ?? 0) + 15;
       if (c.type === 'CastWhenStrikes') procs++;
     }
@@ -168,7 +169,7 @@ export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, s
   for (const u of ONE_PIECE) {
     const cost = enchantmentCost(u.type, u.param);
     const host = order.find((p) => p.spent + cost <= p.budget && p.effects.length < ITEM_ENCHANTMENT_MAX);
-    if (host) addEffect(host, u.type, u.param, cost);
+    if (host) addEffect(host, u.type, u.param, cost, u.benefit);
   }
 
   // Skills: every piece that can hold +15 adds the best skill it can fit, with
@@ -185,22 +186,57 @@ export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, s
         if (value <= 0) continue;
         if (!best || value / cost > best.value / best.cost) best = { id, cost, value };
       }
-      if (!best || !addEffect(p, 'EnhancesSkill', best.id, best.cost)) break;
+      if (!best || !addEffect(p, 'EnhancesSkill', best.id, best.cost, `${Math.round(best.value)} DPS`)) break;
       extra[best.id] = (extra[best.id] ?? 0) + 15;
     }
   }
 
-  // QoL sinks: Repairs Objects stacks (each piece's own tick), then Regens Health.
+  // QoL is a count, not an automatic fill: the player may want none, one or a few.
   const repairCost = enchantmentCost('RepairsObjects');
-  for (const p of pieces) addEffect(p, 'RepairsObjects', undefined, repairCost);
+  const repairHosts = [w, ...pieces.slice(1).sort((a, b) => b.budget - a.budget)];
+  let repairsLeft = Math.max(0, Math.trunc(Number(repairs) || 0));
+  for (const p of repairHosts) {
+    if (repairsLeft <= 0) break;
+    if (addEffect(p, 'RepairsObjects', undefined, repairCost, '1 mend / 4 rounds')) repairsLeft--;
+  }
   const regenCost = enchantmentCost('RegensHealth', 0);
-  for (const p of pieces.slice(1)) addEffect(p, 'RegensHealth', 0, regenCost);
+  let regenLeft = Math.max(0, Math.trunc(Number(regen) || 0));
+  for (const p of pieces.slice(1).sort((a, b) => b.budget - a.budget)) {
+    if (regenLeft <= 0) break;
+    if (addEffect(p, 'RegensHealth', 0, regenCost, '+1 HP / 4 rounds')) regenLeft--;
+  }
 
   const rows = pieces.map((p) => ({
     slot: p.slot, template: p.template, item: p.item,
     base: p.base, soul: p.soul, budget: p.budget, spent: p.spent, left: p.budget - p.spent,
     effects: p.effects,
   }));
+  const chosen = rows.flatMap((r) => r.effects);
+  const chosenCount = (type, param) => chosen.filter((e) => e.type === type && (param === undefined || e.param === param)).length;
+  const weaponRatings = weaponCands.map((c) => ({
+    type: c.type, param: c.param, label: c.label, cost: c.cost, value: c.value, benefit: `${Math.round(c.value)} DPS`,
+    chosen: chosenCount(c.type, c.param), rate: c.value / c.cost,
+  }));
+  const pvParam = GROUP_PARAM[String(group).toLowerCase()] ?? 2;
+  if (!weaponRatings.some((r) => r.type === 'PotentVs')) {
+    const pvValue = Math.max(0, cappedDpsWith(base, { flat: 5 }) - base.cappedDps);
+    const pvCost = enchantmentCost('PotentVs', pvParam);
+    weaponRatings.push({ type: 'PotentVs', param: pvParam, label: `${enchantmentName('PotentVs')}: ${enchantmentParamName('PotentVs', pvParam)}`, cost: pvCost, value: pvValue, benefit: `${Math.round(pvValue)} DPS`, chosen: chosenCount('PotentVs', pvParam), rate: pvCost > 0 ? pvValue / pvCost : 0 });
+  }
+  const skillRatings = skillIdsFor(w.template).map((id) => {
+    const value = skillGain(ch, base, id, {}, target);
+    const cost = enchantmentCost('EnhancesSkill', id);
+    return { id, label: enchantmentParamName('EnhancesSkill', id), cost, value, benefit: `${Math.round(value)} DPS`, chosen: chosenCount('EnhancesSkill', id), rate: cost > 0 ? value / cost : 0 };
+  });
+  const utilityRatings = [
+    ...ONE_PIECE.map((u) => ({ type: u.type, label: enchantmentName(u.type), cost: enchantmentCost(u.type, u.param), benefit: u.benefit, chosen: chosenCount(u.type, u.param) })),
+    { type: 'RepairsObjects', label: enchantmentName('RepairsObjects'), cost: repairCost, benefit: '1 mend / 4 rounds', chosen: chosenCount('RepairsObjects') },
+    { type: 'RegensHealth', label: enchantmentName('RegensHealth'), cost: regenCost, benefit: '+1 HP / 4 rounds (≈0.05 HP/s)', chosen: chosenCount('RegensHealth') },
+    { type: 'ExtraSpellPts', label: 'Extra Spell Points', cost: enchantmentCost('ExtraSpellPts', 0), benefit: '+75 max MP', chosen: 0 },
+    { type: 'VampiricEffect', label: 'Vampiric Effect (at range)', cost: enchantmentCost('VampiricEffect', 0), benefit: '+1 HP / 4 rounds per foe', chosen: 0 },
+    { type: 'ImprovesTalents', label: 'Improves Talents: Athleticism', cost: enchantmentCost('ImprovesTalents', 1), benefit: 'Athleticism', chosen: 0 },
+    { type: 'FeatherWeight', label: 'Feather Weight', cost: enchantmentCost('FeatherWeight'), benefit: 'weight to 0.25 kg', chosen: 0 },
+  ];
   const raw = maxRun(ch);
   const imprintPool = imprintsFor(w.template)
     .map((rec) => ({
@@ -217,9 +253,11 @@ export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, s
     weapon: w.template, weaponName: w.item, shield: pieces.find((p) => /Shield|Buckler/.test(p.slot))?.template ?? null,
     soulGem: !!soulGem, soulPoints: soulGem ? SOUL_GEM_POINTS : 0,
     group, baseDps: base.cappedDps, uncappedDps: raw.dps, skillId, rows, imprint, swings, maxProcs,
+    repairs: Math.max(0, Math.trunc(Number(repairs) || 0)), regen: Math.max(0, Math.trunc(Number(regen) || 0)),
+    ratings: { weapon: weaponRatings, skills: skillRatings, utility: utilityRatings },
     onePiece: ONE_PIECE, stacks: STACKS, weaponOnly: WEAPON_ONLY,
   };
 }
 
 /** Readable effect line, e.g. "Cast When Strikes: Hand of Decay (1,830)". */
-export const effectLine = (e) => `${e.name}${e.paramName && e.paramName !== 'undefined' ? `: ${e.paramName}` : ''} (${e.cost.toLocaleString()})`;
+export const effectLine = (e) => `${e.name}${e.paramName && e.paramName !== 'undefined' ? `: ${e.paramName}` : ''} (${e.cost.toLocaleString()}${e.benefit ? `; ${e.benefit}` : ''})`;

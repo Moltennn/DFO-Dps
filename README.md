@@ -162,15 +162,19 @@ gate** and its 600 per-hit cap, so a +skill or +damage effect that the cap
 eats is not bought. Backstabbing is never planned: its ×3 is capped after
 the roll, so +15 Backstabbing adds no capped boss DPS on the capped
 weapons. The non-stacking effects are placed once (Strengthens Armor,
-Absorbs Spells, Increased Weight Allowance); Repairs Objects and Regens
-Health stack per piece. Strike payloads (Cast When Strikes, Potent Vs, Low
+Absorbs Spells, Increased Weight Allowance). Repairs Objects is a count
+(`--repairs`, default 1); Regens Health is off by default (`--regen 0`)
+because heal spells are stronger. Both stack per piece when chosen. The page
+also rates every candidate it considered (weapon proc DPS, +15 skill DPS,
+and utility), so an empty piece is an explicit "nothing else added capped
+DPS" result, not an omission. Strike payloads (Cast When Strikes, Potent Vs, Low
 Damage Vs) are weapon-only; the weapon's own condition limits how many
 Cast When Strikes rows the gate fight can pay (10 condition a proc).
 
 ```bash
 ./dfo-dps enchant-plan --weapon 123
 ./dfo-dps enchant-plan --weapon 121 --soul-gem --out enchant-plan.html
-./dfo-dps enchant-plan --weapon 123 --soul-gem --group undead --json
+./dfo-dps enchant-plan --weapon 123 --soul-gem --group undead --repairs 2 --regen 0 --json
 ```
 
 The base set is the weapon, the seven armour pieces, a shield when the

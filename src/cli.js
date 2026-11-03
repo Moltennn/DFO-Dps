@@ -90,6 +90,8 @@ Common options:
   --shield <template|none|auto>       enchant-plan shield (default auto)
   --soul-gem                          add 5,000 enchantment points to every piece
   --group <undead|daedra|humanoid|animal>  enchant-plan target for Potent Vs (default daedra)
+  --repairs <n>                       Repairs Objects copies on the set (default 1; 0 = none)
+  --regen <n>                         Regens Health copies (default 0; heal spells are stronger)
   --pair                              paired Pistolets (2 shots per cycle, off hand x0.8)
   --dual                              dual wield the left-hand weapon (off hand x0.8, -5 hit)
   --spam                              bow spam (BOW_FAST stacks to x0.2; default paced)
@@ -169,6 +171,8 @@ const optsSpec = {
   shield: { type: 'string' },
   'soul-gem': { type: 'boolean', default: false },
   group: { type: 'string', default: 'daedra' },
+  repairs: { type: 'string', default: '1' },
+  regen: { type: 'string', default: '0' },
   pair: { type: 'boolean', default: false },
   dual: { type: 'boolean', default: false },
   spam: { type: 'boolean', default: false },
@@ -741,7 +745,9 @@ export async function main(argv = process.argv.slice(2)) {
       console.error(`unknown Potent Vs group: ${group}`);
       process.exit(2);
     }
-    const plan = planEnchants({ weapon, shield, soulGem: !!values['soul-gem'], group });
+    const repairs = Math.max(0, Math.trunc(n(values.repairs, 1)));
+    const regen = Math.max(0, Math.trunc(n(values.regen, 0)));
+    const plan = planEnchants({ weapon, shield, soulGem: !!values['soul-gem'], group, repairs, regen });
     if (!values.json) {
       console.log(`Enchant plan  |  ${plan.weaponName}${plan.shield ? ` + ${plan.shield}` : ''}  |  ${plan.soulGem ? `soul gem +${SOUL_GEM_POINTS}` : 'template points only'}  |  Potent Vs: ${group}  |  ${plan.maxProcs} strike proc${plan.maxProcs === 1 ? '' : 's'} (condition)`);
       if (plan.imprint?.base) {
@@ -766,6 +772,11 @@ export async function main(argv = process.argv.slice(2)) {
         const n = plan.rows.reduce((a, r) => a + r.effects.filter((e) => e.type === u.type).length, 0);
         return [enchantmentNameOf(u.type), n, u.why];
       }).filter(([, n]) => n > 0), ['Effect', 'Copies', 'Why'], ['left', 'right', 'left']));
+      console.log('');
+      console.log('How the effects rate');
+      console.log(table(plan.ratings.weapon.map((r) => [r.label, fmt(r.value), r.cost, fmt(r.value * 1000 / r.cost), r.chosen]), ['Weapon proc', 'DPS', 'Cost', 'DPS / 1k', 'Chosen'], ['left', 'right', 'right', 'right', 'right']));
+      console.log(table(plan.ratings.skills.map((r) => [r.label, fmt(r.value), r.cost, fmt(r.value * 1000 / r.cost), r.chosen]), ['Skill +15', 'DPS', 'Cost', 'DPS / 1k', 'Chosen'], ['left', 'right', 'right', 'right', 'right']));
+      console.log(table(plan.ratings.utility.map((r) => [r.label, r.benefit, r.cost, r.chosen]), ['Utility', 'Benefit', 'Cost', 'Chosen'], ['left', 'left', 'right', 'right']));
     }
     const out = path.resolve(values.out === 'dfo-dps-report.html' ? 'enchant-plan.html' : values.out);
     const pieceTable = `<div class="table"><table><thead><tr><th>Slot</th><th>Item</th><th>Base</th><th>Soul</th><th>Budget</th><th>Spent</th><th>Left</th><th>Enchantments</th></tr></thead><tbody>${plan.rows.map((r) => `<tr><td class="k">${r.slot}</td><td>${r.item}</td><td>${r.base}</td><td>${r.soul || '-'}</td><td>${r.budget}</td><td>${r.spent}</td><td>${r.left}</td><td style="white-space:normal;min-width:320px">${r.effects.map((e) => effectLine(e)).join('<br>') || '-'}</td></tr>`).join('')}</tbody></table></div>`;
@@ -778,10 +789,15 @@ export async function main(argv = process.argv.slice(2)) {
       return { u, n };
     }).filter(({ n }) => n > 0).map(({ u, n }) => `<tr><td class="k">${enchantmentNameOf(u.type)}</td><td>${n}</td><td style="white-space:normal">${u.why}</td></tr>`).join('')}</tbody></table></div>`;
     const weaponTable = `<div class="table"><h3>Weapon only</h3><table><thead><tr><th>Effect</th><th>Why</th></tr></thead><tbody>${plan.weaponOnly.map((u) => `<tr><td class="k">${enchantmentNameOf(u.type)}</td><td style="white-space:normal">${u.why}</td></tr>`).join('')}</tbody></table></div>`;
+    const ratingTable = `<div class="table"><h3>How the effects rate</h3><table><thead><tr><th>Category</th><th>Effect</th><th>Benefit</th><th>Cost</th><th>Chosen</th></tr></thead><tbody>${[
+      ...plan.ratings.weapon.map((r) => ['Weapon proc', r.label, `${fmt(r.value)} DPS (${fmt(r.value * 1000 / r.cost)} / 1k)`, r.cost, r.chosen]),
+      ...plan.ratings.skills.map((r) => ['Skill +15', r.label, `${fmt(r.value)} DPS (${fmt(r.value * 1000 / r.cost)} / 1k)`, r.cost, r.chosen]),
+      ...plan.ratings.utility.map((r) => ['Utility', r.label, r.benefit, r.cost, r.chosen]),
+    ].map((r) => `<tr><td class="k">${r[0]}</td><td>${r[1]}</td><td style="white-space:normal">${r[2]}</td><td>${r[3]}</td><td>${r[4]}</td></tr>`).join('')}</tbody></table></div>`;
     const html = multiGraphPage({
       title: 'DFO enchant plan',
       subtitle: `${plan.weaponName}${plan.rows.find((r) => /Shield|Buckler/.test(r.slot)) ? ` + ${plan.rows.find((r) => /Shield|Buckler/.test(r.slot)).item}` : ''}; ${plan.soulGem ? `soul gem +${SOUL_GEM_POINTS} on every piece` : 'template enchantment points only'}. Budgets are the game's ItemTemplates enchantmentPoints plus the stated soul gem; a POWER is positive, a side effect negative.`,
-      sections: [{ title: 'Per piece', note: `Boss-first fill against the level-45 gate (${group}, 600 per-hit cap). Backstabbing is not planned: its ×3 is capped after the roll, so +15 Backstabbing adds no capped DPS on the capped weapons. One-piece effects go out once; Repairs Objects and Regens Health stack; a skill absent from the stack table added no capped DPS. Strike procs are capped per hit too; the weapon holds ${plan.maxProcs} proc row${plan.maxProcs === 1 ? '' : 's'} over its ${plan.swings}-swing gate fight (10 condition a proc). ${plan.soulGem ? 'The soul gem is applied to every piece.' : 'No soul gem: base template points only.'}${plan.imprint?.base ? ` The weapon's imprint is separate from this budget: best boss ${plan.imprint.base.power.name} (${fmt(plan.imprint.base.baseDps)} DPS), best uncapped ${plan.imprint.uncapped.power.name} (${fmt(plan.imprint.uncapped.uncappedDps)} DPS).` : ''}`, chart: '', table: pieceTable + oneTable + stackTable + weaponTable }],
+      sections: [{ title: 'Per piece', note: `Boss-first fill against the level-45 gate (${group}, 600 per-hit cap). Backstabbing is not planned: its ×3 is capped after the roll, so +15 Backstabbing adds no capped DPS on the capped weapons. One-piece effects go out once; Repairs Objects is a player-chosen count (default 1); Regens Health is optional and off by default (heal spells are stronger). Empty pieces have no remaining effect that added capped DPS. Strike procs are capped per hit too; the weapon holds ${plan.maxProcs} proc row${plan.maxProcs === 1 ? '' : 's'} over its ${plan.swings}-swing gate fight (10 condition a proc). ${plan.soulGem ? 'The soul gem is applied to every piece.' : 'No soul gem: base template points only.'}${plan.imprint?.base ? ` The weapon's imprint is separate from this budget: best boss ${plan.imprint.base.power.name} (${fmt(plan.imprint.base.baseDps)} DPS), best uncapped ${plan.imprint.uncapped.power.name} (${fmt(plan.imprint.uncapped.uncappedDps)} DPS).` : ''}`, chart: '', table: pieceTable + oneTable + stackTable + weaponTable + ratingTable }],
     });
     fs.writeFileSync(out, html, 'utf8');
     if (!values.json) console.log(`enchant plan written: ${out}`);

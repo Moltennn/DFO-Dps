@@ -93,12 +93,14 @@ effects negative. The plan is a boss-first priority fill: the level-45 gate and 
 per-hit cap price the skills and strike procs; Backstabbing is excluded
 (the ×3 is capped after the roll). One-piece effects (Strengthens Armor,
 Absorbs Spells, Increased Weight Allowance) are placed once; Repairs Objects
-and Regens Health stack per piece (each item runs its own mend or regen
-tick). The item cap is ten settings. Cast When Strikes rows are limited by the
+is a player-chosen count and Regens Health is optional (off by default, since
+a heal spell is stronger). Both stack per piece when chosen. The item cap is ten settings. Cast When Strikes rows are limited by the
 weapon's hitPoints and the gate fight's swing count (10 condition a proc),
 so a 100-condition test blade does not get six procs. The game's stacking rules are
 respected: Strengthens Armor is a min-set, Absorbs Spells is a boolean, and
-Increased Weight Allowance takes the maximum.
+Increased Weight Allowance takes the maximum. The page also rates the
+weapon procs, +15 skills and utility effects it considered, with the chosen
+count, so an empty piece is visible as a choice.
 
 ## Firmament planner
 
