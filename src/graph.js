@@ -47,3 +47,27 @@ export function graphPage({ title, subtitle, chart }) {
 <style>body{margin:0;background:#12100e;color:#e9e4d9;font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}main{max-width:1040px;margin:0 auto;padding:28px 20px 60px}h1{font:600 26px/1.15 Georgia,serif;color:#e0b76a;margin:0 0 4px}p{color:#a8a092;margin:0 0 18px}.panel{background:#1b1814;border:1px solid #3a3026;border-radius:8px;padding:14px}</style></head>
 <body><main><h1>${esc(title)}</h1><p>${esc(subtitle)}</p><div class="panel">${chart}</div></main></body></html>`;
 }
+
+
+/** A page of several labelled charts, each with its own note. */
+export function multiGraphPage({ title, subtitle, sections, width = 1100 }) {
+  const body = sections.map((s) => `<section class="panel"><h2>${esc(s.title)}</h2>${s.note ? `<p class="note">${s.note}</p>` : ''}${s.chart}${s.table ? `<div class="table">${s.table}</div>` : ''}</section>`).join('');
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title>
+<style>
+  body{margin:0;background:#12100e;color:#e9e4d9;font:15px/1.55 system-ui,-apple-system,Segoe UI,sans-serif}
+  main{max-width:${width}px;margin:0 auto;padding:30px 20px 70px}
+  h1{font:600 28px/1.15 Georgia,serif;color:#e0b76a;margin:0 0 6px}
+  h2{font:600 18px/1.2 Georgia,serif;color:#e0b76a;margin:0 0 6px}
+  p{color:#a8a092;margin:0 0 16px}
+  .panel{background:#1b1814;border:1px solid #3a3026;border-radius:8px;padding:16px;margin:18px 0}
+  .note{font-size:13px;color:#a8a092;margin:0 0 12px}
+  .note b{color:#e9e4d9}
+  .table{overflow-x:auto;margin-top:12px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:5px 8px;border-bottom:1px solid #3a3026;white-space:nowrap}
+  th{color:#a8a092;font-weight:500}
+  td:not(:first-child){text-align:right;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#e0b76a}
+  .k{color:#e9e4d9}
+</style></head>
+<body><main><h1>${esc(title)}</h1><p>${esc(subtitle)}</p>${body}</main></body></html>`;
+}

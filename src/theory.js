@@ -57,6 +57,8 @@ export const GEAR_MASTERY_POINTS = Math.ceil(GEAR_MASTERY_CAP / 0.44);
 export const GEAR_LB_LINES = 8;
 export const GEAR_CS_LINES = 18;
 export const GEAR_SKILL_LINES = GEAR_LB_LINES + GEAR_CS_LINES;
+/** Hand-to-Hand rolls on armour (BODY_KIN) and jewellery (JEWEL_KIN), never on a weapon. */
+export const GEAR_H2H_LINES = 17;
 
 /** The character. `gearLB` / `gearCS` are gear skill points on Long Blade and Critical Strike. */
 export function theoryCharacter({
@@ -160,6 +162,74 @@ export function theoryBlade(character, templateIndex, material = 9) {
   c.items = [weapon];
   c.worn = [weapon];
   return c;
+}
+
+/** The same ceiling with bare fists: no weapon, Hand-to-Hand skill, its own gear channel. */
+export function theoryFists({
+  level = THEORY_LEVEL,
+  race = 'darkelf',
+  rawH2H = 200,
+  rawCrit = 200,
+  rawBackstab = 200,
+  gearH2H = 0,
+  gearCrit = 0,
+  starStats = {},
+  starSkills = {},
+  starDamage = 0,
+  vampire = false,
+} = {}) {
+  const raceId = typeof race === 'number' ? race : (THEORY_RACES[String(race).toLowerCase()] ?? THEORY_RACES.darkelf);
+  const skills = Array.from({ length: 35 }, () => 100);
+  skills[SKILLS.HandToHand] = rawH2H;
+  skills[SKILLS.CriticalStrike] = rawCrit;
+  skills[SKILLS.Backstabbing] = rawBackstab;
+  const firmStats = {};
+  for (const [k, v] of Object.entries(starStats ?? {})) {
+    if (Number.isFinite(v) && v !== 0) firmStats[k] = Math.max(-15, Math.min(15, v));
+  }
+  const firmSkills = {};
+  for (const [k, v] of Object.entries(starSkills ?? {})) {
+    const id = Number(k);
+    if (Number.isInteger(id) && id >= 0 && id < 35 && Number.isFinite(v) && v !== 0) {
+      firmSkills[id] = Math.max(-15, Math.min(15, v));
+    }
+  }
+  const skillMods = { ...firmSkills };
+  skillMods[SKILLS.HandToHand] = (skillMods[SKILLS.HandToHand] ?? 0) + gearH2H;
+  skillMods[SKILLS.CriticalStrike] = (skillMods[SKILLS.CriticalStrike] ?? 0) + gearCrit;
+  const firmMax = Object.fromEntries(Object.entries(firmStats).filter(([, v]) => v > 0));
+  const activeEffects = vampire
+    ? [{ kind: 'racialOverride', racial: 'vampirism', skillMods: { [SKILLS.HandToHand]: 30, [SKILLS.CriticalStrike]: 30 } }]
+    : [];
+  const save = {
+    name: 'Level 45 theory fists',
+    level,
+    raceId,
+    race: Object.keys(THEORY_RACES).find((k) => THEORY_RACES[k] === raceId) ?? 'Dark Elf',
+    gender: 'male',
+    stats: { ...THEORY_STATS },
+    skills,
+    health: 700,
+    maxHealth: 700,
+    reflexes: 2,
+    career: {
+      name: 'Hand-to-Hand',
+      weaponArmorShieldsBitfield: 4 << 16, // HandToHand proficiency flag
+      abilityFlagsAndSpellPointsBitfield: 0,
+      attackModifierFlags: 0,
+    },
+    items: [],
+    activeEffects,
+    masterSkills: true,
+    masteredSkills: [SKILLS.HandToHand, SKILLS.CriticalStrike, SKILLS.Backstabbing],
+    martialPath: null,
+    _mods: { stats: firmStats, statMax: firmMax, skills: skillMods },
+    _enchantMods: { skillMods: {}, chanceToHitMod: 0 },
+  };
+  const ch = characterFromSave(save, { online: true });
+  ch.firmamentDamagePct = Math.max(-20, Math.min(30, Number.isFinite(starDamage) ? starDamage : 0));
+  ch.name = 'Level 45 theory fists';
+  return ch;
 }
 
 /** The cap sheet, in the order it pays to push. */

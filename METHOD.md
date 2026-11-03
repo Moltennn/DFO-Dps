@@ -64,6 +64,10 @@ The level-45 gate is `240 x 50 = 12,000 HP` with a `12 x 50 = 600` per-hit cap a
 
 The `theory` command prices each star channel from +0 to +15. At the ceiling, Strength is the only attribute that still pays (damage plus RRI swing speed); Speed is clamped to 98/100; Agility moves only on integer thresholds; Luck's critical divisor steps at 125, so +15 from 100 does nothing.
 
+## Skill-scaling page
+
+`skills` renders the same model as a standalone HTML page. Attributes are held at 100 (115 with `--firmament`), and each series varies one skill channel: raw 100 -> 200 with no gear, a gear line 0 -> its practical cap with every other gear channel at 0, and the Firmament skill star +0 -> +15. The Hand-to-Hand reference uses the H2H proficiency flag and no Critical Strike gear; with the Firmament channels it crosses the reported ~450 band around 320-340 gear points. The practical H2H gear cap is 17 lines (510 points: seven armour pieces and ten jewellery slots, never a weapon).
+
 ## Backstab and the cap
 
 `combatStats` carries `Backstab: skillValue(Backstabbing)% ×3`. A front crit of 120–183 (sustained) becomes a **360–549** critical backstab; with the live card's opening First Blood it is 567–870, which the simulation deliberately excludes. `--behind` sets 100% uptime; `--backstab 0.5` uses the expected multiplier `1 + 2 × uptime × chance`.

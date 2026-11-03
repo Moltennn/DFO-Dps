@@ -111,6 +111,19 @@ Use `--firmament` for the +15 channel ceiling, or enter your own stars:
 
 The `theory` output prices every star channel from +0 to +15 at the ceiling, and the blow channel from +0% to +30%. The short version: **Strength** is the only attribute that keeps paying past 100 (damage and RRI swing speed); **Speed** is clamped to 98/100 by the swing law; **Agility** only moves on integer thresholds; **Luck** needs 125 to move the critical divisor, so +15 is dead. Skill stars are small: Long Blade +15 is +6.6% mastery, Critical Strike +15 is +0.15 critical multiplier, and Backstabbing is already at 100% chance.
 
+## Skill scaling page
+
+`skills` writes a self-contained HTML page you can open directly. It holds attributes at the live maximum and varies only skill level, so the raw/gear/star curves are not mixed with stat changes.
+
+```bash
+./dfo-dps skills                    # writes ./skills.html
+./dfo-dps skills --out ~/dfo-skills.html
+./dfo-dps skills --firmament        # attributes 115, skill stars +15, Firmament blow +30%
+./dfo-dps skills --blade 121 --race redguard
+```
+
+The page has six charts: raw skill 100 -> 200 with no gear, the same against the gate cap, gear skill 0 -> its practical cap, the gate-capped gear curves, Firmament skill +0 -> +15, and a Hand-to-Hand reference. The H2H reference is the sanity check: with H2H expertise and no Critical Strike gear it reaches the reported ~450 around 320-340 gear points with the Firmament channels, or around 450 without them.
+
 ## Graphs
 
 `graph` emits a standalone SVG chart. The live lines can be flat because gear stat affixes already hit the 100 cap; `--theory` lowers one channel at a time from that ceiling, so it shows what each point was buying.

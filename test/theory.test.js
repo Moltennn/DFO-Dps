@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { effectiveSkill, liveStat, skillValue } from '../src/save.js';
 import { analyze, gateTarget } from '../src/model.js';
 import {
-  GEAR_CS_LINES, GEAR_LB_LINES, GEAR_SKILL_LINES, LONG_BLADES, theoryBlade, theoryCharacter,
+  GEAR_CS_LINES, GEAR_H2H_LINES, GEAR_LB_LINES, GEAR_SKILL_LINES, LONG_BLADES, theoryBlade, theoryCharacter, theoryFists,
 } from '../src/theory.js';
 
 const near = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
@@ -86,4 +86,18 @@ test('the Firmament blow channel raises uncapped DPS and is priced apart from ge
   const star = analyze(theoryCharacter({ starDamage: 30 }), { target: gateTarget(45), core: 'overhaul', rri: true });
   assert.ok(star.dps > base.dps);
   assert.ok(Math.abs(star.dps / base.dps - 1.3) < 0.02, `${base.dps} -> ${star.dps}`);
+});
+
+
+test('the Hand-to-Hand reference lands in the reported ~450 band', () => {
+  assert.equal(GEAR_H2H_LINES, 17);
+  const c = theoryFists({
+    gearH2H: 320,
+    starStats: { strength: 15, agility: 15, speed: 15, luck: 15 },
+    starSkills: { 30: 15, 34: 15, 19: 15 },
+    starDamage: 30,
+  });
+  assert.equal(c.weapon, null);
+  const r = analyze(c, { target: gateTarget(45), core: 'overhaul', rri: true, health: 12000 });
+  assert.ok(r.dps > 420 && r.dps < 480, `H2H at 320 gear + Firmament: ${r.dps}`);
 });

@@ -16,11 +16,11 @@ import {
   gateHealth, gateHitCap,
 } from './data.js';
 import { buildReport } from './report.js';
-import { graphPage, lineChart } from './graph.js';
+import { graphPage, lineChart, multiGraphPage } from './graph.js';
 import {
-  DAMAGE_AFFIX_MAX, DEFAULT_BLADE, GEAR_CS_LINES, GEAR_LB_LINES, GEAR_LINE_MAX, GEAR_MASTERY_POINTS,
+  DAMAGE_AFFIX_MAX, DEFAULT_BLADE, GEAR_CS_LINES, GEAR_H2H_LINES, GEAR_LB_LINES, GEAR_LINE_MAX, GEAR_MASTERY_POINTS,
   GEAR_SKILL_LINES, LONG_BLADES,
-  THEORY_CAPS, THEORY_LEVEL, THEORY_RACES, theoryBlade, theoryCharacter,
+  THEORY_CAPS, THEORY_LEVEL, THEORY_RACES, theoryBlade, theoryCharacter, theoryFists,
 } from './theory.js';
 import {
   analyze, bossTarget, currentWeaponRow, gateTarget, marginals, rankAffixes, rankWeapons, referenceFoe,
@@ -41,6 +41,7 @@ Usage:
   dfo-dps scale [options]             stat/skill scaling curve to the caps
   dfo-dps tradeoff [options]          speed vs damage against real boss pools
   dfo-dps theory [options]            level-45 long-blade ceiling and minmax curves
+  dfo-dps skills [options]            HTML page: skill-level scaling at max attributes
   dfo-dps graph [options]             SVG line chart of two or more stats/skills
   dfo-dps saves                       list saves under the DFO user data folder
   dfo-dps doctor                      show save/build/ruleset information
@@ -448,7 +449,7 @@ export async function main(argv = process.argv.slice(2)) {
   values = parsed.values;
   if (values.help) { console.log(HELP); return; }
   const cmd = parsed.positionals[0] ?? 'build';
-  if (cmd === 'theory') values.theory = true;
+  if (cmd === 'theory' || cmd === 'skills') values.theory = true;
 
   if (cmd === 'saves') {
     const saves = listSaves();
@@ -482,6 +483,120 @@ export async function main(argv = process.argv.slice(2)) {
   const target = targetOf(ch, values, traits);
   const scenario = scenarioOf(ch, values, traits, target);
   const r = analyze(ch, scenario);
+
+  if (cmd === 'skills') {
+    const level = n(values.level, THEORY_LEVEL);
+    const blade = ch.weapon?.templateIndex ?? DEFAULT_BLADE;
+    const material = ch.weapon?.material ?? 9;
+    const { starStats, starSkills } = starOptions(values);
+    const starDamage = values['star-damage'] != null ? n(values['star-damage'], 0) : (values.firmament ? 30 : 0);
+    const damage = values['damage-pct'] != null ? n(values['damage-pct'], 0) : DAMAGE_AFFIX_MAX;
+    const maxLB = GEAR_LB_LINES * GEAR_LINE_MAX;
+    const maxCS = GEAR_CS_LINES * GEAR_LINE_MAX;
+    const maxH2H = GEAR_H2H_LINES * GEAR_LINE_MAX;
+    const baseOpts = { level, race: values.race ?? 'darkelf', blade, material, vampire: values.vampire };
+    const merge = (base, over) => ({ ...base, ...(over ?? {}) });
+    const makeBlade = (over = {}) => theoryCharacter({
+      ...baseOpts,
+      ...over,
+      starStats: merge(starStats, over.starStats),
+      starSkills: merge(starSkills, over.starSkills),
+      starDamage: over.starDamage ?? starDamage,
+    });
+    const makeFists = (over = {}) => theoryFists({
+      ...baseOpts,
+      ...over,
+      starStats: merge(starStats, over.starStats),
+      starSkills: merge(starSkills, over.starSkills),
+      starDamage: over.starDamage ?? starDamage,
+    });
+    const sc = (c, extra = {}) => ({ ...scenarioOf(c, values, traits, target), ...extra });
+    const run = (c, extra = {}) => analyze(c, sc(c, extra));
+    // Isolate one skill at a time: only the varied skill's own gear is on, every other gear channel is 0.
+    const bladeAt = (over) => run(makeBlade({ gearLB: 0, gearCS: 0, damagePct: 0, ...over }));
+    const fistsAt = (over) => run(makeFists({ gearH2H: 0, gearCrit: 0, ...over }));
+
+    const defs = [
+      { id: 'lb', name: 'Long Blade', raw: (v) => bladeAt({ rawBlade: v }), gear: (v) => bladeAt({ gearLB: v }), star: (v) => bladeAt({ gearLB: maxLB, starSkills: { [29]: v } }), gearMax: maxLB },
+      { id: 'cs', name: 'Critical Strike', raw: (v) => bladeAt({ rawCrit: v }), gear: (v) => bladeAt({ gearCS: v }), star: (v) => bladeAt({ gearCS: maxCS, starSkills: { [34]: v } }), gearMax: maxCS },
+      { id: 'bs', name: 'Backstabbing (behind)', raw: (v) => run(makeBlade({ rawBackstab: v }), { backstabUptime: 1 }), gear: () => run(makeBlade({}), { backstabUptime: 1 }), star: (v) => run(makeBlade({ starSkills: { [19]: v } }), { backstabUptime: 1 }), gearMax: 0, chart: false },
+      { id: 'h2h', name: 'Hand-to-Hand', raw: (v) => fistsAt({ rawH2H: v }), gear: (v) => fistsAt({ gearH2H: v }), star: (v) => fistsAt({ gearH2H: maxH2H, starSkills: { [30]: v } }), gearMax: maxH2H },
+    ];
+    const rawValues = [100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200];
+    const gearValues = { lb: [0, 30, 60, 90, 120, 150, 180, 210, 240], cs: [0, 60, 120, 180, 240, 300, 360, 420, 480, 540], bs: [0], h2h: [0, 60, 120, 180, 240, 300, 360, 420, 480, 510] };
+    const starValues = [0, 3, 6, 9, 12, 15];
+
+    const chartDefs = defs.filter((d) => d.chart !== false);
+    const rawSeries = chartDefs.map((d) => ({ name: d.name, points: rawValues.map((v) => ({ x: v, y: d.raw(v).dps })) }));
+    const rawCappedSeries = chartDefs.map((d) => ({ name: d.name, points: rawValues.map((v) => ({ x: v, y: d.raw(v).cappedDps })) }));
+    const gearSeries = chartDefs.filter((d) => d.gearMax > 0).map((d) => ({ name: d.name, points: gearValues[d.id].map((v) => ({ x: v, y: d.gear(v).dps })) }));
+    const gearCappedSeries = chartDefs.filter((d) => d.gearMax > 0).map((d) => ({ name: d.name, points: gearValues[d.id].map((v) => ({ x: v, y: d.gear(v).cappedDps })) }));
+    const starSeries = chartDefs.map((d) => ({ name: d.name, points: starValues.map((v) => ({ x: v, y: d.star(v).dps })) }));
+
+    const h2hGear = [0, 60, 120, 180, 240, 300, 360, 420, 450, 480, 510];
+    const h2hBase = h2hGear.map((v) => ({ x: v, y: run(makeFists({ gearH2H: v, gearCrit: 0, starStats: {}, starSkills: {}, starDamage: 0 })).dps }));
+    const h2hFirm = h2hGear.map((v) => ({ x: v, y: run(makeFists({ gearH2H: v, gearCrit: 0, starStats: { strength: 15, agility: 15, speed: 15, luck: 15 }, starSkills: { [30]: 15, [34]: 15, [19]: 15 }, starDamage: 30 })).dps }));
+
+    const cell = (v) => (Number.isFinite(v) ? fmt(v) : '-');
+    const rawTable = `<table><thead><tr><th>Skill</th><th>100</th><th>150</th><th>200</th><th>Capped 200</th></tr></thead><tbody>${defs.map((d) => {
+      const at = (v) => d.raw(v);
+      return `<tr><td class="k">${d.name}</td><td>${cell(at(100).dps)}</td><td>${cell(at(150).dps)}</td><td>${cell(at(200).dps)}</td><td>${cell(at(200).cappedDps)}</td></tr>`;
+    }).join('')}</tbody></table>`;
+    const gearTable = `<table><thead><tr><th>Skill</th><th>0</th><th>half</th><th>max</th><th>Capped max</th></tr></thead><tbody>${defs.filter((d) => d.gearMax > 0).map((d) => {
+      const mid = Math.round(d.gearMax / 2 / 30) * 30;
+      return `<tr><td class="k">${d.name}</td><td>${cell(d.gear(0).dps)}</td><td>${cell(d.gear(Math.min(mid, d.gearMax)).dps)}</td><td>${cell(d.gear(d.gearMax).dps)}</td><td>${cell(d.gear(d.gearMax).cappedDps)}</td></tr>`;
+    }).join('')}</tbody></table>`;
+    const starTable = `<table><thead><tr><th>Skill</th><th>+0</th><th>+15</th><th>Delta</th></tr></thead><tbody>${defs.map((d) => {
+      const a = d.star(0).dps, b = d.star(15).dps;
+      return `<tr><td class="k">${d.name}</td><td>${cell(a)}</td><td>${cell(b)}</td><td>${b - a >= 0 ? '+' : ''}${cell(b - a)}</td></tr>`;
+    }).join('')}</tbody></table>`;
+    const h2hTable = `<table><thead><tr><th>H2H gear</th><th>No Firmament</th><th>Firmament</th></tr></thead><tbody>${h2hGear.filter((v) => [0, 200, 300, 400, 450, 510].includes(v)).map((v, i) => `<tr><td class="k">${v}</td><td>${cell(h2hBase[h2hGear.indexOf(v)].y)}</td><td>${cell(h2hFirm[h2hGear.indexOf(v)].y)}</td></tr>`).join('')}</tbody></table>`;
+
+    const statLabel = values.firmament ? '115 (Firmament)' : '100 (base max)';
+    const sections = [
+      {
+        title: 'Raw skill level, no gear',
+        note: `Attributes ${statLabel}. No gear skill lines and no damage affix: this is the raw 100 -> 200 curve alone. Backstabbing is omitted from the chart because raw 100 already gives 100% x3; it is flat in the table.`,
+        chart: lineChart({ title: 'Raw skill 100 -> 200', xLabel: 'Raw skill', yLabel: 'DPS', series: rawSeries }),
+        table: rawTable,
+      },
+      {
+        title: 'Raw skill level, gate-capped',
+        note: 'The same no-gear runs against the level-45 gate: 12,000 HP, 600 per-hit cap. With no gear every blow stays under 600, so the capped line is identical; the cap only starts binding once gear pushes the hit over it.',
+        chart: lineChart({ title: 'Raw skill 100 -> 200 (gate-capped)', xLabel: 'Raw skill', yLabel: 'Capped DPS', series: rawCappedSeries }),
+      },
+      {
+        title: 'Gear skill lines, raw 200',
+        note: 'Each gear line is 30 points at the legendary maximum. Long Blade stops at 8 lines (240), Critical Strike at 18 (540), Hand-to-Hand at 17 (510). Uncapped DPS.',
+        chart: lineChart({ title: 'Gear skill 0 -> practical cap', xLabel: 'Gear skill points', yLabel: 'DPS', series: gearSeries }),
+        table: gearTable,
+      },
+      {
+        title: 'Gear skill lines, gate-capped',
+        note: 'Against the gate the cap flattens every gear curve. Long Blade saturates first; Critical Strike keeps paying longest because its multiplier has no formula cap.',
+        chart: lineChart({ title: 'Gear skill 0 -> practical cap (gate-capped)', xLabel: 'Gear skill points', yLabel: 'Capped DPS', series: gearCappedSeries }),
+      },
+      {
+        title: 'Firmament skill stars, gear max',
+        note: 'The star channel is +15 per skill, on top of effectiveSkill(raw). It is small next to gear: Long Blade +15 is +6.6% mastery, Critical Strike +15 is +0.15 critical multiplier. Uncapped DPS.',
+        chart: lineChart({ title: 'Firmament skill 0 -> +15', xLabel: 'Star points', yLabel: 'DPS', series: starSeries }),
+        table: starTable,
+      },
+      {
+        title: 'Hand-to-Hand reference, raw 200',
+        note: 'A H2H build with H2H expertise and no Critical Strike gear. The reported ~450 sits on this curve around 320-340 gear points with the Firmament channels, or around 450 gear without them. Level-45 gate; H2H stays under the 600 per-hit cap here.',
+        chart: lineChart({ title: 'Hand-to-Hand 0 -> 510 gear points', xLabel: 'H2H gear points', yLabel: 'DPS', series: [{ name: 'No Firmament', points: h2hBase }, { name: 'Firmament', points: h2hFirm }] }),
+        table: h2hTable,
+      },
+    ];
+    const subtitle = `Level ${level} ${RACE_NAMES[ch.raceId] ?? ch.race} | attributes ${statLabel} | Daedric ${WEAPONS[blade].name} | target gate level ${target.level} (${target.maxHealth.toLocaleString()} HP, ${target.hitCap ?? 600} per-hit cap) | gear maxima LB ${maxLB}, CS ${maxCS}, H2H ${maxH2H}`;
+    const html = multiGraphPage({ title: 'DFO skill scaling at max attributes', subtitle, sections });
+    const out = path.resolve(values.out === 'dfo-dps-report.html' ? 'skills.html' : values.out);
+    fs.writeFileSync(out, html, 'utf8');
+    if (!values.json) console.log(`skills page written: ${out}`);
+    if (values.json) console.log(JSON.stringify({ raw: rawSeries, rawCapped: rawCappedSeries, gear: gearSeries, gearCapped: gearCappedSeries, stars: starSeries, h2h: { base: h2hBase, firmament: h2hFirm } }, null, 2));
+    return;
+  }
 
   if (cmd === 'theory') {
     const level = n(values.level, THEORY_LEVEL);
