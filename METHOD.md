@@ -74,22 +74,27 @@ The `theory` command prices each star channel from +0 to +15. At the ceiling, St
 (`lootRarity.js`): a record fits a template when it names no templates or
 names this one, and Chain Lightning fits only a shot while Earthshaker fits
 only a melee blow. Each power is priced on the best weapon of the family it
-fits, at the max profile. The **base** column is unconditional; **trigger**
-applies the condition (undeath, unawareness, night, a second foe, low health,
-and so on). Utility powers (spell cost, magicka on a kill, spell damage)
-show 0 melee DPS and keep their trigger note.
+fits, at the max profile. **Boss** is the level-45 gate (Valkynaz Ruhn is a
+Daedra; 600 per-hit cap); **uncapped** is the same weapon with no cap. The
+**trigger** column applies the condition only where it can occur at the
+gate; conditions that cannot (undeath, dragons, unawareness, night, a second
+foe) are marked. Utility powers (spell cost, magicka on a kill, spell
+damage) show 0 melee DPS.
 
 `enchant-plan` imports the game's enchantment cost table
 (`enchantmentCatalogue.js`) and item `enchantmentPoints`
 (`ItemTemplates.json`, vendored). The budget is the template's points plus
 5,000 per piece when `--soul-gem` is used. Powers are positive and side
-effects negative. The plan is a priority fill: one-piece effects
-(Strengthens Armor, Absorbs Spells, Increased Weight Allowance, Repairs
-Objects) are placed once, then the build's skills, then Regens Health.
-The item cap is ten settings. The game's stacking rules are respected:
-Strengthens Armor is a min-set, Absorbs Spells is a boolean, Increased
-Weight Allowance takes the maximum, and Repairs Objects mends one target;
-Enhances Skill and Regens Health stack per piece.
+effects negative. The plan is a boss-first priority fill: the level-45 gate and its 600
+per-hit cap price the skills and strike procs; Backstabbing is excluded
+(the ×3 is capped after the roll). One-piece effects (Strengthens Armor,
+Absorbs Spells, Increased Weight Allowance) are placed once; Repairs Objects
+and Regens Health stack per piece (each item runs its own mend or regen
+tick). The item cap is ten settings. Cast When Strikes rows are limited by the
+weapon's hitPoints and the gate fight's swing count (10 condition a proc),
+so a 100-condition test blade does not get six procs. The game's stacking rules are
+respected: Strengthens Armor is a min-set, Absorbs Spells is a boolean, and
+Increased Weight Allowance takes the maximum.
 
 ## Firmament planner
 
@@ -142,7 +147,7 @@ The gate's per-blow cap is `HIT_CAP_X × dpsRef(level)` = 420 at level 30 (unles
 Relay bosses (the Warden, the Remnant, the gate court, the sea serpent) only
 carry bladeturning/stoneskin/thorned; they have no ward, curb or wrath.
 
-Curbing only binds when the blow would take more than 5% of **maximum** health.
+The cap is applied **after** backstab's ×3 and after any flat addition to the blow; backstab and poison are not exemptions. Curbing only binds when the final blow would take more than 5% of **maximum** health.
 If your per-hit is 40 and the boss has 5,000 HP, the cap is 250 and does
 nothing. The report's "Boss cap sensitivity" table shows where it starts to
 matter.

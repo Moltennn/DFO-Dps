@@ -84,10 +84,10 @@ Common options:
   --build <id,...>                    firmament build(s): longblade, shortblade, axe, blunt, bow, fists, destruction, tank
   --stars <n>                         firmament stars to spend (default 98)
   --family <key>                      imprints family: LongBlade, ShortBlade, Axe, BluntWeapon, Archery, HandToHand
-  --sort <base|conditional>           imprints order (default base)
+  --sort <boss|uncapped|conditional>  imprints order (default boss)
   --shield <template|none|auto>       enchant-plan shield (default auto)
   --soul-gem                          add 5,000 enchantment points to every piece
-  --group <undead|daedra|humanoid|animal>  enchant-plan target for Potent Vs (default humanoid)
+  --group <undead|daedra|humanoid|animal>  enchant-plan target for Potent Vs (default daedra)
   --pair                              paired Pistolets (2 shots per cycle, off hand x0.8)
   --dual                              dual wield the left-hand weapon (off hand x0.8, -5 hit)
   --spam                              bow spam (BOW_FAST stacks to x0.2; default paced)
@@ -165,7 +165,7 @@ const optsSpec = {
   sort: { type: 'string' },
   shield: { type: 'string' },
   'soul-gem': { type: 'boolean', default: false },
-  group: { type: 'string', default: 'humanoid' },
+  group: { type: 'string', default: 'daedra' },
   pair: { type: 'boolean', default: false },
   dual: { type: 'boolean', default: false },
   spam: { type: 'boolean', default: false },
@@ -700,18 +700,18 @@ export async function main(argv = process.argv.slice(2)) {
   if (cmd === 'enchant-plan' || cmd === 'gear-plan') {
     const weapon = Number(values.weapon ?? 123);
     const shield = values.shield ?? 'auto';
-    const group = String(values.group ?? 'humanoid').toLowerCase();
+    const group = String(values.group ?? 'daedra').toLowerCase();
     if (!['undead', 'daedra', 'humanoid', 'animal'].includes(group)) {
       console.error(`unknown Potent Vs group: ${group}`);
       process.exit(2);
     }
     const plan = planEnchants({ weapon, shield, soulGem: !!values['soul-gem'], group });
     if (!values.json) {
-      console.log(`Enchant plan  |  ${plan.weaponName}${plan.shield ? ` + ${plan.shield}` : ''}  |  ${plan.soulGem ? `soul gem +${SOUL_GEM_POINTS}` : 'template points only'}  |  Potent Vs: ${group}`);
+      console.log(`Enchant plan  |  ${plan.weaponName}${plan.shield ? ` + ${plan.shield}` : ''}  |  ${plan.soulGem ? `soul gem +${SOUL_GEM_POINTS}` : 'template points only'}  |  Potent Vs: ${group}  |  ${plan.maxProcs} strike proc${plan.maxProcs === 1 ? '' : 's'} (condition)`);
       if (plan.imprint?.base) {
         const b = plan.imprint.base;
-        const t = plan.imprint.trigger;
-        console.log(`Weapon imprint (separate from the budget): ${b.power.name} ${fmt(b.baseDps)} DPS (+${fmt(b.baseDps - plan.baseDps)}); best trigger ${t.power.name} ${fmt(t.triggerDps)} (+${fmt(t.triggerDps - plan.baseDps)})`);
+        const u = plan.imprint.uncapped;
+        console.log(`Weapon imprint (separate): boss ${b.power.name} ${fmt(b.baseDps)} (+${fmt(b.baseDps - plan.baseDps)}); uncapped ${u.power.name} ${fmt(u.uncappedDps)} (+${fmt(u.uncappedDps - plan.uncappedDps)})`);
       }
       console.log('');
       console.log(table(plan.rows.map((r) => [
@@ -729,7 +729,7 @@ export async function main(argv = process.argv.slice(2)) {
       console.log(table(plan.stacks.map((u) => {
         const n = plan.rows.reduce((a, r) => a + r.effects.filter((e) => e.type === u.type).length, 0);
         return [enchantmentNameOf(u.type), n, u.why];
-      }), ['Effect', 'Copies', 'Why'], ['left', 'right', 'left']));
+      }).filter(([, n]) => n > 0), ['Effect', 'Copies', 'Why'], ['left', 'right', 'left']));
     }
     const out = path.resolve(values.out === 'dfo-dps-report.html' ? 'enchant-plan.html' : values.out);
     const pieceTable = `<div class="table"><table><thead><tr><th>Slot</th><th>Item</th><th>Base</th><th>Soul</th><th>Budget</th><th>Spent</th><th>Left</th><th>Enchantments</th></tr></thead><tbody>${plan.rows.map((r) => `<tr><td class="k">${r.slot}</td><td>${r.item}</td><td>${r.base}</td><td>${r.soul || '-'}</td><td>${r.budget}</td><td>${r.spent}</td><td>${r.left}</td><td style="white-space:normal;min-width:320px">${r.effects.map((e) => effectLine(e)).join('<br>') || '-'}</td></tr>`).join('')}</tbody></table></div>`;
@@ -739,13 +739,13 @@ export async function main(argv = process.argv.slice(2)) {
     }).join('')}</tbody></table></div>`;
     const stackTable = `<div class="table"><h3>Stacks per piece</h3><table><thead><tr><th>Effect</th><th>Copies</th><th>Why</th></tr></thead><tbody>${plan.stacks.map((u) => {
       const n = plan.rows.reduce((a, r) => a + r.effects.filter((e) => e.type === u.type).length, 0);
-      return `<tr><td class="k">${enchantmentNameOf(u.type)}</td><td>${n}</td><td style="white-space:normal">${u.why}</td></tr>`;
-    }).join('')}</tbody></table></div>`;
+      return { u, n };
+    }).filter(({ n }) => n > 0).map(({ u, n }) => `<tr><td class="k">${enchantmentNameOf(u.type)}</td><td>${n}</td><td style="white-space:normal">${u.why}</td></tr>`).join('')}</tbody></table></div>`;
     const weaponTable = `<div class="table"><h3>Weapon only</h3><table><thead><tr><th>Effect</th><th>Why</th></tr></thead><tbody>${plan.weaponOnly.map((u) => `<tr><td class="k">${enchantmentNameOf(u.type)}</td><td style="white-space:normal">${u.why}</td></tr>`).join('')}</tbody></table></div>`;
     const html = multiGraphPage({
       title: 'DFO enchant plan',
       subtitle: `${plan.weaponName}${plan.rows.find((r) => /Shield|Buckler/.test(r.slot)) ? ` + ${plan.rows.find((r) => /Shield|Buckler/.test(r.slot)).item}` : ''}; ${plan.soulGem ? `soul gem +${SOUL_GEM_POINTS} on every piece` : 'template enchantment points only'}. Budgets are the game's ItemTemplates enchantmentPoints plus the stated soul gem; a POWER is positive, a side effect negative.`,
-      sections: [{ title: 'Per piece', note: `Priority fill for a ${group} target. One-piece effects go out once, then the build's skills fill what is left. ${plan.soulGem ? 'The soul gem is applied to every piece.' : 'No soul gem: base template points only.'}${plan.imprint?.base ? ` The weapon's imprint is separate from this budget: ${plan.imprint.base.power.name} is the best unconditional (${fmt(plan.imprint.base.baseDps)} DPS), ${plan.imprint.trigger.power.name} the best trigger (${fmt(plan.imprint.trigger.triggerDps)} DPS).` : ''}`, chart: '', table: pieceTable + oneTable + stackTable + weaponTable }],
+      sections: [{ title: 'Per piece', note: `Boss-first fill against the level-45 gate (${group}, 600 per-hit cap). Backstabbing is not planned: its ×3 is capped after the roll, so +15 Backstabbing adds no capped DPS on the capped weapons. One-piece effects go out once; Repairs Objects and Regens Health stack; a skill absent from the stack table added no capped DPS. Strike procs are capped per hit too; the weapon holds ${plan.maxProcs} proc row${plan.maxProcs === 1 ? '' : 's'} over its ${plan.swings}-swing gate fight (10 condition a proc). ${plan.soulGem ? 'The soul gem is applied to every piece.' : 'No soul gem: base template points only.'}${plan.imprint?.base ? ` The weapon's imprint is separate from this budget: best boss ${plan.imprint.base.power.name} (${fmt(plan.imprint.base.baseDps)} DPS), best uncapped ${plan.imprint.uncapped.power.name} (${fmt(plan.imprint.uncapped.uncappedDps)} DPS).` : ''}`, chart: '', table: pieceTable + oneTable + stackTable + weaponTable }],
     });
     fs.writeFileSync(out, html, 'utf8');
     if (!values.json) console.log(`enchant plan written: ${out}`);
@@ -759,15 +759,15 @@ export async function main(argv = process.argv.slice(2)) {
       console.error(`unknown imprint family: ${values.family}`);
       process.exit(2);
     }
-    const sort = values.sort === 'conditional' ? 'conditional' : 'base';
+    const sort = values.sort === 'uncapped' ? 'uncapped' : values.sort === 'conditional' ? 'conditional' : 'boss';
     const rows = family
       ? rankAll({ firmament: !!values.firmament, vampire: !!values.vampire, sort }).filter((f) => f.key === family.key)
       : rankAll({ firmament: !!values.firmament, vampire: !!values.vampire, sort });
     if (!values.json) {
       console.log('Weapon imprints');
       for (const f of rows) {
-        console.log(`\n${f.name} - ${f.weapon} (${fmt(f.base.dps)} DPS)`);
-        console.log(table(f.rows.map((r) => [r.power.name, r.name, r.weapon, fmt(r.baseDps), fmt(r.delta), fmt(r.conditionalDps), fmt(r.triggerDelta), r.trigger]), ['Imprint', 'Of', 'On', 'Base DPS', 'Base gain', 'Trigger DPS', 'Trigger gain', 'Trigger'], ['left', 'left', 'left', 'right', 'right', 'right', 'right', 'left']));
+        console.log(`\n${f.name} - ${f.weapon} (${fmt(f.base.cappedDps)} boss DPS)`);
+        console.log(table(f.rows.map((r) => [r.power.name, r.name, r.weapon, fmt(r.baseDps), fmt(r.delta), fmt(r.uncappedDps), fmt(r.uncappedDelta), fmt(r.conditionalDps), fmt(r.triggerDelta), r.trigger, r.power.brief]), ['Imprint', 'Of', 'On', 'Boss DPS', 'Boss gain', 'Uncapped DPS', 'Uncapped gain', 'Trigger DPS', 'Trigger gain', 'Trigger', 'Effect'], ['left', 'left', 'left', 'right', 'right', 'right', 'right', 'right', 'right', 'left', 'left']));
       }
     }
     const out = path.resolve(values.out === 'dfo-dps-report.html' ? 'imprints.html' : values.out);
@@ -776,26 +776,27 @@ export async function main(argv = process.argv.slice(2)) {
         title: `${f.name} imprints - ${f.weapon}`,
         labels: f.rows.map((r) => r.power.name),
         series: [
-          { name: 'Base', values: f.rows.map((r) => r.baseDps) },
+          { name: 'Boss', values: f.rows.map((r) => r.baseDps) },
           { name: 'Trigger', values: f.rows.map((r) => r.conditionalDps) },
+          { name: 'Uncapped', values: f.rows.map((r) => r.uncappedDps) },
         ],
       });
-      const body = f.rows.map((r) => `<tr><td class="k">${r.power.name}</td><td>${r.name}</td><td>${fmt(r.baseDps)}</td><td>${fmt(r.conditionalDps)}</td><td>${fmt(r.delta)}</td><td>${fmt(r.triggerDelta)}</td><td>${r.trigger}</td></tr>`).join('');
+      const body = f.rows.map((r) => `<tr><td class="k" style="white-space:normal;min-width:300px">${r.power.name}<br><span style="color:#a8a092;font-size:11px">of ${r.name} - ${r.power.brief}</span></td><td>${r.weapon}</td><td>${fmt(r.baseDps)}</td><td>${fmt(r.delta)}</td><td>${fmt(r.uncappedDps)}</td><td>${fmt(r.uncappedDelta)}</td><td style="white-space:normal;min-width:180px">${r.trigger}</td></tr>`).join('');
       return {
         title: `${f.name} - ${f.weapon}`,
-        note: `Each row is read on the best weapon of this family that the imprint actually fits. Base is the generic level-${THEORY_LEVEL} tough target; Trigger applies the power's condition. The imprint is the Legendary power only; the Rare's own affixes are separate.`,
+        note: `Each row is read on the best weapon of this family that the imprint actually fits. Boss is the level-${THEORY_LEVEL} gate (Daedra, 600 per-hit cap); Uncapped is the same weapon with no cap. Trigger applies the condition only where it can occur at the gate; otherwise it is marked. The imprint is the Legendary power only; the Rare's own affixes are separate.`,
         chart,
-        table: `<div class="table"><table><thead><tr><th>Imprint</th><th>Of</th><th>On</th><th>Base DPS</th><th>Base gain</th><th>Trigger DPS</th><th>Trigger gain</th><th>Trigger</th></tr></thead><tbody>${body}</tbody></table></div>`,
+        table: `<div class="table"><table><thead><tr><th>Imprint</th><th>On</th><th>Boss DPS</th><th>Boss gain</th><th>Uncapped DPS</th><th>Uncapped gain</th><th>Trigger</th></tr></thead><tbody>${body}</tbody></table></div>`,
       };
     });
     const html = multiGraphPage({
       title: 'DFO weapon imprints',
-      subtitle: `The Reforge's Rare imprints on each family's best max-profile weapon${values.firmament ? ', +Firmament' : ''}. Base is unconditional; Trigger is the power's condition.`,
+      subtitle: `The Reforge's Rare imprints on each family's best max-profile weapon${values.firmament ? ', +Firmament' : ''}. Boss is the level-45 gate with its 600 cap; Uncapped is the same weapon without it.`,
       sections,
     });
     fs.writeFileSync(out, html, 'utf8');
     if (!values.json) console.log(`imprints page written: ${out}`);
-    if (values.json) console.log(JSON.stringify(rows.map((f) => ({ family: f.key, weapon: f.weapon, template: f.template, baseDps: f.base.dps, rows: f.rows.map((r) => ({ id: r.id, record: r.name, power: r.power.name, weapon: r.weapon, baseDps: r.baseDps, conditionalDps: r.conditionalDps, delta: r.delta, triggerDelta: r.triggerDelta, trigger: r.trigger })) })), null, 2));
+    if (values.json) console.log(JSON.stringify(rows.map((f) => ({ family: f.key, weapon: f.weapon, template: f.template, baseDps: f.base.cappedDps, rows: f.rows.map((r) => ({ id: r.id, record: r.name, power: r.power.name, weapon: r.weapon, baseDps: r.baseDps, conditionalDps: r.conditionalDps, uncappedDps: r.uncappedDps, delta: r.delta, uncappedDelta: r.uncappedDelta, triggerDelta: r.triggerDelta, trigger: r.trigger, effect: r.power.brief })) })), null, 2));
     return;
   }
 

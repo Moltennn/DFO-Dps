@@ -32,12 +32,23 @@ test('no piece spends past its budget, its item cap, or repeats one setting', ()
 
 test('the one-piece effects are placed on one piece, and skills stack across pieces', () => {
   const plan = planEnchants({ weapon: 123, soulGem: true });
-  for (const type of ['StrengthensArmor', 'AbsorbsSpells', 'IncreasedWeightAllowance', 'RepairsObjects']) {
+  for (const type of ['StrengthensArmor', 'AbsorbsSpells', 'IncreasedWeightAllowance']) {
     const pieces = plan.rows.filter((r) => r.effects.some((e) => e.type === type));
     assert.equal(pieces.length, 1, type);
   }
-  const skillPieces = plan.rows.filter((r) => r.effects.some((e) => e.type === 'EnhancesSkill'));
+  const repairs = plan.rows.filter((r) => r.effects.some((e) => e.type === 'RepairsObjects'));
+  assert.ok(repairs.length > 1, 'Repairs Objects stacks per piece');
+  const skillPieces = planEnchants({ weapon: 117, soulGem: true }).rows.filter((r) => r.effects.some((e) => e.type === 'EnhancesSkill'));
   assert.ok(skillPieces.length > 1);
+  assert.ok(!plan.rows.some((r) => r.effects.some((e) => e.type === 'EnhancesSkill' && e.paramName === 'Backstabbing')));
+  assert.equal(plan.rows.filter((r) => r.effects.some((e) => e.type === 'EnhancesSkill')).length, 0);
+});
+
+test('strike procs respect the weapon condition over the gate fight', () => {
+  const plan = planEnchants({ weapon: 123, soulGem: true });
+  const procs = plan.rows[0].effects.filter((e) => e.type === 'CastWhenStrikes').length;
+  assert.ok(plan.maxProcs >= 1);
+  assert.ok(procs <= plan.maxProcs);
 });
 
 test('strike enchantments only sit on the weapon', () => {

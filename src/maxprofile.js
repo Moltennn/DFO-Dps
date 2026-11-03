@@ -1,6 +1,6 @@
 /* The weapons page's max character, shared by the imprint and enchant planners. */
 import { SKILLS, WEAPONS } from './data.js';
-import { analyze, referenceFoe } from './model.js';
+import { analyze, expectedCapped, gateTarget, referenceFoe } from './model.js';
 import { perfectSockets } from './sockets.js';
 import {
   DAMAGE_AFFIX_MAX, GEAR_CS_LINES, GEAR_H2H_LINES, GEAR_LB_LINES, GEAR_LINE_MAX,
@@ -46,9 +46,27 @@ export function maxCharacter(template, { firmament = false, vampire = false, rac
 }
 
 export function maxRun(ch, { target = referenceFoe(THEORY_LEVEL, 'tough'), gate = false } = {}) {
+  const t = gate ? gateTarget(THEORY_LEVEL) : target;
   return analyze(ch, {
-    target: gate ? undefined : target,
+    target: t,
+    health: t.maxHealth ?? 0,
     core: 'overhaul', rri: true, healthShare: 1, passiveOn: true, stacks: 5,
     pair: !!ch?._pair, dual: !!ch?._dual,
   });
+}
+
+/** Capped DPS when the blow is multiplied and/or a flat amount is added per hit. */
+export function cappedDpsWith(base, { mult = 1, flat = 0 } = {}) {
+  const c = base.hit.crit.chance;
+  const cap = base.cap;
+  const d = base.damage;
+  const plainAvg = d.avg * mult + flat;
+  const critAvg = d.critAvg * mult + flat;
+  const ePlain = cap > 0
+    ? expectedCapped(Math.round(d.min * mult + flat), Math.round(d.max * mult + flat), cap)
+    : plainAvg;
+  const eCrit = cap > 0
+    ? expectedCapped(Math.round(d.critMin * mult + flat), Math.round(d.critMax * mult + flat), cap)
+    : critAvg;
+  return ((1 - c) * base.hit.hitPlain * ePlain + c * base.hit.hitCrit * eCrit) * base.cadence.aps;
 }

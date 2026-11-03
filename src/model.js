@@ -824,6 +824,7 @@ export function bossTarget({ level = 30, armorValue = 0, isClass = false, health
 export function gateTarget(level, { health = gateHealth(level), traits = [], hitCap = null, players = 1, blowX = 1 } = {}) {
   return bossTarget({
     level, armorValue: 12, health: health * Math.max(1, Math.floor(players)), traits, // 12 x5 = 60, the gate's flat plate armour
+    group: 'daedra', // Valkynaz Ruhn is a Daedra Lord (gateBoss.js WBX7), not a humanoid
     hitCap: hitCap ?? Math.round(gateHitCap(level) * Math.max(1, num(blowX, 1))), phaseShields: GATE_SHIELDS, shieldSeconds: GATE_SHIELD_S,
   });
 }

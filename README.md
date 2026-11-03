@@ -133,25 +133,31 @@ The max profile is: attributes 100 (115 with `--firmament`), raw weapon skill an
 `imprints` ranks the Reforge's Rare imprints per weapon family. The
 Legendary power is priced on the best weapon of that family it actually
 fits, so a power that only lands on a Longsword is not read on a
-Dai-katana. **Base** is unconditional DPS; **Trigger** applies the power's
-condition (undead, unaware, night, a second foe, low health, and so on).
-Chain and quake trigger values are one extra target; poison is before the
-target's resistance.
+Dai-katana. **Boss** is the level-45 gate (Daedra, 600 per-hit cap);
+**Uncapped** is the same weapon without the cap; **Trigger** applies the
+power's condition where it can occur at the gate (low health, below half).
+Triggers that cannot happen there (undead, dragons, unaware, night, a
+second foe) are marked and do not inflate the boss column. Gains are against
+the row's **On** weapon, which can be a faster family member than the family
+title. Chain and quake are one extra target; poison is before resistance.
 
 ```bash
 ./dfo-dps imprints
 ./dfo-dps imprints --family LongBlade
-./dfo-dps imprints --sort conditional --firmament --out imprints.html
+./dfo-dps imprints --sort uncapped --firmament --out imprints.html
 ```
 
 `enchant-plan` reads the game's own `enchantmentPoints` for every piece,
 adds the stated **5,000** soul-gem channel when `--soul-gem` is used, and
-fills each item inside that budget. A power prices positive and a side
-effect negative in the item maker's table. The plan places the
-non-stacking effects once (Strengthens Armor, Absorbs Spells, Increased
-Weight Allowance, Repairs Objects), then adds the effects that do stack
-(Enhances Skill, Regens Health). Strike payloads (Cast When Strikes,
-Potent Vs, Low Damage Vs) are weapon-only.
+fills each item inside that budget. It values everything on the **level-45
+gate** and its 600 per-hit cap, so a +skill or +damage effect that the cap
+eats is not bought. Backstabbing is never planned: its ×3 is capped after
+the roll, so +15 Backstabbing adds no capped boss DPS on the capped
+weapons. The non-stacking effects are placed once (Strengthens Armor,
+Absorbs Spells, Increased Weight Allowance); Repairs Objects and Regens
+Health stack per piece. Strike payloads (Cast When Strikes, Potent Vs, Low
+Damage Vs) are weapon-only; the weapon's own condition limits how many
+Cast When Strikes rows the gate fight can pay (10 condition a proc).
 
 ```bash
 ./dfo-dps enchant-plan --weapon 123
