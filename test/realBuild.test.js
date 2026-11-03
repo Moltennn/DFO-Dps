@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { realCategoryLoadouts, realLoadouts } from '../src/realBuild.js';
+import { realCategoryLoadouts, realFamilyLoadouts, realLoadouts } from '../src/realBuild.js';
 
 const rows = realLoadouts();
 
@@ -33,5 +33,17 @@ test('the loadout page keeps one best 1H, 2H and DW per mode', () => {
   assert.equal(cats.length, 6);
   for (const mode of ['uncapped', 'cap']) assert.deepEqual(cats.filter((r) => r.mode === mode).map((r) => r.category).sort(), ['1H', '2H', 'DW']);
   const cap2h = cats.find((r) => r.mode === 'cap' && r.category === '2H');
+  assert.equal(cap2h.imprintPower, 'Many Endings');
+});
+
+
+test('every family gets its own best hand options', () => {
+  const rows = realFamilyLoadouts({ modes: ['cap'] });
+  for (const family of ['Long Blade', 'Short Blade', 'Axe', 'Blunt Weapon', 'Archery', 'Hand-to-Hand']) {
+    assert.ok(rows.some((r) => r.family === family), family);
+  }
+  const long = rows.filter((r) => r.family === 'Long Blade').map((r) => r.category).sort();
+  assert.deepEqual(long, ['1H', '2H', 'DW']);
+  const cap2h = rows.find((r) => r.family === 'Long Blade' && r.category === '2H');
   assert.equal(cap2h.imprintPower, 'Many Endings');
 });

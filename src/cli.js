@@ -21,7 +21,7 @@ import { barChart, graphPage, lineChart, multiGraphPage } from './graph.js';
 import { FIRMAMENT_NODES, buildById, buildIds, firmamentSection, planBuild, planFromTree, planKey, planSummary } from './firmament.js';
 import { imprintFamilyById, rankAll } from './imprints.js';
 import { effectLine, planEnchants, planMatrix, SOUL_GEM_POINTS } from './enchantPlan.js';
-import { applyTree, realCategoryLoadouts } from './realBuild.js';
+import { applyTree, realFamilyLoadouts } from './realBuild.js';
 import { enchantmentName as enchantmentNameOf } from './enchantData.js';
 import { analyzeSpell, resolveSpells, spellCost, spellRotation, standardSpells } from './spells.js';
 import { ENCHANTMENT_TYPES, castWhenStrikes, enchantDps, procsBeforeBreak, strikeEnchantments } from './enchants.js';
@@ -745,7 +745,7 @@ export async function main(argv = process.argv.slice(2)) {
 
   if (cmd === 'loadout' || cmd === 'real-dps') {
     const modes = values.uncapped ? ['uncapped'] : values['cap-aware'] ? ['cap'] : ['uncapped', 'cap'];
-    const rows = realCategoryLoadouts({ modes, vampire: !!values.vampire });
+    const rows = realFamilyLoadouts({ modes, vampire: !!values.vampire });
     const sorted = (mode) => rows.filter((r) => r.mode === mode).sort((a, b) => b.totalDps - a.totalDps);
     if (!values.json) {
       for (const mode of modes) {
@@ -768,13 +768,13 @@ export async function main(argv = process.argv.slice(2)) {
       const list = sorted(mode);
       const chart = barChart({
         title: `${mode === 'uncapped' ? 'Uncapped' : 'Gate'} loadouts by DPS`,
-        labels: list.map((r) => `${r.category} ${r.family}`),
+        labels: list.map((r) => `${r.family} ${r.category}`),
         series: [{ name: 'Total DPS', values: list.map((r) => r.totalDps) }],
       });
       const body = list.map((r) => `<tr><td class="k">${r.category} · ${r.family}</td><td>${r.weapon}</td><td>${r.imprint ?? '-'}</td><td>${fmt(r.totalDps)}</td></tr>`).join('');
       sections.push({
-        title: `${mode === 'uncapped' ? 'Uncapped theory' : 'Gate'} - best 1H / 2H / DW`,
-        note: 'One best loadout per hand option. Total is tree + enchants + the best eligible imprint.',
+        title: `${mode === 'uncapped' ? 'Uncapped theory' : 'Gate'} - best 1H / 2H / DW per family`,
+        note: 'One best loadout per family and hand option. Total is tree + enchants + the best eligible imprint.',
         chart,
         table: `<div class="table"><table><thead><tr><th>Family</th><th>Weapon</th><th>Imprint</th><th>Total DPS</th></tr></thead><tbody>${body}</tbody></table></div>`,
       });
@@ -797,7 +797,7 @@ export async function main(argv = process.argv.slice(2)) {
     });
     const html = multiGraphPage({
       title: 'DFO real loadouts',
-      subtitle: 'Tree + enchants + best eligible imprint. One best loadout each for 1H, 2H and DW, in both uncapped and capped modes.',
+      subtitle: 'Tree + enchants + best eligible imprint. Best 1H, 2H and DW loadout for every weapon family, in both uncapped and capped modes.',
       sections,
     });
     fs.writeFileSync(out, html, 'utf8');

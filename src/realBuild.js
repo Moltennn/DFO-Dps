@@ -126,6 +126,35 @@ export function realLoadout(family, { mode = 'uncapped', vampire = false } = {})
   const rows = family.templates.map((t) => realTemplate(t, family, { mode, vampire })).filter(Boolean);
   return rows.sort((a, b) => b.totalDps - a.totalDps)[0] ?? null;
 }
+/** Best 1H, 2H, DW (or Fists) for every weapon family. */
+export function realFamilyLoadouts({ modes = ['uncapped', 'cap'], vampire = false } = {}) {
+  const out = [];
+  for (const mode of modes) {
+    for (const family of IMPRINT_FAMILIES) {
+      const buckets = new Map();
+      const add = (category, row) => {
+        if (!row) return;
+        if (!buckets.has(category) || row.totalDps > buckets.get(category).totalDps) buckets.set(category, row);
+      };
+      for (const t of family.templates) {
+        const w = WEAPONS[t];
+        if (!w) continue;
+        const category = w.skill === 'HandToHand' ? 'Fists' : w.twoHanded ? '2H' : '1H';
+        add(category, realTemplate(t, family, { mode, vampire }));
+        if (!w.twoHanded && w.skill !== 'Archery' && w.skill !== 'HandToHand') {
+          add('DW', realTemplate(t, family, { mode, vampire, dual: true }));
+        }
+      }
+      const order = family.key === 'HandToHand' ? ['Fists'] : family.key === 'Archery' ? ['1H', '2H'] : ['1H', '2H', 'DW'];
+      for (const category of order) {
+        const row = buckets.get(category);
+        if (row) out.push({ ...row, category });
+      }
+    }
+  }
+  return out;
+}
+
 /** Best 1H, 2H and DW loadouts across the melee families. */
 export function realCategoryLoadouts({ modes = ['uncapped', 'cap'], vampire = false } = {}) {
   const bySkill = Object.fromEntries(IMPRINT_FAMILIES.map((f) => [f.key, f]));

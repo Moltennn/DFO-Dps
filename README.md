@@ -234,9 +234,9 @@ channels together at the live cap (so +15 flat and +15% are **one** +15
 attribute/skill channel, not +30), then the +15 weapon skill / Critical
 Strike enchant lines, then the imprint.
 
-The page keeps only the best **1H, 2H and DW** loadouts per mode, sorts the
-charts by final DPS, and uses the requested columns: **Family, weapon,
-imprint, Total DPS**. It also carries the shared enchant template, the
+The page keeps the best **1H, 2H and DW** loadout for **every weapon family**
+per mode, sorts the charts by final DPS, and uses the requested columns:
+**Family, weapon, imprint, Total DPS**. It also carries the shared enchant template, the
 imprint ratings and the Firmament plans used. Both uncapped and cap-aware
 charts are on the page.
 
