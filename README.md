@@ -73,6 +73,12 @@ dfo eval '(() => { const e = window.__playerEntity; const equipSlots = {}; for (
 
 The live card's **Damage** and **Per swing** tiles show the **opening** blow when a First Blood item is worn. Pass `--first-blow` to compare exactly; without it the tool shows the sustained swing.
 
+## Backstab and the 600s
+
+A normal front crit on the live card is 189–290; **Backstab is 99% ×3**, so a critical backstab is **567–870**. That is the 600s you see. The tool was showing front swings only; `--behind` (100% behind) or `--backstab 0.5` (uptime) now adds it. The card's **Damage** and **Per swing** are front/opening values; the Backstab tile is separate.
+
+The gate's server per-hit cap is **420** at level 30 (12 × `dpsRef` 35). A displayed 600 backstab is therefore **raw**; the health bar may only lose 420. If the bar really loses 600, the fight has a `relayBlowX` above 1.43 (Elite/Vestiges/might) or a different pool. `--players n` scales the gate's health per player; the cap is per player.
+
 ## Theorycraft numbers
 
 `--target gate` uses the real solo gate boss: **240 seconds of reference damage** at your level, i.e. **8,400 HP at level 30** (`dpsRef(level) = 5 + level`), plate armour 60, a **420 per-blow server cap** (12 x reference), and **two 3s phase shields**. It has no Curbing; Curbing is a separate trait on elite/world bosses and is 5% of max HP.

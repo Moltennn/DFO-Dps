@@ -53,6 +53,9 @@ Common options:
   --rhythm                            War Rhythm is up (Warblade)
   --unaware                           target has not noticed you (Cutthroat)
   --first-blow                        first blow at this foe (Assassin; also First Blood / Duelist's Vambrace)
+  --behind                            every swing is from behind (backstab x3)
+  --backstab <0..1>                   share of swings from behind (expected backstab)
+  --players <n>                       gate boss group size (health per player; default 1)
   --health-share <0..1>               foe's health share for Axe/Blunt mastery (default: 1)
   --no-crit-damage                    overhaul crit adds hit only
   --no-passive                        switch the path passive off
@@ -91,6 +94,9 @@ const optsSpec = {
   bare: { type: 'boolean', default: false },
   'base-stats': { type: 'string' },
   'no-effects': { type: 'boolean', default: false },
+  behind: { type: 'boolean', default: false },
+  backstab: { type: 'string' },
+  players: { type: 'string', default: '1' },
   all: { type: 'boolean', default: false },
   from: { type: 'string' },
   to: { type: 'string' },
@@ -159,7 +165,7 @@ function targetOf(ch, values, traits) {
   const level = n(values.level, ch.level);
   const target = String(values.target ?? 'armoured').toLowerCase();
   if (target === 'gate' || target === 'ruhn') {
-    return gateTarget(level, { health: n(values.health, gateHealth(level)), traits });
+    return gateTarget(level, { health: n(values.health, gateHealth(level)), traits, players: n(values.players, 1) });
   }
   if (target === 'boss') {
     return bossTarget({
@@ -193,6 +199,7 @@ function scenarioOf(ch, values, traits, target) {
     unaware: values.unaware,
     firstBlow: values['first-blow'],
     healthShare: n(values['health-share'], 1),
+    backstabUptime: values.behind ? 1 : n(values.backstab, 0),
     weapon: weaponOverride(values),
   };
 }
@@ -223,6 +230,7 @@ function summary(ch, r, extra = {}) {
     },
     result: {
       hit: r.hit.hit, critChance: r.hit.crit.chance, critMult: r.hit.crit.damageMult,
+      backstab: r.backstab,
       damage: { min: r.damage.min, max: r.damage.max, avg: r.damage.avg, critMin: r.damage.critMin, critMax: r.damage.critMax, critAvg: r.damage.critAvg },
       perSwing: r.perSwing, aps: r.cadence.aps, swingSeconds: r.cadence.seconds,
       dps: r.dps, cappedDps: r.cappedDps, cap: r.cap, capLoss: r.capLoss,
@@ -259,7 +267,9 @@ function printBuild(ch, r, targetPreset, values) {
   console.log('');
   console.log(table([
     ['Hit chance', pc(r.hit.hit), `${pc(r.hit.crit.chance)} critical, x${fmt2(r.hit.crit.damageMult)}`],
+    ...(r.backstab?.chance > 0 ? [['Backstab', `${pc(r.backstab.chance)} x3`, r.backstab.uptime > 0 ? `uptime ${pc(r.backstab.uptime)}; expected x${fmt2(r.backstab.expectedMult)}` : 'available; use --behind']] : []),
     ['Damage / hit', `${r.damage.min}-${r.damage.max}`, `avg ${fmt(r.damage.avg)}; crit ${r.damage.critMin}-${r.damage.critMax}`],
+    ...(r.backstab?.chance > 0 ? [['Backstab hit', `${r.backstab.min}-${r.backstab.max}`, `crit ${r.backstab.critMin}-${r.backstab.critMax}`]] : []),
     ['Expected / swing', fmt(r.perSwing), 'hit chance and criticals included'],
     ['Swing time', `${fmt2(r.cadence.seconds)} s`, `${fmt2(r.cadence.aps)} swings/s`],
     ['DPS', fmt(r.dps), r.cap ? `capped ${fmt(r.cappedDps)} (${pc(r.capLoss)} lost)` : 'no per-hit cap'],
@@ -289,7 +299,7 @@ function printBuild(ch, r, targetPreset, values) {
     target: r.target, core: r.core, traits, health: r.health ?? 0, swing: values.swing,
     passiveOn: !values['no-passive'], stacks: n(values.stacks, 5), rhythm: values.rhythm,
     unaware: values.unaware, firstBlow: values['first-blow'], healthShare: n(values['health-share'], 1),
-    critDamage: !values['no-crit-damage'], weapon: undefined,
+    backstabUptime: values.behind ? 1 : n(values.backstab, 0), critDamage: !values['no-crit-damage'], weapon: undefined,
   });
   console.log(`\nWhat matters (${r.cap ? 'capped DPS' : 'DPS'})`);
   console.log(table(ms.map((m) => [m.label, `${m.delta >= 0 ? '+' : ''}${fmt(m.delta)}`, `${m.delta >= 0 ? '+' : ''}${fmt(m.pct)}%`]), ['Change', r.cap ? 'Capped DPS' : 'DPS', '%'], ['left', 'right', 'right']));
@@ -297,7 +307,7 @@ function printBuild(ch, r, targetPreset, values) {
     target: r.target, core: r.core, traits, health: r.health ?? 0, swing: values.swing,
     passiveOn: !values['no-passive'], stacks: n(values.stacks, 5), rhythm: values.rhythm,
     unaware: values.unaware, firstBlow: values['first-blow'], healthShare: n(values['health-share'], 1),
-    critDamage: !values['no-crit-damage'],
+    backstabUptime: values.behind ? 1 : n(values.backstab, 0), critDamage: !values['no-crit-damage'],
   });
   console.log(`\nAffixes / enchants (${r.cap ? 'capped DPS' : 'DPS'})`);
   console.log(table(affixes.map((m) => [m.label, `${m.delta >= 0 ? '+' : ''}${fmt(m.delta)}`, `${m.delta >= 0 ? '+' : ''}${fmt(m.pct)}%`]), ['Change', r.cap ? 'Capped DPS' : 'DPS', '%'], ['left', 'right', 'right']));
@@ -305,7 +315,7 @@ function printBuild(ch, r, targetPreset, values) {
     target: r.target, core: r.core, traits, health: r.health ?? 0, swing: values.swing,
     passiveOn: !values['no-passive'], stacks: n(values.stacks, 5), rhythm: values.rhythm,
     unaware: values.unaware, firstBlow: values['first-blow'], healthShare: n(values['health-share'], 1),
-    critDamage: !values['no-crit-damage'],
+    backstabUptime: values.behind ? 1 : n(values.backstab, 0), critDamage: !values['no-crit-damage'],
   }, { top: 8 });
   console.log('\nTop melee weapons');
   console.log(table(ranking.map((x) => [`${x.materialName} ${x.name}`, x.twoHanded ? '2H' : '1H', fmt(x.dps), fmt(x.cappedDps), fmt(x.perSwing), fmt2(x.aps)]), ['Weapon', 'Hands', 'DPS', 'Capped', 'Per swing', 'APS'], ['left', 'left', 'right', 'right', 'right', 'right']));
@@ -440,7 +450,7 @@ export async function main(argv = process.argv.slice(2)) {
   if (cmd === 'tradeoff') {
     const { ch } = loadCharacter(values);
     const traits = traitsOf(values);
-    const gate = gateTarget(ch.level);
+    const gate = gateTarget(ch.level, { players: n(values.players, 1) });
     const targets = [
       { label: 'Gate - Ruhn', t: gate },
       { label: 'Curbing 1,000 HP', t: bossTarget({ level: ch.level, health: 1000, traits: ['curbing'] }) },
@@ -501,7 +511,7 @@ export async function main(argv = process.argv.slice(2)) {
       target, core: scenario.core, traits, health: scenario.health, swing: scenario.swing,
       passiveOn: scenario.passiveOn, stacks: scenario.stacks, rhythm: scenario.rhythm,
       unaware: scenario.unaware, firstBlow: scenario.firstBlow, healthShare: scenario.healthShare,
-      weapon: scenario.weapon,
+      backstabUptime: scenario.backstabUptime, players: n(values.players, 1), weapon: scenario.weapon,
     });
     const out = path.resolve(values.out);
     fs.writeFileSync(out, html, 'utf8');

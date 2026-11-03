@@ -557,14 +557,18 @@ export function analyze(ch, {
   const hit = hitModel(ch, w, tgt, swing, core, simOpts);
   const dmg = damageModel(ch, w, tgt, swing, core, simOpts);
   const c = hit.crit.chance;
-  const perSwing = (1 - c) * hit.hitPlain * dmg.avg + c * hit.hitCrit * dmg.critAvg;
+  const backSkill = skill(ch, 19, simOpts);
+  const backChance = clamp(backSkill, 0, 100) / 100;
+  const backUptime = clamp(num(opts.backstabUptime, 0), 0, 1);
+  const backMult = 1 + 2 * backUptime * backChance;
+  const perSwing = ((1 - c) * hit.hitPlain * dmg.avg + c * hit.hitCrit * dmg.critAvg) * backMult;
   const cad = cadence(ch, w, simOpts);
 
   const resist = weaponResistFactor(w, traits);
-  const dmin = Math.max(0, Math.round(dmg.min * resist));
-  const dmax = Math.max(0, Math.round(dmg.max * resist));
-  const cmin = Math.max(0, Math.round(dmg.critMin * resist));
-  const cmax = Math.max(0, Math.round(dmg.critMax * resist));
+  const dmin = Math.max(0, Math.round(dmg.min * resist * backMult));
+  const dmax = Math.max(0, Math.round(dmg.max * resist * backMult));
+  const cmin = Math.max(0, Math.round(dmg.critMin * resist * backMult));
+  const cmax = Math.max(0, Math.round(dmg.critMax * resist * backMult));
   const bossHealth = num(health, 0);
   const curbCap = traits.includes('curbing') && bossHealth > 0
     ? Math.max(1, Math.round(bossHealth * CURB_SHARE)) : 0;
@@ -573,11 +577,11 @@ export function analyze(ch, {
   const cap = caps.length ? Math.min(...caps) : 0;
   const capSource = cap === 0 ? null : (hardCap > 0 && (!curbCap || hardCap <= curbCap) ? 'hit cap' : 'curbing');
   const ePlain = cap > 0
-    ? (dmax <= cap ? dmg.avg * resist : expectedCapped(dmin, dmax, cap))
-    : dmg.avg * resist;
+    ? (dmax <= cap ? dmg.avg * resist * backMult : expectedCapped(dmin, dmax, cap))
+    : dmg.avg * resist * backMult;
   const eCrit = cap > 0
-    ? (cmax <= cap ? dmg.critAvg * resist : expectedCapped(cmin, cmax, cap))
-    : dmg.critAvg * resist;
+    ? (cmax <= cap ? dmg.critAvg * resist * backMult : expectedCapped(cmin, cmax, cap))
+    : dmg.critAvg * resist * backMult;
   const cappedPerSwing = (1 - c) * hit.hitPlain * ePlain + c * hit.hitCrit * eCrit;
 
   const dps = perSwing * cad.aps;
@@ -590,6 +594,7 @@ export function analyze(ch, {
     core, weapon: w, target: tgt, swing, hit, damage: dmg, cadence: cad,
     perSwing, dps, cappedPerSwing, cappedDps, cap, capSource, capLoss: dps > 0 ? 1 - cappedDps / dps : 0,
     resist, health: bossHealth || null, ward, shields, ttk, wrath, wrathAt: WRATH_AFTER_S,
+    backstab: { skill: backSkill, chance: backChance, multiplier: 3, uptime: backUptime, expectedMult: backMult, min: Math.round(dmg.min * resist * 3), max: Math.round(dmg.max * resist * 3), critMin: Math.round(dmg.critMin * resist * 3), critMax: Math.round(dmg.critMax * resist * 3) },
     traits, healthShare: simOpts.healthShare,
     notes: {
       preArmor: true,
@@ -635,9 +640,9 @@ export function bossTarget({ level = 30, armorValue = 0, isClass = false, health
 }
 
 /** The real gate boss (Valkynaz Ruhn): a plate-armour monster, the solo pool for this level, the server hit cap and the two phase shields. */
-export function gateTarget(level, { health = gateHealth(level), traits = [], hitCap = gateHitCap(level) } = {}) {
+export function gateTarget(level, { health = gateHealth(level), traits = [], hitCap = gateHitCap(level), players = 1 } = {}) {
   return bossTarget({
-    level, armorValue: 12, health, traits, // 12 x5 = 60, the gate's flat plate armour
+    level, armorValue: 12, health: health * Math.max(1, Math.floor(players)), traits, // 12 x5 = 60, the gate's flat plate armour
     hitCap, phaseShields: GATE_SHIELDS, shieldSeconds: GATE_SHIELD_S,
   });
 }

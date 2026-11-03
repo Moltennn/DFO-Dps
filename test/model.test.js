@@ -180,3 +180,16 @@ test('the real gate boss: 8,400 HP, plate 60, 420 hit cap, two 3s shields at lev
   assert.equal(r.capSource, 'hit cap');
   assert.ok(r.ttk > t.maxHealth / r.cappedDps, 'the shield seconds are in the TTK');
 });
+
+test('backstab: 99% x3, and the gate group health', () => {
+  const skills = Array.from({ length: 35 }, () => 40);
+  skills[19] = 99;
+  const ch = characterFromSave(testSave({ skills }), { online: false });
+  const base = analyze(ch, { target: referenceFoe(5, 'soft'), core: 'overhaul' });
+  const behind = analyze(ch, { target: referenceFoe(5, 'soft'), core: 'overhaul', backstabUptime: 1 });
+  assert.ok(behind.backstab.chance > 0.98);
+  assert.equal(behind.backstab.multiplier, 3);
+  assert.ok(Math.abs(behind.backstab.critMin - base.damage.critMin * 3) <= 1);
+  assert.ok(behind.dps > base.dps * 2.8);
+  assert.equal(gateTarget(30, { players: 4 }).maxHealth, 33600);
+});

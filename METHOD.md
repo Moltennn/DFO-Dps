@@ -50,6 +50,12 @@ swing = (5 + hold) * tick
 - a fresh main-hand swing is five frames; the 0.45s floor makes the maximum
   about 2.2 swings/s
 
+## Backstab and the cap
+
+`combatStats` carries `Backstab: skillValue(Backstabbing)% ×3`. A front crit of 189–290 becomes a **567–870** critical backstab; with First Blood the opening backstab is higher. `--behind` sets 100% uptime; `--backstab 0.5` uses the expected multiplier `1 + 2 × uptime × chance`.
+
+The gate's per-blow cap is `HIT_CAP_X × dpsRef(level)` = 420 at level 30 (unless an Elite/Vestiges `relayBlowX` raises it). The tool reports raw backstab damage and **capped** DPS separately: a 600 display can be raw while only the cap reaches the health.
+
 ## The real gate boss pool
 
 `net/gate/gateBrain.js`: a player's share of the gate boss is `BOSS_TTK_S = 240` seconds of reference damage, `dpsRef(level) = 5 + level` (level 1..60). Solo at level 30 that is **8,400 HP**. He has plate armour 60, a **per-blow server cap of `HIT_CAP_X = 12` x reference (420 at level 30)**, and phase shields at 66% and 33% for **3 seconds each**. Relay bosses (the gate, the Remnant, the gate court) only carry bladeturning/stoneskin/thorned; they do not carry ward, curb or wrath. The tool adds the six shield seconds to TTK.
