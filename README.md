@@ -234,14 +234,20 @@ channels together at the live cap (so +15 flat and +15% are **one** +15
 attribute/skill channel, not +30), then the +15 weapon skill / Critical
 Strike enchant lines, then the imprint.
 
+The page keeps only the best **1H, 2H and DW** loadouts per mode, sorts the
+charts by final DPS, and uses the requested columns: **Family, weapon,
+imprint, Total DPS**. It also carries the shared enchant template, the
+imprint ratings and the Firmament plans used. Both uncapped and cap-aware
+charts are on the page.
+
 ```bash
 ./dfo-dps loadout --uncapped       # theory: no per-hit cap
 ./dfo-dps loadout --cap-aware      # level-45 gate
 ./dfo-dps loadout                  # both
 ```
 
-The page shows **Tree DPS**, **+ Enchants**, and **+ Imprint** per weapon
-type, with the tree's used/free stars. It assumes a soul gem on every piece.
+The table is tree + enchants + imprint, assumes a soul gem on every piece,
+and the hand options are exclusive: one best 1H, one best 2H, one best DW.
 
 ## Bows, firearms, spells and enchantments
 

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { realLoadouts } from '../src/realBuild.js';
+import { realCategoryLoadouts, realLoadouts } from '../src/realBuild.js';
 
 const rows = realLoadouts();
 
@@ -25,4 +25,13 @@ test('the capped loadouts do not beat the uncapped ones', () => {
     const c = rows.find((r) => r.family === family && r.mode === 'cap');
     assert.ok(c.totalDps <= u.totalDps + 1e-9, family);
   }
+});
+
+
+test('the loadout page keeps one best 1H, 2H and DW per mode', () => {
+  const cats = realCategoryLoadouts();
+  assert.equal(cats.length, 6);
+  for (const mode of ['uncapped', 'cap']) assert.deepEqual(cats.filter((r) => r.mode === mode).map((r) => r.category).sort(), ['1H', '2H', 'DW']);
+  const cap2h = cats.find((r) => r.mode === 'cap' && r.category === '2H');
+  assert.equal(cap2h.imprintPower, 'Many Endings');
 });

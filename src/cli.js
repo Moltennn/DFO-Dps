@@ -21,7 +21,7 @@ import { barChart, graphPage, lineChart, multiGraphPage } from './graph.js';
 import { FIRMAMENT_NODES, buildById, buildIds, firmamentSection, planBuild, planFromTree, planKey, planSummary } from './firmament.js';
 import { imprintFamilyById, rankAll } from './imprints.js';
 import { effectLine, planEnchants, planMatrix, SOUL_GEM_POINTS } from './enchantPlan.js';
-import { applyTree, realLoadouts } from './realBuild.js';
+import { applyTree, realCategoryLoadouts } from './realBuild.js';
 import { enchantmentName as enchantmentNameOf } from './enchantData.js';
 import { analyzeSpell, resolveSpells, spellCost, spellRotation, standardSpells } from './spells.js';
 import { ENCHANTMENT_TYPES, castWhenStrikes, enchantDps, procsBeforeBreak, strikeEnchantments } from './enchants.js';
@@ -745,39 +745,59 @@ export async function main(argv = process.argv.slice(2)) {
 
   if (cmd === 'loadout' || cmd === 'real-dps') {
     const modes = values.uncapped ? ['uncapped'] : values['cap-aware'] ? ['cap'] : ['uncapped', 'cap'];
-    const rows = realLoadouts({ modes, vampire: !!values.vampire });
+    const rows = realCategoryLoadouts({ modes, vampire: !!values.vampire });
+    const sorted = (mode) => rows.filter((r) => r.mode === mode).sort((a, b) => b.totalDps - a.totalDps);
     if (!values.json) {
       for (const mode of modes) {
-        const list = rows.filter((r) => r.mode === mode);
+        const list = sorted(mode);
         console.log(`\nReal loadouts  |  ${mode === 'uncapped' ? 'uncapped theory' : 'level-45 gate'}  |  soul gem +${SOUL_GEM_POINTS}`);
-        console.log(table(list.map((r) => [r.family, r.weapon, `${r.treeStars}/98 (${r.freeStars} free)`, fmt(r.treeDps), fmt(r.enchDps), r.imprint ?? '-', fmt(r.totalDps)]), ['Family', 'Weapon', 'Tree', 'Tree DPS', '+ Enchants', 'Imprint', '+ Imprint'], ['left', 'left', 'right', 'right', 'right', 'left', 'right']));
+        console.log(table(list.map((r) => [`${r.category} · ${r.family}`, r.weapon, r.imprint ?? '-', fmt(r.totalDps)]), ['Family', 'Weapon', 'Imprint', 'Total DPS'], ['left', 'left', 'left', 'right']));
       }
     }
+    const shared = rows.find((r) => r.mode === 'uncapped' && r.category === '1H')?.enchPlan ?? rows[0]?.enchPlan;
+    const imprintRows = rankAll({ sort: 'uncapped' }).flatMap((f) => f.rows.slice(0, 3).map((r) => ({ family: f.name, power: r.power.name, weapon: r.weapon, boss: r.baseDps, uncapped: r.uncappedDps })));
+    const builds = buildIds().map((id) => {
+      const build = buildById(id);
+      const p = planBuild(build);
+      const s = planSummary(p);
+      return { build: build.name, start: p.startName, stars: p.stars, free: p.freeStars, group: p.build.skill ? `${s.rows.find((r) => r.key === 'blow')?.value ?? 0}%` : p.build.school ? `${s.rows.find((r) => r.key === 'castCost')?.value ?? 0}%` : `${p.totals.hp ?? 0} HP` };
+    });
     const out = path.resolve(values.out === 'dfo-dps-report.html' ? 'loadouts.html' : values.out);
-    const sections = modes.map((mode) => {
-      const list = rows.filter((r) => r.mode === mode);
+    const sections = [];
+    for (const mode of modes) {
+      const list = sorted(mode);
       const chart = barChart({
-        title: `${mode === 'uncapped' ? 'Uncapped' : 'Gate'} real DPS`,
-        labels: list.map((r) => r.family),
-        series: [
-          { name: 'Tree', values: list.map((r) => r.treeDps) },
-          { name: '+ Enchants', values: list.map((r) => r.enchDps) },
-          { name: '+ Imprint', values: list.map((r) => r.totalDps) },
-        ],
+        title: `${mode === 'uncapped' ? 'Uncapped' : 'Gate'} loadouts by DPS`,
+        labels: list.map((r) => `${r.category} ${r.family}`),
+        series: [{ name: 'Total DPS', values: list.map((r) => r.totalDps) }],
       });
-      const body = list.map((r) => `<tr><td class="k">${r.family}</td><td>${r.weapon}</td><td>${r.treeStars}/98 (${r.freeStars} free)</td><td>${fmt(r.treeBlow)}%</td><td>${fmt(r.treeDps)}</td><td>${fmt(r.enchDps)}</td><td>${r.imprint ?? '-'}</td><td>${fmt(r.totalDps)}</td></tr>`).join('');
-      return {
-        title: `${mode === 'uncapped' ? 'Uncapped theory' : 'Gate'} loadouts`,
-        note: mode === 'uncapped'
-          ? 'No per-hit cap. Real tree stars, weapon skill and Critical Strike enchants on every piece, then the best eligible imprint.'
-          : 'Level-45 gate (600 per-hit cap). Cap-aware enchants, real tree, then the best eligible imprint.',
+      const body = list.map((r) => `<tr><td class="k">${r.category} · ${r.family}</td><td>${r.weapon}</td><td>${r.imprint ?? '-'}</td><td>${fmt(r.totalDps)}</td></tr>`).join('');
+      sections.push({
+        title: `${mode === 'uncapped' ? 'Uncapped theory' : 'Gate'} - best 1H / 2H / DW`,
+        note: 'One best loadout per hand option. Total is tree + enchants + the best eligible imprint.',
         chart,
-        table: `<div class="table"><table><thead><tr><th>Family</th><th>Weapon</th><th>Tree</th><th>Blow</th><th>Tree DPS</th><th>+ Enchants</th><th>Imprint</th><th>+ Imprint</th></tr></thead><tbody>${body}</tbody></table></div>`,
-      };
+        table: `<div class="table"><table><thead><tr><th>Family</th><th>Weapon</th><th>Imprint</th><th>Total DPS</th></tr></thead><tbody>${body}</tbody></table></div>`,
+      });
+    }
+    if (shared) {
+      const body = shared.rows.map((r) => `<tr><td class="k">${r.slot}</td><td>${r.item}</td><td style="white-space:normal;min-width:360px">${r.effects.map((e) => effectLine(e)).join('<br>') || '-'}</td></tr>`).join('');
+      sections.push({ title: 'Shared enchant plan', note: 'The same armour/jewellery enchant template is used by every loadout; only the weapon-skill name changes.', chart: '', table: `<div class="table"><table><thead><tr><th>Slot</th><th>Item</th><th>Enchantments</th></tr></thead><tbody>${body}</tbody></table></div>` });
+    }
+    sections.push({
+      title: 'Imprint ratings',
+      note: 'Top three eligible imprints per family. Boss is the 600 cap; Uncapped has no cap.',
+      chart: '',
+      table: `<div class="table"><table><thead><tr><th>Family</th><th>Imprint</th><th>Weapon</th><th>Boss DPS</th><th>Uncapped DPS</th></tr></thead><tbody>${imprintRows.map((r) => `<tr><td class="k">${r.family}</td><td>${r.power}</td><td>${r.weapon}</td><td>${fmt(r.boss)}</td><td>${fmt(r.uncapped)}</td></tr>`).join('')}</tbody></table></div>`,
+    });
+    sections.push({
+      title: 'Firmament plans used',
+      note: 'The real tree plans behind the loadouts. Free stars are not needed for damage.',
+      chart: '',
+      table: `<div class="table"><table><thead><tr><th>Build</th><th>Start</th><th>Stars</th><th>Free</th><th>Group</th></tr></thead><tbody>${builds.map((r) => `<tr><td class="k">${r.build}</td><td>${r.start}</td><td>${r.stars}/98</td><td>${r.free}</td><td>${r.group}</td></tr>`).join('')}</tbody></table></div>`,
     });
     const html = multiGraphPage({
       title: 'DFO real loadouts',
-      subtitle: 'Tree only, then tree + enchants, then tree + enchants + the best eligible imprint. Soul gem +5,000 on every piece.',
+      subtitle: 'Tree + enchants + best eligible imprint. One best loadout each for 1H, 2H and DW, in both uncapped and capped modes.',
       sections,
     });
     fs.writeFileSync(out, html, 'utf8');
@@ -1130,7 +1150,6 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     const pctCell = (v) => (Number.isFinite(v) ? pc(v) : '-');
     const maxTable = `<table><thead><tr><th>Weapon</th><th>Type</th><th>Hands</th><th>Path</th><th>Firmament DPS</th><th>Boss DPS</th><th>Boss TTK</th></tr></thead><tbody>${displayRows.map((r) => `<tr><td class="k">${r.name}</td><td>${SKILL_LABELS[r.skill] ?? r.skill}</td><td>${r.dual ? 'Dual' : r.skill === 'HandToHand' ? 'Fists' : r.twoHanded ? '2H' : '1H'}</td><td>${r.path}</td><td>${cell(r.maxDps)}</td><td>${cell(r.gateDps)}</td><td>${r.gateTtk ? `${cell(r.gateTtk)} s` : '-'}</td></tr>`).join('')}</tbody></table>`;
     const top = displayRows.slice().sort((a, b) => b.maxDps - a.maxDps)[0];
-    const topGear = top;
     const gateTop = rows.slice().sort((a, b) => b.gateDps - a.gateDps)[0];
     const scope = values.categories ? 'best of every type' : 'absolute uncapped ceiling';
 

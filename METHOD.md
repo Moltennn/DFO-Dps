@@ -139,8 +139,10 @@ the weapon page.
 fold a key star's flat points and a small star's percent into **one**
 channel capped at +15 (`firmamentPowers.js`); the loader does the same, then
 sets the blow group, then applies the enchant plan's +15 skill lines and
-strike rows, then the best eligible imprint. It reports tree DPS, tree +
-enchants, and tree + enchants + imprint for the uncapped and gate targets.
+strike rows, then the best eligible imprint. The page keeps one best
+**1H, 2H and DW** loadout per mode, charts them sorted by final DPS, and
+shows Family, weapon, imprint and total DPS. It also carries the shared
+enchant template, imprint ratings and Firmament plans.
 
 ## Ranged, spells and enchantments
 
