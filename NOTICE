@@ -1,0 +1,29 @@
+DFO DPS Lab
+===========
+
+This project is an independent, unofficial tool. It is not affiliated with or
+endorsed by Bethesda Softworks or ZeniMax Media. The Elder Scrolls and
+Daggerfall are trademarks of ZeniMax Media Inc.
+
+The combat model is derived from the open-source DFO Online client:
+
+  https://github.com/Lattymoy/daggerfall-js-source
+  Snapshot: a3eb1605ea1dc391b691fe314377458a7e63e483 (2026-11-02)
+  License: MIT (see the upstream LICENSE and README)
+
+DFO Online is itself derived from Daggerfall Unity. Its combat formulas cite
+and port FormulaHelper.cs, Dice100.cs, DaggerfallUnityItem.cs and DFCareer.cs
+from Daggerfall Unity:
+
+  https://github.com/Interkarma/daggerfall-unity
+  License: MIT, Daggerfall Workshop
+
+The following upstream notices are preserved:
+
+  Daggerfall Unity is an open-source re-implementation of The Elder Scrolls II:
+  Daggerfall. It is not affiliated with Bethesda Softworks or ZeniMax Media.
+  The Elder Scrolls and Daggerfall are trademarks of ZeniMax Media Inc.
+
+The MIT license text is in LICENSE. The upstream source's own comments and
+attributions are the authority for the formulas; this project only re-expresses
+the parts needed for offline DPS analysis.

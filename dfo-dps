@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Convenience wrapper; `node bin/dfo-dps.js` works the same.
+exec node "$(dirname "$0")/bin/dfo-dps.js" "$@"
