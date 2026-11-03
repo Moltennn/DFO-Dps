@@ -198,7 +198,9 @@ piece in this plan; without it, the template points alone are used.
 
 `firmament` plans the real 518-star sky for a build, using the game's own
 tree, adjacency and channel caps. It walks connected paths, never through a
-keystone, and spends the 98-Star purse. It does not assume Craft points.
+keystone, and spends at most the 98-Star purse. It does not assume Craft
+points, and it stops as soon as no remaining star adds to the build; the
+free points are the player's.
 
 ```bash
 ./dfo-dps firmament                              # all eight builds, writes firmament.html
@@ -214,8 +216,11 @@ keyed by a source fingerprint; the first run computes, later runs reuse.
 cares about, and the notables/keystones on the path. It is a deterministic
 channel-coverage plan, not a solver proof: the weapons page `+ Firmament`
 column is the flat channel ceiling (+15 STR/AGI/SPEED/LUCK, +15 weapon /
-Critical Strike / Backstabbing, +30% blow), and a real 98-star path may leave
-some of those short.
+Critical Strike, +30% blow), and a real path may leave some of those short.
+The planner excludes `unawareDmg`, `rageDmg` and Backstabbing for boss
+builds. Flat attributes cap at +15; percent attributes cap at +15%; but
+`skill.CriticalStrike` (+15) and `skillPct.CriticalStrike` (20%) are separate
+channels, so Critical Strike can pass the flat +15.
 
 ## Bows, firearms, spells and enchantments
 

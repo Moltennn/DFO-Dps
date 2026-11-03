@@ -956,7 +956,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       return [
         p.build.name,
         p.startName,
-        `${p.stars}/${p.starBudget}`,
+        `${p.stars}/${p.starBudget}${p.freeStars ? ` (+${p.freeStars} free)` : ''}`,
         p.build.skill ? `${s.rows.find((r) => r.key === 'blow')?.value ?? 0}%` : p.build.school ? `${s.rows.find((r) => r.key === 'castCost')?.value ?? 0}%` : `${p.totals.hp ?? 0} HP`,
         s.counts.notable,
         s.counts.keystone,
@@ -970,7 +970,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     });
     fs.writeFileSync(out, html, 'utf8');
     console.log(`firmament page written: ${out}`);
-    if (values.json) console.log(JSON.stringify(plans.map((p) => ({ build: p.build.id, name: p.build.name, start: p.tree.start, startName: p.startName, stars: p.stars, budget: p.starBudget, keys: p.tree.keys, totals: p.totals })), null, 2));
+    if (values.json) console.log(JSON.stringify(plans.map((p) => ({ build: p.build.id, name: p.build.name, start: p.tree.start, startName: p.startName, stars: p.stars, budget: p.starBudget, freeStars: p.freeStars, keys: p.tree.keys, totals: p.totals })), null, 2));
     return;
   }
 

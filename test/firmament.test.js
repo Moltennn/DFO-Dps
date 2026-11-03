@@ -4,9 +4,10 @@ import { BUILDS, buildById, planBuild, planFromTree, planKey, planSummary } from
 import { START_KEYS } from '../vendor/firmament/firmamentTree.js';
 import { blowPct, castCostPct, treeFault } from '../vendor/firmament/firmamentLaw.js';
 
-test('a firmament plan is a whole 98-star path from one sign', () => {
+test('a firmament plan is a valid path, and stops before spending free points', () => {
   const plan = planBuild(buildById('longblade'));
-  assert.equal(plan.stars, 98);
+  assert.ok(plan.stars <= 98);
+  assert.equal(plan.freeStars, 98 - plan.stars);
   assert.ok(START_KEYS.includes(plan.tree.start));
   assert.equal(new Set(plan.tree.keys).size, plan.tree.keys.length);
   assert.equal(treeFault(plan.tree, 98, 0), null);
@@ -22,7 +23,8 @@ test('the long-blade plan fills the weapon blow group cap', () => {
 
 test('the destruction plan fills the spell-cost group cap', () => {
   const plan = planBuild(buildById('destruction'));
-  assert.equal(plan.stars, 98);
+  assert.ok(plan.stars < 98);
+  assert.ok(plan.freeStars > 0);
   assert.equal(castCostPct(plan.totals, ['Destruction']), 25);
   assert.ok((plan.totals.spellPower ?? 0) > 0);
 });
@@ -49,5 +51,13 @@ test('a persisted plan rehydrates to the same tree and totals', () => {
   assert.deepEqual(r.tree, p.tree);
   assert.equal(r.stars, p.stars);
   assert.equal(r.totals['skill.LongBlade'], p.totals['skill.LongBlade']);
+  assert.equal(r.freeStars, p.freeStars);
   assert.notEqual(planKey('longblade', 24), planKey('shortblade', 24));
+});
+
+
+test('the damage plan does not buy unaware, rage or backstabbing channels', () => {
+  const plan = planBuild(buildById('longblade'));
+  assert.equal(plan.totals['skill.Backstabbing'], undefined);
+  assert.ok(!plan.build.channels.some((c) => /unaware|rage|Backstabbing/.test(c.key)));
 });

@@ -40,8 +40,6 @@ const weaponBuild = (id, name, skill, extra = [], attrs = WEAPON_ATTRS) => ({
     { key: `skillPct.${skill}`, weight: 0.60 },
     { key: 'skill.CriticalStrike', weight: 0.60 },
     { key: 'skillPct.CriticalStrike', weight: 0.40 },
-    { key: 'skill.Backstabbing', weight: 0.20 },
-    { key: 'skillPct.Backstabbing', weight: 0.12 },
     ...attrs,
     ...extra,
   ],
@@ -226,24 +224,6 @@ function greedy(start, build, budget) {
         best = { path, gain, ratio, score: nextScore, totals: nextTotals, gains: nextGains, prices: nextPrices };
       }
     }
-    // Nothing pays: fill the rest with the shortest reachable path that does not cost score.
-    if (!best) {
-      for (const key of candidates) {
-        if (taken.has(key)) continue;
-        const path = pathFor(paths, key);
-        if (!path.length || path.length > room) continue;
-        const nextGains = { ...gains };
-        const nextPrices = { ...prices };
-        for (const k of path) addParts(nextGains, nextPrices, FIRM_NODES.get(k));
-        const nextTotals = statsFromParts(nextGains, nextPrices);
-        const nextScore = scoreTree(nextTotals, build);
-        const gain = nextScore - score;
-        if (gain < -tol) continue;
-        if (!best || path.length < best.path.length || (path.length === best.path.length && gain > best.gain)) {
-          best = { path, gain, ratio: 0, score: nextScore, totals: nextTotals, gains: nextGains, prices: nextPrices };
-        }
-      }
-    }
     if (!best) break;
     for (const k of best.path) {
       chosen.push(k);
@@ -276,6 +256,7 @@ export function planFromTree(build, { start, keys, stars, starBudget = FIRMAMENT
   return {
     build, tree, totals: treeStats(tree), score: 0,
     stars: Number.isFinite(stars) ? Number(stars) : clean.length,
+    freeStars: Math.max(0, (Number.isFinite(starBudget) ? Number(starBudget) : FIRMAMENT_STARS) - (Number.isFinite(stars) ? Number(stars) : clean.length)),
     start: startKey,
     startName: signName(FIRM_NODES.get(startKey)?.sector ?? 'sp'),
     starBudget: Number.isFinite(starBudget) ? Number(starBudget) : FIRMAMENT_STARS,
@@ -305,6 +286,7 @@ export function planBuild(build, { stars = FIRMAMENT_STARS, start = null } = {})
     start: startKey,
     startName: signName(FIRM_NODES.get(startKey)?.sector ?? 'sp'),
     starBudget: budget,
+    freeStars: Math.max(0, budget - (best?.stars ?? 0)),
   };
   PLAN_CACHE.set(key, plan);
   return plan;
@@ -336,6 +318,7 @@ export function planSummary(plan) {
     picked,
     notables: picked.filter((n) => n.kind === 'notable'),
     keystones: picked.filter((n) => n.kind === 'keystone'),
+    freeStars: Math.max(0, (plan.starBudget ?? FIRMAMENT_STARS) - plan.stars),
     counts: {
       small: nodes.filter((n) => n.kind === 'small').length,
       road: nodes.filter((n) => n.kind === 'road').length,
@@ -388,8 +371,9 @@ export function firmamentSection(plan) {
   const table = `<div class="table"><h3>What the tree gives</h3><table><thead><tr><th>Channel</th><th>Value</th></tr></thead><tbody>${channelRows}</tbody></table></div>
     <div class="table"><h3>Notables and keystones</h3><table><thead><tr><th>Star</th><th>Kind</th><th>Sign</th><th>Stats</th></tr></thead><tbody>${notableRows || '<tr><td colspan="4">none</td></tr>'}</tbody></table></div>`;
   return {
-    title: `${plan.build.name} - ${plan.startName}, ${plan.stars}/${plan.starBudget} stars`,
-    note: `Channel plan: ${sum.counts.small} small, ${sum.counts.road} road, ${sum.counts.notable} notable, ${sum.counts.keystone} keystone. The weapons page +Firmament column is the flat channel ceiling (+15 STR/AGI/SPEED/LUCK, +15 weapon/Critical Strike/Backstabbing, +30% blow); this is a real 98-star path, so it may leave some of those short. It never walks through a keystone.`,
+    title: `${plan.build.name} - ${plan.startName}, ${plan.stars}/${plan.starBudget} stars${sum.freeStars ? ` (${sum.freeStars} free)` : ''}`,
+    note: `Channel plan: ${sum.counts.small} small, ${sum.counts.road} road, ${sum.counts.notable} notable, ${sum.counts.keystone} keystone. The plan stops when no remaining star adds to this build, so the free points
+are yours. The weapons page +Firmament column is the flat channel ceiling (+15 STR/AGI/SPEED/LUCK, +15 weapon/Critical Strike/Backstabbing, +30% blow); this is a real 98-star path, so it may leave some of those short. It never walks through a keystone.`,
     chart: `<div style="font-size:12px;color:#a8a092;margin:0 0 8px"><span style="color:#e0b76a">&#9679; start</span> &nbsp; <span style="color:#7fae6a">&#9679; small</span> &nbsp; <span style="color:#6fa8dc">&#9679; road</span> &nbsp; <span style="color:#c08a3e">&#9679; notable</span> &nbsp; <span style="color:#c25b4e">&#9679; keystone</span></div>${firmamentSvg(plan)}`,
     table,
   };
