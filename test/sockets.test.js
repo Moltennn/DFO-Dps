@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { theoryCharacter, theoryFists } from '../src/theory.js';
 import { analyze, referenceFoe, weaponOf } from '../src/model.js';
+import { WEAPONS } from '../src/data.js';
 import { perfectSockets, socketAffixes, socketCount } from '../src/sockets.js';
 
 test('socket counts follow the weapon size', () => {
@@ -39,4 +40,17 @@ test('dual wield adds the off hand at x0.8 and -5 hit', () => {
   assert.ok(dual.dual);
   assert.ok(dual.dps > single.dps);
   assert.ok(dual.dps < single.dps * 2);
+});
+
+
+test('Hand Wraps are one-handed, and two-handed weapons never enter a dual pair', () => {
+  const wraps = theoryFists({ wraps: true });
+  assert.equal(weaponOf(wraps.wraps).twoHanded, false);
+  assert.equal(socketCount(563), 2);
+  assert.equal(WEAPONS[127].twoHanded, false); // Battle Axe is Either
+  assert.equal(WEAPONS[128].twoHanded, true);  // War Axe is Both
+  const ch = theoryCharacter({ blade: 123 }); // Dai-katana
+  ch.offWeapon = { ...ch.weapon, equipSlot: 21 };
+  const r = analyze(ch, { target: referenceFoe(45, 'tough'), core: 'overhaul', rri: true, dual: true });
+  assert.ok(!r.dual, 'a two-handed main hand is not dual-wielded');
 });
