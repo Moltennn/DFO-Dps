@@ -102,11 +102,13 @@ Increased Weight Allowance takes the maximum. The page also rates the
 weapon procs, +15 skills and utility effects it considered, with the chosen
 count, so an empty piece is visible as a choice. `--all` builds the matrix
 per weapon family; `--uncapped` prices the same plans without the gate cap.
-At the gate only families with headroom buy +skill; uncapped, all melee
-families buy weapon skill and Critical Strike on every piece, and the
-layout differs only in the weapon-skill name. The weapon package is solved
-as an exact knapsack (budget, 10 settings, proc limit); the armour/jewellery
-skill lines are taken while their next marginal DPS is positive.
+By default the plan is future-proof: weapon skill and Critical Strike go on
+every piece, even where the current gate cap eats their DPS, so a cap change
+does not invalidate the setup. `--cap-aware` restores the current-cap
+behaviour, where only families with headroom buy +skill. The weapon package
+is solved as an exact knapsack (budget, 10 settings, proc limit). The
+armour/jewellery skill lines are forced in the default mode and taken by
+their next marginal DPS in cap-aware mode.
 
 ## Firmament planner
 

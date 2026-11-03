@@ -46,7 +46,10 @@ test('the one-piece effects are placed on one piece, and skills stack across pie
   const skillPieces = planEnchants({ weapon: 117, soulGem: true }).rows.filter((r) => r.effects.some((e) => e.type === 'EnhancesSkill'));
   assert.ok(skillPieces.length > 1);
   assert.ok(!plan.rows.some((r) => r.effects.some((e) => e.type === 'EnhancesSkill' && e.paramName === 'Backstabbing')));
-  assert.equal(plan.rows.filter((r) => r.effects.some((e) => e.type === 'EnhancesSkill')).length, 0);
+  const forced = planEnchants({ weapon: 123, soulGem: true });
+  assert.ok(forced.rows.filter((r) => r.effects.some((e) => e.type === 'EnhancesSkill')).length >= 18);
+  const aware = planEnchants({ weapon: 123, soulGem: true, forceSkills: false });
+  assert.equal(aware.rows.filter((r) => r.effects.some((e) => e.type === 'EnhancesSkill')).length, 0);
 });
 
 test('strike procs respect the weapon condition over the gate fight', () => {

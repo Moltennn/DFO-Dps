@@ -11,7 +11,7 @@ import { SKILLS, WEAPONS } from './data.js';
 import { THEORY_LEVEL } from './theory.js';
 import { cappedDpsWith, maxCharacter, maxRun } from './maxprofile.js';
 import { IMPRINT_FAMILIES, imprintsFor, powerDps } from './imprints.js';
-import { gateTarget } from './model.js';
+import { gateTarget, referenceFoe } from './model.js';
 import { enchantDps, ENCHANTMENT_TYPES } from './enchants.js';
 import {
   ITEM_ENCHANTMENT_MAX, defaultParam, enchantmentCost, enchantmentName, enchantmentParamName, itemEnchantmentPoints, itemTemplate,
@@ -182,7 +182,7 @@ function applyPlanDps(ch, plan, target) {
   return { dps: r.totalDps, cappedDps: r.cappedDps, procDps: r.enchantDps, weaponDps: r.cappedDps };
 }
 
-export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, skill = null, group = 'humanoid', repairs = 1, regen = 0, target = gateTarget(THEORY_LEVEL) } = {}) {
+export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, skill = null, group = 'humanoid', repairs = 1, regen = 0, forceSkills = true, target = gateTarget(THEORY_LEVEL) } = {}) {
   const pieces = gearPieces({ weapon, shield });
   for (const p of pieces) {
     p.soul = soulGem ? SOUL_GEM_POINTS : 0;
@@ -194,6 +194,8 @@ export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, s
   const ch = maxCharacter(w.template, {});
   ch._template = w.template;
   const base = maxRun(ch, { target });
+  const rawTarget = referenceFoe(THEORY_LEVEL, 'tough');
+  const rawBase = maxRun(ch, { target: rawTarget });
   const skillId = skill == null ? skillIdOf(w.template) : Number(skill);
   const extra = {};
   const swings = Math.max(1, Math.round((base.ttk || 20) * base.cadence.aps));
@@ -216,9 +218,8 @@ export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, s
     if (host) addEffect(host, u.type, u.param, cost, u.benefit);
   }
 
-  // Skills: every piece that can hold +15 adds the best skill it can fit, with
-  // the cap already paid by earlier pieces taken into account.
-  for (const p of pieces.slice(1)) {
+  // Cap-aware mode: every piece that can hold +15 adds the best skill it can fit.
+  for (const p of forceSkills ? [] : pieces.slice(1)) {
     for (;;) {
       let best = null;
       for (const id of skillIdsFor(w.template)) {
@@ -232,6 +233,20 @@ export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, s
       }
       if (!best || !addEffect(p, 'EnhancesSkill', best.id, best.cost, `${Math.round(best.value)} DPS`)) break;
       extra[best.id] = (extra[best.id] ?? 0) + 15;
+    }
+  }
+
+  // Future-cap choice: put weapon skill and Critical Strike on every piece that can hold them.
+  const skillIds = skillIdsFor(w.template).filter((id) => skill == null || id === skillId || id === SKILLS.CriticalStrike);
+  if (forceSkills) {
+    for (const p of pieces) {
+      for (const id of skillIds) {
+        if (p.effects.some((e) => e.type === 'EnhancesSkill' && e.param === id)) continue;
+        const cost = enchantmentCost('EnhancesSkill', id);
+        if (cost > p.budget - p.spent) continue;
+        const future = skillGain(ch, rawBase, id, extra, rawTarget);
+        if (addEffect(p, 'EnhancesSkill', id, cost, `${Math.round(future)} DPS no-cap`)) extra[id] = (extra[id] ?? 0) + 15;
+      }
     }
   }
 
@@ -269,8 +284,9 @@ export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, s
   }
   const skillRatings = skillIdsFor(w.template).map((id) => {
     const value = skillGain(ch, base, id, {}, target);
+    const future = skillGain(ch, rawBase, id, {}, rawTarget);
     const cost = enchantmentCost('EnhancesSkill', id);
-    return { id, label: enchantmentParamName('EnhancesSkill', id), cost, value, benefit: `${Math.round(value)} DPS`, chosen: chosenCount('EnhancesSkill', id), rate: cost > 0 ? value / cost : 0 };
+    return { id, label: enchantmentParamName('EnhancesSkill', id), cost, value, futureValue: future, benefit: `${Math.round(future)} DPS no-cap`, chosen: chosenCount('EnhancesSkill', id), rate: cost > 0 ? future / cost : 0 };
   });
   const utilityRatings = [
     ...ONE_PIECE.map((u) => ({ type: u.type, label: enchantmentName(u.type), cost: enchantmentCost(u.type, u.param), benefit: u.benefit, chosen: chosenCount(u.type, u.param) })),
@@ -281,23 +297,23 @@ export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, s
     { type: 'ImprovesTalents', label: 'Improves Talents: Athleticism', cost: enchantmentCost('ImprovesTalents', 1), benefit: 'Athleticism', chosen: 0 },
     { type: 'FeatherWeight', label: 'Feather Weight', cost: enchantmentCost('FeatherWeight'), benefit: 'weight to 0.25 kg', chosen: 0 },
   ];
-  const raw = maxRun(ch);
   const imprintPool = imprintsFor(w.template)
     .map((rec) => ({
       name: rec.name, power: rec.power,
       baseDps: powerDps(rec.power, base, false, { capped: true }),
       triggerDps: powerDps(rec.power, base, true, { capped: true }),
-      uncappedDps: powerDps(rec.power, raw, false),
+      uncappedDps: powerDps(rec.power, rawBase, false),
     }));
   const imprintBase = imprintPool.slice().sort((a, b) => b.baseDps - a.baseDps)[0] ?? null;
   const imprintTrigger = imprintPool.slice().sort((a, b) => b.triggerDps - a.triggerDps)[0] ?? null;
   const imprintUncapped = imprintPool.slice().sort((a, b) => b.uncappedDps - a.uncappedDps)[0] ?? null;
   const imprint = { base: imprintBase, trigger: imprintTrigger, uncapped: imprintUncapped };
   const applied = applyPlanDps(ch, { rows }, target);
+  const future = applyPlanDps(ch, { rows }, rawTarget);
   return {
     weapon: w.template, weaponName: w.item, shield: pieces.find((p) => /Shield|Buckler/.test(p.slot))?.template ?? null,
     soulGem: !!soulGem, soulPoints: soulGem ? SOUL_GEM_POINTS : 0,
-    group, baseDps: base.cappedDps, uncappedDps: raw.dps, dps: applied.dps, procDps: applied.procDps, skillId, rows, imprint, swings, maxProcs,
+    group, baseDps: base.cappedDps, uncappedDps: rawBase.dps, dps: applied.dps, uncappedPlanDps: future.dps, procDps: applied.procDps, skillId, rows, imprint, swings, maxProcs, forceSkills,
     repairs: Math.max(0, Math.trunc(Number(repairs) || 0)), regen: Math.max(0, Math.trunc(Number(regen) || 0)),
     ratings: { weapon: weaponRatings, skills: skillRatings, utility: utilityRatings },
     onePiece: ONE_PIECE, stacks: STACKS, weaponOnly: WEAPON_ONLY,
@@ -316,11 +332,11 @@ export function bestWeaponForFamily(family, target) {
 }
 
 /** One plan per weapon family, on that family's best weapon. */
-export function planMatrix({ soulGem = false, repairs = 1, regen = 0, group = 'daedra', target = gateTarget(THEORY_LEVEL) } = {}) {
+export function planMatrix({ soulGem = false, repairs = 1, regen = 0, group = 'daedra', forceSkills = true, target = gateTarget(THEORY_LEVEL) } = {}) {
   return IMPRINT_FAMILIES.map((family) => {
     const best = bestWeaponForFamily(family, target);
     if (!best) return { family: family.name, key: family.key, weapon: null, plan: null };
-    const plan = planEnchants({ weapon: best.template, soulGem, repairs, regen, group, target });
+    const plan = planEnchants({ weapon: best.template, soulGem, repairs, regen, group, forceSkills, target });
     const skillPieces = plan.rows.filter((r) => r.effects.some((e) => e.type === 'EnhancesSkill' && e.param === plan.skillId)).length;
     const csPieces = plan.rows.filter((r) => r.effects.some((e) => e.type === 'EnhancesSkill' && e.param === SKILLS.CriticalStrike)).length;
     return { family: family.name, key: family.key, weapon: best.name, template: best.template, skillPieces, csPieces, plan };
