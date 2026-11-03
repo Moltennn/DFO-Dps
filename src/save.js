@@ -23,6 +23,20 @@ export function userDataDir(home = os.homedir()) {
   return path.join(base, 'Daggerfall JavaScript');
 }
 
+export function configPath(home = os.homedir()) {
+  return path.join(userDataDir(home), 'config.json');
+}
+
+/** The user's Daggerfall ARENA2 directory, from the launcher's config. */
+export function arena2Dir(home = os.homedir()) {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(configPath(home), 'utf8'));
+    return cfg.arena2Path || null;
+  } catch {
+    return null;
+  }
+}
+
 export function savesDir(home = os.homedir()) {
   return path.join(userDataDir(home), 'Saves');
 }
@@ -102,7 +116,8 @@ export const WEAPON_SKILL = Object.freeze({
   117: SKILLS.ShortBlade, 118: SKILLS.LongBlade, 119: SKILLS.LongBlade, 120: SKILLS.LongBlade,
   121: SKILLS.LongBlade, 122: SKILLS.LongBlade, 123: SKILLS.LongBlade, 124: SKILLS.BluntWeapon,
   125: SKILLS.BluntWeapon, 126: SKILLS.BluntWeapon, 127: SKILLS.Axe, 128: SKILLS.Axe,
-  129: SKILLS.Archery, 130: SKILLS.Archery,
+  129: SKILLS.Archery, 130: SKILLS.Archery, 131: SKILLS.Archery,
+  560: SKILLS.Archery, 561: SKILLS.Archery, 562: SKILLS.Archery,
 });
 
 /** Proficiency flag per weapon skill (systems/equip.js). */
@@ -166,6 +181,24 @@ export function liveStat(ch, name) {
 function addMap(obj, key, value) {
   if (!key || !Number.isFinite(value)) return;
   obj[key] = (obj[key] ?? 0) + value;
+}
+
+/** EnhancesSkill is +15 per row (EnhancesSkill.cs:28). */
+export const ENHANCE_SKILL_MOD = 15;
+
+/** The held enchantment fold for a raw save that has no live `_enchantMods`. */
+export function rebuildEnchantMods(items) {
+  const skillMods = {};
+  let chanceToHitMod = 0;
+  for (const item of items ?? []) {
+    for (const e of item?.enchantments ?? []) {
+      if (e?.type === 10) {
+        const id = Number(e.param);
+        if (id >= 0 && id < 35) skillMods[id] = (skillMods[id] ?? 0) + ENHANCE_SKILL_MOD;
+      }
+    }
+  }
+  return { skillMods, chanceToHitMod };
 }
 
 /** Rebuild the modifier channels from worn gear (entityMods + lootRarity). */
@@ -232,6 +265,10 @@ export function characterFromSave(save, { online = true, martialPath, ...opts } 
     reflexes: NUM(save.reflexes, 2),
     health: NUM(save.health, 1),
     maxHealth: NUM(save.maxHealth, Math.max(1, NUM(save.health, 1))),
+    magicka: NUM(save.magicka ?? save.spellPoints, 0),
+    maxMagicka: NUM(save.maxMagicka ?? save.maxSpellPoints, 0),
+    spells: ARRAY(save.spells).map((s) => (typeof s === 'number' ? s : { ...s })),
+    readiedSpellIndex: save.readiedSpellIndex ?? null,
     stats,
     skills,
     activeEffects: ARRAY(save.activeEffects).map((a) => ({ ...a })),
@@ -243,7 +280,7 @@ export function characterFromSave(save, { online = true, martialPath, ...opts } 
     items,
     worn,
     _mods: liveWorn ? { stats: mods.stats, skills: mods.skills } : (save._mods ? { ...save._mods, stats: { ...(save._mods.stats ?? {}) }, skills: { ...(save._mods.skills ?? {}) } } : { stats: mods.stats, skills: mods.skills }),
-    _enchantMods: save._enchantMods ? { ...save._enchantMods, skillMods: { ...(save._enchantMods.skillMods ?? {}) } } : { skillMods: {}, chanceToHitMod: 0 },
+    _enchantMods: save._enchantMods ? { ...save._enchantMods, skillMods: { ...(save._enchantMods.skillMods ?? {}) } } : rebuildEnchantMods(worn),
     weaponDamagePct: mods.weaponDamagePct,
     slayer: mods.slayer,
     legendaries,

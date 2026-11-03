@@ -20,7 +20,9 @@ import {
   SWING_TEMPO_AT_0, SWING_TEMPO_AT_100, SWING_TWO_HANDED,
   WARD_SHARE, WEAPON_MATERIAL_MODIFIER, WEAPON_TYPES, WEAPONS, WRATH_AFTER_S,
   GATE_SHIELDS, GATE_SHIELD_S, gateHealth, gateHitCap, RRI_WEAPON_DAMAGE, RRI_SPEED_REDUCTION_FACTOR,
+  BOW_DRAW_LOOSE_S, GUN_FPS, GUN_RELOAD_S, PISTOLET_FPS, PISTOLET_RELOAD_S, THUNDERLOCK_FRAMES, PISTOLET_FRAMES, thunderlockReloadSeconds,
 } from './data.js';
+import { enchantDps, procsBeforeBreak } from './enchants.js';
 import {
   effectiveSkill, liveStat, masterCappedSkill, PROFICIENCY_FLAG, skillModOf,
   skillValue, WEAPON_SKILL,
@@ -61,10 +63,17 @@ export function weaponOf(item, { rri = false } = {}) {
     weight: t.weight,
     shortBlade: t.shortBlade,
     twoHanded: t.twoHanded,
+    ranged: !!(t.ranged || item.ranged),
+    gun: !!(t.gun || item.gun),
+    ammo: !!(t.ammo || item.ammo),
+    bowPull: t.bowPull ?? 1,
+    bowWithin: t.bowWithin ?? 1,
     material: num(item.material, 0),
     materialName: MATERIALS[num(item.material, 0)] ?? 'Iron',
     damagePct: (item.affixes ?? []).filter((a) => a?.id === 'damage').reduce((s, a) => s + num(a.value), 0),
     slayer: (item.affixes ?? []).filter((a) => a?.id === 'slayer').reduce((s, a) => s + num(a.value), 0),
+    slayerByGroup: Object.fromEntries((item.affixes ?? []).filter((a) => a?.id === 'slayer').map((a) => [String(a.param), num(a.value)])),
+    elemental: (item.affixes ?? []).filter((a) => a?.id === 'elemental').reduce((s, a) => s + num(a.value), 0),
     conditionPct: item.maxCondition > 0 ? clamp(num(item.currentCondition, item.maxCondition) / item.maxCondition, 0, 1) : 1,
     bonusDamage: num(item.__bonusDamage, 0),
   };
@@ -189,6 +198,12 @@ function overhaulRacial(ch, w, opts = {}) {
         out.toHit = trunc(S('agility') / 33) + trunc(S('speed') / 33) + trunc(S('luck') / 33);
       }
       break;
+    case RACES.WoodElf:
+      if (ws === SKILLS.Archery) {
+        out.damage = trunc(S('strength') / 25) + trunc(S('agility') / 25);
+        out.toHit = trunc(S('agility') / 10) + trunc(S('speed') / 25) + trunc(S('luck') / 20);
+      }
+      break;
     case RACES.Khajiit:
       if (ws === SKILLS.ShortBlade) {
         out.damage = trunc(S('agility') / 33) + trunc(S('speed') / 50);
@@ -208,6 +223,9 @@ function overhaulRacial(ch, w, opts = {}) {
       if (ws === SKILLS.LongBlade) {
         out.damage = trunc(S('agility') / 33) + trunc(S('strength') / 50);
         out.toHit = trunc(S('agility') / 10) + trunc(S('speed') / 25) + trunc(S('luck') / 25);
+      } else if (ws === SKILLS.Archery) {
+        out.damage = trunc(S('strength') / 50) + trunc(S('agility') / 50);
+        out.toHit = trunc(S('agility') / 25) + trunc(S('speed') / 33) + trunc(S('luck') / 33);
       } else if (ws === SKILLS.BluntWeapon) {
         out.damage = trunc(S('strength') / 33) + trunc(S('endurance') / 33);
         out.toHit = trunc(S('strength') / 20) + trunc(S('agility') / 25) + trunc(S('luck') / 33);
@@ -314,6 +332,41 @@ export function cadence(ch, w, opts = {}) {
   return { seconds, tick, aps: 1 / seconds, speed: usedSpeed, heft, handling, pace, rri: !!opts.rri };
 }
 
+/** Bows and the port's guns. A bow's full cycle is the five-frame swing law
+ *  (the draw/loose is 0.5625s of it, the rest is the reload); a gun's is its
+ *  frame strip plus its reload. A Pistolet pair alternates two machines. */
+export function rangedCadence(ch, w, opts = {}) {
+  if (!w) return null;
+  if (w.gun) {
+    const speed = stat(ch, 'speed', opts);
+    const pistol = w.templateIndex === 562;
+    const fps = pistol ? PISTOLET_FPS : GUN_FPS;
+    const frames = pistol ? PISTOLET_FRAMES : THUNDERLOCK_FRAMES;
+    const reload = pistol ? PISTOLET_RELOAD_S : thunderlockReloadSeconds(speed);
+    const pair = !!opts.pair && pistol;
+    const cycle = frames / fps + reload;
+    const seconds = pair ? cycle / 2 : cycle;
+    return { seconds, tick: 1 / fps, aps: 1 / seconds, speed, heft: 1, handling: swingHandling(w), pace: 0, gun: true, reload, pair, cycle };
+  }
+  // A bow is its own law: the frame is the swing law's, but RRI never
+  // touches a bow and the cycle is the drawn-idle release plus the
+  // reload the port gives it (BOW-LAW). Pacing at `within` keeps the
+  // BOW_FAST penalty at zero; spamming stacks it to x0.2.
+  const speed = stat(ch, 'speed', opts);
+  const strength = stat(ch, 'strength', opts);
+  const handling = swingHandling(w);
+  let frame = swingFrameSeconds(speed, { heft: swingHeft(w.weight, strength), handling });
+  const pace = clamp(martialPace(ch, opts) + masteryPace(ch, w, opts) + num(opts.attackSpeedPct, 0), 0, 50);
+  if (pace > 0) frame = Math.max(0.09, frame / (1 + pace / 100));
+  const reload = Math.max(0, 5 * frame - BOW_DRAW_LOOSE_S);
+  const cycle = (opts.bowDrawback ? 7 : 4) * 0.0625 + reload;
+  const within = w.bowWithin ?? 1;
+  const spam = !!opts.bowSpam;
+  const seconds = spam ? cycle : Math.max(cycle, within);
+  const pull = (w.bowPull ?? 1) * (spam ? 0.2 : 1);
+  return { seconds, cycle, tick: frame, aps: 1 / seconds, speed, heft: 1, handling, pace, bow: true, reload, within, pull, spam };
+}
+
 /** systems/bossTraits.js: the blow's resistance. */
 export function weaponResistFactor(w, traits = []) {
   let f = 1;
@@ -380,7 +433,8 @@ export function hitModel(ch, w, target, swingKey, core, opts = {}) {
       + trunc((stat(ch, 'speed', opts) - stat(target, 'speed')) / 8)
       - unityRound(fround((stat(target, 'luck') - 50) / 10))
       - trunc(targetDodge / 2)
-      + (target.isClass ? -50 : 0);
+      + (target.isClass ? -50 : 0)
+      + (opts.offHand ? -5 : 0);
   } else {
     base = skill(ch, w?.skillId ?? SKILLS.HandToHand, opts) + swing.toHit + prof.toHit + race.toHit;
     if (w) base += (WEAPON_MATERIAL_MODIFIER[w.material] ?? 0) * 10;
@@ -486,12 +540,14 @@ export function weaponBlow(ch, w, damage, target, opts = {}) {
   if (mastery > 0) d = applyPct(d, mastery);
   const martial = martialBlowPct(ch, target, opts);
   if (martial > 0) d = applyPct(d, martial);
-  const slayer = w?.slayer ?? 0;
+  const slayer = w?.slayerByGroup?.[String(target?.group ?? '')] ?? 0;
   if (slayer > 0) d = applyPct(d, slayer);
   const theory = num(opts.damagePct, 0);
   if (theory) d = applyPct(d, theory);
   const firm = num(opts.firmamentDamagePct, 0);
   if (firm) d = applyPct(d, firm);
+  const bow = num(opts.bowPull, 1);
+  if (bow !== 1) d = Math.max(1, Math.round(d * bow));
   return d;
 }
 
@@ -528,6 +584,8 @@ export function damageModel(ch, w, target, swingKey, core, opts = {}) {
     let d = roll + dmgMods + strMod + matMod;
     if (d < 1) d = 0;
     if (d > 0) d = weaponBlow(ch, w, d, target, opts);
+    if (d > 0 && w?.elemental) d += w.elemental;
+    if (d > 0 && opts.offHand) d = Math.max(1, Math.round(d * 0.8));
     return d;
   };
   const finish = (d, critical) => {
@@ -566,7 +624,39 @@ export function analyze(ch, {
   }
   const t = target ?? { ...referenceFoe(ch.level, 'tough') };
   const tgt = { ...t, group: t.group ?? null, affinity: t.affinity ?? null };
-  const simOpts = { ...opts, passiveOn, critDamage, healthShare: opts.healthShare ?? t.healthShare ?? 1, firmamentDamagePct: opts.firmamentDamagePct ?? ch.firmamentDamagePct ?? 0 };
+  if (opts.pair && w?.templateIndex === 562) {
+    const base = { ...opts, core, target: t, traits, health, swing, critDamage, weapon: w };
+    const main = analyze(ch, { ...base, pair: false, offHand: false });
+    const off = analyze(ch, { ...base, pair: false, offHand: true });
+    const perSwing = (main.perSwing + off.perSwing) / 2;
+    const cappedPerSwing = (main.cappedPerSwing + off.cappedPerSwing) / 2;
+    const aps = main.cadence.aps * 2;
+    const dps = perSwing * aps;
+    const cappedDps = cappedPerSwing * aps;
+    const enchantPerSwing = (main.enchantPerSwing + off.enchantPerSwing) / 2;
+    const enchantDpsValue = enchantPerSwing * aps;
+    const totalDps = dps + enchantDpsValue;
+    const bossHealth = main.health ?? 0;
+    const ttk = bossHealth > 0 && cappedDps > 0 ? (bossHealth + main.ward) / cappedDps + main.shields : null;
+    const totalTtk = bossHealth > 0 && (cappedDps + enchantDpsValue) > 0 ? (bossHealth + main.ward) / (cappedDps + enchantDpsValue) + main.shields : null;
+    return {
+      ...main,
+      pair: true,
+      perSwing,
+      cappedPerSwing,
+      dps,
+      cappedDps,
+      enchantPerSwing,
+      enchantDps: enchantDpsValue,
+      totalDps,
+      totalTtk,
+      cadence: { ...main.cadence, seconds: main.cadence.seconds / 2, aps, pair: true },
+      ttk,
+      capLoss: dps > 0 ? 1 - cappedDps / dps : 0,
+    };
+  }
+  const bowPull = w?.ranged && !w?.gun ? (opts.bowSpam ? 0.2 * (w?.bowPull ?? 1) : (w?.bowPull ?? 1)) : 1;
+  const simOpts = { ...opts, passiveOn, critDamage, healthShare: opts.healthShare ?? t.healthShare ?? 1, firmamentDamagePct: opts.firmamentDamagePct ?? ch.firmamentDamagePct ?? 0, bowPull };
   const hit = hitModel(ch, w, tgt, swing, core, simOpts);
   const dmg = damageModel(ch, w, tgt, swing, core, simOpts);
   const c = hit.crit.chance;
@@ -575,7 +665,7 @@ export function analyze(ch, {
   const backUptime = clamp(num(opts.backstabUptime, 0), 0, 1);
   const backMult = 1 + 2 * backUptime * backChance;
   const perSwing = ((1 - c) * hit.hitPlain * dmg.avg + c * hit.hitCrit * dmg.critAvg) * backMult;
-  const cad = cadence(ch, w, simOpts);
+  const cad = w?.ranged ? rangedCadence(ch, w, simOpts) : cadence(ch, w, simOpts);
 
   const resist = weaponResistFactor(w, traits);
   const dmin = Math.max(0, Math.round(dmg.min * resist * backMult));
@@ -599,13 +689,19 @@ export function analyze(ch, {
 
   const dps = perSwing * cad.aps;
   const cappedDps = cappedPerSwing * cad.aps;
+  const ench = opts.enchants === false ? null : enchantDps(w?.item ?? ch.weapon, ch, tgt, { hit: hit.hit, aps: cad.aps, level: ch.level, potencyPct: opts.potencyPct, pierce: opts.pierce });
+  const enchantPerSwing = ench?.perSwing ?? 0;
+  const enchantDpsValue = ench?.dps ?? 0;
+  const totalDps = dps + enchantDpsValue;
   const ward = traits.includes('warded') && bossHealth > 0 ? Math.max(1, Math.round(bossHealth * WARD_SHARE)) : 0;
   const shields = Math.max(0, num(t.phaseShields, 0)) * Math.max(0, num(t.shieldSeconds, 0));
   const ttk = bossHealth > 0 && cappedDps > 0 ? (bossHealth + ward) / cappedDps + shields : null;
+  const totalTtk = bossHealth > 0 && (cappedDps + enchantDpsValue) > 0 ? (bossHealth + ward) / (cappedDps + enchantDpsValue) + shields : null;
   const wrath = traits.includes('wrathful');
   return {
     core, weapon: w, target: tgt, swing, hit, damage: dmg, cadence: cad,
     perSwing, dps, cappedPerSwing, cappedDps, cap, capSource, capLoss: dps > 0 ? 1 - cappedDps / dps : 0,
+    enchantPerSwing, enchantDps: enchantDpsValue, totalDps, totalTtk, enchantProcs: ench?.procs ?? [], procsBeforeBreak: procsBeforeBreak(w?.item ?? ch.weapon),
     resist, health: bossHealth || null, ward, shields, ttk, wrath, wrathAt: WRATH_AFTER_S,
     backstab: { skill: backSkill, chance: backChance, multiplier: 3, uptime: backUptime, expectedMult: backMult, min: Math.round(dmg.min * resist * 3), max: Math.round(dmg.max * resist * 3), critMin: Math.round(dmg.critMin * resist * 3), critMax: Math.round(dmg.critMax * resist * 3) },
     traits, healthShare: simOpts.healthShare,
@@ -698,6 +794,7 @@ export function rankWeapons(ch, scenario = {}, { top = 20, materials = 10 } = {}
   const rows = [];
   for (const key of Object.keys(WEAPONS)) {
     const t = WEAPONS[key];
+    if (t.ammo || t.ranged) continue; // melee ranking; ranged has its own card
     for (let m = 0; m < materials; m++) {
       const w = syntheticWeapon(Number(key), m, { rri: !!scenario.rri });
       if (!w) continue;
@@ -724,8 +821,9 @@ export function rankAffixes(ch, baseline, scenario = {}) {
   const rows = [];
   const run = (label, fn) => {
     const c = JSON.parse(JSON.stringify(ch));
-    fn(c);
-    const r = analyze(c, { ...scenario, weapon: undefined });
+    const s = { ...scenario };
+    fn(c, s);
+    const r = analyze(c, { ...s, weapon: undefined });
     const dps = r.cappedDps ?? r.dps;
     rows.push({ label, dps, delta: dps - base, pct: base > 0 ? (dps / base - 1) * 100 : 0 });
   };
@@ -754,6 +852,19 @@ export function rankAffixes(ch, baseline, scenario = {}) {
       c._mods.stats = c._mods.stats ?? {};
       c._mods.stats.strength = (c._mods.stats.strength ?? 0) + v;
     });
+  }
+  for (const v of [3, 6, 10]) {
+    run(`+${v} elemental damage`, (c) => {
+      c.weapon = { ...(c.weapon ?? {}), affixes: [...(c.weapon?.affixes ?? []), { id: 'elemental', param: 'fire', value: v }] };
+    });
+  }
+  for (const v of [10, 20, 30]) {
+    run(`+${v}% slayer`, (c, s) => {
+      c.weapon = { ...(c.weapon ?? {}), affixes: [...(c.weapon?.affixes ?? []), { id: 'slayer', param: s.target?.group ?? 'undead', value: v }] };
+    });
+  }
+  for (const v of [5, 10, 15]) {
+    run(`+${v}% spell potency`, (c, s) => { s.potencyPct = (s.potencyPct ?? 0) + v; });
   }
   return rows;
 }

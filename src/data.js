@@ -97,6 +97,8 @@ export const WEAPON_TYPES = Object.freeze({
   Bow: 14,
   Melee: 15,
   Werecreature: 16,
+  Thunderlock: 17,
+  Pistolet: 19,
 });
 
 /**
@@ -122,6 +124,12 @@ export const WEAPONS = Object.freeze({
   126: { name: 'Warhammer', min: 3, max: 18, skill: 'BluntWeapon', type: 10, weight: 7, shortBlade: false, twoHanded: true },
   127: { name: 'Battle Axe', min: 2, max: 12, skill: 'Axe', type: 12, weight: 6, shortBlade: false, twoHanded: false },
   128: { name: 'War Axe', min: 2, max: 16, skill: 'Axe', type: 12, weight: 7.5, shortBlade: false, twoHanded: true },
+  129: { name: 'Short Bow', min: 5, max: 17, skill: 'Archery', type: 14, weight: 1, shortBlade: false, twoHanded: true, ranged: true, bowPull: 1, bowWithin: 0.75 },
+  130: { name: 'Long Bow', min: 5, max: 19, skill: 'Archery', type: 14, weight: 1.5, shortBlade: false, twoHanded: true, ranged: true, bowPull: 1.5, bowWithin: 1.25 },
+  131: { name: 'Arrow', min: 0, max: 0, skill: 'Archery', type: 14, weight: 0.25, shortBlade: false, twoHanded: false, ammo: true },
+  560: { name: 'Thunderlock', min: 7, max: 26, skill: 'Archery', type: 17, weight: 6, shortBlade: false, twoHanded: true, ranged: true, gun: true },
+  561: { name: 'Dwemer Pellet', min: 0, max: 0, skill: 'Archery', type: 19, weight: 0.2, shortBlade: false, twoHanded: false, ammo: true },
+  562: { name: 'Pistolet', min: 4, max: 15, skill: 'Archery', type: 19, weight: 2.5, shortBlade: false, twoHanded: false, ranged: true, gun: true },
 });
 
 export const WEAPON_SKILL_IDS = Object.freeze(
@@ -164,9 +172,23 @@ export const SWING_FRAME_MAX = 0.4;
 export const SWING_HANDLING = Object.freeze({
   0: 1, 1: 1, 2: 0.97, 3: 0.97, 4: 0.9, 5: 0.9, 6: 1.03, 7: 1.03,
   8: 1.05, 9: 1.05, 10: 1.06, 11: 1.06, 12: 1.05, 13: 1.05,
-  15: 0.9, 16: 0.9,
+  15: 0.9, 16: 0.9, 17: 1, 19: 1,
 });
 export const SWING_SHORT_BLADE = SWING_HANDLING[4];
+
+/** Bows and the port's guns (characters/weaponStates.js, combat/gun/gunFeel.js). */
+export const CLASSIC_UPDATE_INTERVAL = 0.0625;
+export const BOW_DRAW_LOOSE_S = (4 + 5) * CLASSIC_UPDATE_INTERVAL; // BOW_NUM_FRAMES.StrikeUp + HIT_FRAME_BOW
+export const BOW_DRAWN_IDLE_TICKS = 4; // the default BowDrawback=false release from the drawn frame
+export const GUN_FPS = 14;
+export const GUN_RELOAD_S = 1.7;
+export const GUN_RELOAD_MIN_S = 1;
+export const GUN_SPEED_SCALE = 0.004;
+export const PISTOLET_FPS = 12;
+export const PISTOLET_RELOAD_S = 1.4;
+export const THUNDERLOCK_FRAMES = 7;
+export const PISTOLET_FRAMES = 6;
+export const thunderlockReloadSeconds = (speed) => Math.max(GUN_RELOAD_MIN_S, GUN_RELOAD_S * (1 - GUN_SPEED_SCALE * ((Number.isFinite(speed) ? speed : 50) - 50)));
 
 /** systems/bossTraits.js constants. */
 export const WARD_SHARE = 0.3;

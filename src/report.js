@@ -142,10 +142,10 @@ function capTable(ch, scenario) {
 export function buildReport(ch, {
   target, core = 'overhaul', traits = [], health = 0, swing = 'StrikeLeft',
   passiveOn = true, stacks = 5, rhythm = false, unaware = false, firstBlow = false,
-  healthShare = 1, backstabUptime = 0, players = 1, blowX = 1, rri = true, weapon = null,
+  healthShare = 1, backstabUptime = 0, players = 1, blowX = 1, rri = true, pair = false, bowSpam = false, potencyPct = 0, pierce = 0, weapon = null,
 } = {}) {
   const baseCh = weapon?.item ? { ...ch, weapon: weapon.item } : ch;
-  const scenario = { target, core, traits, health, swing, passiveOn, stacks, rhythm, unaware, firstBlow, healthShare, backstabUptime, rri };
+  const scenario = { target, core, traits, health, swing, passiveOn, stacks, rhythm, unaware, firstBlow, healthShare, backstabUptime, rri, pair, bowSpam, potencyPct, pierce };
   const r = analyze(baseCh, scenario);
   const w = r.weapon;
   const rs = marginals(baseCh, r, scenario);
@@ -207,11 +207,13 @@ export function buildReport(ch, {
   <div class="grid">
     ${card('DPS', n1(r.dps), `${n1(r.perSwing)} per swing x ${n2(r.cadence.aps)}/s`, 'brass')}
     ${card('Capped DPS', n1(r.cappedDps), r.cap ? capLine : 'no cap', r.cap ? 'bad' : 'good')}
+    ${r.enchantDps > 0 ? card('Enchant DPS', n1(r.enchantDps), `${n1(r.enchantPerSwing)} per landed hit`, 'brass') : ''}
+    ${r.enchantDps > 0 ? card('Total DPS', n1(r.totalDps), 'weapon + enchant procs', 'good') : ''}
     ${card('Hit chance', pct(r.hit.hit), `${pct(r.hit.crit.chance)} critical`, '')}
     ${card('Damage / hit', `${r.damage.min}-${r.damage.max}`, `avg ${n1(r.damage.avg)}; crit ${r.damage.critMin}-${r.damage.critMax}`)}
     ${r.backstab?.chance > 0 ? card('Backstab', `${pct(r.backstab.chance)} ×3`, r.backstab.uptime > 0 ? `uptime ${pct(r.backstab.uptime)}; raw crit ${r.backstab.critMin}-${r.backstab.critMax}` : `available; raw crit ${r.backstab.critMin}-${r.backstab.critMax}`) : ''}
     ${card('Swing time', `${n2(r.cadence.seconds)} s`, `${n2(r.cadence.aps)} swings/s`)}
-    ${card('Time to kill', r.ttk ? `${n1(r.ttk)} s` : '-', r.health ? `${r.health.toLocaleString()} HP${r.ward ? ` + ${r.ward} ward` : ''}` : 'no boss health set')}
+    ${card('Time to kill', (r.totalTtk ?? r.ttk) ? `${n1(r.totalTtk ?? r.ttk)} s` : '-', r.health ? `${r.health.toLocaleString()} HP${r.ward ? ` + ${r.ward} ward` : ''}${r.enchantDps > 0 ? ' · weapon + procs' : ''}` : 'no boss health set')}
   </div>
 
   ${r.backstab?.uptime > 0 ? `<div class="note"><b>Backstab:</b> ${pct(r.backstab.chance)} chance of ×3 from behind; the DPS uses a ${pct(r.backstab.uptime)} behind uptime (expected ×${n2(r.backstab.expectedMult)}). Raw backstab crit ${r.backstab.critMin}-${r.backstab.critMax}; the per-hit cap is applied after this. A displayed 600 is a backstab crit; the health bar may only lose the cap (${r.cap || 'none'}).</div>` : ''}

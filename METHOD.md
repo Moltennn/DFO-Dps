@@ -66,7 +66,15 @@ The `theory` command prices each star channel from +0 to +15. At the ceiling, St
 
 ## Weapon-ceiling page
 
-`weapons` renders the same model as a standalone HTML page. It ranks all sixteen melee templates at a max profile (attributes 100/115, raw weapon skill and Critical Strike 200 mastered, weapon skill gear 240, Critical Strike gear 540, 40% damage affix, the weapon's career expertise, the best race, and the best martial path for the family) and shows raw 100 -> 200 and gear 0 -> 240 curves per family. Axe and H2H use Berserker and are measured below half health; Blunt uses Blademaster at or above half. The Hand-to-Hand reference uses the H2H proficiency flag and no Critical Strike gear; with the Firmament channels it crosses the reported ~450 band around 240 gear points (about 450 without them). The practical H2H gear cap is 17 lines (510 points: seven armour pieces and ten jewellery slots, never a weapon).
+`weapons` renders the same model as a standalone HTML page. It ranks every weapon template (melee, bows and the port's firearms) at a max profile (attributes 100/115, raw weapon skill and Critical Strike 200 mastered, weapon skill gear 240, Critical Strike gear 540, 40% damage affix, the weapon's career expertise, the best race, and the best martial path for the family) and shows raw 100 -> 200 and gear 0 -> 240 curves per family. Axe and H2H use Berserker and are measured below half health; Blunt uses Blademaster at or above half. The Hand-to-Hand reference uses the H2H proficiency flag and no Critical Strike gear; with the Firmament channels it crosses the reported ~450 band around 240 gear points (about 450 without them). The practical H2H gear cap is 17 lines (510 points: seven armour pieces and ten jewellery slots, never a weapon).
+
+## Ranged, spells and enchantments
+
+The model's other lanes follow the same source snapshot. Bows use the port's BOW-LAW cycle (the five-frame swing law's frame, the drawn-idle release and the reload) and the BOW_FAST pacing window; guns use `frames/fps + reload` (Thunderlock's reload scales with Speed to a 1 s floor, the Pistolet's is fixed at 1.4 s). A Pistolet pair is two machines, the off hand at x0.8 damage and -5 to hit. Ammunition carries no damage.
+
+Spells read `ARENA2/SPELLS.STD` from the launcher's `arena2Path` (or `--data`), price every effect through FormulaHelper's component table and the school's live skill, roll `GetMagnitude`, apply the saving throw and the school's past-100 potency, and use a 0.7 s cast recovery divided by the cast rate (Speed + castSpeed). PvE spells do not crit; armour does not reduce them; a magic round is 5 real seconds; there is no in-combat magicka regeneration.
+
+Enchantments read `items[].enchantments`: Cast When Strikes (type 2) fires its spell on every landed blow, Potent Vs (type 4) is +5 flat against its affinity, Low Damage Vs (type 20) is -5, and EnhancesSkill (type 10) is +15. The weapon's `elemental` affix is flat per blow; `slayer` is group-specific. `analyze` returns weapon DPS, enchant DPS and total DPS, plus `procsBeforeBreak` from the 10-condition cost of a strike proc.
 
 ## Backstab and the cap
 

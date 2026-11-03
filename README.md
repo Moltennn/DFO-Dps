@@ -66,7 +66,7 @@ A save is a snapshot; a live character can differ (gear changed, gems, set power
 
 ```bash
 # from the debug game, with CDP on 9222
-dfo eval '(() => { const e = window.__playerEntity; const equipSlots = {}; for (const [k, v] of Object.entries(e.equip?.slots ?? {})) if (v) equipSlots[k] = v; return { name: e.name, level: e.level, raceId: e.raceId, race: e.race, gender: e.gender, career: e.career, reflexes: e.reflexes, health: e.health, maxHealth: e.maxHealth, stats: e.stats, skills: e.skills, skillOverrides: e.skillOverrides, activeEffects: e.activeEffects, items: e.items, equipSlots, martialPath: e.martialPath, masterSkills: e.masterSkills, masteredSkills: e.masteredSkills, _mods: e._mods, _enchantMods: e._enchantMods, _online: e._online }; })()' > /tmp/live.json
+dfo eval '(() => { const e = window.__playerEntity; const equipSlots = {}; for (const [k, v] of Object.entries(e.equip?.slots ?? {})) if (v) equipSlots[k] = v; return { name: e.name, level: e.level, raceId: e.raceId, race: e.race, gender: e.gender, career: e.career, reflexes: e.reflexes, health: e.health, maxHealth: e.maxHealth, magicka: e.magicka, maxMagicka: e.maxMagicka, stats: e.stats, skills: e.skills, skillOverrides: e.skillOverrides, activeEffects: e.activeEffects, items: e.items, equipSlots, spells: e.spells, readiedSpellIndex: e.readiedSpellIndex, martialPath: e.martialPath, masterSkills: e.masterSkills, masteredSkills: e.masteredSkills, _mods: e._mods, _enchantMods: e._enchantMods, _online: e._online }; })()' > /tmp/live.json
 
 ./dfo-dps build --save /tmp/live.json --first-blow
 ```
@@ -113,7 +113,7 @@ The `theory` output prices every star channel from +0 to +15 at the ceiling, and
 
 ## Weapon ceiling page
 
-`weapons` writes a self-contained HTML page you can open directly. It compares every melee weapon at the best build the model can justify, then shows how each weapon family's damage scales with its own skill.
+`weapons` writes a self-contained HTML page you can open directly. It compares every weapon at the best build the model can justify, then shows how each weapon family's damage scales with its own skill.
 
 ```bash
 ./dfo-dps weapons                   # writes ./weapons.html
@@ -127,6 +127,31 @@ The max profile is: attributes 100 (115 with `--firmament`), raw weapon skill an
 The page has a max-DPS bar chart and table, then two charts per family (raw skill 100 -> 200 and gear skill 0 -> its cap), and one Critical Strike chart across the best weapon of each family. The Hand-to-Hand row is included as the sanity check: with H2H expertise, Berserker below half and no Critical Strike gear it reaches the reported ~450 band around 240 gear points with the Firmament channels, or around 450 without them.
 
 `skills` is kept as an alias for the same page.
+
+## Bows, firearms, spells and enchantments
+
+The same model now covers the other damage lanes:
+
+```bash
+# bows (Short Bow 129, Long Bow 130) and the port's guns (560 Thunderlock, 562 Pistolet)
+./dfo-dps build --save /tmp/live.json --weapon 129:9 --target gate
+./dfo-dps build --save /tmp/live.json --weapon 562:4 --pair --target gate
+./dfo-dps build --save /tmp/live.json --weapon 129:9 --spam --target gate
+
+# spells: the live formula, standard SPELLS.STD records, cost, cast time and mana
+./dfo-dps spell --save /tmp/live.json --spell Fireball
+./dfo-dps spells --save /tmp/live.json --out spells.html
+./dfo-dps spell --save /tmp/live.json --spell Wildfire --seconds 60 --potency 30 --pierce 10
+
+# the equipped weapon's Cast When Strikes / Potent Vs rows
+./dfo-dps enchant --save /tmp/live.json
+```
+
+Ranged laws: a bow's cycle is the port's five-frame swing law with the BOW-LAW reload, and the BOW_FAST window (`--spam` stacks it to x0.2). A Pistolet pair is two shots per 1.9 s, the off hand at x0.8 damage and -5 to hit; the Thunderlock is one shot per `0.5 s + reload`. Arrows and pellets carry no damage and are spent one per shot.
+
+Spells: magnitude is `Range(base) + Range(level) * floor(level/perLevel)`; the target's saving throw and the school's past-100 potency (x1.4 at 200) are applied; PvE spells do not crit and armour does not reduce them. One magic round is 5 real seconds, so a DoT is modelled as per-tick DPS, not burst. A 0.7 s cast recovery is the throughput floor, and there is no in-combat magicka regeneration, so the pool — not the cast rate — binds a long fight.
+
+Enchantments: a `Cast When Strikes` row fires its `SPELLS.STD` spell on every landed blow (no proc chance), with the target's save and the caster's spell power. `Potent Vs` is a flat +5 against its affinity; `Enhances Skill` is +15; `elemental` is flat per blow and `slayer` is group-specific. `build` and `report` show weapon DPS, enchant DPS and total DPS; the condition budget is reported as procs before break.
 
 ## Graphs
 

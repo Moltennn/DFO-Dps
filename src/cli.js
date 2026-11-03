@@ -17,6 +17,8 @@ import {
 } from './data.js';
 import { buildReport } from './report.js';
 import { barChart, graphPage, lineChart, multiGraphPage } from './graph.js';
+import { analyzeSpell, resolveSpells, spellCost, spellRotation, standardSpells } from './spells.js';
+import { ENCHANTMENT_TYPES, castWhenStrikes, enchantDps, procsBeforeBreak, strikeEnchantments } from './enchants.js';
 import {
   DAMAGE_AFFIX_MAX, DEFAULT_BLADE, GEAR_CS_LINES, GEAR_H2H_LINES, GEAR_LB_LINES, GEAR_LINE_MAX, GEAR_MASTERY_POINTS,
   GEAR_SKILL_LINES, LONG_BLADES,
@@ -31,7 +33,7 @@ import {
   skillName, skillValue,
 } from './save.js';
 
-const HELP = `dfo-dps - DFO Online melee DPS and build lab
+const HELP = `dfo-dps - DFO Online combat DPS and build lab
 
 Usage:
   dfo-dps build  [options]            one build against one target (default)
@@ -41,7 +43,10 @@ Usage:
   dfo-dps scale [options]             stat/skill scaling curve to the caps
   dfo-dps tradeoff [options]          speed vs damage against real boss pools
   dfo-dps theory [options]            level-45 long-blade ceiling and minmax curves
-  dfo-dps weapons [options]           HTML page: all melee weapons, max DPS and skill scaling
+  dfo-dps spell [options]             one spell: damage, cost, casts and sustain
+  dfo-dps spells [options]            HTML page: every standard damage spell
+  dfo-dps enchant [options]           the equipped weapon's enchantment procs
+  dfo-dps weapons [options]           HTML page: all weapons, max DPS and skill scaling
   dfo-dps skills [options]            same page (alias)
   dfo-dps graph [options]             SVG line chart of two or more stats/skills
   dfo-dps saves                       list saves under the DFO user data folder
@@ -67,6 +72,8 @@ Common options:
   --backstab <0..1>                   share of swings from behind (expected backstab)
   --players <n>                       gate boss group size (health per player; default 1)
   --blow-x <n>                        gate relayBlowX (Elite/Vestiges cap multiplier; default 1)
+  --pair                              paired Pistolets (2 shots per cycle, off hand x0.8)
+  --spam                              bow spam (BOW_FAST stacks to x0.2; default paced)
   --health-share <0..1>               foe's health share for Axe/Blunt mastery (default: 1)
   --no-crit-damage                    overhaul crit adds hit only
   --no-passive                        switch the path passive off
@@ -89,6 +96,16 @@ Common options:
   --star-stat <name=n,...>            Firmament attribute points (max +15 each)
   --star-skill <id=n,...>             Firmament skill points (max +15 each)
   --star-damage <pct>                 Firmament weapon-blow percent (cap +30)
+  --spell <index|name>                spell to price (with spell)
+  --list                              list the resolved spellbook (with spell)
+  --all-spells                        price every damaging spell (with spell)
+  --standard                          include every standard spell, not just the spellbook
+  --potency <pct>                     spell power percent (potency / Firmament)
+  --pierce <n>                        points off the target's saving throw
+  --cast-speed <pct>                  cast speed percent
+  --magicka <n>                       override the magicka pool
+  --seconds <n>                       fight length for spell sustain (default 30)
+  --data <dir>                        ARENA2 directory holding SPELLS.STD
   --series <a,b>                      graph series: stat:strength,skill:29,gear:29,star:strength
   --uncapped                          graph raw DPS instead of gate-capped DPS
   --no-rri                            use the vanilla swing law instead of RRI weapon balance
@@ -123,6 +140,8 @@ const optsSpec = {
   backstab: { type: 'string' },
   players: { type: 'string', default: '1' },
   'blow-x': { type: 'string', default: '1' },
+  pair: { type: 'boolean', default: false },
+  spam: { type: 'boolean', default: false },
   series: { type: 'string' },
   uncapped: { type: 'boolean', default: false },
   theory: { type: 'boolean', default: false },
@@ -137,6 +156,16 @@ const optsSpec = {
   'star-stat': { type: 'string', multiple: true },
   'star-skill': { type: 'string', multiple: true },
   'star-damage': { type: 'string' },
+  spell: { type: 'string' },
+  list: { type: 'boolean', default: false },
+  'all-spells': { type: 'boolean', default: false },
+  standard: { type: 'boolean', default: false },
+  potency: { type: 'string', default: '0' },
+  pierce: { type: 'string', default: '0' },
+  'cast-speed': { type: 'string', default: '0' },
+  magicka: { type: 'string' },
+  seconds: { type: 'string' },
+  data: { type: 'string' },
   'no-rri': { type: 'boolean', default: false },
   all: { type: 'boolean', default: false },
   from: { type: 'string' },
@@ -154,6 +183,7 @@ const optsSpec = {
   help: { type: 'boolean', short: 'h', default: false },
 };
 
+const weaponLabel = (w) => (w ? (String(w.name).startsWith(String(w.materialName)) ? w.name : `${w.materialName} ${w.name}`) : 'bare hands');
 const n = (v, d = 0) => (v != null && Number.isFinite(Number(v)) ? Number(v) : d);
 const fmt = (v) => (Number.isFinite(v) ? (Math.round(v * 10) / 10).toFixed(1) : '-');
 const fmt2 = (v) => (Number.isFinite(v) ? (Math.round(v * 100) / 100).toFixed(2) : '-');
@@ -304,6 +334,10 @@ function scenarioOf(ch, values, traits, target) {
     healthShare: n(values['health-share'], 1),
     backstabUptime: values.behind ? 1 : n(values.backstab, 0),
     firmamentDamagePct: ch.firmamentDamagePct ?? 0,
+    pair: values.pair,
+    bowSpam: values.spam,
+    potencyPct: n(values.potency, 0),
+    pierce: n(values.pierce, 0),
     weapon: values.theory ? undefined : weaponOverride(values),
   };
 }
@@ -338,7 +372,8 @@ function summary(ch, r, extra = {}) {
       damage: { min: r.damage.min, max: r.damage.max, avg: r.damage.avg, critMin: r.damage.critMin, critMax: r.damage.critMax, critAvg: r.damage.critAvg },
       perSwing: r.perSwing, aps: r.cadence.aps, swingSeconds: r.cadence.seconds,
       dps: r.dps, cappedDps: r.cappedDps, cap: r.cap, capLoss: r.capLoss,
-      ward: r.ward, ttk: r.ttk, wrath: r.wrath,
+      enchantDps: r.enchantDps, totalDps: r.totalDps, enchantPerSwing: r.enchantPerSwing, enchantProcs: r.enchantProcs, procsBeforeBreak: r.procsBeforeBreak,
+      ward: r.ward, ttk: r.ttk, totalTtk: r.totalTtk, wrath: r.wrath,
       terms: r.damage.parts,
     },
     ...extra,
@@ -364,7 +399,7 @@ function printBuild(ch, r, targetPreset, values) {
   const w = r.weapon;
   const traits = r.traits;
   console.log(`${characterLabel(ch)}`);
-  console.log(`${w ? `${w.materialName} ${w.name}` : 'bare hands'}  |  ${r.core}${ch.online ? ' / online' : ' / offline'}${ch.martialPath ? ` / ${MARTIAL_PATHS[ch.martialPath]?.name ?? ch.martialPath}` : ''}`);
+  console.log(`${weaponLabel(w)}  |  ${r.core}${ch.online ? ' / online' : ' / offline'}${ch.martialPath ? ` / ${MARTIAL_PATHS[ch.martialPath]?.name ?? ch.martialPath}` : ''}`);
   console.log(`target: ${targetPreset}${r.target.isClass ? ' (class)' : ''}, level ${r.target.level}${r.health ? `, ${r.health.toLocaleString()} HP` : ''}${traits.length ? `, traits: ${traits.join(', ')}` : ''}`);
   console.log('');
   console.log(table([
@@ -375,7 +410,8 @@ function printBuild(ch, r, targetPreset, values) {
     ['Expected / swing', fmt(r.perSwing), 'hit chance and criticals included'],
     ['Swing time', `${fmt2(r.cadence.seconds)} s`, `${fmt2(r.cadence.aps)} swings/s`],
     ['DPS', fmt(r.dps), r.cap ? `capped ${fmt(r.cappedDps)} (${pc(r.capLoss)} lost)` : 'no per-hit cap'],
-    ['Time to kill', r.ttk ? `${fmt(r.ttk)} s` : '-', r.health ? `${r.health.toLocaleString()} HP${r.ward ? ` + ${r.ward} ward` : ''}${r.shields ? ` + ${r.shields}s shields` : ''}` : 'no boss health'],
+    ...(r.enchantDps > 0 ? [['Enchant procs', fmt(r.enchantDps), `${fmt(r.enchantPerSwing)} per landed hit${r.procsBeforeBreak ? `; ${r.procsBeforeBreak} procs before break` : ''}`], ['Total DPS', fmt(r.totalDps), 'weapon + enchant procs']] : []),
+    ['Time to kill', (r.totalTtk ?? r.ttk) ? `${fmt(r.totalTtk ?? r.ttk)} s` : '-', r.health ? `${r.health.toLocaleString()} HP${r.ward ? ` + ${r.ward} ward` : ''}${r.shields ? ` + ${r.shields}s shields` : ''}${r.enchantDps > 0 ? ' (weapon + procs)' : ''}` : 'no boss health'],
   ], ['Metric', 'Value', 'Notes']));
   if (r.cap) console.log(`\n${r.capSource === 'hit cap' ? 'Per-hit hit cap' : 'Curbing cap'}: ${r.cap} per hit${r.capSource === 'curbing' ? ` (5% of ${r.health.toLocaleString()} HP)` : ''}.`);
   if (r.target?.phaseShields) console.log(`Phase shields: ${r.target.phaseShields} x ${r.target.shieldSeconds}s (${r.shields}s added to TTK).`);
@@ -485,6 +521,154 @@ export async function main(argv = process.argv.slice(2)) {
   const scenario = scenarioOf(ch, values, traits, target);
   const r = analyze(ch, scenario);
 
+  if (cmd === 'enchant') {
+    const item = ch.weapon;
+    if (!item) {
+      console.log('No weapon equipped. Pass --weapon or load a save with a weapon.');
+      return;
+    }
+    const target = values.target === 'armoured' ? gateTarget(n(values.level, ch.level), { traits }) : target;
+    const opts = { level: n(values.level, ch.level), potencyPct: n(values.potency, 0), pierce: n(values.pierce, 0) };
+    const rows = (item.enchantments ?? []).filter((e) => e && e.type >= 0);
+    const names = Object.fromEntries(Object.entries(ENCHANTMENT_TYPES).map(([k, v]) => [v, k]));
+    const strike = strikeEnchantments(item, ch, target, opts);
+    const r = analyze(ch, { ...scenario, target, health: target.isBoss ? target.maxHealth : 0, potencyPct: opts.potencyPct, pierce: opts.pierce });
+    console.log(`${characterLabel(ch)}  |  ${item.name ?? 'weapon'}`);
+    console.log(table(rows.map((e) => [names[e.type] ?? e.type, e.param ?? '-', e.type === 2 ? (strike.procs.find((p) => p.index === Number(e.param))?.name ?? 'spell') : '-']), ['Enchantment', 'Param', 'Spell'], ['left', 'right', 'left']));
+    console.log(table([
+      ['Weapon DPS', fmt(r.dps)],
+      ['Enchant per landed hit', fmt(strike.procDamage + strike.flat)],
+      ['Enchant DPS', fmt(r.enchantDps)],
+      ['Total DPS', fmt(r.totalDps)],
+      ['Procs before break', r.procsBeforeBreak ?? '-'],
+      ['Procs', strike.procs.map((p) => `${p.name} ${fmt(p.damage)}`).join(', ') || '-'],
+    ], ['Metric', 'Value']));
+    if (values.json) console.log(JSON.stringify({ enchantments: rows, strike, result: { weaponDps: r.dps, enchantDps: r.enchantDps, totalDps: r.totalDps, procsBeforeBreak: r.procsBeforeBreak } }, null, 2));
+    return;
+  }
+
+  if (cmd === 'spells') {
+    if (values.theory) { ch.skills[22] = 200; ch.masteredSkills = [...new Set([...(ch.masteredSkills ?? []), 22])]; ch.maxMagicka = ch.maxMagicka || Math.floor((ch.stats.intelligence ?? 100) * 3); ch.name = 'Level 45 theory caster'; }
+    const level = n(values.level, ch.level);
+    const standard = standardSpells(values.data ?? undefined);
+    const known = resolveSpells(ch.spells, standard);
+    const pool = [...standard.values(), ...known.filter((sp) => !standard.has(sp.index))];
+    const spellTarget = values.target === 'armoured' ? gateTarget(level, { traits }) : target;
+    const opts = {
+      level, online: ch.online !== false, potencyPct: n(values.potency, 0), pierce: n(values.pierce, 0),
+      castSpeedPct: n(values['cast-speed'], 0), magicka: values.magicka != null ? n(values.magicka, 0) : undefined,
+      health: spellTarget.isBoss ? spellTarget.maxHealth : 0, traits: spellTarget.bossTraits ?? [],
+    };
+    const list = pool.map((sp) => ({ sp, r: spellRotation(sp, ch, spellTarget, { ...opts, seconds: n(values.seconds, 30) }) }))
+      .filter((x) => x.r.damage > 0 && !/^(Lvl |!)/i.test(String(x.sp.name)))
+      .sort((a, b) => b.r.windowDps - a.r.windowDps);
+    if (!list.length) { console.log('No standard damage spells found. Check --data / ARENA2.'); return; }
+    const top = list.slice(0, 20);
+    const dpsChart = barChart({ title: 'Sustained spell DPS (30s window)', labels: top.map((x) => x.sp.name), series: [{ name: 'DPS', values: top.map((x) => x.r.windowDps) }] });
+    const effChart = barChart({ title: 'Damage per spell point', labels: top.map((x) => x.sp.name), series: [{ name: 'dmg/SP', values: top.map((x) => x.r.damage / Math.max(1, x.r.cost)) }] });
+    const tableHtml = `<table><thead><tr><th>Spell</th><th>School</th><th>Cost</th><th>Damage</th><th>Window DPS</th><th>Mana DPS</th><th>dmg/SP</th><th>DoT</th></tr></thead><tbody>${top.map(({ sp, r }) => `<tr><td class="k">${sp.name}</td><td>${skillName(r.school)}</td><td>${r.cost}</td><td>${fmt(r.damage)}</td><td>${fmt(r.windowDps)}</td><td>${fmt(r.manaDps)}</td><td>${fmt(r.damage / Math.max(1, r.cost))}</td><td>${r.dotRounds ? `${r.dotRounds} r` : '-'}</td></tr>`).join('')}</tbody></table>`;
+    const subtitle = `${characterLabel(ch)} | ${list.length} standard damage spells | ${spellTarget.isBoss ? `gate ${spellTarget.maxHealth.toLocaleString()} HP` : `level ${spellTarget.level}`} | ${n(values.seconds, 30)}s window | potency ${n(values.potency, 0)}% | pierce ${n(values.pierce, 0)}`;
+    const html = multiGraphPage({
+      title: 'DFO spell ceiling',
+      subtitle,
+      sections: [
+        { title: 'Sustained DPS', note: 'Mana-limited: no in-combat regeneration. A DoT is one instance per target and renews, never stacks.', chart: dpsChart, table: tableHtml },
+        { title: 'Damage per spell point', note: 'The metric that binds a long fight. A 30s window may not spend the whole pool.', chart: effChart },
+      ],
+    });
+    const out = path.resolve(values.out === 'dfo-dps-report.html' ? 'spells.html' : values.out);
+    fs.writeFileSync(out, html, 'utf8');
+    if (!values.json) console.log(`spells page written: ${out}`);
+    if (values.json) console.log(JSON.stringify(list.map(({ sp, r }) => ({ index: sp.index, name: sp.name, ...r })), null, 2));
+    return;
+  }
+
+  if (cmd === 'spell') {
+    if (values.theory) { ch.skills[22] = 200; ch.masteredSkills = [...new Set([...(ch.masteredSkills ?? []), 22])]; ch.maxMagicka = ch.maxMagicka || Math.floor((ch.stats.intelligence ?? 100) * 3); ch.name = 'Level 45 theory caster'; }
+    const level = n(values.level, ch.level);
+    const dataDir = values.data ?? undefined;
+    const standard = standardSpells(dataDir);
+    const known = resolveSpells(ch.spells, standard);
+    const standardList = [...standard.values()];
+    const pool = values.standard ? standardList : (known.length ? known : standardList);
+    const searchPool = values.spell != null
+      ? [...pool, ...standardList.filter((sp) => !pool.some((p) => p.index === sp.index))]
+      : pool;
+    const spellTarget = values.target === 'armoured' ? gateTarget(level, { traits }) : target;
+    const opts = {
+      level,
+      online: ch.online !== false,
+      potencyPct: n(values.potency, 0),
+      pierce: n(values.pierce, 0),
+      castSpeedPct: n(values['cast-speed'], 0),
+      magicka: values.magicka != null ? n(values.magicka, 0) : undefined,
+      health: spellTarget.isBoss ? spellTarget.maxHealth : 0,
+      traits: spellTarget.bossTraits ?? [],
+    };
+    const debugName = (sp) => /^(Lvl |!)/i.test(String(sp?.name ?? ''));
+    const priced = pool.map((sp) => ({ sp, r: analyzeSpell(sp, ch, spellTarget, opts) }))
+      .filter((x) => x.r.damage > 0 && !debugName(x.sp))
+      .sort((a, b) => b.r.dps - a.r.dps);
+    const searchPriced = searchPool.map((sp) => ({ sp, r: analyzeSpell(sp, ch, spellTarget, opts) }))
+      .filter((x) => x.r.damage > 0)
+      .sort((a, b) => b.r.dps - a.r.dps);
+    if (!priced.length && values.spell == null && !values.standard) {
+      console.log('No damaging spells in the spellbook. Pass --spell <index|name> or --standard.');
+      return;
+    }
+    if (values.list) {
+      console.log(`${characterLabel(ch)}  |  ${pool.length} spell(s)`);
+      console.log(table(pool.map((sp) => [sp.index ?? '-', sp.name, spellCost(sp, ch), fmt(analyzeSpell(sp, ch, spellTarget, opts).damage)]), ['Index', 'Spell', 'Cost', 'Damage'], ['right', 'left', 'right', 'right']));
+      return;
+    }
+    if (values['all-spells']) {
+      console.log(table(priced.map(({ sp, r }) => [sp.name, skillName(r.school), r.cost, fmt(r.damage), fmt(r.dps), `${fmt2(r.castSeconds)}s`, r.castsPerPool, fmt(r.poolDamage)]), ['Spell', 'School', 'Cost', 'Damage', 'DPS', 'Cast', 'Casts', 'Pool dmg'], ['left', 'left', 'right', 'right', 'right', 'right', 'right', 'right']));
+      if (values.json) console.log(JSON.stringify(priced.map(({ sp, r }) => ({ index: sp.index, name: sp.name, ...r })), null, 2));
+      return;
+    }
+    let chosen = priced[0];
+    if (values.spell != null) {
+      const q = String(values.spell).trim();
+      const found = searchPriced.find(({ sp }) => String(sp.index) === q || String(sp.name).toLowerCase() === q.toLowerCase())
+        ?? searchPriced.find(({ sp }) => String(sp.name).toLowerCase().includes(q.toLowerCase()));
+      if (!found) throw new Error(`spell "${values.spell}" not found in the resolved spellbook`);
+      chosen = found;
+    }
+    const { sp } = chosen;
+    const r = spellRotation(sp, ch, spellTarget, { ...opts, seconds: n(values.seconds, 30) });
+    console.log(`${characterLabel(ch)}  |  ${sp.name} (${skillName(r.school)})`);
+    console.log(table([
+      ['Spell cost', `${r.cost} SP`],
+      ['Instant damage', fmt(r.instant)],
+      ...(r.dotRounds ? [['DoT per tick', fmt(r.dotPerTick)], ['DoT duration', `${r.dotRounds} rounds (${fmt(r.dotSeconds)} s)`], ['DoT total', fmt(r.dotTotal)]] : []),
+      ['Damage / cast', fmt(r.damage)],
+      ['Cast time', `${fmt2(r.castSeconds)} s`],
+      ['Burst DPS', fmt(r.burstDps)],
+      ...(r.dotRounds ? [['DoT DPS', fmt(r.dotDps)]] : []),
+      ['DPS', fmt(r.dps)],
+      ['Magicka pool', r.magicka],
+      ['Fight window', `${fmt(r.seconds)} s`],
+      ['Casts used', r.casts],
+      ['Total damage', fmt(r.totalDamage)],
+      ['Mana DPS', fmt(r.manaDps)],
+      ['Window DPS', fmt(r.windowDps)],
+      ['Time to empty', `${fmt(r.timeToEmpty)} s`],
+      ['Pool kill', r.poolKill == null ? '-' : (r.poolKill ? 'yes' : 'no')],
+      ['Mana left', fmt(r.manaLeft)],
+      ['Casts per pool', r.castsPerPool],
+      ['Saving throw', `${pc(r.saving)} lands`],
+      ['Power multiplier', `x${fmt2(r.powerMult)}`],
+      ['Target', `${spellTarget.isBoss ? 'gate' : values.target}, level ${spellTarget.level}${spellTarget.isBoss ? `, ${spellTarget.maxHealth.toLocaleString()} HP` : ''}`],
+      ['Time to kill', r.ttk ? `${fmt(r.ttk)} s` : '-'],
+    ], ['Metric', 'Value']));
+    if (r.elements?.length) {
+      console.log('\nEffects');
+      console.log(table(r.elements.map((e) => [e.key, e.magnitude != null ? fmt(e.magnitude) : '-', e.rounds ?? 1, fmt(e.damage), e.note ?? '']), ['Effect', 'Magnitude', 'Rounds', 'Damage', 'Note'], ['left', 'right', 'right', 'right', 'left']));
+    }
+    if (values.json) console.log(JSON.stringify({ index: sp.index, name: sp.name, ...r }, null, 2));
+    return;
+  }
+
   if (cmd === 'weapons' || cmd === 'skills') {
     const level = n(values.level, THEORY_LEVEL);
     const firmCharts = !!values.firmament;
@@ -493,15 +677,15 @@ export async function main(argv = process.argv.slice(2)) {
     const maxWeaponGear = GEAR_LB_LINES * GEAR_LINE_MAX; // 240
     const maxCritGear = GEAR_CS_LINES * GEAR_LINE_MAX; // 540
     const maxH2HGear = GEAR_H2H_LINES * GEAR_LINE_MAX; // 510
-    const PROF_OF = Object.freeze({ ShortBlade: 1, LongBlade: 2, HandToHand: 4, Axe: 8, BluntWeapon: 16 });
+    const PROF_OF = Object.freeze({ ShortBlade: 1, LongBlade: 2, HandToHand: 4, Axe: 8, BluntWeapon: 16, Archery: 32 });
     const RACE_KEYS = ['darkelf', 'redguard', 'nord', 'breton', 'highelf', 'woodelf', 'khajiit', 'argonian'];
-    const MELEE = Object.keys(WEAPONS).map(Number).filter((t) => WEAPONS[t]?.skill && WEAPONS[t].skill !== 'Archery');
+    const MELEE = Object.keys(WEAPONS).map(Number).filter((t) => WEAPONS[t]?.skill && !WEAPONS[t].ammo);
     const familyOf = (t) => WEAPONS[t]?.skill ?? 'HandToHand';
     const gearMaxOf = (t) => (familyOf(t) === 'HandToHand' ? maxH2HGear : maxWeaponGear);
     const maxTarget = referenceFoe(level, 'tough');
     const gate = gateTarget(level);
-    const maxRun = (ch, share = 1) => analyze(ch, { target: maxTarget, core: 'overhaul', rri: true, healthShare: share, passiveOn: true, stacks: 5 });
-    const gateRun = (ch) => analyze(ch, { target: gate, core: 'overhaul', rri: true, health: gate.maxHealth, healthShare: 1, passiveOn: true, stacks: 5 });
+    const maxRun = (ch, share = 1) => analyze(ch, { target: maxTarget, core: 'overhaul', rri: true, healthShare: share, passiveOn: true, stacks: 5, pair: !!ch?._pair });
+    const gateRun = (ch) => analyze(ch, { target: gate, core: 'overhaul', rri: true, health: gate.maxHealth, healthShare: 1, passiveOn: true, stacks: 5, pair: !!ch?._pair });
     const martialFor = (t) => (familyOf(t) === 'Axe' || familyOf(t) === 'HandToHand' ? 'berserker' : 'blademaster');
     const shareFor = (t) => (familyOf(t) === 'Axe' || familyOf(t) === 'HandToHand' ? 0.49 : 1);
 
@@ -536,6 +720,7 @@ export async function main(argv = process.argv.slice(2)) {
         [SKILLS.CriticalStrike]: critGear + (firmament ? 15 : 0),
       };
       ch.martialPath = martial;
+      ch._pair = t === 562;
       ch.name = `Level 45 ${tpl.name}`;
       return ch;
     };
@@ -594,10 +779,12 @@ export async function main(argv = process.argv.slice(2)) {
       { key: 'BluntWeapon', title: 'Blunt weapons', templates: [115, 124, 125, 126] },
       { key: 'Axe', title: 'Axes', templates: [127, 128] },
       { key: 'HandToHand', title: 'Hand-to-Hand', templates: [null] },
+      { key: 'Archery', title: 'Bows and firearms', templates: [129, 130, 560, 562] },
     ];
     const rawVals = [100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200];
     const familySections = families.map((f) => {
       const gearMax = f.key === 'HandToHand' ? maxH2HGear : maxWeaponGear;
+      const rangedNote = f.key === 'Archery' ? ' Bows use the paced BOW_FAST window; the Pistolet is a pair.' : '';
       const gearVals = f.key === 'HandToHand' ? [0, 60, 120, 180, 240, 300, 360, 420, 480, 510] : [0, 30, 60, 90, 120, 150, 180, 210, 240];
       const rawSeries = f.templates.map((t) => {
         const race = bestRace(t, { firmament: firmCharts });
@@ -613,7 +800,7 @@ export async function main(argv = process.argv.slice(2)) {
           points: gearVals.map((v) => ({ x: v, y: maxRun(makeMax(t, { race, firmament: firmCharts, gear: v }), shareFor(t)).dps })),
         };
       });
-      const note = `${f.key === 'HandToHand' ? 'H2H gear 0 -> 510.' : `Gear 0 -> ${gearMax}.`} Top: raw skill 100 -> 200. Bottom: gear skill. Max gear, best race, career expertise, best path, 40% damage affix, no per-hit cap.${f.key === 'Axe' ? ' Axe uses Berserker and is measured below half health for its 2x climb.' : f.key === 'BluntWeapon' ? ' Blunt uses Blademaster and is measured at or above half health for its 2x climb.' : f.key === 'HandToHand' ? ' H2H uses Berserker and is measured below half health; the reported ~450 sits around 240 gear points with the Firmament channels, or around 450 without them (run --firmament to see the star version).' : ''}${firmCharts ? ' Firmament channels on.' : ''}`;
+      const note = `${f.key === 'HandToHand' ? 'H2H gear 0 -> 510.' : `Gear 0 -> ${gearMax}.`} Top: raw skill 100 -> 200. Bottom: gear skill. Max gear, best race, career expertise, best path, 40% damage affix, no per-hit cap.${f.key === 'Axe' ? ' Axe uses Berserker and is measured below half health for its 2x climb.' : f.key === 'BluntWeapon' ? ' Blunt uses Blademaster and is measured at or above half health for its 2x climb.' : f.key === 'HandToHand' ? ' H2H uses Berserker and is measured below half health; the reported ~450 sits around 240 gear points with the Firmament channels, or around 450 without them (run --firmament to see the star version).' : ''}${firmCharts ? ' Firmament channels on.' : ''}${rangedNote}`;
       return {
         title: f.title,
         note,
@@ -1078,7 +1265,7 @@ export async function main(argv = process.argv.slice(2)) {
       passiveOn: scenario.passiveOn, stacks: scenario.stacks, rhythm: scenario.rhythm,
       unaware: scenario.unaware, firstBlow: scenario.firstBlow, healthShare: scenario.healthShare,
       backstabUptime: scenario.backstabUptime, players: n(values.players, 1), blowX: n(values['blow-x'], 1),
-      rri: !values['no-rri'], weapon: scenario.weapon,
+      rri: !values['no-rri'], pair: values.pair, bowSpam: values.spam, potencyPct: n(values.potency, 0), pierce: n(values.pierce, 0), weapon: scenario.weapon,
     });
     const out = path.resolve(values.out);
     fs.writeFileSync(out, html, 'utf8');
