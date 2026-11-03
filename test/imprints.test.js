@@ -6,15 +6,19 @@ import { gateTarget } from '../src/model.js';
 
 const family = (key) => IMPRINT_FAMILIES.find((f) => f.key === key);
 
-test('imprint eligibility follows the record templates and the power fit', () => {
-  assert.ok(imprintsFor(123).some((r) => r.id === 'anseis-edge'));
-  assert.ok(imprintsFor(123).some((r) => r.id === 'warp-edge'));
-  assert.ok(!imprintsFor(123).some((r) => r.id === 'nightwhisper'));
-  assert.ok(imprintsFor(117).some((r) => r.id === 'nightwhisper'));
-  assert.ok(imprintsFor(129).some((r) => r.id === 'stormcaller'));
-  assert.ok(!imprintsFor(127).some((r) => r.id === 'stormcaller'));
-  assert.ok(!imprintsFor(129).some((r) => r.id === 'orsiniums-anvil'));
-  assert.ok(imprintsFor(115).some((r) => r.id === 'direnni-staff'));
+test('imprint eligibility is the Weapons group, then the power\'s own fit', () => {
+  // A Weapon Legendary's power may sit on any weapon of the group: the record's
+  // template list is only which base a Legendary drops as.
+  assert.ok(imprintsFor(127).some((r) => r.id === 'warp-edge')); // a mace may carry Many Endings
+  assert.ok(imprintsFor(117).some((r) => r.id === 'anseis-edge')); // a wakizashi may carry Way of the Sword
+  assert.ok(imprintsFor(563).some((r) => r.id === 'warp-edge')); // the wraps are Weapons
+  // Only the power's own fit narrows it: the chain wants a shot, the quake a melee blow.
+  const bow = imprintsFor(129).map((r) => r.power.kind);
+  assert.ok(bow.includes('chain'));
+  assert.ok(!bow.includes('quake'));
+  const melee = imprintsFor(123).map((r) => r.power.kind);
+  assert.ok(melee.includes('quake'));
+  assert.ok(!melee.includes('chain'));
 });
 
 test('a power is priced both unconditionally and under its trigger', () => {
@@ -26,14 +30,15 @@ test('a power is priced both unconditionally and under its trigger', () => {
   assert.ok(Math.abs(powerDps(bane, base, true) / base.dps - 1.50) < 1e-9);
 });
 
-test('the long-blade ranking keeps every long-blade imprint, on the best weapon it fits', () => {
+test('the long-blade ranking keeps every weapon power, read on a long blade', () => {
   const r = rankFamily(family('LongBlade'));
   const names = r.rows.map((x) => x.power.name);
   assert.ok(names.includes('Way of the Sword'));
   assert.ok(names.includes('Dragonsbane'));
   assert.ok(names.includes('Arcane Surge'));
-  const surge = r.rows.find((x) => x.power.name === 'Arcane Surge');
-  assert.ok(['Broadsword', 'Saber', 'Longsword'].includes(surge.weapon));
+  assert.equal(r.rows.length, WEAPON_IMPRINTS.length - 1); // every power but the shot-only chain
+  assert.ok(!names.includes('Chain Lightning'));
+  assert.ok(family('LongBlade').templates.includes(r.rows.find((x) => x.power.name === 'Arcane Surge').template));
 });
 
 test('Silent Death is a double only away from the gate, where its trigger can occur', () => {

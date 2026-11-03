@@ -132,22 +132,25 @@ brings a share), not the cap. The first chart ranks the boss (gate) DPS; the sec
 
 ## Imprints and enchant planning
 
-`imprints` ranks the Reforge's Rare imprints per weapon family. The
-Legendary power is priced on the best weapon of that family it actually
-fits, so a power that only lands on a Longsword is not read on a
-Dai-katana. **Boss** is the level-45 gate (Daedra, 600 per-hit cap);
-**Uncapped** is the same weapon without the cap; **Trigger** applies the
-power's condition where it can occur at the gate (low health, below half).
-Triggers that cannot happen there (undead, dragons, unaware, night, a
-second foe) are marked and do not inflate the boss column. Gains are against
-the row's **On** weapon. `--uncapped` sorts by the uncapped gain;
-`--cap-aware` sorts by boss gain. Chain and quake are one extra target and
-not single-target DPS; poison is before resistance. **Many Endings** is an
-extra strike and therefore its own hit: it gets its own cap, which is why it
-still gains at the gate when Flow or Serpent's Kiss do not. **Cast When
-Strikes** spells are separate hits too; Flow, Serpent's Kiss, Potent Vs and
-the conditional damage powers ride the same hit and share its cap. The table
-says which powers are `same hit`, `extra hit`, `other target` or `utility`.
+`imprints` ranks the Reforge's Rare imprints per weapon family. An
+imprint is a Legendary power of the piece's own group, so **any weapon
+Legendary may sit on any weapon**; only the power's own fit narrows it
+(Chain Lightning needs a shot, Earthshaker a melee blow). A record's
+template list is only which base a Legendary drops as. Each power is priced
+on the best weapon of that family. **Boss** is the level-45 gate (Daedra,
+600 per-hit cap); **Uncapped** is the same weapon without the cap;
+**Trigger** applies the power's condition where it can occur at the gate
+(low health, below half). Triggers that cannot happen there (undead,
+dragons, unaware, night, a second foe) are marked and do not inflate the
+boss column. Gains are against the row's **On** weapon. `--uncapped` sorts
+by the uncapped gain; `--cap-aware` sorts by boss gain. Chain and quake are
+one extra target and not single-target DPS; poison is before resistance.
+**Many Endings** is an extra strike and therefore its own hit: it gets its
+own cap, which is why it still gains at the gate when Flow or Serpent's
+Kiss do not. **Cast When Strikes** spells are separate hits too; Flow,
+Serpent's Kiss, Potent Vs and the conditional damage powers ride the same
+hit and share its cap. The table says which powers are `same hit`,
+`extra hit`, `other target` or `utility`.
 
 ```bash
 ./dfo-dps imprints

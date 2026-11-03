@@ -54,6 +54,8 @@ test('all weapon loadouts list every template and exclude monster-type damage im
   assert.ok(rows.length >= 30);
   const forbidden = new Set(['Dragonsbane', 'Sanctified', "Hunter's Moon"]);
   assert.ok(rows.every((r) => !forbidden.has(r.imprintPower)));
+  // Any Weapon Legendary's power fits any weapon, so every row carries one.
+  assert.ok(rows.every((r) => r.imprintPower), 'every loadout should carry an imprint');
   const long = rows.filter((r) => r.mode === 'cap' && r.family === 'Long Blade');
   assert.ok(long.some((r) => r.category === '1H') && long.some((r) => r.category === '2H') && long.some((r) => r.category === 'DW'));
   assert.ok(long.some((r) => r.imprintPower === 'Many Endings'));

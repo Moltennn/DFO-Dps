@@ -972,7 +972,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       const body = f.rows.map((r) => `<tr><td class="k" style="white-space:normal;min-width:300px">${r.power.name}<br><span style="color:#a8a092;font-size:11px">of ${r.name} - ${r.power.brief}</span></td><td>${r.weapon}</td><td>${r.hit}</td><td>${fmt(r.baseDps)}</td><td>${fmt(r.delta)}</td><td>${fmt(r.uncappedDps)}</td><td>${fmt(r.uncappedDelta)}</td><td style="white-space:normal;min-width:180px">${r.trigger}</td></tr>`).join('');
       return {
         title: `${f.name} - ${f.weapon}`,
-        note: `Each row is read on the best weapon of this family that the imprint actually fits. Boss is the level-${THEORY_LEVEL} gate (Daedra, 600 per-hit cap); Uncapped is the same weapon with no cap. Trigger applies the condition only where it can occur at the gate; otherwise it is marked. The imprint is the Legendary power only; the Rare's own affixes are separate.`,
+        note: `Every Weapon Legendary's power may sit on any weapon of its group; only Chain Lightning (a shot) and Earthshaker (a melee blow) narrow it. Each row reads the power on this family's best weapon. Boss is the level-${THEORY_LEVEL} gate (Daedra, 600 per-hit cap); Uncapped is the same weapon with no cap. Trigger applies the condition only where it can occur at the gate; otherwise it is marked. The imprint is the Legendary power only; the Rare's own affixes are separate.`,
         chart,
         table: `<div class="table"><table><thead><tr><th>Imprint</th><th>On</th><th>Hit</th><th>Boss DPS</th><th>Boss gain</th><th>Uncapped DPS</th><th>Uncapped gain</th><th>Trigger</th></tr></thead><tbody>${body}</tbody></table></div>`,
       };

@@ -71,19 +71,22 @@ The `theory` command prices each star channel from +0 to +15. At the ceiling, St
 ## Imprints and the item maker
 
 `imprints` reads the weapon Legendaries' powers from the game
-(`lootRarity.js`): a record fits a template when it names no templates or
-names this one, and Chain Lightning fits only a shot while Earthshaker fits
-only a melee blow. Each power is priced on the best weapon of the family it
-fits, at the max profile. **Boss** is the level-45 gate (Valkynaz Ruhn is a
-Daedra; 600 per-hit cap); **uncapped** is the same weapon with no cap. The
-**trigger** column applies the condition only where it can occur at the
-gate; conditions that cannot (undeath, dragons, unawareness, night, a second
-foe) are marked. Utility powers (spell cost, magicka on a kill, spell
-damage) show 0 melee DPS. **Many Endings** is a separate strike and gets
-its own cap; Cast When Strikes spells are separate hits; chain/quake hit
-other targets separately. Flow, Serpent's Kiss, Potent Vs, bane, sanctified,
-moon, rage and the other same-hit modifiers share the main hit's cap. The
-imprint table prints each power's `Hit` class.
+(`lootRarity.js`). A Rare's imprint is the power of a Legendary of its own
+group, so **any Weapon Legendary fits any weapon**; a record's template list
+only says which base a Legendary drops as. Only the power's own fit narrows
+it: Chain Lightning fits a shot, Earthshaker a melee blow (the game's
+`validImprint` -> `recordFitsGroup` + `powerFits`). Each power is priced on
+the best weapon of the family, at the max profile. **Boss** is the level-45
+gate (Valkynaz Ruhn is a Daedra; 600 per-hit cap); **uncapped** is the same
+weapon with no cap. The **trigger** column applies the condition only where
+it can occur at the gate; conditions that cannot (undeath, dragons,
+unawareness, night, a second foe) are marked. Utility powers (spell cost,
+magicka on a kill, spell damage) show 0 melee DPS. **Many Endings** is a
+separate strike and gets its own cap; Cast When Strikes spells are separate
+hits; chain/quake hit other targets separately. Flow, Serpent's Kiss,
+Potent Vs, bane, sanctified, moon, rage and the other same-hit modifiers
+share the main hit's cap. The imprint table prints each power's `Hit`
+class.
 
 `enchant-plan` imports the game's enchantment cost table
 (`enchantmentCatalogue.js`) and item `enchantmentPoints`

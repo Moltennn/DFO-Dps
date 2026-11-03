@@ -2,9 +2,12 @@
  * dfo-dps - the Reforge's weapon imprints.
  *
  * LOOT10: a Rare may carry one Legendary's power. The records and their
- * powers below are the game's own (systems/loot/lootRarity.js): a weapon
- * record fits a template when it names no templates or names this one,
- * and Chain Lightning fits only a shot, Earthshaker only a melee blow.
+ * powers below are the game's own (systems/loot/lootRarity.js). An imprint
+ * is a record of the piece's own GROUP - any Weapon Legendary on any weapon -
+ * and only the power's own fit narrows it: Chain Lightning fits a shot,
+ * Earthshaker a melee blow (validImprint -> recordFitsGroup + powerFits).
+ * A record's `templates` list is only which base a Legendary DROPS as, not
+ * which weapon may imprint its power.
  * The ranking is the power's DPS on the family's best max-profile weapon.
  * The Rare's own affixes are separate and are not part of this table.
  */
@@ -63,9 +66,11 @@ function powerFits(template, power) {
   return true;
 }
 
-/** The records a Rare of this template can be reforged from. */
-export const imprintsFor = (template) => WEAPON_IMPRINTS.filter((rec) =>
-  (rec.templates === null || rec.templates.includes(Number(template))) && powerFits(Number(template), rec.power));
+/** The records whose power a Rare of this template may carry (the piece's group, then the power's fit). */
+export const imprintsFor = (template) => {
+  const t = Number(template);
+  return WEAPON_IMPRINTS.filter((rec) => powerFits(t, rec.power));
+};
 
 /**
  * A power's DPS on a base run. `conditional` applies its trigger (the foe
@@ -138,8 +143,8 @@ export function rankFamily(family, { firmament = false, vampire = false, sort = 
   for (const [t, base] of bases) if (!best || base.cappedDps > best.base.cappedDps) best = { template: t, base };
   if (!best) return { ...family, template: null, base: null, rows: [] };
   const rows = WEAPON_IMPRINTS.map((rec) => {
-    // Each imprint is read on the best weapon of this family it actually fits.
-    const eligible = family.templates.filter((t) => bases.has(t) && (rec.templates === null || rec.templates.includes(t)) && powerFits(t, rec.power));
+    // A Weapon Legendary's power fits any weapon of the group; only the power's own fit excludes one.
+    const eligible = family.templates.filter((t) => bases.has(t) && powerFits(t, rec.power));
     if (!eligible.length) return null;
     const host = eligible.reduce((a, t) => (bases.get(t).cappedDps > bases.get(a).cappedDps ? t : a), eligible[0]);
     const base = bases.get(host);
