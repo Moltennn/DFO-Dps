@@ -146,23 +146,19 @@ test('the curbing cap only binds below 20x the per-hit', () => {
   assert.equal(large.capLoss, 0);
 });
 
-test('a live equip table is the authority, and First Blood is 60% on the opening blow', () => {
+test('a live equip table is the authority over the saved items and the _mods cache', () => {
   const save = testSave({
     equipSlots: {
       19: { name: 'Katana of the Cat', group: 'Weapons', templateIndex: 121, material: 9, minDamage: 1, maxDamage: 16, maxCondition: 100, currentCondition: 100 },
-      6: { name: "Duelist's Vambrace", group: 'Jewellery', legendary: 'duelists-vambrace', affixes: [{ id: 'skill', param: 29, value: 10 }] },
+      6: { name: 'Bracelet of Practice', group: 'Jewellery', affixes: [{ id: 'skill', param: 29, value: 10 }] },
     },
     _mods: { stats: {}, skills: { 29: 999 } },
     _enchantMods: { skillMods: {} },
   });
   const ch = characterFromSave(save, { online: true });
   assert.equal(ch._mods.skills[29], 10, 'equipSlots, not the stale _mods');
-  assert.ok(ch.legendaries.some((l) => l.id === 'duelists-vambrace'));
   assert.equal(ch.weapon.minDamage, 1);
   assert.equal(ch.weapon.maxDamage, 16);
-  const base = analyze(ch, { target: referenceFoe(5, 'soft'), core: 'overhaul' });
-  const open = analyze(ch, { target: referenceFoe(5, 'soft'), core: 'overhaul', firstBlow: true });
-  assert.ok(Math.abs(open.damage.avg / base.damage.avg - 1.6) < 0.06, `${base.damage.avg} -> ${open.damage.avg}`);
 });
 
 test('the real gate boss: 8,400 HP, plate 60, 420 hit cap, two 3s shields at level 30', () => {

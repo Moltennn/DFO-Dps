@@ -228,6 +228,20 @@ export const gateRefDps = (level) => 5 + Math.max(1, Math.min(60, Math.floor(Num
 export const gateHealth = (level) => GATE_TTK_S * gateRefDps(level);
 export const gateHitCap = (level) => GATE_HIT_CAP_X * gateRefDps(level);
 
+
+/** Roleplay & Realism: Items weaponBalance spans (rriRealism.js), used by the
+ * community benchmark and by `--rri`. Bows are included for parity but v1 DPS
+ * is melee. */
+export const RRI_WEAPON_DAMAGE = Object.freeze({
+  113: { min: 1, max: 6 }, 114: { min: 1, max: 7 }, 115: { min: 3, max: 8 },
+  116: { min: 2, max: 8 }, 117: { min: 1, max: 10 }, 118: { min: 2, max: 14 },
+  119: { min: 1, max: 14 }, 120: { min: 2, max: 15 }, 121: { min: 1, max: 16 },
+  122: { min: 2, max: 19 }, 123: { min: 1, max: 18 }, 124: { min: 4, max: 12 },
+  125: { min: 4, max: 16 }, 126: { min: 4, max: 18 }, 127: { min: 3, max: 13 },
+  128: { min: 3, max: 18 }, 129: { min: 5, max: 17 }, 130: { min: 5, max: 19 },
+});
+export const RRI_SPEED_REDUCTION_FACTOR = 3.4;
+
 export const TARGET_PRESETS = Object.freeze([
   { id: 'soft', label: 'Soft monster', isClass: false, armorValue: 6, note: 'rats, imps and the early bestiary' },
   { id: 'tough', label: 'Tough monster', isClass: false, armorValue: 0, note: 'the middle of the bestiary' },

@@ -59,7 +59,7 @@ function weaponTable(rows, current) {
   }).join('');
 }
 
-function targetTable(ch, scenario, players = 1) {
+function targetTable(ch, scenario, players = 1, blowX = 1) {
   const rows = [];
   for (const id of ['soft', 'tough', 'armoured', 'human']) {
     const r = analyze(ch, { ...scenario, target: referenceFoe(ch.level, id), health: 0, traits: [] });
@@ -68,7 +68,7 @@ function targetTable(ch, scenario, players = 1) {
   const hp = scenario.health || 5000;
   const b = analyze(ch, { ...scenario, target: bossTarget({ level: ch.level, armorValue: 0, health: hp, traits: scenario.traits }), health: hp });
   rows.push({ id: 'boss', r: b });
-  const g = analyze(ch, { ...scenario, target: gateTarget(ch.level, { players }), health: gateHealth(ch.level) * Math.max(1, Math.floor(players)), traits: [] });
+  const g = analyze(ch, { ...scenario, target: gateTarget(ch.level, { players, blowX }), health: gateHealth(ch.level) * Math.max(1, Math.floor(players)), traits: [] });
   rows.push({ id: 'gate', r: g });
   return rows.map(({ id, r }) => {
     const label = id === 'boss' ? `Boss${scenario.traits.length ? ` (${scenario.traits.join(', ')})` : ''}` : id === 'gate' ? 'Gate - Ruhn' : id[0].toUpperCase() + id.slice(1);
@@ -86,9 +86,9 @@ function traitTable(ch, scenario) {
   }).join('');
 }
 
-function theoryTable(ch, scenario, players = 1) {
+function theoryTable(ch, scenario, players = 1, blowX = 1) {
   const pools = [
-    { label: 'Gate - Ruhn', t: gateTarget(ch.level, { players }), traits: [] },
+    { label: 'Gate - Ruhn', t: gateTarget(ch.level, { players, blowX }), traits: [] },
     { label: 'Curbing 1,000', t: bossTarget({ level: ch.level, health: 1000, traits: ['curbing'] }), traits: ['curbing'] },
     { label: 'Curbing 2,000', t: bossTarget({ level: ch.level, health: 2000, traits: ['curbing'] }), traits: ['curbing'] },
     { label: 'Curbing 5,000', t: bossTarget({ level: ch.level, health: 5000, traits: ['curbing'] }), traits: ['curbing'] },
@@ -142,15 +142,11 @@ function capTable(ch, scenario) {
 export function buildReport(ch, {
   target, core = 'overhaul', traits = [], health = 0, swing = 'StrikeLeft',
   passiveOn = true, stacks = 5, rhythm = false, unaware = false, firstBlow = false,
-  healthShare = 1, backstabUptime = 0, players = 1, weapon = null,
+  healthShare = 1, backstabUptime = 0, players = 1, blowX = 1, weapon = null,
 } = {}) {
   const baseCh = weapon?.item ? { ...ch, weapon: weapon.item } : ch;
   const scenario = { target, core, traits, health, swing, passiveOn, stacks, rhythm, unaware, firstBlow, healthShare, backstabUptime };
   const r = analyze(baseCh, scenario);
-  const sustained = analyze(baseCh, { ...scenario, firstBlow: false });
-  const opening = (ch.legendaries ?? []).some((l) => l.id === 'duelists-vambrace')
-    ? analyze(baseCh, { ...scenario, firstBlow: true })
-    : null;
   const w = r.weapon;
   const rs = marginals(baseCh, r, scenario);
   const affixes = rankAffixes(baseCh, r, scenario);
@@ -219,7 +215,6 @@ export function buildReport(ch, {
   </div>
 
   ${r.backstab?.uptime > 0 ? `<div class="note"><b>Backstab:</b> ${pct(r.backstab.chance)} chance of ×3 from behind; the DPS uses a ${pct(r.backstab.uptime)} behind uptime (expected ×${n2(r.backstab.expectedMult)}). Raw backstab crit ${r.backstab.critMin}-${r.backstab.critMax}; the per-hit cap is applied after this. A displayed 600 is a backstab crit; the health bar may only lose the cap (${r.cap || 'none'}).</div>` : ''}
-  ${opening ? `<div class="note"><b>First Blood (Duelist's Vambrace):</b> the opening blow deals 60% more. Opening per swing ${n1(opening.perSwing)}; sustained per swing ${n1(sustained.perSwing)}. The live Combat Stats card's Damage and Per swing tiles show the opening value; the cards above show the ${scenario.firstBlow ? 'opening' : 'sustained'} one. Add or remove <code>--first-blow</code> to switch.</div>` : ''}
   <div class="note"><b>Target:</b> ${esc(targetLabel)}${esc(affinity)}, level ${esc(target?.level ?? '-')}.
     ${r.cap ? `<br><b>${esc(capLine)}</b> Your per-hit range is ${r.damage.min}-${r.damage.max} (crit ${r.damage.critMin}-${r.damage.critMax}); ${pct(r.capLoss)} of the uncapped DPS is lost to the cap.` : ''}
     ${r.ward ? `<br><b>Warded:</b> ${r.ward} points absorb the first blows; the time-to-kill includes that pool.` : ''}
@@ -251,7 +246,7 @@ export function buildReport(ch, {
   <p class="note">The ranking holds the character's skills, effects and gear skill affixes fixed, and gives every candidate a fresh 100% condition item. The equipped row keeps its own affixes. Materials are Iron through Daedric.</p>
 
   <h2>Real boss pools and the speed/damage crossover</h2>
-  <table><thead><tr><th>Pool</th><th>HP</th><th>Cap</th><th>Landed hit</th><th>Headroom</th><th>Best weapon</th><th>Best DPS</th><th>TTK</th></tr></thead><tbody>${theoryTable(baseCh, scenario, players)}</tbody></table>
+  <table><thead><tr><th>Pool</th><th>HP</th><th>Cap</th><th>Landed hit</th><th>Headroom</th><th>Best weapon</th><th>Best DPS</th><th>TTK</th></tr></thead><tbody>${theoryTable(baseCh, scenario, players, blowX)}</tbody></table>
   <p class="note">The gate boss's real solo pool at level ${ch.level} is ${gateHealth(ch.level).toLocaleString()} HP (240 seconds of level reference damage) with a ${gateHitCap(ch.level)} per-blow server cap and two 3s phase shields. Curbing is 5% of max HP. <b>Headroom</b> is cap / expected landed hit: above 1x, damage can grow that many times before speed is strictly better; at or below 1x, speed is already better.</p>
 
   <h2>Scaling headroom</h2>
@@ -260,7 +255,7 @@ export function buildReport(ch, {
 
   <h2>Targets</h2>
 
-  <table><thead><tr><th>Target</th><th>Armor</th><th>Hit</th><th>DPS</th><th>Capped</th><th>TTK</th></tr></thead><tbody>${targetTable(baseCh, scenario, players)}</tbody></table>
+  <table><thead><tr><th>Target</th><th>Armor</th><th>Hit</th><th>DPS</th><th>Capped</th><th>TTK</th></tr></thead><tbody>${targetTable(baseCh, scenario, players, blowX)}</tbody></table>
 
   <h2>Boss traits, one at a time</h2>
   <table><thead><tr><th>Trait</th><th>DPS</th><th>Capped</th><th>Loss</th><th>TTK</th><th>Effect</th></tr></thead><tbody>${traitTable(baseCh, scenario)}</tbody></table>

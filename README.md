@@ -71,13 +71,39 @@ dfo eval '(() => { const e = window.__playerEntity; const equipSlots = {}; for (
 ./dfo-dps build --save /tmp/live.json --first-blow
 ```
 
-The live card's **Damage** and **Per swing** tiles show the **opening** blow when a First Blood item is worn. Pass `--first-blow` to compare exactly; without it the tool shows the sustained swing.
+The live card's **Damage** and **Per swing** tiles can include the Duelist's Vambrace **First Blood** opening effect. The simulation deliberately excludes it — it is one opening hit, not boss DPS — so compare the tool's sustained **38–58 / 120–183** front range and its **Backstab** range, not the card's opening tile.
+
+## Graphs
+
+```bash
+./dfo-dps graph --save /tmp/live.json --target gate \
+  --series stat:strength,stat:agility --from 50 --to 100 --step 5 --out stats.svg.html
+
+./dfo-dps graph --save /tmp/live.json --bare --no-effects --base-stats 50 --target gate \
+  --series stat:strength,stat:agility --from 50 --to 100 --out naked-stats.html
+
+./dfo-dps graph --save /tmp/live.json --target gate \
+  --series skill:29,gear:29 --from 100 --to 200 --out skill-gear.html
+```
+
+The first command is the honest live picture: with gear stat affixes the lines can be flat at the live 100 cap. The bare run is the theorycraft baseline.
+
+## Community benchmark
+
+`benchmark` reproduces the 2026-10-28 community fixture (level 45 Redguard Haarvenu vampire, RRI, tough monster, raw 100/200, +0/+150/+300) and prints our values beside the published ones:
+
+```bash
+./dfo-dps benchmark          # community strength model (classic /5, two-handed ~15)
+./dfo-dps benchmark --live   # the live PCAAO strength model (/10, two-handed x2)
+```
+
+The community table assumes **classic /5 Strength** for one-handed and a **~+15** two-handed strength term; our `benchmark` mode reproduces it within about **1–6%**. The live game uses PCAAO `/10` with two-handed ×2, which is why `--live` is lower than the doc. The tool defaults to the live model for build decisions and labels the community mode when benchmarking.
 
 ## Backstab and the 600s
 
 A normal front crit on the live card is 189–290; **Backstab is 99% ×3**, so a critical backstab is **567–870**. That is the 600s you see. The tool was showing front swings only; `--behind` (100% behind) or `--backstab 0.5` (uptime) now adds it. The card's **Damage** and **Per swing** are front/opening values; the Backstab tile is separate.
 
-The gate's server per-hit cap is **420** at level 30 (12 × `dpsRef` 35). A displayed 600 backstab is therefore **raw**; the health bar may only lose 420. If the bar really loses 600, the fight has a `relayBlowX` above 1.43 (Elite/Vestiges/might) or a different pool. `--players n` scales the gate's health per player; the cap is per player.
+The gate's server per-hit cap is **420** at level 30 (12 × `dpsRef` 35). A displayed 600 backstab is therefore **raw**; the health bar may only lose 420. If the bar really loses 600, the fight has a `relayBlowX` above 1.43 (Elite/Vestiges/might) or a different pool; model it with `--blow-x 1.5` (or the fight's factor). `--players n` scales the gate's health per player; the cap is per player.
 
 ## Theorycraft numbers
 
@@ -113,7 +139,7 @@ The gate's server per-hit cap is **420** at level 30 (12 × `dpsRef` 35). A disp
 - damage is shown **before the foe's worn/natural armor reduction**, exactly
   like the game's Combat Stats card; a human in mail will take less
 - the overhaul's condition-based effectiveness is assumed at 100% condition
-- no loot set powers, sigils or legendary proc damage; **First Blood** (Duelist's Vambrace) is modelled because it changes the opening blow
+- no loot set powers, sigils, legendary proc damage or First Blood; the simulation is for sustained boss DPS
 - no mentor overlay
 - no PvP/peer model
 

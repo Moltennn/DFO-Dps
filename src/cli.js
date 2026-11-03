@@ -16,6 +16,8 @@ import {
   gateHealth, gateHitCap,
 } from './data.js';
 import { buildReport } from './report.js';
+import { benchmarkFull, benchmarkTable } from './benchmark.js';
+import { graphPage, lineChart } from './graph.js';
 import {
   analyze, bossTarget, currentWeaponRow, gateTarget, marginals, rankAffixes, rankWeapons, referenceFoe,
   syntheticWeapon, weaponOf,
@@ -34,6 +36,8 @@ Usage:
   dfo-dps compare [options]           baseline vs one change
   dfo-dps scale [options]             stat/skill scaling curve to the caps
   dfo-dps tradeoff [options]          speed vs damage against real boss pools
+  dfo-dps graph [options]             SVG line chart of two or more stats/skills
+  dfo-dps benchmark [options]         compare the community weapon table
   dfo-dps saves                       list saves under the DFO user data folder
   dfo-dps doctor                      show save/build/ruleset information
 
@@ -52,10 +56,11 @@ Common options:
   --stacks <0-5>                      Flowing Steel stacks (default: 5)
   --rhythm                            War Rhythm is up (Warblade)
   --unaware                           target has not noticed you (Cutthroat)
-  --first-blow                        first blow at this foe (Assassin; also First Blood / Duelist's Vambrace)
+  --first-blow                        first blow at this foe (Assassin / Opening Strike)
   --behind                            every swing is from behind (backstab x3)
   --backstab <0..1>                   share of swings from behind (expected backstab)
   --players <n>                       gate boss group size (health per player; default 1)
+  --blow-x <n>                        gate relayBlowX (Elite/Vestiges cap multiplier; default 1)
   --health-share <0..1>               foe's health share for Axe/Blunt mastery (default: 1)
   --no-crit-damage                    overhaul crit adds hit only
   --no-passive                        switch the path passive off
@@ -67,6 +72,9 @@ Common options:
   --gear-skill <id>                   scale one gear skill affix (with scale)
   --from <n> --to <n> --step <n>      scale range (default: current to cap)
   --all                               scale/compare every relevant channel
+  --series <a,b>                      graph series: stat:strength,skill:29,gear:29
+  --live                              benchmark against the live strength model instead of the community doc
+  --full                               also print the healthy / below-half / full-fight table
   --damage-pct <n>                    add N% weapon damage (theorycraft)
   --json                              machine-readable output
   --top <n>                           rows in a ranking (default: 20)
@@ -97,6 +105,10 @@ const optsSpec = {
   behind: { type: 'boolean', default: false },
   backstab: { type: 'string' },
   players: { type: 'string', default: '1' },
+  'blow-x': { type: 'string', default: '1' },
+  series: { type: 'string' },
+  live: { type: 'boolean', default: false },
+  full: { type: 'boolean', default: false },
   all: { type: 'boolean', default: false },
   from: { type: 'string' },
   to: { type: 'string' },
@@ -165,7 +177,7 @@ function targetOf(ch, values, traits) {
   const level = n(values.level, ch.level);
   const target = String(values.target ?? 'armoured').toLowerCase();
   if (target === 'gate' || target === 'ruhn') {
-    return gateTarget(level, { health: n(values.health, gateHealth(level)), traits, players: n(values.players, 1) });
+    return gateTarget(level, { health: n(values.health, gateHealth(level)), traits, players: n(values.players, 1), blowX: n(values['blow-x'], 1) });
   }
   if (target === 'boss') {
     return bossTarget({
@@ -261,8 +273,6 @@ function printBuild(ch, r, targetPreset, values) {
   const traits = r.traits;
   console.log(`${characterLabel(ch)}`);
   console.log(`${w ? `${w.materialName} ${w.name}` : 'bare hands'}  |  ${r.core}${ch.online ? ' / online' : ' / offline'}${ch.martialPath ? ` / ${MARTIAL_PATHS[ch.martialPath]?.name ?? ch.martialPath}` : ''}`);
-  const hasFirstBlood = (ch.legendaries ?? []).some((l) => l.id === 'duelists-vambrace');
-  if (hasFirstBlood) console.log(`First Blood (Duelist's Vambrace): ${values['first-blow'] ? 'on - opening blow +60%' : 'available - opening blow +60%, sustained shown (pass --first-blow to compare the card)'}`);
   console.log(`target: ${targetPreset}${r.target.isClass ? ' (class)' : ''}, level ${r.target.level}${r.health ? `, ${r.health.toLocaleString()} HP` : ''}${traits.length ? `, traits: ${traits.join(', ')}` : ''}`);
   console.log('');
   console.log(table([
@@ -379,6 +389,82 @@ export async function main(argv = process.argv.slice(2)) {
   const scenario = scenarioOf(ch, values, traits, target);
   const r = analyze(ch, scenario);
 
+  if (cmd === 'benchmark') {
+    const rows = benchmarkTable({ mode: values.live ? 'live' : 'doc' });
+    const flat = [];
+    for (const r of rows) {
+      const exp = r.expected;
+      const diffs = exp ? r.values.map((v, i) => (v - exp[i]) / Math.max(1, exp[i])) : [];
+      const max = exp ? Math.max(...diffs.map((d) => Math.abs(d))) * 100 : null;
+      flat.push({ label: r.label, values: r.values, expected: exp, maxDiff: max });
+    }
+    console.log(`community fixture (${values.live ? 'live strength' : 'doc strength'}) | level 45 Redguard vampire | RRI | tough monster`);
+    console.log(table(flat.map((r) => [r.label, ...r.values.map((v) => v.toFixed(0)), ...(r.expected ? r.expected.map((v) => String(v)) : ['', '', '', '']), r.maxDiff == null ? '-' : `${r.maxDiff.toFixed(1)}%`]), ['Weapon', 'raw100', 'raw200', '+150', '+300', 'exp100', 'exp200', 'exp150', 'exp300', 'max Δ'], ['left', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right']));
+    if (values.full) {
+      const full = benchmarkFull(values.live ? 'live' : 'doc');
+      console.log('\nFull HP-to-zero (equal HP halves; harmonic, no overkill)');
+      console.log(table(full.map((x) => [x.label, x.healthy.toFixed(0), x.below.toFixed(0), x.full.toFixed(0)]), ['Weapon', 'Healthy', 'Below half', 'Full'], ['left', 'right', 'right', 'right']));
+    }
+    if (values.json) console.log(JSON.stringify(flat, null, 2));
+    return;
+  }
+
+  if (cmd === 'graph') {
+    const { ch } = loadCharacter(values);
+    const traits = traitsOf(values);
+    const target = targetOf(ch, values, traits);
+    const scenario = scenarioOf(ch, values, traits, target);
+    const specs = String(values.series ?? 'stat:strength,stat:agility').split(',').map((s) => s.trim()).filter(Boolean);
+    const series = [];
+    for (const spec of specs) {
+      const [kindRaw, idRaw] = spec.split(':');
+      const kind = (kindRaw || '').toLowerCase();
+      let id = idRaw;
+      let current;
+      let from;
+      let to;
+      let label;
+      if (kind === 'stat') {
+        id = String(id).toLowerCase();
+        current = liveStat(ch, id);
+        from = n(values.from, 50); to = n(values.to, 100);
+        label = `stat ${id}`;
+      } else if (kind === 'skill' || kind === 'gear') {
+        id = Number(id);
+        if (!(id >= 0 && id < 35)) throw new Error(`bad skill id ${idRaw}`);
+        current = kind === 'skill' ? (ch.skills?.[id] ?? 0) : (ch._mods?.skills?.[id] ?? 0);
+        from = n(values.from, kind === 'skill' ? 100 : current);
+        to = n(values.to, kind === 'skill' ? 200 : current + 100);
+        label = kind === 'skill' ? `skill ${id}` : `gear ${id}`;
+      } else {
+        throw new Error(`graph series must be stat:name, skill:id or gear:id (${spec})`);
+      }
+      const points = [];
+      for (const value of scaleRange(values, from, to)) {
+        const c = JSON.parse(JSON.stringify(ch));
+        if (kind === 'stat') c.stats[id] = value;
+        else if (kind === 'skill') c.skills[id] = value;
+        else {
+          c._mods = c._mods ?? { stats: {}, skills: {} };
+          c._mods.skills = c._mods.skills ?? {};
+          c._mods.skills[id] = value;
+        }
+        const rr = analyze(c, { ...scenario, weapon: scenario.weapon });
+        points.push({ x: value, y: rr.cappedDps ?? rr.dps });
+      }
+      series.push({ name: label, points });
+    }
+    const title = 'DFO DPS - stat curves';
+    const flags = [values.bare ? 'bare' : '', values['no-effects'] ? 'no effects' : '', values['base-stats'] != null ? `base ${values['base-stats']}` : ''].filter(Boolean).join(', ');
+    const subtitle = `${characterLabel(ch)} | ${values.core}${ch.online ? ' / online' : ' / offline'} | ${values.target}${target.health ? ` ${target.maxHealth.toLocaleString()} HP` : ''}${flags ? ` | ${flags}` : ''}`;
+    const html = graphPage({ title, subtitle, chart: lineChart({ title, xLabel: 'Value', yLabel: 'Capped DPS', series }) });
+    const out = path.resolve(values.out);
+    fs.writeFileSync(out, html, 'utf8');
+    console.log(`graph written: ${out}`);
+    if (values.json) console.log(JSON.stringify(series, null, 2));
+    return;
+  }
+
   if (cmd === 'scale') {
     const { ch } = loadCharacter(values);
     const traits = traitsOf(values);
@@ -450,7 +536,7 @@ export async function main(argv = process.argv.slice(2)) {
   if (cmd === 'tradeoff') {
     const { ch } = loadCharacter(values);
     const traits = traitsOf(values);
-    const gate = gateTarget(ch.level, { players: n(values.players, 1) });
+    const gate = gateTarget(ch.level, { players: n(values.players, 1), blowX: n(values['blow-x'], 1) });
     const targets = [
       { label: 'Gate - Ruhn', t: gate },
       { label: 'Curbing 1,000 HP', t: bossTarget({ level: ch.level, health: 1000, traits: ['curbing'] }) },
@@ -511,7 +597,7 @@ export async function main(argv = process.argv.slice(2)) {
       target, core: scenario.core, traits, health: scenario.health, swing: scenario.swing,
       passiveOn: scenario.passiveOn, stacks: scenario.stacks, rhythm: scenario.rhythm,
       unaware: scenario.unaware, firstBlow: scenario.firstBlow, healthShare: scenario.healthShare,
-      backstabUptime: scenario.backstabUptime, players: n(values.players, 1), weapon: scenario.weapon,
+      backstabUptime: scenario.backstabUptime, players: n(values.players, 1), blowX: n(values['blow-x'], 1), weapon: scenario.weapon,
     });
     const out = path.resolve(values.out);
     fs.writeFileSync(out, html, 'utf8');

@@ -19,7 +19,7 @@ import {
   SWING_HEFT_MAX, SWING_HEFT_PER_KG, SWING_MODS, SWING_SHORT_BLADE,
   SWING_TEMPO_AT_0, SWING_TEMPO_AT_100, SWING_TWO_HANDED,
   WARD_SHARE, WEAPON_MATERIAL_MODIFIER, WEAPON_TYPES, WEAPONS, WRATH_AFTER_S,
-  GATE_SHIELDS, GATE_SHIELD_S, gateHealth, gateHitCap,
+  GATE_SHIELDS, GATE_SHIELD_S, gateHealth, gateHitCap, RRI_WEAPON_DAMAGE, RRI_SPEED_REDUCTION_FACTOR,
 } from './data.js';
 import {
   effectiveSkill, liveStat, masterCappedSkill, PROFICIENCY_FLAG, skillModOf,
@@ -44,7 +44,7 @@ export function unityRound(x) {
 }
 
 /** The template and the live item as one weapon descriptor. */
-export function weaponOf(item) {
+export function weaponOf(item, { rri = false } = {}) {
   if (!item) return null;
   const t = WEAPONS[item.templateIndex];
   if (!t) return null;
@@ -53,8 +53,8 @@ export function weaponOf(item) {
     templateIndex: item.templateIndex,
     name: item.name || t.name,
     baseName: t.name,
-    min: Number.isFinite(item.minDamage) && item.minDamage > 0 ? item.minDamage : t.min,
-    max: Number.isFinite(item.maxDamage) && item.maxDamage > 0 ? item.maxDamage : t.max,
+    min: rri ? (RRI_WEAPON_DAMAGE[item.templateIndex]?.min ?? t.min) : (Number.isFinite(item.minDamage) && item.minDamage > 0 ? item.minDamage : t.min),
+    max: rri ? (RRI_WEAPON_DAMAGE[item.templateIndex]?.max ?? t.max) : (Number.isFinite(item.maxDamage) && item.maxDamage > 0 ? item.maxDamage : t.max),
     skillId: WEAPON_SKILL[item.templateIndex] ?? SKILLS.HandToHand,
     skill: t.skill,
     type: t.type,
@@ -70,14 +70,14 @@ export function weaponOf(item) {
   };
 }
 
-export function syntheticWeapon(templateIndex, material = 9) {
+export function syntheticWeapon(templateIndex, material = 9, { rri = false } = {}) {
   const t = WEAPONS[templateIndex];
   if (!t) return null;
   return weaponOf({
     group: 'Weapons', templateIndex, material,
     name: `${MATERIALS[material] ?? ''} ${t.name}`.trim(),
     maxCondition: 100, currentCondition: 100,
-  });
+  }, { rri });
 }
 
 export function isBlade(w) {
@@ -290,13 +290,26 @@ export function cadence(ch, w, opts = {}) {
     const tick = swingFrameSeconds(speed, { heft: 1, handling: swingHandling(null) });
     return { seconds: 5 * tick, tick, aps: 1 / (5 * tick), speed, heft: 1, handling: swingHandling(null), pace: 0 };
   }
-  const heft = swingHeft(w.weight, stat(ch, 'strength', opts));
+  const strength = stat(ch, 'strength', opts);
   const handling = swingHandling(w);
-  let tick = swingFrameSeconds(speed, { heft, handling });
+  let heft = 1;
+  let tick;
+  let usedSpeed = speed;
+  if (opts.rri) {
+    // Roleplay & Realism: Items GetMeleeWeaponAnimTime, restated over the port's swing law.
+    const capped = Math.min(speed, 98);
+    const adjustedWeight = ((150 - strength) * w.weight) / 100;
+    const reduction = adjustedWeight * RRI_SPEED_REDUCTION_FACTOR;
+    usedSpeed = Math.trunc(capped - (capped * reduction) / 90);
+    tick = swingFrameSeconds(usedSpeed, { handling });
+  } else {
+    heft = swingHeft(w.weight, strength);
+    tick = swingFrameSeconds(speed, { heft, handling });
+  }
   const pace = clamp(martialPace(ch, opts) + masteryPace(ch, w, opts) + num(opts.attackSpeedPct, 0), 0, 50);
   if (pace > 0) tick = Math.max(SWING_FRAME_MIN, tick / (1 + pace / 100));
   const seconds = 5 * tick; // a fresh strike stands on frame 0: strikeTicks 5, hold 0
-  return { seconds, tick, aps: 1 / seconds, speed, heft, handling, pace };
+  return { seconds, tick, aps: 1 / seconds, speed: usedSpeed, heft, handling, pace, rri: !!opts.rri };
 }
 
 /** systems/bossTraits.js: the blow's resistance. */
@@ -464,12 +477,6 @@ function conditionMultiplier(w, powerful = false) {
   return 0.25;
 }
 
-/** Legendary powers that add to a blow. First Blood (Duelist's Vambrace) is the opening hit. */
-export function gearBlowPct(ch, opts = {}) {
-  if (!opts.firstBlow) return 0;
-  return (ch.legendaries ?? []).some((l) => l.id === 'duelists-vambrace') ? 60 : 0;
-}
-
 /** The blow's damage after the registered blow modifiers (martial, mastery, slayer, gear). */
 export function weaponBlow(ch, w, damage, target, opts = {}) {
   let d = damage;
@@ -479,8 +486,6 @@ export function weaponBlow(ch, w, damage, target, opts = {}) {
   if (martial > 0) d = applyPct(d, martial);
   const slayer = w?.slayer ?? 0;
   if (slayer > 0) d = applyPct(d, slayer);
-  const gear = gearBlowPct(ch, opts);
-  if (gear > 0) d = applyPct(d, gear);
   const theory = num(opts.damagePct, 0);
   if (theory) d = applyPct(d, theory);
   return d;
@@ -503,7 +508,7 @@ export function damageModel(ch, w, target, swingKey, core, opts = {}) {
     const hi = floor(h2h / 5) + 1;
     rolls = [];
     for (let r = lo; r <= hi; r++) rolls.push(r);
-    strMod = core === 'overhaul' ? pcaaoDamageModifier(str) : damageModifier(str);
+    strMod = core === 'overhaul' && !opts.classicStrength ? pcaaoDamageModifier(str) : damageModifier(str);
   } else {
     const lo = w.min;
     const hi = w.max;
@@ -513,7 +518,13 @@ export function damageModel(ch, w, target, swingKey, core, opts = {}) {
       rolls.push(rolled + w.bonusDamage);
     }
     matMod = WEAPON_MATERIAL_MODIFIER[w.material] ?? 0;
-    strMod = core === 'overhaul' ? pcaaoDamageModifier(str) * (w.twoHanded ? 2 : 1) : damageModifier(str);
+    strMod = opts.strModOverride != null
+      ? opts.strModOverride
+      : (w.twoHanded && opts.twoHandedStrMod != null
+        ? opts.twoHandedStrMod
+        : (opts.classicStrength
+          ? damageModifier(str)
+          : (core === 'overhaul' ? pcaaoDamageModifier(str) * (w.twoHanded ? 2 : 1) : damageModifier(str))));
   }
   const one = (roll) => {
     let d = roll + dmgMods + strMod + matMod;
@@ -539,7 +550,7 @@ export function damageModel(ch, w, target, swingKey, core, opts = {}) {
     parts: {
       roll: [Math.min(...rolls), Math.max(...rolls)],
       matMod, strMod, prof: prof.damage, racial: race.damage, twoHanded: !!w?.twoHanded,
-      mastery: masteryPct(ch, w, target, opts), martial: martialBlowPct(ch, target, opts), slayer: w?.slayer ?? 0, gear: gearBlowPct(ch, opts),
+      mastery: masteryPct(ch, w, target, opts), martial: martialBlowPct(ch, target, opts), slayer: w?.slayer ?? 0,
     },
     crit,
   };
@@ -550,7 +561,11 @@ export function analyze(ch, {
   weapon, target, core = 'overhaul', swing = 'StrikeLeft', critDamage = true,
   traits = [], health = null, passiveOn = true, ...opts
 } = {}) {
-  const w = weapon === undefined ? weaponOf(ch.weapon) : weapon;
+  let w = weapon === undefined ? weaponOf(ch.weapon, { rri: !!opts.rri }) : weapon;
+  if (w && opts.rri) {
+    const rr = RRI_WEAPON_DAMAGE[w.templateIndex];
+    if (rr) w = { ...w, min: rr.min, max: rr.max };
+  }
   const t = target ?? { ...referenceFoe(ch.level, 'tough') };
   const tgt = { ...t, group: t.group ?? null, affinity: t.affinity ?? null };
   const simOpts = { ...opts, passiveOn, critDamage, healthShare: opts.healthShare ?? t.healthShare ?? 1 };
@@ -640,10 +655,10 @@ export function bossTarget({ level = 30, armorValue = 0, isClass = false, health
 }
 
 /** The real gate boss (Valkynaz Ruhn): a plate-armour monster, the solo pool for this level, the server hit cap and the two phase shields. */
-export function gateTarget(level, { health = gateHealth(level), traits = [], hitCap = gateHitCap(level), players = 1 } = {}) {
+export function gateTarget(level, { health = gateHealth(level), traits = [], hitCap = null, players = 1, blowX = 1 } = {}) {
   return bossTarget({
     level, armorValue: 12, health: health * Math.max(1, Math.floor(players)), traits, // 12 x5 = 60, the gate's flat plate armour
-    hitCap, phaseShields: GATE_SHIELDS, shieldSeconds: GATE_SHIELD_S,
+    hitCap: hitCap ?? Math.round(gateHitCap(level) * Math.max(1, num(blowX, 1))), phaseShields: GATE_SHIELDS, shieldSeconds: GATE_SHIELD_S,
   });
 }
 
@@ -686,7 +701,7 @@ export function rankWeapons(ch, scenario = {}, { top = 20, materials = 10 } = {}
   for (const key of Object.keys(WEAPONS)) {
     const t = WEAPONS[key];
     for (let m = 0; m < materials; m++) {
-      const w = syntheticWeapon(Number(key), m);
+      const w = syntheticWeapon(Number(key), m, { rri: !!scenario.rri });
       if (!w) continue;
       const r = analyze(ch, { ...scenario, weapon: w });
       rows.push({

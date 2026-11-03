@@ -50,9 +50,13 @@ swing = (5 + hold) * tick
 - a fresh main-hand swing is five frames; the 0.45s floor makes the maximum
   about 2.2 swings/s
 
+## Community fixture
+
+`benchmark` uses the 2026-10-28 community fixture: level 45 Redguard Haarvenu vampire, STR/AGI/END/SPD/LUC 100, INT 99, WIL/PER 40, RRI weapon balance and swing law, Daedric, tough monster, raw 100/200, gear +0/+150/+300, no Expertise, no backstab, no procs. The doc's one-handed rows match **classic /5 Strength** and its two-handed rows a **~+15** term; `benchmark` uses those assumptions and is within ~1–6% of the published table. `--live` uses the live PCAAO `/10` model instead.
+
 ## Backstab and the cap
 
-`combatStats` carries `Backstab: skillValue(Backstabbing)% ×3`. A front crit of 189–290 becomes a **567–870** critical backstab; with First Blood the opening backstab is higher. `--behind` sets 100% uptime; `--backstab 0.5` uses the expected multiplier `1 + 2 × uptime × chance`.
+`combatStats` carries `Backstab: skillValue(Backstabbing)% ×3`. A front crit of 120–183 (sustained) becomes a **360–549** critical backstab; with the live card's opening First Blood it is 567–870, which the simulation deliberately excludes. `--behind` sets 100% uptime; `--backstab 0.5` uses the expected multiplier `1 + 2 × uptime × chance`.
 
 The gate's per-blow cap is `HIT_CAP_X × dpsRef(level)` = 420 at level 30 (unless an Elite/Vestiges `relayBlowX` raises it). The tool reports raw backstab damage and **capped** DPS separately: a 600 display can be raw while only the cap reaches the health.
 
@@ -79,11 +83,9 @@ If your per-hit is 40 and the boss has 5,000 HP, the cap is 250 and does
 nothing. The report's "Boss cap sensitivity" table shows where it starts to
 matter.
 
-## Live snapshot and First Blood
+## Live snapshot
 
 When a JSON with `equipSlots` is imported, the actual equip table wins over the saved `items[].equipSlot` and the live `_mods` cache. Its item `affixes` are folded into `_mods.skills`/`_mods.stats`; `_enchantMods.skillMods` is added separately. That reproduces the live Combat Stats card's skill line: for Moltenn, Long Blade 168, Critical Strike 217, Dodging 112, and the hit term `298`.
-
-`First Blood` (the Duelist's Vambrace legendary) adds 60% to the **opening** blow. The live card's Damage and Per swing tiles show that opening blow; `--first-blow` reproduces it. Without it the tool shows the sustained swing.
 
 ## Save import
 
