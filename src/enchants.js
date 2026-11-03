@@ -107,13 +107,19 @@ export function strikeEnchantments(item, ch, target, {
 
 /** Expected enchant damage per landed blow and per second. */
 export function enchantDps(item, ch, target, {
-  hit = 1, aps = 1, level = ch?.level ?? 1, potencyPct = 0, pierce = 0,
+  hit = 1, aps = 1, level = ch?.level ?? 1, potencyPct = 0, pierce = 0, cap = 0,
 } = {}) {
   const s = strikeEnchantments(item, ch, target, { level, potencyPct, pierce });
-  const perSwing = hit * (s.procDamage + s.flat);
-  const perSwingMin = hit * (s.procDamageMin + s.flat);
-  const perSwingMax = hit * (s.procDamageMax + s.flat);
-  return { ...s, perSwing, perSwingMin, perSwingMax, dps: perSwing * aps, dpsMin: perSwingMin * aps, dpsMax: perSwingMax * aps };
+  // Each Cast When Strikes spell is its own hit, so each gets its own per-hit cap.
+  const capOne = (v) => (cap > 0 ? Math.min(v, cap) : v);
+  const procDamage = s.procs.reduce((a, p) => a + capOne(p.damage), 0);
+  const procDamageMin = s.procs.reduce((a, p) => a + capOne(p.min), 0);
+  const procDamageMax = s.procs.reduce((a, p) => a + capOne(p.max), 0);
+  const flat = cap > 0 ? Math.min(s.flat, cap) : s.flat;
+  const perSwing = hit * (procDamage + flat);
+  const perSwingMin = hit * (procDamageMin + flat);
+  const perSwingMax = hit * (procDamageMax + flat);
+  return { ...s, procDamage, procDamageMin, procDamageMax, perSwing, perSwingMin, perSwingMax, dps: perSwing * aps, dpsMin: perSwingMin * aps, dpsMax: perSwingMax * aps };
 }
 
 /** Procs a weapon's condition can pay for (10 per Cast When Strikes). */

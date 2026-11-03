@@ -122,7 +122,9 @@ The `theory` output prices every star channel from +0 to +15 at the ceiling, and
 ./dfo-dps weapons --out ~/dfo-weapons.html
 ```
 
-The max profile is: attributes 100 (115 with `--firmament`), raw weapon skill and Critical Strike 200 mastered, weapon skill gear 240 (8 lines), Critical Strike gear 540 (18 lines), 40% damage affix, **perfect diamond sockets** (short blade 1, one-handed 2, two-handed 3, +12% damage each), the weapon's own career expertise, **Dunmer** (the default race; `--race` overrides), and **Blademaster** for every family; Berserker's below-half upkeep is not assumed. Hand-to-Hand uses a pair of **Hand Wraps** (damage/sockets/procs carry the fist blow). The table also includes dual-wield pairs, both hands of the same one-handed weapon at the off-hand x0.8 / -5 hit terms. The `Max gear` column is that build; `+ Firmament` adds the star-tree channel ceiling (+15 attributes, +15 skill, +30% blow). The gate column is the same build against the level-45 gate's 600 per-hit cap. The first chart ranks the boss (gate) DPS; the second ranks the uncapped DPS. Every DPS cell is the average; the bar chart's bar is the average.
+The max profile is: attributes 100 (115 with `--firmament`), raw weapon skill and Critical Strike 200 mastered, weapon skill gear 240 (8 lines), Critical Strike gear 540 (18 lines), 40% damage affix, **perfect diamond sockets** (short blade 1, one-handed 2, two-handed 3, +12% damage each), the weapon's own career expertise, **Dunmer** (the default race; `--race` overrides), and **Blademaster** for every family; Berserker's below-half upkeep is not assumed. Hand-to-Hand uses a pair of **Hand Wraps** (damage/sockets/procs carry the fist blow). The table also includes dual-wield pairs, both hands of the same one-handed weapon at the off-hand x0.8 / -5 hit terms. The `Max gear` column is that build; `+ Firmament` adds the star-tree channel ceiling (+15 attributes, +15 skill, +30% blow). The gate column is the same build against the level-45 gate's 600 per-hit cap.
+The cap is per player: a group scales the boss's health pool (each player
+brings a share), not the cap. The first chart ranks the boss (gate) DPS; the second ranks the uncapped DPS. Every DPS cell is the average; the bar chart's bar is the average.
 
 `weapons-max.html` with `--categories` is the condensed table: one row per weapon type in each slot, including the Hand Wraps fist row, sorted by DPS. The full page has a max-DPS bar chart and table, then one combined chart per family: raw training 100 -> 200 is effective 100 -> 140, and gear lines continue from effective 140 to 140 + the gear cap. One Critical Strike chart covers the best weapon of each family. The Hand-to-Hand row is the wrapped ceiling. Bare fists without Hand Wrap lines are the ~450 band the community tests saw.
 
@@ -140,6 +142,12 @@ Triggers that cannot happen there (undead, dragons, unaware, night, a
 second foe) are marked and do not inflate the boss column. Gains are against
 the row's **On** weapon, which can be a faster family member than the family
 title. Chain and quake are one extra target; poison is before resistance.
+**Many Endings** is an extra strike and therefore its own hit: it gets its
+own cap, which is why it still gains at the gate when Flow or Serpent's Kiss
+do not. **Cast When Strikes** spells are separate hits too; Flow, Serpent's
+Kiss, Potent Vs and the conditional damage powers ride the same hit and share
+its cap. The table says which powers are `same hit`, `extra hit`, `other
+target` or `utility`.
 
 ```bash
 ./dfo-dps imprints

@@ -86,7 +86,11 @@ export function powerDps(power, base, conditional = false, { capped = false } = 
     case 'chain': if (conditional) mult += (power.share ?? 0) / 100; break;
     case 'quake': if (conditional) mult += (power.share ?? 0) / 100; break;
     case 'flow': mult += ((power.pct ?? 0) * (power.max ?? 1)) / 100; break;
-    case 'echo': mult += (power.chance ?? 0) / 100; break;
+    case 'echo':
+      // Many Endings' extra strike is its own hit, so it gets its own cap.
+      return capped
+        ? base.cappedDps * (1 + (power.chance ?? 0) / 100)
+        : base.dps * (1 + (power.chance ?? 0) / 100);
     case 'venom': flat += conditional ? (power.flat ?? 0) * 2 : (power.flat ?? 0); break;
     case 'conduit': case 'siphon': case 'surge': break;
     default: break;
@@ -96,6 +100,12 @@ export function powerDps(power, base, conditional = false, { capped = false } = 
 }
 
 /** Powers whose condition cannot occur at the level-45 gate (a Daedra, one foe). */
+const HIT_KIND = Object.freeze({
+  bane: 'same hit', unaware: 'same hit', sanctified: 'same hit', flow: 'same hit', venom: 'same hit',
+  moon: 'same hit', rage: 'same hit', echo: 'extra hit', chain: 'other target', quake: 'other targets',
+  conduit: 'utility', siphon: 'utility', surge: 'utility',
+});
+
 const NOT_AT_GATE = new Set(['bane', 'unaware', 'sanctified', 'moon', 'chain', 'quake', 'conduit', 'siphon', 'surge']);
 
 const TRIGGER = Object.freeze({
@@ -108,7 +118,7 @@ const TRIGGER = Object.freeze({
   quake: 'another foe within 3 m',
   venom: 'foe is below half health (×2)',
   flow: 'five landed blows (steady)',
-  echo: 'the 10% extra strike lands',
+  echo: '10% extra strike (expected)',
   conduit: 'spell cost / magicka',
   siphon: 'a kill',
   surge: 'spell damage above 75% MP',
@@ -145,6 +155,7 @@ export function rankFamily(family, { firmament = false, vampire = false, sort = 
       delta: baseDps - base.cappedDps,
       triggerDelta: conditionalDps - base.cappedDps,
       uncappedDelta: uncappedDps - raw.dps,
+      hit: HIT_KIND[rec.power.kind] ?? 'same hit',
       trigger: `${TRIGGER[rec.power.kind] ?? ''}${canTrigger ? '' : ' (not at the gate)'}`,
       unconditional: rec.power.kind === 'flow' || rec.power.kind === 'echo',
     };

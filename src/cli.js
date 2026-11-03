@@ -767,7 +767,7 @@ export async function main(argv = process.argv.slice(2)) {
       console.log('Weapon imprints');
       for (const f of rows) {
         console.log(`\n${f.name} - ${f.weapon} (${fmt(f.base.cappedDps)} boss DPS)`);
-        console.log(table(f.rows.map((r) => [r.power.name, r.name, r.weapon, fmt(r.baseDps), fmt(r.delta), fmt(r.uncappedDps), fmt(r.uncappedDelta), fmt(r.conditionalDps), fmt(r.triggerDelta), r.trigger, r.power.brief]), ['Imprint', 'Of', 'On', 'Boss DPS', 'Boss gain', 'Uncapped DPS', 'Uncapped gain', 'Trigger DPS', 'Trigger gain', 'Trigger', 'Effect'], ['left', 'left', 'left', 'right', 'right', 'right', 'right', 'right', 'right', 'left', 'left']));
+        console.log(table(f.rows.map((r) => [r.power.name, r.name, r.weapon, r.hit, fmt(r.baseDps), fmt(r.delta), fmt(r.uncappedDps), fmt(r.uncappedDelta), fmt(r.conditionalDps), fmt(r.triggerDelta), r.trigger, r.power.brief]), ['Imprint', 'Of', 'On', 'Hit', 'Boss DPS', 'Boss gain', 'Uncapped DPS', 'Uncapped gain', 'Trigger DPS', 'Trigger gain', 'Trigger', 'Effect'], ['left', 'left', 'left', 'left', 'right', 'right', 'right', 'right', 'right', 'right', 'left', 'left']));
       }
     }
     const out = path.resolve(values.out === 'dfo-dps-report.html' ? 'imprints.html' : values.out);
@@ -781,12 +781,12 @@ export async function main(argv = process.argv.slice(2)) {
           { name: 'Uncapped', values: f.rows.map((r) => r.uncappedDps) },
         ],
       });
-      const body = f.rows.map((r) => `<tr><td class="k" style="white-space:normal;min-width:300px">${r.power.name}<br><span style="color:#a8a092;font-size:11px">of ${r.name} - ${r.power.brief}</span></td><td>${r.weapon}</td><td>${fmt(r.baseDps)}</td><td>${fmt(r.delta)}</td><td>${fmt(r.uncappedDps)}</td><td>${fmt(r.uncappedDelta)}</td><td style="white-space:normal;min-width:180px">${r.trigger}</td></tr>`).join('');
+      const body = f.rows.map((r) => `<tr><td class="k" style="white-space:normal;min-width:300px">${r.power.name}<br><span style="color:#a8a092;font-size:11px">of ${r.name} - ${r.power.brief}</span></td><td>${r.weapon}</td><td>${r.hit}</td><td>${fmt(r.baseDps)}</td><td>${fmt(r.delta)}</td><td>${fmt(r.uncappedDps)}</td><td>${fmt(r.uncappedDelta)}</td><td style="white-space:normal;min-width:180px">${r.trigger}</td></tr>`).join('');
       return {
         title: `${f.name} - ${f.weapon}`,
         note: `Each row is read on the best weapon of this family that the imprint actually fits. Boss is the level-${THEORY_LEVEL} gate (Daedra, 600 per-hit cap); Uncapped is the same weapon with no cap. Trigger applies the condition only where it can occur at the gate; otherwise it is marked. The imprint is the Legendary power only; the Rare's own affixes are separate.`,
         chart,
-        table: `<div class="table"><table><thead><tr><th>Imprint</th><th>On</th><th>Boss DPS</th><th>Boss gain</th><th>Uncapped DPS</th><th>Uncapped gain</th><th>Trigger</th></tr></thead><tbody>${body}</tbody></table></div>`,
+        table: `<div class="table"><table><thead><tr><th>Imprint</th><th>On</th><th>Hit</th><th>Boss DPS</th><th>Boss gain</th><th>Uncapped DPS</th><th>Uncapped gain</th><th>Trigger</th></tr></thead><tbody>${body}</tbody></table></div>`,
       };
     });
     const html = multiGraphPage({
@@ -796,7 +796,7 @@ export async function main(argv = process.argv.slice(2)) {
     });
     fs.writeFileSync(out, html, 'utf8');
     if (!values.json) console.log(`imprints page written: ${out}`);
-    if (values.json) console.log(JSON.stringify(rows.map((f) => ({ family: f.key, weapon: f.weapon, template: f.template, baseDps: f.base.cappedDps, rows: f.rows.map((r) => ({ id: r.id, record: r.name, power: r.power.name, weapon: r.weapon, baseDps: r.baseDps, conditionalDps: r.conditionalDps, uncappedDps: r.uncappedDps, delta: r.delta, uncappedDelta: r.uncappedDelta, triggerDelta: r.triggerDelta, trigger: r.trigger, effect: r.power.brief })) })), null, 2));
+    if (values.json) console.log(JSON.stringify(rows.map((f) => ({ family: f.key, weapon: f.weapon, template: f.template, baseDps: f.base.cappedDps, rows: f.rows.map((r) => ({ id: r.id, record: r.name, power: r.power.name, weapon: r.weapon, baseDps: r.baseDps, conditionalDps: r.conditionalDps, uncappedDps: r.uncappedDps, delta: r.delta, uncappedDelta: r.uncappedDelta, triggerDelta: r.triggerDelta, trigger: r.trigger, hit: r.hit, effect: r.power.brief })) })), null, 2));
     return;
   }
 

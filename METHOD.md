@@ -79,7 +79,11 @@ Daedra; 600 per-hit cap); **uncapped** is the same weapon with no cap. The
 **trigger** column applies the condition only where it can occur at the
 gate; conditions that cannot (undeath, dragons, unawareness, night, a second
 foe) are marked. Utility powers (spell cost, magicka on a kill, spell
-damage) show 0 melee DPS.
+damage) show 0 melee DPS. **Many Endings** is a separate strike and gets
+its own cap; Cast When Strikes spells are separate hits; chain/quake hit
+other targets separately. Flow, Serpent's Kiss, Potent Vs, bane, sanctified,
+moon, rage and the other same-hit modifiers share the main hit's cap. The
+imprint table prints each power's `Hit` class.
 
 `enchant-plan` imports the game's enchantment cost table
 (`enchantmentCatalogue.js`) and item `enchantmentPoints`
@@ -147,7 +151,7 @@ The gate's per-blow cap is `HIT_CAP_X × dpsRef(level)` = 420 at level 30 (unles
 Relay bosses (the Warden, the Remnant, the gate court, the sea serpent) only
 carry bladeturning/stoneskin/thorned; they have no ward, curb or wrath.
 
-The cap is applied **after** backstab's ×3 and after any flat addition to the blow; backstab and poison are not exemptions. Curbing only binds when the final blow would take more than 5% of **maximum** health.
+The cap is applied **after** backstab's ×3 and after any flat addition to the blow; backstab and poison are not exemptions. It is **per player**: `HIT_CAP_X * dpsRef(level)` for that fighter (times the relay bucket's `blowX`), while the health pool adds a `BOSS_TTK_S * dpsRef(level)` share for each player, so a group's cap does not grow with the group. Curbing only binds when the final blow would take more than 5% of **maximum** health.
 If your per-hit is 40 and the boss has 5,000 HP, the cap is 250 and does
 nothing. The report's "Boss cap sensitivity" table shows where it starts to
 matter.

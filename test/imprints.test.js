@@ -69,3 +69,19 @@ test('the gate boss is a daedra, and Serpent\'s Kiss is flat poison before the c
   assert.ok(powerDps(venom, base, false, { capped: true }) > base.cappedDps);
   assert.ok(powerDps(venom, base, true, { capped: true }) >= powerDps(venom, base, false, { capped: true }));
 });
+
+
+test('the per-hit cap is per player; the health pool scales with the group', () => {
+  const solo = gateTarget(45);
+  const group = gateTarget(45, { players: 4 });
+  assert.equal(group.hitCap, solo.hitCap);
+  assert.equal(group.maxHealth, solo.maxHealth * 4);
+});
+
+test('Many Endings is a separate hit, so it survives the main hit\'s cap', () => {
+  const base = maxRun(maxCharacter(123), { target: gateTarget(45) });
+  const echo = { kind: 'echo', chance: 10 };
+  const boss = powerDps(echo, base, false, { capped: true });
+  assert.ok(boss > base.cappedDps);
+  assert.ok(Math.abs(boss - base.cappedDps * 1.1) < 1e-9);
+});
