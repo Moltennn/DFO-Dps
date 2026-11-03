@@ -10,6 +10,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import {
   BOSS_TRAIT_TEXT, GATE_SHIELDS, GATE_SHIELD_S, MARTIAL_PATHS, MATERIALS, RACE_NAMES, SKILLS, SOURCE, WEAPONS,
@@ -17,7 +18,7 @@ import {
 } from './data.js';
 import { buildReport } from './report.js';
 import { barChart, graphPage, lineChart, multiGraphPage } from './graph.js';
-import { FIRMAMENT_NODES, buildById, buildIds, firmamentSection, planBuild, planSummary } from './firmament.js';
+import { FIRMAMENT_NODES, buildById, buildIds, firmamentSection, planBuild, planFromTree, planKey, planSummary } from './firmament.js';
 import { imprintFamilyById, rankAll } from './imprints.js';
 import { effectLine, planEnchants, SOUL_GEM_POINTS } from './enchantPlan.js';
 import { enchantmentName as enchantmentNameOf } from './enchantData.js';
@@ -52,7 +53,7 @@ Usage:
   dfo-dps spells [options]            HTML page: every standard damage spell
   dfo-dps enchant [options]           the equipped weapon's enchantment procs
   dfo-dps weapons [options]           HTML page: all weapons, max DPS and skill scaling
-  dfo-dps firmament [options]         HTML page: star-tree plans for each build
+  dfo-dps firmament [options]         HTML page: star-tree plans for each build (cached)
   dfo-dps imprints [options]          HTML page: weapon imprints ranked by family
   dfo-dps enchant-plan [options]      per-piece enchant budget and priority plan
   dfo-dps skills [options]            same page (alias)
@@ -83,6 +84,7 @@ Common options:
   --categories                        condense the weapons page to the best of each type, sorted by DPS
   --build <id,...>                    firmament build(s): longblade, shortblade, axe, blunt, bow, fists, destruction, tank
   --stars <n>                         firmament stars to spend (default 98)
+  --refresh                           recompute firmament plans instead of using the cache
   --family <key>                      imprints family: LongBlade, ShortBlade, Axe, BluntWeapon, Archery, HandToHand
   --sort <boss|uncapped|conditional>  imprints order (default boss)
   --shield <template|none|auto>       enchant-plan shield (default auto)
@@ -161,6 +163,7 @@ const optsSpec = {
   categories: { type: 'boolean', default: false },
   build: { type: 'string' },
   stars: { type: 'string' },
+  refresh: { type: 'boolean', default: false },
   family: { type: 'string' },
   sort: { type: 'string' },
   shield: { type: 'string' },
@@ -502,6 +505,39 @@ function printRank(ch, rows, values, current) {
   ]), ['Weapon', 'Skill', 'Hands', 'DPS', 'Capped', 'Per swing', 'APS', 'Hit', 'Crit'], ['left', 'left', 'left', 'right', 'right', 'right', 'right', 'right', 'right']));
 }
 
+const FIRMAMENT_CACHE_VERSION = 1;
+const FIRMAMENT_CACHE = new URL('../.cache/firmament-plans.json', import.meta.url);
+const FIRMAMENT_FILES = [
+  new URL('./firmament.js', import.meta.url),
+  new URL('../vendor/firmament/firmamentTree.js', import.meta.url),
+  new URL('../vendor/firmament/firmamentLaw.js', import.meta.url),
+];
+
+/** A source fingerprint: an edited planner or tree invalidates every saved plan. */
+function firmamentFingerprint() {
+  const h = createHash('sha1');
+  for (const file of FIRMAMENT_FILES) h.update(fs.readFileSync(file));
+  return h.digest('hex');
+}
+
+function loadFirmamentCache() {
+  const fingerprint = firmamentFingerprint();
+  try {
+    const data = JSON.parse(fs.readFileSync(FIRMAMENT_CACHE, 'utf8'));
+    if (data?.version === FIRMAMENT_CACHE_VERSION && data?.fingerprint === fingerprint && data?.plans) return data;
+  } catch { /* no cache or unreadable */ }
+  return { version: FIRMAMENT_CACHE_VERSION, fingerprint, plans: {} };
+}
+
+function saveFirmamentCache(cache) {
+  try {
+    fs.mkdirSync(new URL('../.cache/', import.meta.url), { recursive: true });
+    const tmp = new URL('../.cache/firmament-plans.json.tmp', import.meta.url);
+    fs.writeFileSync(tmp, JSON.stringify(cache), 'utf8');
+    fs.renameSync(tmp, FIRMAMENT_CACHE);
+  } catch { /* a cache is an optimization, never a failure */ }
+}
+
 export async function main(argv = process.argv.slice(2)) {
   let values;
   try {
@@ -808,8 +844,26 @@ export async function main(argv = process.argv.slice(2)) {
       process.exit(2);
     }
     const stars = values.stars != null ? Math.max(0, Math.min(98, Math.trunc(n(values.stars, 98)))) : 98;
-    const plans = ids.map((id) => planBuild(buildById(id), { stars }));
-    console.log('Firmament plans');
+    const cache = values.refresh
+      ? { version: FIRMAMENT_CACHE_VERSION, fingerprint: firmamentFingerprint(), plans: {} }
+      : loadFirmamentCache();
+    let cached = 0;
+    let computed = 0;
+    const plans = ids.map((id) => {
+      const build = buildById(id);
+      const key = planKey(id, stars);
+      const hit = cache.plans[key];
+      if (hit) {
+        cached++;
+        return planFromTree(build, hit);
+      }
+      const plan = planBuild(build, { stars });
+      cache.plans[key] = { start: plan.start, keys: plan.tree.keys, stars: plan.stars, starBudget: plan.starBudget };
+      computed++;
+      return plan;
+    });
+    if (computed) saveFirmamentCache(cache);
+    console.log(`Firmament plans${cached || computed ? ` (${cached} cached, ${computed} computed)` : ''}`);
     console.log(table(plans.map((p) => {
       const s = planSummary(p);
       return [

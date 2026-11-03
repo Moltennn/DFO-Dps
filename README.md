@@ -192,7 +192,9 @@ keystone, and spends the 98-Star purse. It does not assume Craft points.
 ```
 
 Builds: `longblade`, `shortblade`, `axe`, `blunt`, `bow`, `fists`,
-`destruction`, `tank`. The page shows the lit tree, every channel the build
+`destruction`, `tank`. Plans are cached in `.cache/firmament-plans.json`
+keyed by a source fingerprint; the first run computes, later runs reuse.
+`--refresh` recomputes. The page shows the lit tree, every channel the build
 cares about, and the notables/keystones on the path. It is a deterministic
 channel-coverage plan, not a solver proof: the weapons page `+ Firmament`
 column is the flat channel ceiling (+15 STR/AGI/SPEED/LUCK, +15 weapon /

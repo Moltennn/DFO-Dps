@@ -19,6 +19,7 @@ export const FIRMAMENT_STARS = 98;
 export const FIRMAMENT_NODES = FIRM_NODES.size;
 
 const tol = 1e-9;
+const PLAN_CACHE = new Map();
 const signName = (id) => (id === SERPENT.id ? SERPENT.name : (SIGNS.find((s) => s.id === id)?.name ?? id));
 
 const WEAPON_ATTRS = [
@@ -267,9 +268,29 @@ function sortTree(tree) {
   return tree;
 }
 
+/** Rebuild a plan from its persisted tree without running the search. */
+export function planFromTree(build, { start, keys, stars, starBudget = FIRMAMENT_STARS }) {
+  const startKey = FIRM_NODES.has(start) ? start : START_KEYS[0];
+  const clean = Array.isArray(keys) ? [...new Set(keys.filter((k) => FIRM_NODES.has(k) && k !== startKey))].sort() : [];
+  const tree = { start: startKey, keys: clean };
+  return {
+    build, tree, totals: treeStats(tree), score: 0,
+    stars: Number.isFinite(stars) ? Number(stars) : clean.length,
+    start: startKey,
+    startName: signName(FIRM_NODES.get(startKey)?.sector ?? 'sp'),
+    starBudget: Number.isFinite(starBudget) ? Number(starBudget) : FIRMAMENT_STARS,
+  };
+}
+
+/** The stable key for a plan: the build, the purse, and the forced start (if any). */
+export const planKey = (buildId, stars, start = null) => `${buildId}|${Number(stars)}|${start ?? ''}`;
+
 /** Plan one build. Every start sign is tried; the best channel score wins. */
 export function planBuild(build, { stars = FIRMAMENT_STARS, start = null } = {}) {
   const budget = Math.max(0, Math.min(FIRMAMENT_STARS, Math.trunc(Number(stars) || 0)));
+  const key = planKey(build?.id ?? '?', budget, start);
+  const hit = PLAN_CACHE.get(key);
+  if (hit) return hit;
   const starts = start ? [start] : START_KEYS;
   let best = null;
   for (const st of starts) {
@@ -278,13 +299,15 @@ export function planBuild(build, { stars = FIRMAMENT_STARS, start = null } = {})
     if (!best || plan.score > best.score + tol || (Math.abs(plan.score - best.score) <= tol && plan.stars > best.stars)) best = plan;
   }
   const startKey = best?.tree.start ?? START_KEYS[0];
-  return {
+  const plan = {
     build,
     ...(best ?? { tree: { start: startKey, keys: [] }, totals: {}, score: 0, stars: 0 }),
     start: startKey,
     startName: signName(FIRM_NODES.get(startKey)?.sector ?? 'sp'),
     starBudget: budget,
   };
+  PLAN_CACHE.set(key, plan);
+  return plan;
 }
 
 /** The readable summary of a plan: tree words, group reads, and the stars taken. */

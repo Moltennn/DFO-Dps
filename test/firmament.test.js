@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BUILDS, buildById, planBuild, planSummary } from '../src/firmament.js';
+import { BUILDS, buildById, planBuild, planFromTree, planKey, planSummary } from '../src/firmament.js';
 import { START_KEYS } from '../vendor/firmament/firmamentTree.js';
 import { blowPct, castCostPct, treeFault } from '../vendor/firmament/firmamentLaw.js';
 
@@ -39,4 +39,15 @@ test('the same build and budget give the same tree', () => {
   const a = planBuild(buildById('bow'), { stars: 24 });
   const b = planBuild(buildById('bow'), { stars: 24 });
   assert.deepEqual(a.tree, b.tree);
+});
+
+
+test('a persisted plan rehydrates to the same tree and totals', () => {
+  const build = buildById('longblade');
+  const p = planBuild(build, { stars: 24 });
+  const r = planFromTree(build, { start: p.start, keys: p.tree.keys, stars: p.stars, starBudget: p.starBudget });
+  assert.deepEqual(r.tree, p.tree);
+  assert.equal(r.stars, p.stars);
+  assert.equal(r.totals['skill.LongBlade'], p.totals['skill.LongBlade']);
+  assert.notEqual(planKey('longblade', 24), planKey('shortblade', 24));
 });
