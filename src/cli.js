@@ -73,6 +73,7 @@ Common options:
   --backstab <0..1>                   share of swings from behind (expected backstab)
   --players <n>                       gate boss group size (health per player; default 1)
   --blow-x <n>                        gate relayBlowX (Elite/Vestiges cap multiplier; default 1)
+  --categories                        condense the weapons page to the top 1H, 2H and dual rows
   --pair                              paired Pistolets (2 shots per cycle, off hand x0.8)
   --dual                              dual wield the left-hand weapon (off hand x0.8, -5 hit)
   --spam                              bow spam (BOW_FAST stacks to x0.2; default paced)
@@ -143,6 +144,7 @@ const optsSpec = {
   backstab: { type: 'string' },
   players: { type: 'string', default: '1' },
   'blow-x': { type: 'string', default: '1' },
+  categories: { type: 'boolean', default: false },
   pair: { type: 'boolean', default: false },
   dual: { type: 'boolean', default: false },
   spam: { type: 'boolean', default: false },
@@ -691,8 +693,8 @@ export async function main(argv = process.argv.slice(2)) {
     const gate = gateTarget(level);
     const maxRun = (ch, share = 1) => analyze(ch, { target: maxTarget, core: 'overhaul', rri: true, healthShare: share, passiveOn: true, stacks: 5, pair: !!ch?._pair, dual: !!ch?._dual });
     const gateRun = (ch) => analyze(ch, { target: gate, core: 'overhaul', rri: true, health: gate.maxHealth, healthShare: 1, passiveOn: true, stacks: 5, pair: !!ch?._pair, dual: !!ch?._dual });
-    const martialFor = (t) => (familyOf(t) === 'Axe' || familyOf(t) === 'HandToHand' ? 'berserker' : 'blademaster');
-    const shareFor = (t) => (familyOf(t) === 'Axe' || familyOf(t) === 'HandToHand' ? 0.49 : 1);
+    const martialFor = () => 'blademaster';
+    const shareFor = () => 1;
 
     const makeMax = (t, {
       race = 'darkelf', firmament = false, raw = 200, gear = null, critGear = maxCritGear, martial = martialFor(t),
@@ -747,9 +749,7 @@ export async function main(argv = process.argv.slice(2)) {
       const chF = makeMax(t, { race: raceF, firmament: true });
       const r = maxRun(ch, shareFor(t));
       const rF = maxRun(chF, shareFor(t));
-      const healthy = maxRun(ch, 1).dps;
-      const low = (familyOf(t) === 'Axe' || familyOf(t) === 'HandToHand') ? maxRun(ch, 0.49).dps : healthy;
-      const full = healthy > 0 && low > 0 ? (2 * healthy * low) / (healthy + low) : 0;
+      const full = r.dps;
       const g = gateRun(ch);
       const gF = gateRun(chF);
       return {
@@ -778,21 +778,30 @@ export async function main(argv = process.argv.slice(2)) {
     }
     rows.sort((a, b) => b.maxDpsF - a.maxDpsF || b.maxDps - a.maxDps);
 
+    const categoryOf = (r) => (r.dual ? 'DW' : r.skill === 'HandToHand' ? 'Fists' : r.twoHanded ? '2H' : '1H');
+    const topRows = ['1H', '2H', 'DW'].map((cat) => {
+      const candidates = rows.filter((r) => categoryOf(r) === cat);
+      const metric = firmCharts ? 'maxDpsF' : 'maxDps';
+      return candidates.sort((a, b) => b[metric] - a[metric])[0];
+    }).filter(Boolean);
+    const displayRows = values.categories ? topRows : rows;
+
     const cell = (v) => (Number.isFinite(v) ? fmt(v) : '-');
     const pctCell = (v) => (Number.isFinite(v) ? pc(v) : '-');
-    const maxTable = `<table><thead><tr><th>Weapon</th><th>Skill</th><th>Hands</th><th>Path</th><th>Max gear</th><th>Full gear</th><th>+ Firmament</th><th>Gate</th><th>Gate + Firm</th><th>Gate TTK</th></tr></thead><tbody>${rows.map((r) => `<tr><td class="k">${r.name}</td><td>${r.skill}</td><td>${r.dual ? 'Dual' : r.skill === 'HandToHand' ? 'Fists' : r.twoHanded ? '2H' : '1H'}</td><td>${r.path}</td><td>${cell(r.maxDps)}</td><td>${cell(r.full)}</td><td>${cell(r.maxDpsF)}</td><td>${cell(r.gateDps)}</td><td>${cell(r.gateDpsF)}</td><td>${r.gateTtk ? `${cell(r.gateTtk)} s` : '-'}</td></tr>`).join('')}</tbody></table>`;
-    const top = rows[0];
-    const topGear = rows.slice().sort((a, b) => b.maxDps - a.maxDps)[0];
+    const maxTable = `<table><thead><tr><th>Weapon</th><th>Skill</th><th>Hands</th><th>Path</th><th>Max gear</th><th>+ Firmament</th><th>Gate</th><th>Gate + Firm</th><th>Gate TTK</th></tr></thead><tbody>${displayRows.map((r) => `<tr><td class="k">${r.name}</td><td>${r.skill}</td><td>${r.dual ? 'Dual' : r.skill === 'HandToHand' ? 'Fists' : r.twoHanded ? '2H' : '1H'}</td><td>${r.path}</td><td>${cell(r.maxDps)}</td><td>${cell(r.maxDpsF)}</td><td>${cell(r.gateDps)}</td><td>${cell(r.gateDpsF)}</td><td>${r.gateTtk ? `${cell(r.gateTtk)} s` : '-'}</td></tr>`).join('')}</tbody></table>`;
+    const top = displayRows.slice().sort((a, b) => b.maxDpsF - a.maxDpsF)[0];
+    const topGear = displayRows.slice().sort((a, b) => b.maxDps - a.maxDps)[0];
     const gateTop = rows.slice().sort((a, b) => b.gateDpsF - a.gateDpsF)[0];
-    const absolute = `<b>${top.name}</b> is the absolute uncapped ceiling: <b>${cell(top.maxDpsF)} DPS</b> (${top.path} below half, Dunmer) and <b>${cell(top.gateDpsF)} DPS</b> at the level-45 gate. Its healthy/below-half full-fight rate is <b>${cell(top.full)} DPS</b> on gear alone. On gear alone the top is <b>${topGear.name}</b> at <b>${cell(topGear.maxDps)} DPS</b>. At the gate the cap flips it: <b>${gateTop.name}</b> leads with <b>${cell(gateTop.gateDpsF)} capped DPS</b> and <b>${gateTop.gateTtk ? `${cell(gateTop.gateTtk)} s` : '-'} TTK</b>.<br><br>Max is the weapon's best health share (Axe/H2H below half, Blunt at or above half). Full gear is the healthy/below-half harmonic on gear alone. +Firmament is the star-tree channel ceiling at the same best share. All rows are Dunmer. DPS cells are averages; the bar is the average.`;
+    const scope = values.categories ? 'Best of the 1H / 2H / DW tops' : 'The absolute uncapped ceiling';
+    const absolute = `<b>${scope}: ${top.name}</b> at <b>${cell(top.maxDpsF)} DPS</b> (${top.path}, Dunmer). On gear alone the best of these is <b>${topGear.name}</b> at <b>${cell(topGear.maxDps)} DPS</b>. At the gate the full pool is led by <b>${gateTop.name}</b> at <b>${cell(gateTop.gateDpsF)} capped DPS</b> (${gateTop.gateTtk ? `${cell(gateTop.gateTtk)} s TTK` : '-'}).<br><br>Full health and Blademaster only: Berserker's below-half upkeep is not assumed. Max is the full-health DPS; +Firmament adds the star-tree channel ceiling. All rows are Dunmer. DPS cells are averages; the bar is the average.${values.categories ? ' H2H wraps (fists) is outside 1H/2H/DW; see the full weapons page.' : ''}`;
 
     const chartFirm = `<svg viewBox="0 0 920 10" width="100%" height="0" aria-hidden="true"></svg>`;
     const bar = barChart({
       title: 'Maximum uncapped DPS by weapon',
-      labels: rows.map((r) => r.name),
+      labels: displayRows.map((r) => r.name),
       series: [
-        { name: 'Max gear', values: rows.map((r) => r.maxDps) },
-        { name: '+ Firmament', values: rows.map((r) => r.maxDpsF) },
+        { name: 'Max gear', values: displayRows.map((r) => r.maxDps) },
+        { name: '+ Firmament', values: displayRows.map((r) => r.maxDpsF) },
       ],
     });
 
@@ -821,7 +830,7 @@ export async function main(argv = process.argv.slice(2)) {
         }
         return { name: nameOf(t), points };
       });
-      const note = `One line per weapon: raw training 100 -> 200 is effective 100 -> 140; gear lines continue from effective 140 to ${140 + gearMax}. Max gear, Dunmer, career expertise, best path, 40% damage affix, sockets, no per-hit cap.${f.key === 'Axe' ? ' Axe uses Berserker and is measured below half health for its 2x climb.' : f.key === 'BluntWeapon' ? ' Blunt uses Blademaster and is measured at or above half health for its 2x climb.' : f.key === 'HandToHand' ? ' H2H uses Berserker and is measured below half health; the row is Hand Wraps, which carry damage, sockets and procs onto the fist blow. Bare fists without wrap lines sit around the reported ~450 band.' : ''}${firmCharts ? ' Firmament channels on.' : ''}${rangedNote}`;
+      const note = `One line per weapon: raw training 100 -> 200 is effective 100 -> 140; gear lines continue from effective 140 to ${140 + gearMax}. Max gear, Dunmer, career expertise, best path, 40% damage affix, sockets, no per-hit cap.${f.key === 'Axe' || f.key === 'HandToHand' ? ' Blademaster, full health; no Berserker below-half assumption.' : ''}${firmCharts ? ' Firmament channels on.' : ''}${rangedNote}`;
       return {
         title: f.title,
         note,
@@ -841,21 +850,19 @@ export async function main(argv = process.argv.slice(2)) {
       chart: lineChart({ title: 'Critical Strike gear 0 -> 540', xLabel: 'Critical Strike gear points', yLabel: 'DPS', series: csSeries }),
     };
 
-    const subtitle = `Level ${level} | attributes 100 base / 115 Firmament | Dunmer | career expertise | best martial path per family (Blademaster / Berserker) | 40% damage affix | target: level-${level} tough, no per-hit cap | gate column: ${gate.maxHealth.toLocaleString()} HP, ${gate.hitCap} per-hit cap${vampire ? ' | vampire +30 CS' : ''}`;
+    const subtitle = `Level ${level} | attributes 100 base / 115 Firmament | Dunmer | career expertise | Blademaster, no Berserker | 40% damage affix | target: level-${level} tough, no per-hit cap | gate column: ${gate.maxHealth.toLocaleString()} HP, ${gate.hitCap} per-hit cap${vampire ? ' | vampire +30 CS' : ''}`;
     const html = multiGraphPage({
       title: 'DFO weapon ceiling and skill scaling',
       subtitle,
-      sections: [
-        { title: 'Absolute maximum', note: absolute, chart: bar, table: maxTable },
-        ...familySections,
-        csSection,
-      ],
+      sections: values.categories
+        ? [{ title: 'Top per category - 1H / 2H / DW', note: absolute, chart: bar, table: maxTable }]
+        : [{ title: 'Absolute maximum', note: absolute, chart: bar, table: maxTable }, ...familySections, csSection],
     });
     const defaultOut = cmd === 'weapons' ? 'weapons.html' : 'skills.html';
     const out = path.resolve(values.out === 'dfo-dps-report.html' ? defaultOut : values.out);
     fs.writeFileSync(out, html, 'utf8');
     if (!values.json) console.log(`weapons page written: ${out}`);
-    if (values.json) console.log(JSON.stringify({ level, firmCharts, rows, cs: csSeries }, null, 2));
+    if (values.json) console.log(JSON.stringify({ level, firmCharts, rows: values.categories ? displayRows : rows, cs: csSeries }, null, 2));
     return;
   }
 
