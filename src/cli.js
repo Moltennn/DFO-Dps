@@ -18,6 +18,9 @@ import {
 import { buildReport } from './report.js';
 import { barChart, graphPage, lineChart, multiGraphPage } from './graph.js';
 import { FIRMAMENT_NODES, buildById, buildIds, firmamentSection, planBuild, planSummary } from './firmament.js';
+import { imprintFamilyById, rankAll } from './imprints.js';
+import { effectLine, planEnchants, SOUL_GEM_POINTS } from './enchantPlan.js';
+import { enchantmentName as enchantmentNameOf } from './enchantData.js';
 import { analyzeSpell, resolveSpells, spellCost, spellRotation, standardSpells } from './spells.js';
 import { ENCHANTMENT_TYPES, castWhenStrikes, enchantDps, procsBeforeBreak, strikeEnchantments } from './enchants.js';
 import { perfectSockets } from './sockets.js';
@@ -50,6 +53,8 @@ Usage:
   dfo-dps enchant [options]           the equipped weapon's enchantment procs
   dfo-dps weapons [options]           HTML page: all weapons, max DPS and skill scaling
   dfo-dps firmament [options]         HTML page: star-tree plans for each build
+  dfo-dps imprints [options]          HTML page: weapon imprints ranked by family
+  dfo-dps enchant-plan [options]      per-piece enchant budget and priority plan
   dfo-dps skills [options]            same page (alias)
   dfo-dps graph [options]             SVG line chart of two or more stats/skills
   dfo-dps saves                       list saves under the DFO user data folder
@@ -78,6 +83,11 @@ Common options:
   --categories                        condense the weapons page to the best of each type, sorted by DPS
   --build <id,...>                    firmament build(s): longblade, shortblade, axe, blunt, bow, fists, destruction, tank
   --stars <n>                         firmament stars to spend (default 98)
+  --family <key>                      imprints family: LongBlade, ShortBlade, Axe, BluntWeapon, Archery, HandToHand
+  --sort <base|conditional>           imprints order (default base)
+  --shield <template|none|auto>       enchant-plan shield (default auto)
+  --soul-gem                          add 5,000 enchantment points to every piece
+  --group <undead|daedra|humanoid|animal>  enchant-plan target for Potent Vs (default humanoid)
   --pair                              paired Pistolets (2 shots per cycle, off hand x0.8)
   --dual                              dual wield the left-hand weapon (off hand x0.8, -5 hit)
   --spam                              bow spam (BOW_FAST stacks to x0.2; default paced)
@@ -151,6 +161,11 @@ const optsSpec = {
   categories: { type: 'boolean', default: false },
   build: { type: 'string' },
   stars: { type: 'string' },
+  family: { type: 'string' },
+  sort: { type: 'string' },
+  shield: { type: 'string' },
+  'soul-gem': { type: 'boolean', default: false },
+  group: { type: 'string', default: 'humanoid' },
   pair: { type: 'boolean', default: false },
   dual: { type: 'boolean', default: false },
   spam: { type: 'boolean', default: false },
@@ -679,6 +694,103 @@ export async function main(argv = process.argv.slice(2)) {
       console.log(table(r.elements.map((e) => [e.key, e.magnitude != null ? fmt(e.magnitude) : '-', e.rounds ?? 1, fmt(e.damage), e.note ?? '']), ['Effect', 'Magnitude', 'Rounds', 'Damage', 'Note'], ['left', 'right', 'right', 'right', 'left']));
     }
     if (values.json) console.log(JSON.stringify({ index: sp.index, name: sp.name, ...r }, null, 2));
+    return;
+  }
+
+  if (cmd === 'enchant-plan' || cmd === 'gear-plan') {
+    const weapon = Number(values.weapon ?? 123);
+    const shield = values.shield ?? 'auto';
+    const group = String(values.group ?? 'humanoid').toLowerCase();
+    if (!['undead', 'daedra', 'humanoid', 'animal'].includes(group)) {
+      console.error(`unknown Potent Vs group: ${group}`);
+      process.exit(2);
+    }
+    const plan = planEnchants({ weapon, shield, soulGem: !!values['soul-gem'], group });
+    if (!values.json) {
+      console.log(`Enchant plan  |  ${plan.weaponName}${plan.shield ? ` + ${plan.shield}` : ''}  |  ${plan.soulGem ? `soul gem +${SOUL_GEM_POINTS}` : 'template points only'}  |  Potent Vs: ${group}`);
+      console.log('');
+      console.log(table(plan.rows.map((r) => [
+        r.slot, r.item, r.base, r.soul || '-', r.budget, r.spent, r.left,
+        r.effects.map((e) => effectLine(e)).join('; ') || '-',
+      ]), ['Slot', 'Item', 'Base', 'Soul', 'Budget', 'Spent', 'Left', 'Enchantments'], ['left', 'left', 'right', 'right', 'right', 'right', 'right', 'left']));
+      console.log('');
+      console.log('Only one piece needs it');
+      console.log(table(plan.onePiece.map((u) => {
+        const placed = plan.rows.flatMap((r) => r.effects.filter((e) => e.type === u.type).map(() => r.slot));
+        return [enchantmentNameOf(u.type), placed.join(', ') || '-', u.why];
+      }), ['Effect', 'Placed on', 'Why'], ['left', 'left', 'left']));
+      console.log('');
+      console.log('Stacks per piece');
+      console.log(table(plan.stacks.map((u) => {
+        const n = plan.rows.reduce((a, r) => a + r.effects.filter((e) => e.type === u.type).length, 0);
+        return [enchantmentNameOf(u.type), n, u.why];
+      }), ['Effect', 'Copies', 'Why'], ['left', 'right', 'left']));
+    }
+    const out = path.resolve(values.out === 'dfo-dps-report.html' ? 'enchant-plan.html' : values.out);
+    const pieceTable = `<div class="table"><table><thead><tr><th>Slot</th><th>Item</th><th>Base</th><th>Soul</th><th>Budget</th><th>Spent</th><th>Left</th><th>Enchantments</th></tr></thead><tbody>${plan.rows.map((r) => `<tr><td class="k">${r.slot}</td><td>${r.item}</td><td>${r.base}</td><td>${r.soul || '-'}</td><td>${r.budget}</td><td>${r.spent}</td><td>${r.left}</td><td style="white-space:normal;min-width:320px">${r.effects.map((e) => effectLine(e)).join('<br>') || '-'}</td></tr>`).join('')}</tbody></table></div>`;
+    const oneTable = `<div class="table"><h3>Only one piece needs it</h3><table><thead><tr><th>Effect</th><th>Placed on</th><th>Why</th></tr></thead><tbody>${plan.onePiece.map((u) => {
+      const placed = plan.rows.flatMap((r) => r.effects.filter((e) => e.type === u.type).map(() => r.slot));
+      return `<tr><td class="k">${enchantmentNameOf(u.type)}</td><td>${placed.join(', ') || '-'}</td><td style="white-space:normal">${u.why}</td></tr>`;
+    }).join('')}</tbody></table></div>`;
+    const stackTable = `<div class="table"><h3>Stacks per piece</h3><table><thead><tr><th>Effect</th><th>Copies</th><th>Why</th></tr></thead><tbody>${plan.stacks.map((u) => {
+      const n = plan.rows.reduce((a, r) => a + r.effects.filter((e) => e.type === u.type).length, 0);
+      return `<tr><td class="k">${enchantmentNameOf(u.type)}</td><td>${n}</td><td style="white-space:normal">${u.why}</td></tr>`;
+    }).join('')}</tbody></table></div>`;
+    const weaponTable = `<div class="table"><h3>Weapon only</h3><table><thead><tr><th>Effect</th><th>Why</th></tr></thead><tbody>${plan.weaponOnly.map((u) => `<tr><td class="k">${enchantmentNameOf(u.type)}</td><td style="white-space:normal">${u.why}</td></tr>`).join('')}</tbody></table></div>`;
+    const html = multiGraphPage({
+      title: 'DFO enchant plan',
+      subtitle: `${plan.weaponName}${plan.rows.find((r) => /Shield|Buckler/.test(r.slot)) ? ` + ${plan.rows.find((r) => /Shield|Buckler/.test(r.slot)).item}` : ''}; ${plan.soulGem ? `soul gem +${SOUL_GEM_POINTS} on every piece` : 'template enchantment points only'}. Budgets are the game's ItemTemplates enchantmentPoints plus the stated soul gem; a POWER is positive, a side effect negative.`,
+      sections: [{ title: 'Per piece', note: `Priority fill for a ${group} target. One-piece effects go out once, then the build's skills fill what is left. ${plan.soulGem ? 'The soul gem is applied to every piece.' : 'No soul gem: base template points only.'}`, chart: '', table: pieceTable + oneTable + stackTable + weaponTable }],
+    });
+    fs.writeFileSync(out, html, 'utf8');
+    if (!values.json) console.log(`enchant plan written: ${out}`);
+    if (values.json) console.log(JSON.stringify(plan, null, 2));
+    return;
+  }
+
+  if (cmd === 'imprints') {
+    const family = values.family ? imprintFamilyById(values.family) : null;
+    if (values.family && !family) {
+      console.error(`unknown imprint family: ${values.family}`);
+      process.exit(2);
+    }
+    const sort = values.sort === 'conditional' ? 'conditional' : 'base';
+    const rows = family
+      ? rankAll({ firmament: !!values.firmament, vampire: !!values.vampire, sort }).filter((f) => f.key === family.key)
+      : rankAll({ firmament: !!values.firmament, vampire: !!values.vampire, sort });
+    if (!values.json) {
+      console.log('Weapon imprints');
+      for (const f of rows) {
+        console.log(`\n${f.name} - ${f.weapon} (${fmt(f.base.dps)} DPS)`);
+        console.log(table(f.rows.map((r) => [r.power.name, r.name, r.weapon, fmt(r.baseDps), fmt(r.delta), fmt(r.conditionalDps), fmt(r.triggerDelta), r.trigger]), ['Imprint', 'Of', 'On', 'Base DPS', 'Base gain', 'Trigger DPS', 'Trigger gain', 'Trigger'], ['left', 'left', 'left', 'right', 'right', 'right', 'right', 'left']));
+      }
+    }
+    const out = path.resolve(values.out === 'dfo-dps-report.html' ? 'imprints.html' : values.out);
+    const sections = rows.map((f) => {
+      const chart = barChart({
+        title: `${f.name} imprints - ${f.weapon}`,
+        labels: f.rows.map((r) => r.power.name),
+        series: [
+          { name: 'Base', values: f.rows.map((r) => r.baseDps) },
+          { name: 'Trigger', values: f.rows.map((r) => r.conditionalDps) },
+        ],
+      });
+      const body = f.rows.map((r) => `<tr><td class="k">${r.power.name}</td><td>${r.name}</td><td>${fmt(r.baseDps)}</td><td>${fmt(r.conditionalDps)}</td><td>${fmt(r.delta)}</td><td>${fmt(r.triggerDelta)}</td><td>${r.trigger}</td></tr>`).join('');
+      return {
+        title: `${f.name} - ${f.weapon}`,
+        note: `Each row is read on the best weapon of this family that the imprint actually fits. Base is the generic level-${THEORY_LEVEL} tough target; Trigger applies the power's condition. The imprint is the Legendary power only; the Rare's own affixes are separate.`,
+        chart,
+        table: `<div class="table"><table><thead><tr><th>Imprint</th><th>Of</th><th>On</th><th>Base DPS</th><th>Base gain</th><th>Trigger DPS</th><th>Trigger gain</th><th>Trigger</th></tr></thead><tbody>${body}</tbody></table></div>`,
+      };
+    });
+    const html = multiGraphPage({
+      title: 'DFO weapon imprints',
+      subtitle: `The Reforge's Rare imprints on each family's best max-profile weapon${values.firmament ? ', +Firmament' : ''}. Base is unconditional; Trigger is the power's condition.`,
+      sections,
+    });
+    fs.writeFileSync(out, html, 'utf8');
+    if (!values.json) console.log(`imprints page written: ${out}`);
+    if (values.json) console.log(JSON.stringify(rows.map((f) => ({ family: f.key, weapon: f.weapon, template: f.template, baseDps: f.base.dps, rows: f.rows.map((r) => ({ id: r.id, record: r.name, power: r.power.name, weapon: r.weapon, baseDps: r.baseDps, conditionalDps: r.conditionalDps, delta: r.delta, triggerDelta: r.triggerDelta, trigger: r.trigger })) })), null, 2));
     return;
   }
 

@@ -128,6 +128,42 @@ The max profile is: attributes 100 (115 with `--firmament`), raw weapon skill an
 
 `skills` is kept as an alias for the same page.
 
+## Imprints and enchant planning
+
+`imprints` ranks the Reforge's Rare imprints per weapon family. The
+Legendary power is priced on the best weapon of that family it actually
+fits, so a power that only lands on a Longsword is not read on a
+Dai-katana. **Base** is unconditional DPS; **Trigger** applies the power's
+condition (undead, unaware, night, a second foe, low health, and so on).
+Chain and quake trigger values are one extra target; poison is before the
+target's resistance.
+
+```bash
+./dfo-dps imprints
+./dfo-dps imprints --family LongBlade
+./dfo-dps imprints --sort conditional --firmament --out imprints.html
+```
+
+`enchant-plan` reads the game's own `enchantmentPoints` for every piece,
+adds the stated **5,000** soul-gem channel when `--soul-gem` is used, and
+fills each item inside that budget. A power prices positive and a side
+effect negative in the item maker's table. The plan places the
+non-stacking effects once (Strengthens Armor, Absorbs Spells, Increased
+Weight Allowance, Repairs Objects), then adds the effects that do stack
+(Enhances Skill, Regens Health). Strike payloads (Cast When Strikes,
+Potent Vs, Low Damage Vs) are weapon-only.
+
+```bash
+./dfo-dps enchant-plan --weapon 123
+./dfo-dps enchant-plan --weapon 121 --soul-gem --out enchant-plan.html
+./dfo-dps enchant-plan --weapon 123 --soul-gem --group undead --json
+```
+
+The base set is the weapon, the seven armour pieces, a shield when the
+weapon is one-handed, and the jewellery pairs (amulet/torc, two rings,
+two bracers, two bracelets, two marks). The soul gem is applied to every
+piece in this plan; without it, the template points alone are used.
+
 ## Firmament trees
 
 `firmament` plans the real 518-star sky for a build, using the game's own

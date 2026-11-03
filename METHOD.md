@@ -68,6 +68,29 @@ The `theory` command prices each star channel from +0 to +15. At the ceiling, St
 
 `weapons` renders the same model as a standalone HTML page. The first chart is boss (level-45 gate) DPS; the second is uncapped DPS. DPS values are averages; each bar is the average. `--categories` condenses the table to the best of each weapon type (Long Blade, Short Blade, Axe, Blunt Weapon, Archery, Hand-to-Hand) in the 1H, 2H and dual slots, sorted by DPS. It ranks every weapon template (melee, bows and the port's firearms) at a max profile (attributes 100/115, raw weapon skill and Critical Strike 200 mastered, weapon skill gear 240, Critical Strike gear 540, 40% damage affix, the weapon's career expertise, Dunmer (the default; `--race` overrides), and the best martial path for the family) and shows raw 100 -> 200 and gear 0 -> 240 curves per family. Every family uses Blademaster at full health; Berserker's below-half upkeep is not assumed. Blunt keeps its own at-or-above-half mastery. The Hand-to-Hand row is the Hand Wraps ceiling (damage/sockets/procs); bare fists without wrap lines are the ~450 band the community tests saw. The practical H2H gear cap is 17 lines (510 points: seven armour pieces and ten jewellery slots, never a weapon).
 
+## Imprints and the item maker
+
+`imprints` reads the weapon Legendaries' powers from the game
+(`lootRarity.js`): a record fits a template when it names no templates or
+names this one, and Chain Lightning fits only a shot while Earthshaker fits
+only a melee blow. Each power is priced on the best weapon of the family it
+fits, at the max profile. The **base** column is unconditional; **trigger**
+applies the condition (undeath, unawareness, night, a second foe, low health,
+and so on). Utility powers (spell cost, magicka on a kill, spell damage)
+show 0 melee DPS and keep their trigger note.
+
+`enchant-plan` imports the game's enchantment cost table
+(`enchantmentCatalogue.js`) and item `enchantmentPoints`
+(`ItemTemplates.json`, vendored). The budget is the template's points plus
+5,000 per piece when `--soul-gem` is used. Powers are positive and side
+effects negative. The plan is a priority fill: one-piece effects
+(Strengthens Armor, Absorbs Spells, Increased Weight Allowance, Repairs
+Objects) are placed once, then the build's skills, then Regens Health.
+The item cap is ten settings. The game's stacking rules are respected:
+Strengthens Armor is a min-set, Absorbs Spells is a boolean, Increased
+Weight Allowance takes the maximum, and Repairs Objects mends one target;
+Enhances Skill and Regens Health stack per piece.
+
 ## Firmament planner
 
 `firmament` imports the game's own `firmamentTree.js` and `firmamentLaw.js`
