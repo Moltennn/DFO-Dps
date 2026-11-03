@@ -49,3 +49,15 @@ test('a weapon with no enchantments adds nothing', () => {
   assert.equal(r.enchantDps, 0);
   assert.equal(r.totalDps, r.dps);
 });
+
+
+test('a Cast When Strikes DoT is priced per tick, not as its whole duration every hit', () => {
+  const ch = weapon({ enchantments: [{ type: 2, param: 33 }] }); // Wildfire
+  const target = bossTarget({ level: 45, health: 12000, traits: [], group: 'daedra' });
+  const strike = strikeEnchantments(ch.weapon, ch, target, { level: 45 });
+  assert.equal(strike.procDamage, 0);
+  assert.ok(strike.procDot > 0);
+  const e = enchantDps(ch.weapon, ch, target, { hit: 1, aps: 1.4, level: 45 });
+  assert.ok(e.dotDps > 0);
+  assert.ok(e.dps < 100, `Wildfire DPS ${e.dps}`);
+});

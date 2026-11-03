@@ -6,7 +6,7 @@
  * saving throw (enchantments.js CastWhenStrikes). Potent Vs is +5 flat
  * on a landed blow against one affinity; Low Damage Vs is -5.
  */
-import { standardSpells } from './spells.js';
+import { MAGIC_ROUND_SECONDS, standardSpells } from './spells.js';
 import { spellDamage } from './spells.js';
 
 export const ENCHANTMENT_TYPES = Object.freeze({
@@ -86,14 +86,21 @@ export function strikeEnchantments(item, ch, target, {
   let procDamage = 0;
   let procDamageMin = 0;
   let procDamageMax = 0;
+  let procDot = 0;
+  let procDotMin = 0;
+  let procDotMax = 0;
   for (const sp of castWhenStrikes(item, standard)) {
     const d = spellDamage(sp, ch, target, { level, potencyPct, pierce });
     const dMin = spellDamage(sp, ch, target, { level, potencyPct, pierce, mode: 'min' });
     const dMax = spellDamage(sp, ch, target, { level, potencyPct, pierce, mode: 'max' });
-    procDamage += d.damage;
-    procDamageMin += dMin.damage;
-    procDamageMax += dMax.damage;
-    procs.push({ name: sp.name, index: sp.index, damage: d.damage, min: dMin.damage, max: dMax.damage });
+    // A strike proc's DoT refreshes; it does not stack its whole duration on every hit.
+    procDamage += d.instant;
+    procDamageMin += dMin.instant;
+    procDamageMax += dMax.instant;
+    procDot += d.dotPerTick;
+    procDotMin += dMin.dotPerTick;
+    procDotMax += dMax.dotPerTick;
+    procs.push({ name: sp.name, index: sp.index, damage: d.instant, min: dMin.instant, max: dMax.instant, dotTick: d.dotPerTick, dotRounds: d.dotRounds });
   }
   let flat = 0;
   for (const e of enchantmentRows(item)) {
@@ -102,7 +109,7 @@ export function strikeEnchantments(item, ch, target, {
     if (e.type === ENCHANTMENT_TYPES.PotentVs && target?.group === group) flat += POTENT_VS_FLAT;
     if (e.type === ENCHANTMENT_TYPES.LowDamageVs && target?.group === group) flat -= POTENT_VS_FLAT;
   }
-  return { procDamage, procDamageMin, procDamageMax, flat, procs };
+  return { procDamage, procDamageMin, procDamageMax, procDot, procDotMin, procDotMax, flat, procs };
 }
 
 /** Expected enchant damage per landed blow and per second. */
@@ -115,11 +122,24 @@ export function enchantDps(item, ch, target, {
   const procDamage = s.procs.reduce((a, p) => a + capOne(p.damage), 0);
   const procDamageMin = s.procs.reduce((a, p) => a + capOne(p.min), 0);
   const procDamageMax = s.procs.reduce((a, p) => a + capOne(p.max), 0);
+  const procDot = s.procs.reduce((a, p) => a + capOne(p.dotTick ?? 0), 0);
+  const procDotMin = cap > 0 ? Math.min(s.procDotMin ?? 0, cap) : (s.procDotMin ?? 0);
+  const procDotMax = cap > 0 ? Math.min(s.procDotMax ?? 0, cap) : (s.procDotMax ?? 0);
   const flat = cap > 0 ? Math.min(s.flat, cap) : s.flat;
   const perSwing = hit * (procDamage + flat);
   const perSwingMin = hit * (procDamageMin + flat);
   const perSwingMax = hit * (procDamageMax + flat);
-  return { ...s, procDamage, procDamageMin, procDamageMax, perSwing, perSwingMin, perSwingMax, dps: perSwing * aps, dpsMin: perSwingMin * aps, dpsMax: perSwingMax * aps };
+  const dotDps = procDot / MAGIC_ROUND_SECONDS;
+  const dotDpsMin = procDotMin / MAGIC_ROUND_SECONDS;
+  const dotDpsMax = procDotMax / MAGIC_ROUND_SECONDS;
+  return {
+    ...s, procDamage, procDamageMin, procDamageMax, procDot,
+    perSwing, perSwingMin, perSwingMax,
+    dps: perSwing * aps + dotDps,
+    dpsMin: perSwingMin * aps + dotDpsMin,
+    dpsMax: perSwingMax * aps + dotDpsMax,
+    dotDps, dotDpsMin, dotDpsMax,
+  };
 }
 
 /** Procs a weapon's condition can pay for (10 per Cast When Strikes). */

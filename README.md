@@ -274,7 +274,7 @@ Ranged laws: a bow's cycle is the port's five-frame swing law with the BOW-LAW r
 
 Spells: magnitude is `Range(base) + Range(level) * floor(level/perLevel)`; the target's saving throw and the school's past-100 potency (x1.4 at 200) are applied; PvE spells do not crit and armour does not reduce them. One magic round is 5 real seconds, so a DoT is priced as per-tick DPS; the page shows that separately. A 0.7 s cast recovery is the throughput floor. **Mana is treated as solved by default**; `--mana-limit` prices the pool instead.
 
-Enchantments: a `Cast When Strikes` row fires its `SPELLS.STD` spell on every landed blow (no proc chance), with the target's save and the caster's spell power. `Potent Vs` is a flat +5 against its affinity; `Enhances Skill` is +15; `elemental` is flat per blow and `slayer` is group-specific. `build` and `report` show weapon DPS, enchant DPS and total DPS; the condition budget is reported as procs before break.
+Enchantments: a `Cast When Strikes` row fires its `SPELLS.STD` spell on every landed blow (no proc chance), with the target's save and the caster's spell power. A DoT proc refreshes on the target and is priced at its per-tick DPS (`dotTick / 5`), not its whole duration per blow — otherwise Wildfire would read as thousands of DPS. `Potent Vs` is a flat +5 against its affinity; `Enhances Skill` is +15; `elemental` is flat per blow and `slayer` is group-specific. `build` and `report` show weapon DPS, enchant DPS and total DPS; the condition budget is reported as procs before break.
 
 ## Graphs
 
@@ -333,7 +333,6 @@ The gate's server per-hit cap is **420** at level 30 (12 × `dpsRef` 35). A disp
 
 ## Deliberate limits in v1
 
-- melee only; bows, spells and cast-when-strikes procs are not scored yet
 - damage is shown **before the foe's worn/natural armor reduction**, exactly
   like the game's Combat Stats card; a human in mail will take less
 - the overhaul's condition-based effectiveness is assumed at 100% condition

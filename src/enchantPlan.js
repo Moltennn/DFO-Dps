@@ -115,14 +115,9 @@ function weaponCandidates(ch, base, group, target) {
     const cost = enchantmentCost('CastWhenStrikes', param);
     if (!Number.isFinite(cost) || cost <= 0) continue;
     const raw = enchantDps({ enchantments: [{ type: ENCHANTMENT_TYPES.CastWhenStrikes, param }] }, ch, target, {
-      hit: base.hit.hit, aps: base.cadence.aps,
+      hit: base.hit.hit, aps: base.cadence.aps, cap: base.cap,
     });
-    if (!(raw.dps > 0)) continue;
-    // A proc is one more hit on the same boss; cap it like one.
-    const perHit = raw.perSwing / Math.max(1e-9, base.hit.hit);
-    const capped = base.cap > 0 ? Math.min(perHit, base.cap) : perHit;
-    const value = capped * base.hit.hit * base.cadence.aps;
-    if (value > 0) out.push({ type: 'CastWhenStrikes', param, cost, value, label: enchantmentParamName('CastWhenStrikes', param) });
+    if (raw.dps > 0) out.push({ type: 'CastWhenStrikes', param, cost, value: raw.dps, label: enchantmentParamName('CastWhenStrikes', param) });
   }
   const pv = GROUP_PARAM[String(group).toLowerCase()] ?? 2;
   const pvValue = Math.max(0, cappedDpsWith(base, { flat: 5 }) - base.cappedDps);

@@ -612,11 +612,11 @@ export async function main(argv = process.argv.slice(2)) {
     console.log(table(rows.map((e) => [names[e.type] ?? e.type, e.param ?? '-', e.type === 2 ? (strike.procs.find((p) => p.index === Number(e.param))?.name ?? 'spell') : '-']), ['Enchantment', 'Param', 'Spell'], ['left', 'right', 'left']));
     console.log(table([
       ['Weapon DPS', fmt(r.dps)],
-      ['Enchant per landed hit', fmt(strike.procDamage + strike.flat)],
+      ['Enchant per landed hit', `${fmt(strike.procDamage + strike.flat)}${strike.procDot ? ` + ${fmt(strike.procDot / 5)} DoT DPS` : ''}`],
       ['Enchant DPS', fmt(r.enchantDps)],
       ['Total DPS', fmt(r.totalDps)],
       ['Procs before break', r.procsBeforeBreak ?? '-'],
-      ['Procs', strike.procs.map((p) => `${p.name} ${fmt(p.damage)}`).join(', ') || '-'],
+      ['Procs', strike.procs.map((p) => `${p.name} ${p.dotTick ? `DoT ${fmt(p.dotTick)}/round` : fmt(p.damage)}`).join(', ') || '-'],
     ], ['Metric', 'Value']));
     if (values.json) console.log(JSON.stringify({ enchantments: rows, strike, result: { weaponDps: r.dps, enchantDps: r.enchantDps, totalDps: r.totalDps, procsBeforeBreak: r.procsBeforeBreak } }, null, 2));
     return;
