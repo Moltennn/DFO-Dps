@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "DFO Online melee DPS and build lab: read a save, model the game's combat core, rank stats, weapons, enchants and boss traits.",
+  "description": "DFO Online combat DPS and build lab: read a save, model the game's combat core, rank stats, weapons, enchants and boss traits.",
   "bin": {
     "dfo-dps": "bin/dfo-dps.js"
   },

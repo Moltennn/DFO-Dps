@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { theoryCharacter } from '../src/theory.js';
 import { referenceFoe } from '../src/model.js';
-import { analyzeSpell, spellCost, spellDamage, effectSchool } from '../src/spells.js';
+import { analyzeSpell, spellCost, spellDamage, spellRotation, effectSchool } from '../src/spells.js';
 import { SKILLS } from '../src/data.js';
 
 function mage() {
@@ -57,4 +57,12 @@ test('the spell card exposes cost, cast time, DPS and pool sustain', () => {
   assert.ok(card.castsPerPool > 0);
   assert.equal(card.poolDamage, card.damage * card.castsPerPool);
   assert.ok(card.ttk > 0);
+});
+
+
+test('a spell rotation carries min/avg/max DPS', () => {
+  const ch = mage();
+  const r = spellRotation(bolt(), ch, referenceFoe(45, 'tough'), { seconds: 30, health: 12000 });
+  assert.ok(r.windowDpsMin <= r.windowDps && r.windowDps <= r.windowDpsMax, `${r.windowDpsMin} ${r.windowDps} ${r.windowDpsMax}`);
+  assert.ok(r.manaDpsMin <= r.manaDps && r.manaDps <= r.manaDpsMax);
 });

@@ -638,19 +638,31 @@ export function analyze(ch, {
     const main = analyze(ch, { ...base, weapon: w, offHand: false });
     const off = analyze({ ...ch, weapon: ch.offWeapon }, { ...base, weapon: offWeapon, offHand: true });
     const perSwing = (main.perSwing + off.perSwing) / 2;
+    const perSwingMin = (main.perSwingMin + off.perSwingMin) / 2;
+    const perSwingMax = (main.perSwingMax + off.perSwingMax) / 2;
     const cappedPerSwing = (main.cappedPerSwing + off.cappedPerSwing) / 2;
+    const cappedPerSwingMin = (main.cappedPerSwingMin + off.cappedPerSwingMin) / 2;
+    const cappedPerSwingMax = (main.cappedPerSwingMax + off.cappedPerSwingMax) / 2;
     const aps = main.cadence.aps * 2;
     const dps = perSwing * aps;
+    const dpsMin = perSwingMin * aps;
+    const dpsMax = perSwingMax * aps;
     const cappedDps = cappedPerSwing * aps;
+    const cappedDpsMin = cappedPerSwingMin * aps;
+    const cappedDpsMax = cappedPerSwingMax * aps;
     const enchantPerSwing = (main.enchantPerSwing + off.enchantPerSwing) / 2;
     const enchantDpsValue = enchantPerSwing * aps;
+    const enchantDpsMin = (main.enchantDpsMin + off.enchantDpsMin) / 2 * 2;
+    const enchantDpsMax = (main.enchantDpsMax + off.enchantDpsMax) / 2 * 2;
     const totalDps = dps + enchantDpsValue;
+    const totalDpsMin = dpsMin + enchantDpsMin;
+    const totalDpsMax = dpsMax + enchantDpsMax;
     const bossHealth = main.health ?? 0;
     const ttk = bossHealth > 0 && cappedDps > 0 ? (bossHealth + main.ward) / cappedDps + main.shields : null;
     const totalTtk = bossHealth > 0 && (cappedDps + enchantDpsValue) > 0 ? (bossHealth + main.ward) / (cappedDps + enchantDpsValue) + main.shields : null;
     return {
-      ...main, dual: true, perSwing, cappedPerSwing, dps, cappedDps, enchantPerSwing, enchantDps: enchantDpsValue,
-      totalDps, ttk, totalTtk, capLoss: dps > 0 ? 1 - cappedDps / dps : 0,
+      ...main, dual: true, perSwing, perSwingMin, perSwingMax, cappedPerSwing, cappedPerSwingMin, cappedPerSwingMax, dps, dpsMin, dpsMax, cappedDps, cappedDpsMin, cappedDpsMax, enchantPerSwing, enchantDps: enchantDpsValue, enchantDpsMin, enchantDpsMax,
+      totalDps, totalDpsMin, totalDpsMax, ttk, totalTtk, capLoss: dps > 0 ? 1 - cappedDps / dps : 0,
       cadence: { ...main.cadence, seconds: main.cadence.seconds / 2, aps, dual: true },
     };
   }
@@ -659,26 +671,39 @@ export function analyze(ch, {
     const main = analyze(ch, { ...base, pair: false, offHand: false });
     const off = analyze(ch, { ...base, pair: false, offHand: true });
     const perSwing = (main.perSwing + off.perSwing) / 2;
+    const perSwingMin = (main.perSwingMin + off.perSwingMin) / 2;
+    const perSwingMax = (main.perSwingMax + off.perSwingMax) / 2;
     const cappedPerSwing = (main.cappedPerSwing + off.cappedPerSwing) / 2;
+    const cappedPerSwingMin = (main.cappedPerSwingMin + off.cappedPerSwingMin) / 2;
+    const cappedPerSwingMax = (main.cappedPerSwingMax + off.cappedPerSwingMax) / 2;
     const aps = main.cadence.aps * 2;
     const dps = perSwing * aps;
+    const dpsMin = perSwingMin * aps;
+    const dpsMax = perSwingMax * aps;
     const cappedDps = cappedPerSwing * aps;
+    const cappedDpsMin = cappedPerSwingMin * aps;
+    const cappedDpsMax = cappedPerSwingMax * aps;
     const enchantPerSwing = (main.enchantPerSwing + off.enchantPerSwing) / 2;
     const enchantDpsValue = enchantPerSwing * aps;
+    const enchantDpsMin = (main.enchantDpsMin + off.enchantDpsMin) / 2 * 2;
+    const enchantDpsMax = (main.enchantDpsMax + off.enchantDpsMax) / 2 * 2;
     const totalDps = dps + enchantDpsValue;
+    const totalDpsMin = dpsMin + enchantDpsMin;
+    const totalDpsMax = dpsMax + enchantDpsMax;
     const bossHealth = main.health ?? 0;
     const ttk = bossHealth > 0 && cappedDps > 0 ? (bossHealth + main.ward) / cappedDps + main.shields : null;
     const totalTtk = bossHealth > 0 && (cappedDps + enchantDpsValue) > 0 ? (bossHealth + main.ward) / (cappedDps + enchantDpsValue) + main.shields : null;
     return {
       ...main,
       pair: true,
-      perSwing,
-      cappedPerSwing,
-      dps,
-      cappedDps,
+      perSwing, perSwingMin, perSwingMax,
+      cappedPerSwing, cappedPerSwingMin, cappedPerSwingMax,
+      dps, dpsMin, dpsMax,
+      cappedDps, cappedDpsMin, cappedDpsMax,
       enchantPerSwing,
       enchantDps: enchantDpsValue,
-      totalDps,
+      enchantDpsMin, enchantDpsMax,
+      totalDps, totalDpsMin, totalDpsMax,
       totalTtk,
       cadence: { ...main.cadence, seconds: main.cadence.seconds / 2, aps, pair: true },
       ttk,
@@ -695,6 +720,8 @@ export function analyze(ch, {
   const backUptime = clamp(num(opts.backstabUptime, 0), 0, 1);
   const backMult = 1 + 2 * backUptime * backChance;
   const perSwing = ((1 - c) * hit.hitPlain * dmg.avg + c * hit.hitCrit * dmg.critAvg) * backMult;
+  const perSwingMin = ((1 - c) * hit.hitPlain * dmg.min + c * hit.hitCrit * dmg.critMin) * backMult;
+  const perSwingMax = ((1 - c) * hit.hitPlain * dmg.max + c * hit.hitCrit * dmg.critMax) * backMult;
   const cad = w?.ranged ? rangedCadence(ch, w, simOpts) : cadence(ch, w, simOpts);
 
   const resist = weaponResistFactor(w, traits);
@@ -716,13 +743,27 @@ export function analyze(ch, {
     ? (cmax <= cap ? dmg.critAvg * resist * backMult : expectedCapped(cmin, cmax, cap))
     : dmg.critAvg * resist * backMult;
   const cappedPerSwing = (1 - c) * hit.hitPlain * ePlain + c * hit.hitCrit * eCrit;
+  const ePlainMin = cap > 0 ? Math.min(dmg.min * resist * backMult, cap) : dmg.min * resist * backMult;
+  const ePlainMax = cap > 0 ? Math.min(dmg.max * resist * backMult, cap) : dmg.max * resist * backMult;
+  const eCritMin = cap > 0 ? Math.min(dmg.critMin * resist * backMult, cap) : dmg.critMin * resist * backMult;
+  const eCritMax = cap > 0 ? Math.min(dmg.critMax * resist * backMult, cap) : dmg.critMax * resist * backMult;
+  const cappedPerSwingMin = (1 - c) * hit.hitPlain * ePlainMin + c * hit.hitCrit * eCritMin;
+  const cappedPerSwingMax = (1 - c) * hit.hitPlain * ePlainMax + c * hit.hitCrit * eCritMax;
 
   const dps = perSwing * cad.aps;
+  const dpsMin = perSwingMin * cad.aps;
+  const dpsMax = perSwingMax * cad.aps;
   const cappedDps = cappedPerSwing * cad.aps;
+  const cappedDpsMin = cappedPerSwingMin * cad.aps;
+  const cappedDpsMax = cappedPerSwingMax * cad.aps;
   const ench = opts.enchants === false ? null : enchantDps(w?.item ?? ch.wraps ?? ch.weapon, ch, tgt, { hit: hit.hit, aps: cad.aps, level: ch.level, potencyPct: opts.potencyPct, pierce: opts.pierce });
   const enchantPerSwing = ench?.perSwing ?? 0;
   const enchantDpsValue = ench?.dps ?? 0;
+  const enchantDpsMin = ench?.dpsMin ?? 0;
+  const enchantDpsMax = ench?.dpsMax ?? 0;
   const totalDps = dps + enchantDpsValue;
+  const totalDpsMin = dpsMin + enchantDpsMin;
+  const totalDpsMax = dpsMax + enchantDpsMax;
   const ward = traits.includes('warded') && bossHealth > 0 ? Math.max(1, Math.round(bossHealth * WARD_SHARE)) : 0;
   const shields = Math.max(0, num(t.phaseShields, 0)) * Math.max(0, num(t.shieldSeconds, 0));
   const ttk = bossHealth > 0 && cappedDps > 0 ? (bossHealth + ward) / cappedDps + shields : null;
@@ -730,8 +771,9 @@ export function analyze(ch, {
   const wrath = traits.includes('wrathful');
   return {
     core, weapon: w, target: tgt, swing, hit, damage: dmg, cadence: cad,
-    perSwing, dps, cappedPerSwing, cappedDps, cap, capSource, capLoss: dps > 0 ? 1 - cappedDps / dps : 0,
-    enchantPerSwing, enchantDps: enchantDpsValue, totalDps, totalTtk, enchantProcs: ench?.procs ?? [], procsBeforeBreak: procsBeforeBreak(w?.item ?? ch.wraps ?? ch.weapon),
+    perSwing, perSwingMin, perSwingMax, dps, dpsMin, dpsMax,
+    cappedPerSwing, cappedPerSwingMin, cappedPerSwingMax, cappedDps, cappedDpsMin, cappedDpsMax, cap, capSource, capLoss: dps > 0 ? 1 - cappedDps / dps : 0,
+    enchantPerSwing, enchantDps: enchantDpsValue, enchantDpsMin, enchantDpsMax, totalDps, totalDpsMin, totalDpsMax, totalTtk, enchantProcs: ench?.procs ?? [], procsBeforeBreak: procsBeforeBreak(w?.item ?? ch.wraps ?? ch.weapon),
     resist, health: bossHealth || null, ward, shields, ttk, wrath, wrathAt: WRATH_AFTER_S,
     backstab: { skill: backSkill, chance: backChance, multiplier: 3, uptime: backUptime, expectedMult: backMult, min: Math.round(dmg.min * resist * 3), max: Math.round(dmg.max * resist * 3), critMin: Math.round(dmg.critMin * resist * 3), critMax: Math.round(dmg.critMax * resist * 3) },
     traits, healthShare: simOpts.healthShare,
@@ -832,7 +874,7 @@ export function rankWeapons(ch, scenario = {}, { top = 20, materials = 10 } = {}
       rows.push({
         templateIndex: Number(key), name: t.name, material: m, materialName: MATERIALS[m],
         skill: t.skill, twoHanded: t.twoHanded,
-        dps: r.dps, cappedDps: r.cappedDps, perSwing: r.perSwing, perHit: r.perSwing / Math.max(1e-9, r.hit.hit), aps: r.cadence.aps,
+        dps: r.dps, dpsMin: r.dpsMin, dpsMax: r.dpsMax, cappedDps: r.cappedDps, cappedDpsMin: r.cappedDpsMin, cappedDpsMax: r.cappedDpsMax, perSwing: r.perSwing, perHit: r.perSwing / Math.max(1e-9, r.hit.hit), aps: r.cadence.aps,
         hit: r.hit.hit, crit: r.hit.crit.chance, damage: r.damage.avg, capLoss: r.capLoss,
       });
     }

@@ -189,3 +189,12 @@ test('backstab: 99% x3, and the gate group health', () => {
   assert.ok(behind.dps > base.dps * 2.8);
   assert.equal(gateTarget(30, { players: 4 }).maxHealth, 33600);
 });
+
+
+test('DPS carries a min/avg/max range, and the average sits inside it', () => {
+  const ch = characterFromSave(testSave(), { online: true });
+  const r = analyze(ch, { target: referenceFoe(5, 'soft'), core: 'overhaul' });
+  assert.ok(r.dpsMin <= r.dps && r.dps <= r.dpsMax, `${r.dpsMin} ${r.dps} ${r.dpsMax}`);
+  assert.ok(r.cappedDpsMin <= r.cappedDps && r.cappedDps <= r.cappedDpsMax);
+  assert.ok(r.totalDpsMin <= r.totalDps && r.totalDps <= r.totalDpsMax);
+});

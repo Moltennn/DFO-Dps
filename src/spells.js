@@ -228,12 +228,15 @@ export function spellCost(spell, ch, { online = ch?.online !== false } = {}) {
   return Math.max(CAST_COST_FLOOR, sp);
 }
 
-/** One effect's average magnitude: the midpoint of both ranges. */
-export function averageMagnitude(e, level = 1) {
-  const base = (e.magnitudeBaseLow + e.magnitudeBaseHigh) / 2;
-  const plus = (e.magnitudeLevelBase + e.magnitudeLevelHigh) / 2;
+/** One effect's magnitude: average, or the low/high end of the roll. */
+export function magnitudeAt(e, level = 1, mode = 'avg') {
+  const base = mode === 'min' ? e.magnitudeBaseLow : mode === 'max' ? e.magnitudeBaseHigh
+    : (e.magnitudeBaseLow + e.magnitudeBaseHigh) / 2;
+  const plus = mode === 'min' ? e.magnitudeLevelBase : mode === 'max' ? e.magnitudeLevelHigh
+    : (e.magnitudeLevelBase + e.magnitudeLevelHigh) / 2;
   return base + plus * Math.floor(level / Math.max(1, e.magnitudePerLevel));
 }
+export const averageMagnitude = (e, level = 1) => magnitudeAt(e, level, 'avg');
 
 /** A spell's duration in rounds, straight arithmetic (effects.js rollDuration). */
 export function spellRounds(e, level = 1) {
@@ -270,6 +273,7 @@ export function spellDamage(spell, ch, target, {
   online = ch?.online !== false,
   potencyPct = 0,
   pierce = 0,
+  mode = 'avg',
 } = {}) {
   if (!spell) return { damage: 0, effects: [], school: SKILLS.Destruction, saving: 0 };
   const traits = target?.bossTraits ?? [];
@@ -292,7 +296,7 @@ export function spellDamage(spell, ch, target, {
       effects.push({ key, damage: 0, note: 'not health damage' });
       continue;
     }
-    const mag = averageMagnitude(e, level);
+    const mag = magnitudeAt(e, level, mode);
     const rounds = e.type === 1 ? spellRounds(e, level) : 1;
     const tick = mag * (saving / 100) * powerMult;
     if (e.type === 1) {
@@ -338,6 +342,8 @@ export function analyzeSpell(spell, ch, target, {
   traits = [],
 } = {}) {
   const dmg = spellDamage(spell, ch, target, { level, online, potencyPct, pierce });
+  const dmgMin = spellDamage(spell, ch, target, { level, online, potencyPct, pierce, mode: 'min' });
+  const dmgMax = spellDamage(spell, ch, target, { level, online, potencyPct, pierce, mode: 'max' });
   const cost = spellCost(spell, ch, { online });
   const rate = castRate(ch, { castSpeedPct });
   const castSeconds = 0.7 / rate;
@@ -345,20 +351,38 @@ export function analyzeSpell(spell, ch, target, {
   const burstDps = dmg.instant / castSeconds;
   const dotDps = dmg.dotPerTick / MAGIC_ROUND_SECONDS;
   const dps = burstDps + dotDps;
+  const burstDpsMin = dmgMin.instant / castSeconds;
+  const burstDpsMax = dmgMax.instant / castSeconds;
+  const dotDpsMin = dmgMin.dotPerTick / MAGIC_ROUND_SECONDS;
+  const dotDpsMax = dmgMax.dotPerTick / MAGIC_ROUND_SECONDS;
+  const dpsMin = burstDpsMin + dotDpsMin;
+  const dpsMax = burstDpsMax + dotDpsMax;
   const poolDamage = dmg.damage * castsPerPool;
   return {
     name: spell?.name ?? 'spell',
     index: spell?.index ?? null,
     cost,
     damage: dmg.damage,
+    damageMin: dmgMin.damage,
+    damageMax: dmgMax.damage,
     instant: dmg.instant,
+    instantMin: dmgMin.instant,
+    instantMax: dmgMax.instant,
     dotPerTick: dmg.dotPerTick,
+    dotPerTickMin: dmgMin.dotPerTick,
+    dotPerTickMax: dmgMax.dotPerTick,
     dotRounds: dmg.dotRounds,
     dotSeconds: dmg.dotSeconds,
     dotTotal: dmg.dotTotal,
     burstDps,
     dotDps,
     dps,
+    burstDpsMin,
+    burstDpsMax,
+    dotDpsMin,
+    dotDpsMax,
+    dpsMin,
+    dpsMax,
     castSeconds,
     castsPerPool,
     poolDamage,
@@ -388,12 +412,24 @@ export function spellRotation(spell, ch, target, { seconds = 30, manaSolved = tr
   const fight = manaSolved ? seconds : Math.min(seconds, casts * card.castSeconds);
   const active = Math.min(fight, card.dotSeconds);
   const instantDamage = card.instant * casts;
+  const instantDamageMin = card.instantMin * casts;
+  const instantDamageMax = card.instantMax * casts;
   const dotDamage = card.dotPerTick * (active / MAGIC_ROUND_SECONDS);
+  const dotDamageMin = card.dotPerTickMin * (active / MAGIC_ROUND_SECONDS);
+  const dotDamageMax = card.dotPerTickMax * (active / MAGIC_ROUND_SECONDS);
   const total = instantDamage + dotDamage;
+  const totalMin = instantDamageMin + dotDamageMin;
+  const totalMax = instantDamageMax + dotDamageMax;
   const timeToEmpty = casts * card.castSeconds;
   const dotDps = dotDamage / Math.max(1e-9, active);
+  const dotDpsMin = dotDamageMin / Math.max(1e-9, active);
+  const dotDpsMax = dotDamageMax / Math.max(1e-9, active);
   const manaDps = dotOnly ? dotDps : (timeToEmpty > 0 ? total / timeToEmpty : 0);
+  const manaDpsMin = dotOnly ? dotDpsMin : (timeToEmpty > 0 ? totalMin / timeToEmpty : 0);
+  const manaDpsMax = dotOnly ? dotDpsMax : (timeToEmpty > 0 ? totalMax / timeToEmpty : 0);
   const windowDps = seconds > 0 ? total / seconds : 0;
+  const windowDpsMin = seconds > 0 ? totalMin / seconds : 0;
+  const windowDpsMax = seconds > 0 ? totalMax / seconds : 0;
   return {
     ...card,
     seconds,
@@ -403,11 +439,21 @@ export function spellRotation(spell, ch, target, { seconds = 30, manaSolved = tr
     instantDamage,
     dotDamage,
     totalDamage: total,
+    totalDamageMin: totalMin,
+    totalDamageMax: totalMax,
     manaDps,
+    manaDpsMin,
+    manaDpsMax,
     windowDps,
+    windowDpsMin,
+    windowDpsMax,
     dotDps,
+    dotDpsMin,
+    dotDpsMax,
     manaSolved,
     sustainedDps: windowDps,
+    sustainedDpsMin: windowDpsMin,
+    sustainedDpsMax: windowDpsMax,
     manaLeft: manaSolved ? null : card.magicka - casts * card.cost,
     poolKill: manaSolved ? (opts.health > 0 ? total >= opts.health : null) : (opts.health > 0 ? total >= opts.health : null),
     ttk: opts.health > 0 && (dotOnly ? dotDps : manaDps) > 0 && (manaSolved || total >= opts.health)

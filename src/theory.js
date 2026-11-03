@@ -78,6 +78,7 @@ export function theoryCharacter({
   starSkills = {},
   starDamage = 0,
   sockets = [],
+  martialPath = null,
 } = {}) {
   const raceId = typeof race === 'number' ? race : (THEORY_RACES[String(race).toLowerCase()] ?? THEORY_RACES.darkelf);
   const templateIndex = Number(blade);
@@ -124,7 +125,7 @@ export function theoryCharacter({
     activeEffects,
     masterSkills: true,
     masteredSkills: [SKILLS.LongBlade, SKILLS.CriticalStrike, SKILLS.Backstabbing],
-    martialPath: null,
+    martialPath,
     _mods: { stats: {}, skills: { [SKILLS.LongBlade]: gearLB, [SKILLS.CriticalStrike]: gearCS } },
     _enchantMods: { skillMods: {}, chanceToHitMod: 0 },
   };

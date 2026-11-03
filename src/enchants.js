@@ -84,10 +84,16 @@ export function strikeEnchantments(item, ch, target, {
 } = {}) {
   const procs = [];
   let procDamage = 0;
+  let procDamageMin = 0;
+  let procDamageMax = 0;
   for (const sp of castWhenStrikes(item, standard)) {
     const d = spellDamage(sp, ch, target, { level, potencyPct, pierce });
+    const dMin = spellDamage(sp, ch, target, { level, potencyPct, pierce, mode: 'min' });
+    const dMax = spellDamage(sp, ch, target, { level, potencyPct, pierce, mode: 'max' });
     procDamage += d.damage;
-    procs.push({ name: sp.name, index: sp.index, damage: d.damage });
+    procDamageMin += dMin.damage;
+    procDamageMax += dMax.damage;
+    procs.push({ name: sp.name, index: sp.index, damage: d.damage, min: dMin.damage, max: dMax.damage });
   }
   let flat = 0;
   for (const e of enchantmentRows(item)) {
@@ -96,7 +102,7 @@ export function strikeEnchantments(item, ch, target, {
     if (e.type === ENCHANTMENT_TYPES.PotentVs && target?.group === group) flat += POTENT_VS_FLAT;
     if (e.type === ENCHANTMENT_TYPES.LowDamageVs && target?.group === group) flat -= POTENT_VS_FLAT;
   }
-  return { procDamage, flat, procs };
+  return { procDamage, procDamageMin, procDamageMax, flat, procs };
 }
 
 /** Expected enchant damage per landed blow and per second. */
@@ -105,7 +111,9 @@ export function enchantDps(item, ch, target, {
 } = {}) {
   const s = strikeEnchantments(item, ch, target, { level, potencyPct, pierce });
   const perSwing = hit * (s.procDamage + s.flat);
-  return { ...s, perSwing, dps: perSwing * aps };
+  const perSwingMin = hit * (s.procDamageMin + s.flat);
+  const perSwingMax = hit * (s.procDamageMax + s.flat);
+  return { ...s, perSwing, perSwingMin, perSwingMax, dps: perSwing * aps, dpsMin: perSwingMin * aps, dpsMax: perSwingMax * aps };
 }
 
 /** Procs a weapon's condition can pay for (10 per Cast When Strikes). */
