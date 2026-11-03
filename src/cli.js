@@ -16,8 +16,12 @@ import {
   gateHealth, gateHitCap,
 } from './data.js';
 import { buildReport } from './report.js';
-import { benchmarkFull, benchmarkTable } from './benchmark.js';
 import { graphPage, lineChart } from './graph.js';
+import {
+  DAMAGE_AFFIX_MAX, DEFAULT_BLADE, GEAR_CS_LINES, GEAR_LB_LINES, GEAR_LINE_MAX, GEAR_MASTERY_POINTS,
+  GEAR_SKILL_LINES, LONG_BLADES,
+  THEORY_CAPS, THEORY_LEVEL, THEORY_RACES, theoryBlade, theoryCharacter,
+} from './theory.js';
 import {
   analyze, bossTarget, currentWeaponRow, gateTarget, marginals, rankAffixes, rankWeapons, referenceFoe,
   syntheticWeapon, weaponOf,
@@ -36,8 +40,8 @@ Usage:
   dfo-dps compare [options]           baseline vs one change
   dfo-dps scale [options]             stat/skill scaling curve to the caps
   dfo-dps tradeoff [options]          speed vs damage against real boss pools
+  dfo-dps theory [options]            level-45 long-blade ceiling and minmax curves
   dfo-dps graph [options]             SVG line chart of two or more stats/skills
-  dfo-dps benchmark [options]         compare the community weapon table
   dfo-dps saves                       list saves under the DFO user data folder
   dfo-dps doctor                      show save/build/ruleset information
 
@@ -72,11 +76,16 @@ Common options:
   --gear-skill <id>                   scale one gear skill affix (with scale)
   --from <n> --to <n> --step <n>      scale range (default: current to cap)
   --all                               scale/compare every relevant channel
+  --theory                            use the level-45 long-blade theory character
+  --race <name>                       theory race (darkelf, redguard, nord, ...)
+  --blade <template>                  theory long blade (default 123, Dai-katana)
+  --gear-lines <n>                    theory gear skill lines (default 26: 8 LB + 18 crit)
+  --line-points <n>                   points per skill line (default 30, legendary max)
+  --gear-lb <n> --gear-cs <n>         theory gear points on Long Blade / Critical Strike
+  --vampire                           add the vampire +30 Critical Strike
   --series <a,b>                      graph series: stat:strength,skill:29,gear:29
-  --live                              benchmark against the live strength model instead of the community doc
-  --doc                               use the community fixture's strength/RRI assumptions for build/graph
+  --uncapped                          graph raw DPS instead of gate-capped DPS
   --no-rri                            use the vanilla swing law instead of RRI weapon balance
-  --full                               also print the healthy / below-half / full-fight table
   --damage-pct <n>                    add N% weapon damage (theorycraft)
   --json                              machine-readable output
   --top <n>                           rows in a ranking (default: 20)
@@ -109,10 +118,16 @@ const optsSpec = {
   players: { type: 'string', default: '1' },
   'blow-x': { type: 'string', default: '1' },
   series: { type: 'string' },
-  live: { type: 'boolean', default: false },
-  doc: { type: 'boolean', default: false },
+  uncapped: { type: 'boolean', default: false },
+  theory: { type: 'boolean', default: false },
+  race: { type: 'string' },
+  blade: { type: 'string' },
+  'gear-lines': { type: 'string' },
+  'line-points': { type: 'string' },
+  'gear-lb': { type: 'string' },
+  'gear-cs': { type: 'string' },
+  vampire: { type: 'boolean', default: false },
   'no-rri': { type: 'boolean', default: false },
-  full: { type: 'boolean', default: false },
   all: { type: 'boolean', default: false },
   from: { type: 'string' },
   to: { type: 'string' },
@@ -146,6 +161,31 @@ function table(rows, headers, aligns = []) {
 }
 
 function loadCharacter(values) {
+  if (values.theory) {
+    let blade = n(values.blade, DEFAULT_BLADE);
+    let material = 9;
+    if (values.weapon) {
+      const [tpl, mat] = String(values.weapon).split(':').map(Number);
+      if (WEAPONS[tpl]) blade = tpl;
+      if (Number.isFinite(mat)) material = mat;
+    }
+    let ch = theoryCharacter({
+      level: n(values.level, THEORY_LEVEL),
+      race: values.race ?? 'darkelf',
+      blade,
+      material,
+      gearLB: n(values['gear-lb'], GEAR_LB_LINES * GEAR_LINE_MAX),
+      gearCS: n(values['gear-cs'], GEAR_CS_LINES * GEAR_LINE_MAX),
+      damagePct: n(values['damage-pct'], DAMAGE_AFFIX_MAX),
+      vampire: values.vampire,
+    });
+    if (values['no-effects']) ch.activeEffects = [];
+    if (values['base-stats'] != null) {
+      const v = n(values['base-stats'], 50);
+      for (const k of ['strength', 'intelligence', 'willpower', 'agility', 'endurance', 'personality', 'speed', 'luck']) ch.stats[k] = v;
+    }
+    return { ch, entry: null, save: null };
+  }
   const { entry, save } = loadSave(values.save);
   let ch = characterFromSave(save, {
     online: !values.offline,
@@ -179,7 +219,9 @@ function traitsOf(values) {
 
 function targetOf(ch, values, traits) {
   const level = n(values.level, ch.level);
-  const target = String(values.target ?? 'armoured').toLowerCase();
+  const target = String(values.target ?? 'armoured').toLowerCase() === 'armoured' && values.theory
+    ? 'gate'
+    : String(values.target ?? 'armoured').toLowerCase();
   if (target === 'gate' || target === 'ruhn') {
     return gateTarget(level, { health: n(values.health, gateHealth(level)), traits, players: n(values.players, 1), blowX: n(values['blow-x'], 1) });
   }
@@ -206,7 +248,6 @@ function scenarioOf(ch, values, traits, target) {
     target,
     core: values.core === 'classic' ? 'classic' : 'overhaul',
     rri: !values['no-rri'],
-    ...(values.doc ? { classicStrength: true, twoHandedStrMod: 15 } : {}),
     traits,
     health: target.isBoss ? target.maxHealth : n(values.health, 0),
     swing: values.swing,
@@ -218,7 +259,7 @@ function scenarioOf(ch, values, traits, target) {
     firstBlow: values['first-blow'],
     healthShare: n(values['health-share'], 1),
     backstabUptime: values.behind ? 1 : n(values.backstab, 0),
-    weapon: weaponOverride(values),
+    weapon: values.theory ? undefined : weaponOverride(values),
   };
 }
 
@@ -316,7 +357,7 @@ function printBuild(ch, r, targetPreset, values) {
     passiveOn: !values['no-passive'], stacks: n(values.stacks, 5), rhythm: values.rhythm,
     unaware: values.unaware, firstBlow: values['first-blow'], healthShare: n(values['health-share'], 1),
     backstabUptime: values.behind ? 1 : n(values.backstab, 0), critDamage: !values['no-crit-damage'], weapon: undefined,
-    rri: !values['no-rri'], ...(values.doc ? { classicStrength: true, twoHandedStrMod: 15 } : {}),
+    rri: !values['no-rri'],
   });
   console.log(`\nWhat matters (${r.cap ? 'capped DPS' : 'DPS'})`);
   console.log(table(ms.map((m) => [m.label, `${m.delta >= 0 ? '+' : ''}${fmt(m.delta)}`, `${m.delta >= 0 ? '+' : ''}${fmt(m.pct)}%`]), ['Change', r.cap ? 'Capped DPS' : 'DPS', '%'], ['left', 'right', 'right']));
@@ -325,7 +366,7 @@ function printBuild(ch, r, targetPreset, values) {
     passiveOn: !values['no-passive'], stacks: n(values.stacks, 5), rhythm: values.rhythm,
     unaware: values.unaware, firstBlow: values['first-blow'], healthShare: n(values['health-share'], 1),
     backstabUptime: values.behind ? 1 : n(values.backstab, 0), critDamage: !values['no-crit-damage'],
-    rri: !values['no-rri'], ...(values.doc ? { classicStrength: true, twoHandedStrMod: 15 } : {}),
+    rri: !values['no-rri'],
   });
   console.log(`\nAffixes / enchants (${r.cap ? 'capped DPS' : 'DPS'})`);
   console.log(table(affixes.map((m) => [m.label, `${m.delta >= 0 ? '+' : ''}${fmt(m.delta)}`, `${m.delta >= 0 ? '+' : ''}${fmt(m.pct)}%`]), ['Change', r.cap ? 'Capped DPS' : 'DPS', '%'], ['left', 'right', 'right']));
@@ -334,7 +375,7 @@ function printBuild(ch, r, targetPreset, values) {
     passiveOn: !values['no-passive'], stacks: n(values.stacks, 5), rhythm: values.rhythm,
     unaware: values.unaware, firstBlow: values['first-blow'], healthShare: n(values['health-share'], 1),
     backstabUptime: values.behind ? 1 : n(values.backstab, 0), critDamage: !values['no-crit-damage'],
-    rri: !values['no-rri'], ...(values.doc ? { classicStrength: true, twoHandedStrMod: 15 } : {}),
+    rri: !values['no-rri'],
   }, { top: 8 });
   console.log('\nTop melee weapons');
   console.log(table(ranking.map((x) => [`${x.materialName} ${x.name}`, x.twoHanded ? '2H' : '1H', fmt(x.dps), fmt(x.cappedDps), fmt(x.perSwing), fmt2(x.aps)]), ['Weapon', 'Hands', 'DPS', 'Capped', 'Per swing', 'APS'], ['left', 'left', 'right', 'right', 'right', 'right']));
@@ -364,6 +405,7 @@ export async function main(argv = process.argv.slice(2)) {
   values = parsed.values;
   if (values.help) { console.log(HELP); return; }
   const cmd = parsed.positionals[0] ?? 'build';
+  if (cmd === 'theory') values.theory = true;
 
   if (cmd === 'saves') {
     const saves = listSaves();
@@ -398,23 +440,169 @@ export async function main(argv = process.argv.slice(2)) {
   const scenario = scenarioOf(ch, values, traits, target);
   const r = analyze(ch, scenario);
 
-  if (cmd === 'benchmark') {
-    const rows = benchmarkTable({ mode: values.live ? 'live' : 'doc' });
-    const flat = [];
-    for (const r of rows) {
-      const exp = r.expected;
-      const diffs = exp ? r.values.map((v, i) => (v - exp[i]) / Math.max(1, exp[i])) : [];
-      const max = exp ? Math.max(...diffs.map((d) => Math.abs(d))) * 100 : null;
-      flat.push({ label: r.label, values: r.values, expected: exp, maxDiff: max });
+  if (cmd === 'theory') {
+    const level = n(values.level, THEORY_LEVEL);
+    const blade = ch.weapon?.templateIndex ?? DEFAULT_BLADE;
+    const material = ch.weapon?.material ?? 9;
+    const lines = Math.min(GEAR_SKILL_LINES, Math.max(0, n(values['gear-lines'], GEAR_SKILL_LINES)));
+    const linePts = Math.max(1, n(values['line-points'], GEAR_LINE_MAX));
+    const damage = values['damage-pct'] != null ? n(values['damage-pct'], 0) : DAMAGE_AFFIX_MAX;
+    const baseOpts = { level, race: values.race ?? 'darkelf', blade, material, vampire: values.vampire };
+    const make = (over = {}) => theoryCharacter({ ...baseOpts, ...over });
+    const sc = (c, extra = {}) => ({ ...scenarioOf(c, values, traits, target), ...extra });
+    const run = (c, extra = {}) => analyze(c, sc(c, extra));
+    const behind = (c) => run(c, { backstabUptime: 1 });
+
+    // The best split of a fixed line budget between Long Blade and Critical Strike.
+    const budgetRows = [];
+    for (let total = 0; total <= lines; total++) {
+      let row = null;
+      for (let lb = Math.max(0, total - GEAR_CS_LINES); lb <= Math.min(total, GEAR_LB_LINES); lb++) {
+        const cs = total - lb;
+        const c = make({ rawBlade: 200, rawCrit: 200, gearLB: lb * linePts, gearCS: cs * linePts, damagePct: damage });
+        const r = run(c);
+        const candidate = { lines: total, lb, cs, lbPts: lb * linePts, csPts: cs * linePts, dps: r.dps, cappedDps: r.cappedDps, perSwing: r.perSwing, ttk: r.ttk, ch: c, r };
+        if (!row || candidate.cappedDps > row.cappedDps || (candidate.cappedDps === row.cappedDps && candidate.dps > row.dps)) row = candidate;
+      }
+      budgetRows.push(row);
     }
-    console.log(`community fixture (${values.live ? 'live strength' : 'doc strength'}) | level 45 Redguard vampire | RRI | tough monster`);
-    console.log(table(flat.map((r) => [r.label, ...r.values.map((v) => v.toFixed(0)), ...(r.expected ? r.expected.map((v) => String(v)) : ['', '', '', '']), r.maxDiff == null ? '-' : `${r.maxDiff.toFixed(1)}%`]), ['Weapon', 'raw100', 'raw200', '+150', '+300', 'exp100', 'exp200', 'exp150', 'exp300', 'max Δ'], ['left', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right']));
-    if (values.full) {
-      const full = benchmarkFull(values.live ? 'live' : 'doc');
-      console.log('\nFull HP-to-zero (equal HP halves; harmonic, no overkill)');
-      console.log(table(full.map((x) => [x.label, x.healthy.toFixed(0), x.below.toFixed(0), x.full.toFixed(0)]), ['Weapon', 'Healthy', 'Below half', 'Full'], ['left', 'right', 'right', 'right']));
+    const best = budgetRows[budgetRows.length - 1];
+    const explicitGear = values['gear-lb'] != null || values['gear-cs'] != null;
+    const maxLb = explicitGear ? n(values['gear-lb'], 0) : best.lbPts;
+    const maxCs = explicitGear ? n(values['gear-cs'], 0) : best.csPts;
+    const maxCh = make({ rawBlade: 200, rawCrit: 200, gearLB: maxLb, gearCS: maxCs, damagePct: damage });
+    const maxR = run(maxCh);
+    const maxBehind = behind(maxCh);
+
+    const stages = [
+      { label: 'Naked skills', raw: 100, gearLB: 0, gearCS: 0, damage: 0, vampire: false },
+      { label: 'Mastered skills', raw: 200, gearLB: 0, gearCS: 0, damage: 0, vampire: false },
+      { label: 'Perfect skill lines', raw: 200, gearLB: maxLb, gearCS: maxCs, damage: 0, vampire: false },
+      { label: 'Perfect weapon line', raw: 200, gearLB: maxLb, gearCS: maxCs, damage, vampire: false },
+      { label: 'Vampire', raw: 200, gearLB: maxLb, gearCS: maxCs, damage, vampire: true },
+    ].map((s) => {
+      const c = make({ rawBlade: s.raw, rawCrit: s.raw, rawBackstab: s.raw, gearLB: s.gearLB, gearCS: s.gearCS, damagePct: s.damage, vampire: s.vampire });
+      const r = run(c);
+      const b = behind(c);
+      return { ...s, dps: r.dps, cappedDps: r.cappedDps, behind: b.cappedDps, perSwing: r.perSwing, aps: r.cadence.aps, ttk: r.ttk, ch: c, r };
+    });
+
+    // One attribute at a time, everything else at the ceiling.
+    const statScaled = [];
+    for (const k of ['strength', 'agility', 'speed', 'luck', 'endurance', 'intelligence', 'willpower', 'personality']) {
+      const at = (v) => {
+        const c = JSON.parse(JSON.stringify(maxCh));
+        c.stats[k] = v;
+        const rr = run(c);
+        return { dps: rr.dps, capped: rr.cappedDps };
+      };
+      const a50 = at(50), a75 = at(75), a90 = at(90), a100 = at(100);
+      statScaled.push({ stat: k, d50: a50.dps, d75: a75.dps, d100: a100.dps, capped100: a100.capped, delta: a100.dps - a50.dps, last10: a100.dps - a90.dps });
     }
-    if (values.json) console.log(JSON.stringify(flat, null, 2));
+    statScaled.sort((a, b) => b.delta - a.delta);
+
+    const skillRows = [];
+    const addSkill = (label, kind, id, values_, extra = {}) => {
+      for (const v of values_) {
+        const c = JSON.parse(JSON.stringify(maxCh));
+        if (kind === 'raw') c.skills[id] = v;
+        else {
+          c._mods = c._mods ?? { stats: {}, skills: {} };
+          c._mods.skills = c._mods.skills ?? {};
+          c._mods.skills[id] = v;
+        }
+        const r = run(c, extra);
+        const b = behind(c);
+        skillRows.push({ label, value: v, dps: r.dps, cappedDps: r.cappedDps, behind: b.cappedDps, perSwing: r.perSwing, ttk: r.ttk });
+      }
+    };
+    addSkill('Raw Long Blade', 'raw', 29, [100, 125, 150, 175, 200]);
+    addSkill('Raw Critical Strike', 'raw', 34, [100, 125, 150, 175, 200]);
+    addSkill('Raw Backstabbing (behind)', 'raw', 19, [100, 125, 150, 175, 200], { backstabUptime: 1 });
+    addSkill('Gear Long Blade (CS fixed)', 'gear', 29, [0, 200, 400, 600, GEAR_MASTERY_POINTS, 800]);
+    addSkill('Gear Critical Strike (LB fixed)', 'gear', 34, [0, 200, 400, 600, 800]);
+
+    const bladeRows = LONG_BLADES.map((idx) => {
+      const c = theoryBlade(maxCh, idx, material);
+      const r = run(c);
+      const w = r.weapon;
+      return { templateIndex: idx, name: WEAPONS[idx].name, twoHanded: w.twoHanded, dps: r.dps, cappedDps: r.cappedDps, perSwing: r.perSwing, aps: r.cadence.aps, damage: r.damage.avg, capLoss: r.capLoss };
+    }).sort((a, b) => b.cappedDps - a.cappedDps);
+
+    const raceRows = Object.entries(THEORY_RACES).map(([key, id]) => {
+      const c = make({ race: key, rawBlade: 200, rawCrit: 200, gearLB: maxLb, gearCS: maxCs, damagePct: damage });
+      const r = run(c);
+      return { race: RACE_NAMES[id] ?? key, dps: r.dps, cappedDps: r.cappedDps, perSwing: r.perSwing, damage: r.damage.avg, ttk: r.ttk };
+    }).sort((a, b) => b.cappedDps - a.cappedDps);
+
+    const r = maxR;
+    const p = r.damage.parts;
+    if (!values.json) {
+    console.log(`Level ${level} theory long blade  |  ${RACE_NAMES[maxCh.raceId] ?? maxCh.race}  |  Daedric ${WEAPONS[blade].name}`);
+    const targetName = values.theory && values.target === 'armoured' ? 'gate' : values.target;
+    console.log(`overhaul / online${values['no-rri'] ? '' : ' / RRI'}  |  target ${targetName} level ${r.target.level}, ${r.health.toLocaleString()} HP, ${r.cap || 'no'} per-hit cap`);
+    console.log('');
+    console.log(table([
+      ['Attributes', 'all 100 (live cap)', 'strength, agility, speed, luck; endurance/int/wil/per buy no DPS'],
+      ['Raw skills', 'Long Blade 200, Critical Strike 200, Backstabbing 200', 'mastered; effectiveSkill = 140 each'],
+      ['Gear skill lines', `${lines} x ${linePts} points`, explicitGear ? `explicit ${maxLb} Long Blade / ${maxCs} Critical Strike` : `${best.lb} Long Blade / ${best.cs} Critical Strike is the best split`],
+      ['Weapon', `Daedric ${WEAPONS[blade].name}`, `RRI ${r.weapon.min}-${r.weapon.max}, weight ${r.weapon.twoHanded ? '2H' : '1H'}`],
+      ['Damage affix', `${damage}%`, `legendary maximum ${DAMAGE_AFFIX_MAX}%`],
+      ['Mastery / gear', `${fmt(p.mastery)}%`, `raw climb + gear channel`],
+      ['Hit / crit', `${pc(r.hit.hit)} / ${pc(r.hit.crit.chance)} x${fmt2(r.hit.crit.damageMult)}`, `critical damage multiplier`],
+    ], ['Term', 'Value', 'Notes']));
+
+    console.log('\nPush stages');
+    console.log(table(stages.map((s) => [s.label, s.raw, `${s.gearLB}+${s.gearCS}`, `${s.damage}%`, fmt(s.dps), fmt(s.cappedDps), fmt(s.behind), fmt(s.perSwing), fmt2(s.aps), s.ttk ? `${fmt(s.ttk)} s` : '-']), ['Stage', 'Raw skill', 'Gear', 'Damage', 'DPS', 'Capped', 'Behind', 'Per swing', 'APS', 'TTK'], ['left', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right']));
+    console.log('\nCaps (push in this order)');
+    console.log(table(THEORY_CAPS.map((c) => [c.channel, c.cap, c.formula, c.note]), ['Channel', 'Cap', 'Formula', 'What it means']));
+
+    console.log('\nAttribute scaling (everything else at the ceiling)');
+    console.log(table(statScaled.map((x) => [x.stat, fmt(x.d50), fmt(x.d75), fmt(x.d100), fmt(x.capped100), `${x.delta >= 0 ? '+' : ''}${fmt(x.delta)}`, `${x.last10 >= 0 ? '+' : ''}${fmt(x.last10)}`]), ['Attribute', 'DPS 50', 'DPS 75', 'DPS 100', 'Capped 100', '50 -> 100', '90 -> 100'], ['left', 'right', 'right', 'right', 'right', 'right', 'right']));
+    console.log('The DPS columns are uncapped so the stat slope is visible; Capped 100 is the gate reality. Luck is flat here only because Critical Strike already holds chance at 100%.');
+
+    console.log('\nSkill and gear scaling');
+    console.log(table(skillRows.map((x) => [x.label, x.value, fmt(x.dps), fmt(x.cappedDps), fmt(x.behind), fmt(x.perSwing), x.ttk ? `${fmt(x.ttk)} s` : '-']), ['Channel', 'Value', 'DPS', 'Capped', 'Behind', 'Per swing', 'TTK'], ['left', 'right', 'right', 'right', 'right', 'right', 'right']));
+
+    console.log(`\nGear line budget (${linePts} points per line; best feasible split)`);
+    console.log(table(budgetRows.map((x) => [x.lines, `${x.lb} / ${x.cs}`, x.lbPts, x.csPts, fmt(x.dps), fmt(x.cappedDps), fmt(x.perSwing), x.ttk ? `${fmt(x.ttk)} s` : '-']), ['Lines', 'LB / CS', 'LB points', 'CS points', 'DPS', 'Capped', 'Per swing', 'TTK'], ['right', 'left', 'right', 'right', 'right', 'right', 'right', 'right']));
+
+    console.log('\nLong blades at the ceiling');
+    console.log(table(bladeRows.map((x) => [x.name, x.twoHanded ? '2H' : '1H', fmt(x.dps), fmt(x.cappedDps), fmt(x.perSwing), fmt2(x.aps), fmt(x.damage), pc(x.capLoss)]), ['Blade', 'Hands', 'DPS', 'Capped', 'Per swing', 'APS', 'Avg hit', 'Cap loss'], ['left', 'left', 'right', 'right', 'right', 'right', 'right', 'right']));
+    console.log('The table holds the two-handed 8/18 line budget. A one-handed blade plus a shield adds one armour-group Long Blade line and one Critical Strike line, so the 1H rows are a lower bound.');
+    console.log(`Best at this target: ${bladeRows[0].name} (${fmt(bladeRows[0].cappedDps)} capped DPS, ${fmt(bladeRows[0].dps)} uncapped).`);
+
+    console.log('\nRaces at the ceiling');
+    console.log(table(raceRows.map((x) => [x.race, fmt(x.dps), fmt(x.cappedDps), fmt(x.perSwing), fmt(x.damage), x.ttk ? `${fmt(x.ttk)} s` : '-']), ['Race', 'DPS', 'Capped', 'Per swing', 'Avg hit', 'TTK'], ['left', 'right', 'right', 'right', 'right', 'right']));
+
+    console.log(`\n${targetName[0].toUpperCase()}${targetName.slice(1)} result`);
+    console.log(table([
+      ['Uncapped DPS', fmt(r.dps)],
+      ['Capped DPS', fmt(r.cappedDps)],
+      ['Per-hit range', `${r.damage.min}-${r.damage.max} (crit ${r.damage.critMin}-${r.damage.critMax})`],
+      ['Cap loss', pc(r.capLoss)],
+      ['Time to kill', `${fmt(r.ttk)} s`],
+      ['Behind / backstab', `${fmt(maxBehind.cappedDps)} capped (${pc(maxBehind.backstab.chance)} x3)`],
+      ['Phase shields', `${r.target.phaseShields} x ${r.target.shieldSeconds}s (${r.shields}s)`],
+    ], ['Metric', 'Value']));
+    if (r.cap && r.hit.crit.chance >= 1 && r.damage.critMin >= r.cap) {
+      console.log('At 100% critical chance every blow is a critical, and the critical minimum is already over the per-hit cap: the 40% damage affix adds 0 capped DPS. Speed is the only attribute that still buys capped DPS here; Strength helps only through the RRI swing law.\nAgainst an uncapped boss the same build is ' + fmt(r.dps) + ' DPS.');
+    }
+    }
+
+    if (values.json) {
+      console.log(JSON.stringify({
+        character: { level, race: RACE_NAMES[maxCh.raceId] ?? maxCh.race, blade: WEAPONS[blade].name, material, lines, linePts, maxLb, maxCs, damage },
+        result: { dps: r.dps, cappedDps: r.cappedDps, perSwing: r.perSwing, aps: r.cadence.aps, ttk: r.ttk, cap: r.cap, capLoss: r.capLoss, hit: r.hit.hit, critChance: r.hit.crit.chance, critMult: r.hit.crit.damageMult, damage: { min: r.damage.min, max: r.damage.max, critMin: r.damage.critMin, critMax: r.damage.critMax }, terms: p },
+        stages: stages.map(({ ch: _c, r: _r, ...rest }) => rest),
+        caps: THEORY_CAPS,
+        stats: statScaled,
+        skills: skillRows,
+        splits: budgetRows.map(({ ch: _c, r: _r, ...rest }) => rest),
+        blades: bladeRows,
+        races: raceRows,
+      }, null, 2));
+    }
     return;
   }
 
@@ -459,14 +647,14 @@ export async function main(argv = process.argv.slice(2)) {
           c._mods.skills[id] = value;
         }
         const rr = analyze(c, { ...scenario, weapon: scenario.weapon });
-        points.push({ x: value, y: rr.cappedDps ?? rr.dps });
+        points.push({ x: value, y: values.uncapped ? rr.dps : (rr.cappedDps ?? rr.dps) });
       }
       series.push({ name: label, points });
     }
     const title = 'DFO DPS - stat curves';
-    const flags = [values.bare ? 'bare' : '', values['no-effects'] ? 'no effects' : '', values['base-stats'] != null ? `base ${values['base-stats']}` : ''].filter(Boolean).join(', ');
+    const flags = [values.bare ? 'bare' : '', values['no-effects'] ? 'no effects' : '', values['base-stats'] != null ? `base ${values['base-stats']}` : '', values.uncapped ? 'uncapped' : 'capped'].filter(Boolean).join(', ');
     const subtitle = `${characterLabel(ch)} | ${values.core}${ch.online ? ' / online' : ' / offline'} | ${values.target}${target.health ? ` ${target.maxHealth.toLocaleString()} HP` : ''}${flags ? ` | ${flags}` : ''}`;
-    const html = graphPage({ title, subtitle, chart: lineChart({ title, xLabel: 'Value', yLabel: 'Capped DPS', series }) });
+    const html = graphPage({ title, subtitle, chart: lineChart({ title, xLabel: 'Value', yLabel: values.uncapped ? 'DPS' : 'Capped DPS', series }) });
     const out = path.resolve(values.out);
     fs.writeFileSync(out, html, 'utf8');
     console.log(`graph written: ${out}`);
@@ -607,7 +795,7 @@ export async function main(argv = process.argv.slice(2)) {
       passiveOn: scenario.passiveOn, stacks: scenario.stacks, rhythm: scenario.rhythm,
       unaware: scenario.unaware, firstBlow: scenario.firstBlow, healthShare: scenario.healthShare,
       backstabUptime: scenario.backstabUptime, players: n(values.players, 1), blowX: n(values['blow-x'], 1),
-      rri: !values['no-rri'], doc: values.doc, weapon: scenario.weapon,
+      rri: !values['no-rri'], weapon: scenario.weapon,
     });
     const out = path.resolve(values.out);
     fs.writeFileSync(out, html, 'utf8');
@@ -656,5 +844,5 @@ export async function main(argv = process.argv.slice(2)) {
     }), null, 2));
     return;
   }
-  printBuild(ch, r, values.target, values);
+  printBuild(ch, r, values.theory && values.target === 'armoured' ? 'gate' : values.target, values);
 }

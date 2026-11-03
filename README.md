@@ -73,31 +73,41 @@ dfo eval '(() => { const e = window.__playerEntity; const equipSlots = {}; for (
 
 The live card's **Damage** and **Per swing** tiles can include the Duelist's Vambrace **First Blood** opening effect. The simulation deliberately excludes it — it is one opening hit, not boss DPS — so compare the tool's sustained **38–58 / 120–183** front range and its **Backstab** range, not the card's opening tile.
 
+## Theoretical level 45 long blade
+
+`theory` is the live ceiling, not a community fixture: all attributes 100, mastered Long Blade / Critical Strike / Backstabbing at raw 200, a Daedric Dai-katana, online rules and RRI weapon balance. It prints the DPS at each stage, the cap sheet, stat and skill curves, the long-blade ranking, and the best split of the gear skill-line budget.
+
+```bash
+./dfo-dps theory
+./dfo-dps theory --vampire
+./dfo-dps theory --gear-lines 20 --json
+./dfo-dps theory --blade 121 --race redguard
+```
+
+The practical skill-line ceiling comes from the item rules, not a made-up budget. Long Blade can only roll on the weapon and the seven armour pieces (**8 lines**); Critical Strike can also roll on all ten jewellery slots (**18 lines**). That is **26 lines x 30 points = 780 points**, and the command searches the feasible Long Blade / Critical Strike split at every lower budget too. The weapon damage affix is capped at 40%.
+
+At the level-45 gate the **600 per-hit cap**, not the character sheet, is the wall: the fully geared build is **~1,198 uncapped DPS**, but only **~821 capped DPS** and **~20.6 s TTK**. Past about 24 skill lines the extra damage is almost entirely eaten by the cap.
+
 ## Graphs
 
-```bash
-./dfo-dps graph --save /tmp/live.json --target gate \
-  --series stat:strength,stat:agility --from 50 --to 100 --step 5 --out stats.svg.html
-
-./dfo-dps graph --save /tmp/live.json --bare --no-effects --base-stats 50 --target gate \
-  --series stat:strength,stat:agility --from 50 --to 100 --out naked-stats.html
-
-./dfo-dps graph --save /tmp/live.json --target gate \
-  --series skill:29,gear:29 --from 100 --to 200 --out skill-gear.html
-```
-
-The first command is the honest live picture: with gear stat affixes the lines can be flat at the live 100 cap. The bare run is the theorycraft baseline.
-
-## Community benchmark
-
-`benchmark` reproduces the 2026-10-28 community fixture (level 45 Redguard Haarvenu vampire, RRI, tough monster, raw 100/200, +0/+150/+300) and prints our values beside the published ones:
+`graph` emits a standalone SVG chart. The live lines can be flat because gear stat affixes already hit the 100 cap; `--theory` lowers one channel at a time from that ceiling, so it shows what each point was buying.
 
 ```bash
-./dfo-dps benchmark          # community strength model (classic /5, two-handed ~15)
-./dfo-dps benchmark --live   # the live PCAAO strength model (/10, two-handed x2)
+# live character
+./dfo-dps graph --save /tmp/live.json --target gate \
+  --series stat:strength,stat:agility --from 50 --to 100 --step 5 --out stats.html
+
+# theory character: what each attribute buys at the ceiling
+./dfo-dps graph --theory --target gate \
+  --series stat:strength,stat:speed,stat:agility \
+  --from 50 --to 100 --step 5 --out theory-stats.html
+
+# theory character: gear skill against the practical line budget
+./dfo-dps graph --theory --target gate --series gear:29,gear:34 \
+  --from 0 --to 540 --step 30 --out theory-gear.html
 ```
 
-The community table assumes **classic /5 Strength** for one-handed and a **~+15** two-handed strength term; our `benchmark` mode reproduces it within about **1–6%**. The live game uses PCAAO `/10` with two-handed ×2, which is why `--live` is lower than the doc. Builds default to the live model with RRI weapon balance; `--doc` switches a build or graph to the community fixture's strength assumptions, and `--no-rri` switches back to the vanilla swing law.
+Series syntax is `stat:strength`, `stat:agility`, `skill:29`, `gear:29`, etc. The Y axis is capped DPS against the selected target, so the gate's per-hit cap is in the line, not hidden. Add `--uncapped` to plot raw DPS and see the full stat slope before the cap flattens it.
 
 ## Backstab and the 600s
 

@@ -142,10 +142,10 @@ function capTable(ch, scenario) {
 export function buildReport(ch, {
   target, core = 'overhaul', traits = [], health = 0, swing = 'StrikeLeft',
   passiveOn = true, stacks = 5, rhythm = false, unaware = false, firstBlow = false,
-  healthShare = 1, backstabUptime = 0, players = 1, blowX = 1, rri = true, doc = false, weapon = null,
+  healthShare = 1, backstabUptime = 0, players = 1, blowX = 1, rri = true, weapon = null,
 } = {}) {
   const baseCh = weapon?.item ? { ...ch, weapon: weapon.item } : ch;
-  const scenario = { target, core, traits, health, swing, passiveOn, stacks, rhythm, unaware, firstBlow, healthShare, backstabUptime, rri, ...(doc ? { classicStrength: true, twoHandedStrMod: 15 } : {}) };
+  const scenario = { target, core, traits, health, swing, passiveOn, stacks, rhythm, unaware, firstBlow, healthShare, backstabUptime, rri };
   const r = analyze(baseCh, scenario);
   const w = r.weapon;
   const rs = marginals(baseCh, r, scenario);

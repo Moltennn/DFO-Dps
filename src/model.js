@@ -508,7 +508,7 @@ export function damageModel(ch, w, target, swingKey, core, opts = {}) {
     const hi = floor(h2h / 5) + 1;
     rolls = [];
     for (let r = lo; r <= hi; r++) rolls.push(r);
-    strMod = core === 'overhaul' && !opts.classicStrength ? pcaaoDamageModifier(str) : damageModifier(str);
+    strMod = core === 'overhaul' ? pcaaoDamageModifier(str) : damageModifier(str);
   } else {
     const lo = w.min;
     const hi = w.max;
@@ -518,13 +518,7 @@ export function damageModel(ch, w, target, swingKey, core, opts = {}) {
       rolls.push(rolled + w.bonusDamage);
     }
     matMod = WEAPON_MATERIAL_MODIFIER[w.material] ?? 0;
-    strMod = opts.strModOverride != null
-      ? opts.strModOverride
-      : (w.twoHanded && opts.twoHandedStrMod != null
-        ? opts.twoHandedStrMod
-        : (opts.classicStrength
-          ? damageModifier(str)
-          : (core === 'overhaul' ? pcaaoDamageModifier(str) * (w.twoHanded ? 2 : 1) : damageModifier(str))));
+    strMod = core === 'overhaul' ? pcaaoDamageModifier(str) * (w.twoHanded ? 2 : 1) : damageModifier(str);
   }
   const one = (roll) => {
     let d = roll + dmgMods + strMod + matMod;

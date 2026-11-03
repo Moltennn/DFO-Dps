@@ -230,8 +230,9 @@ export const gateHitCap = (level) => GATE_HIT_CAP_X * gateRefDps(level);
 
 
 /** Roleplay & Realism: Items weaponBalance spans (rriRealism.js), used by the
- * community benchmark and by `--rri`. Bows are included for parity but v1 DPS
- * is melee. */
+ * Roleplay & Realism: Items weaponBalance spans (rriRealism.js), used by
+ * `--rri` and by the theory character. Bows are included for parity but v1
+ * DPS is melee. */
 export const RRI_WEAPON_DAMAGE = Object.freeze({
   113: { min: 1, max: 6 }, 114: { min: 1, max: 7 }, 115: { min: 3, max: 8 },
   116: { min: 2, max: 8 }, 117: { min: 1, max: 10 }, 118: { min: 2, max: 14 },

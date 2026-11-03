@@ -50,9 +50,13 @@ swing = (5 + hold) * tick
 - a fresh main-hand swing is five frames; the 0.45s floor makes the maximum
   about 2.2 swings/s
 
-## Community fixture
+## The level-45 theory character
 
-`benchmark` uses the 2026-10-28 community fixture: level 45 Redguard Haarvenu vampire, STR/AGI/END/SPD/LUC 100, INT 99, WIL/PER 40, RRI weapon balance and swing law, Daedric, tough monster, raw 100/200, gear +0/+150/+300, no Expertise, no backstab, no procs. The doc's one-handed rows match **classic /5 Strength** and its two-handed rows a **~+15** term; `benchmark` uses those assumptions and is within ~1–6% of the published table. `--live` uses the live PCAAO `/10` model instead.
+`theory` is the live ceiling. Attributes are 100 (the `liveStat` clamp), Long Blade, Critical Strike and Backstabbing are mastered at raw 200 (`effectiveSkill` = 140), the weapon is a Daedric Dai-katana, online rules are on, and RRI weapon balance is on. It uses no community assumptions and no legacy strength model.
+
+A gear skill line is modelled at the legendary maximum of 30 points (`AFFIX_RANGES.skill.legendary`). The practical line ceiling comes from `lootRarity.js`: Long Blade's own skill is only in the weapon and the body-skill pool, so the weapon plus seven armour pieces give **8 lines (240 points, +105.6% mastery)**; jewellery's `JEWEL_KIN` has Critical Strike but not Long Blade, so Critical Strike reaches **18 lines (540 points)** across the weapon, armour and ten jewellery slots. The mastery formula caps at +320% (728 points), but 8 Long Blade lines cannot reach it; Critical Strike has no formula cap and is the channel that keeps paying after chance reaches 100%. The weapon's damage affix is capped at 40% (`AFFIX_RANGES.damage.legendary`). The command searches every feasible split of the line budget and prices each stage from naked to fully geared against the level-45 gate boss.
+
+The level-45 gate is `240 x 50 = 12,000 HP` with a `12 x 50 = 600` per-hit cap and two 3s shields. The fully geared long blade is about **1,198 uncapped DPS**, but the cap binds almost every blow: **~821 capped DPS** and **~20.6 s TTK**. The marginal value of another skill line is therefore near zero at the gate, which is the practical answer to "how far can it be pushed".
 
 ## Backstab and the cap
 
