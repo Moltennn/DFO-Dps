@@ -768,7 +768,7 @@ export async function main(argv = process.argv.slice(2)) {
       const list = sorted(mode);
       const chart = barChart({
         title: `${mode === 'uncapped' ? 'Uncapped' : 'Gate'} loadouts by DPS`,
-        labels: list.map((r) => `${r.family} ${r.category}`),
+        labels: list.map((r) => `${r.category} ${r.weapon}`),
         series: [{ name: 'Total DPS', values: list.map((r) => r.totalDps) }],
       });
       const body = list.map((r) => `<tr><td class="k">${r.category} · ${r.family}</td><td>${r.weapon}</td><td>${r.imprint ?? '-'}</td><td>${fmt(r.totalDps)}</td></tr>`).join('');
