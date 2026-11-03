@@ -74,6 +74,8 @@ Common options:
   --all                               scale/compare every relevant channel
   --series <a,b>                      graph series: stat:strength,skill:29,gear:29
   --live                              benchmark against the live strength model instead of the community doc
+  --doc                               use the community fixture's strength/RRI assumptions for build/graph
+  --no-rri                            use the vanilla swing law instead of RRI weapon balance
   --full                               also print the healthy / below-half / full-fight table
   --damage-pct <n>                    add N% weapon damage (theorycraft)
   --json                              machine-readable output
@@ -108,6 +110,8 @@ const optsSpec = {
   'blow-x': { type: 'string', default: '1' },
   series: { type: 'string' },
   live: { type: 'boolean', default: false },
+  doc: { type: 'boolean', default: false },
+  'no-rri': { type: 'boolean', default: false },
   full: { type: 'boolean', default: false },
   all: { type: 'boolean', default: false },
   from: { type: 'string' },
@@ -201,6 +205,8 @@ function scenarioOf(ch, values, traits, target) {
   return {
     target,
     core: values.core === 'classic' ? 'classic' : 'overhaul',
+    rri: !values['no-rri'],
+    ...(values.doc ? { classicStrength: true, twoHandedStrMod: 15 } : {}),
     traits,
     health: target.isBoss ? target.maxHealth : n(values.health, 0),
     swing: values.swing,
@@ -310,6 +316,7 @@ function printBuild(ch, r, targetPreset, values) {
     passiveOn: !values['no-passive'], stacks: n(values.stacks, 5), rhythm: values.rhythm,
     unaware: values.unaware, firstBlow: values['first-blow'], healthShare: n(values['health-share'], 1),
     backstabUptime: values.behind ? 1 : n(values.backstab, 0), critDamage: !values['no-crit-damage'], weapon: undefined,
+    rri: !values['no-rri'], ...(values.doc ? { classicStrength: true, twoHandedStrMod: 15 } : {}),
   });
   console.log(`\nWhat matters (${r.cap ? 'capped DPS' : 'DPS'})`);
   console.log(table(ms.map((m) => [m.label, `${m.delta >= 0 ? '+' : ''}${fmt(m.delta)}`, `${m.delta >= 0 ? '+' : ''}${fmt(m.pct)}%`]), ['Change', r.cap ? 'Capped DPS' : 'DPS', '%'], ['left', 'right', 'right']));
@@ -318,6 +325,7 @@ function printBuild(ch, r, targetPreset, values) {
     passiveOn: !values['no-passive'], stacks: n(values.stacks, 5), rhythm: values.rhythm,
     unaware: values.unaware, firstBlow: values['first-blow'], healthShare: n(values['health-share'], 1),
     backstabUptime: values.behind ? 1 : n(values.backstab, 0), critDamage: !values['no-crit-damage'],
+    rri: !values['no-rri'], ...(values.doc ? { classicStrength: true, twoHandedStrMod: 15 } : {}),
   });
   console.log(`\nAffixes / enchants (${r.cap ? 'capped DPS' : 'DPS'})`);
   console.log(table(affixes.map((m) => [m.label, `${m.delta >= 0 ? '+' : ''}${fmt(m.delta)}`, `${m.delta >= 0 ? '+' : ''}${fmt(m.pct)}%`]), ['Change', r.cap ? 'Capped DPS' : 'DPS', '%'], ['left', 'right', 'right']));
@@ -326,6 +334,7 @@ function printBuild(ch, r, targetPreset, values) {
     passiveOn: !values['no-passive'], stacks: n(values.stacks, 5), rhythm: values.rhythm,
     unaware: values.unaware, firstBlow: values['first-blow'], healthShare: n(values['health-share'], 1),
     backstabUptime: values.behind ? 1 : n(values.backstab, 0), critDamage: !values['no-crit-damage'],
+    rri: !values['no-rri'], ...(values.doc ? { classicStrength: true, twoHandedStrMod: 15 } : {}),
   }, { top: 8 });
   console.log('\nTop melee weapons');
   console.log(table(ranking.map((x) => [`${x.materialName} ${x.name}`, x.twoHanded ? '2H' : '1H', fmt(x.dps), fmt(x.cappedDps), fmt(x.perSwing), fmt2(x.aps)]), ['Weapon', 'Hands', 'DPS', 'Capped', 'Per swing', 'APS'], ['left', 'left', 'right', 'right', 'right', 'right']));
@@ -597,7 +606,8 @@ export async function main(argv = process.argv.slice(2)) {
       target, core: scenario.core, traits, health: scenario.health, swing: scenario.swing,
       passiveOn: scenario.passiveOn, stacks: scenario.stacks, rhythm: scenario.rhythm,
       unaware: scenario.unaware, firstBlow: scenario.firstBlow, healthShare: scenario.healthShare,
-      backstabUptime: scenario.backstabUptime, players: n(values.players, 1), blowX: n(values['blow-x'], 1), weapon: scenario.weapon,
+      backstabUptime: scenario.backstabUptime, players: n(values.players, 1), blowX: n(values['blow-x'], 1),
+      rri: !values['no-rri'], doc: values.doc, weapon: scenario.weapon,
     });
     const out = path.resolve(values.out);
     fs.writeFileSync(out, html, 'utf8');

@@ -97,7 +97,7 @@ The first command is the honest live picture: with gear stat affixes the lines c
 ./dfo-dps benchmark --live   # the live PCAAO strength model (/10, two-handed x2)
 ```
 
-The community table assumes **classic /5 Strength** for one-handed and a **~+15** two-handed strength term; our `benchmark` mode reproduces it within about **1–6%**. The live game uses PCAAO `/10` with two-handed ×2, which is why `--live` is lower than the doc. The tool defaults to the live model for build decisions and labels the community mode when benchmarking.
+The community table assumes **classic /5 Strength** for one-handed and a **~+15** two-handed strength term; our `benchmark` mode reproduces it within about **1–6%**. The live game uses PCAAO `/10` with two-handed ×2, which is why `--live` is lower than the doc. Builds default to the live model with RRI weapon balance; `--doc` switches a build or graph to the community fixture's strength assumptions, and `--no-rri` switches back to the vanilla swing law.
 
 ## Backstab and the 600s
 
