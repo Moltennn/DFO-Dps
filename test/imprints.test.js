@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { imprintsFor, powerDps, rankAll, rankFamily, IMPRINT_FAMILIES } from '../src/imprints.js';
+import { imprintsFor, powerDps, rankAll, rankFamily, IMPRINT_FAMILIES, WEAPON_IMPRINTS } from '../src/imprints.js';
 import { maxCharacter, maxRun } from '../src/maxprofile.js';
 import { gateTarget } from '../src/model.js';
 
@@ -92,4 +92,17 @@ test('moon adds both night and animal shares, and chain/quake are other-target o
   assert.ok(Math.abs(powerDps({ kind: 'moon', pct: 35, beast: 35 }, base, true) / base.dps - 1.7) < 1e-9);
   assert.equal(powerDps({ kind: 'chain', share: 50 }, base, true), base.dps);
   assert.equal(powerDps({ kind: 'quake', share: 25 }, base, true), base.dps);
+});
+
+
+test('every weapon imprint has a live power and a readable effect', () => {
+  assert.equal(WEAPON_IMPRINTS.length, 13);
+  for (const rec of WEAPON_IMPRINTS) {
+    assert.ok(rec.power?.name, rec.id);
+    assert.ok(rec.power?.brief, rec.id);
+    assert.ok(rec.templates === null || rec.templates.length > 0, rec.id);
+  }
+  assert.match(WEAPON_IMPRINTS.find((r) => r.id === 'tsaesci-fang').power.brief, /poison resistance/);
+  assert.match(WEAPON_IMPRINTS.find((r) => r.id === 'warp-edge').power.brief, /same damage/);
+  assert.match(WEAPON_IMPRINTS.find((r) => r.id === 'shalidors-brand').power.brief, /Destruction/);
 });
