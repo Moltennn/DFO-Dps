@@ -338,10 +338,5 @@ export function planMatrix({ soulGem = false, repairs = 1, regen = 0, group = 'd
   });
 }
 
-/** The per-piece signature, ignoring which weapon skill is named. */
-export const planSignature = (plan) => plan.rows.map((r) => r.slot === 'Weapon'
-  ? `W:${r.effects.filter((e) => e.type === 'CastWhenStrikes').length}`
-  : r.effects.map((e) => e.type === 'EnhancesSkill' && e.param === plan.skillId ? 'WS' : e.type).join('+')).join('|');
-
 /** Readable effect line, e.g. "Cast When Strikes: Hand of Decay (1,830)". */
 export const effectLine = (e) => `${e.name}${e.paramName && e.paramName !== 'undefined' ? `: ${e.paramName}` : ''} (${e.cost.toLocaleString()}${e.benefit ? `; ${e.benefit}` : ''})`;

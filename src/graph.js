@@ -12,7 +12,6 @@ export function lineChart({ title, xLabel, yLabel, series, width = 920, height =
   const all = series.flatMap((s) => s.points.map((p) => p.y));
   const xs = series.flatMap((s) => s.points.map((p) => p.x));
   const xMin = Math.min(...xs), xMax = Math.max(...xs);
-  const yMin = 0;
   const yMax = Math.max(1, ...all) * 1.08;
   const sx = (x) => left + ((x - xMin) / Math.max(1e-9, xMax - xMin)) * w;
   const sy = (y) => top + h - (y / yMax) * h;

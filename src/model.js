@@ -20,7 +20,7 @@ import {
   SWING_TEMPO_AT_0, SWING_TEMPO_AT_100, SWING_TWO_HANDED,
   WARD_SHARE, WEAPON_MATERIAL_MODIFIER, WEAPON_TYPES, WEAPONS, WRATH_AFTER_S,
   GATE_SHIELDS, GATE_SHIELD_S, gateHealth, gateHitCap, RRI_WEAPON_DAMAGE, RRI_SPEED_REDUCTION_FACTOR,
-  BOW_DRAW_LOOSE_S, GUN_FPS, GUN_RELOAD_S, PISTOLET_FPS, PISTOLET_RELOAD_S, THUNDERLOCK_FRAMES, PISTOLET_FRAMES, thunderlockReloadSeconds,
+  BOW_DRAW_LOOSE_S, GUN_FPS, PISTOLET_FPS, PISTOLET_RELOAD_S, THUNDERLOCK_FRAMES, PISTOLET_FRAMES, thunderlockReloadSeconds,
 } from './data.js';
 import { enchantDps, procsBeforeBreak } from './enchants.js';
 import { socketAffixes } from './sockets.js';
@@ -35,7 +35,6 @@ const floor = Math.floor;
 const fround = Math.fround;
 const mean = (a) => a.reduce((s, x) => s + x, 0) / a.length;
 const num = (v, d = 0) => (Number.isFinite(v) ? v : d);
-const sum = (a) => a.reduce((s, x) => s + x, 0);
 
 /** Unity's Mathf.Round: half to even (pcaao.js unityRound). */
 export function unityRound(x) {

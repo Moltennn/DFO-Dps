@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { theoryCharacter } from '../src/theory.js';
 import { analyze, bossTarget } from '../src/model.js';
 import { rebuildEnchantMods, strikeEnchantments, enchantDps, procsBeforeBreak } from '../src/enchants.js';
-import { SKILLS } from '../src/data.js';
 
 function weapon(over = {}) {
   const ch = theoryCharacter({});

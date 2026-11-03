@@ -4,7 +4,7 @@
  * Everything is precomputed here; the page needs no server and no network.
  * The palette follows the game's enhanced skin so it reads beside DFO.
  */
-import { BOSS_TRAITS, BOSS_TRAIT_TEXT, GATE_SHIELDS, GATE_SHIELD_S, MATERIALS, MARTIAL_PATHS, SOURCE, gateHealth, gateHitCap } from './data.js';
+import { BOSS_TRAITS, BOSS_TRAIT_TEXT, MARTIAL_PATHS, SOURCE, gateHealth, gateHitCap } from './data.js';
 import { characterLabel, liveStat } from './save.js';
 import { analyze, bossTarget, currentWeaponRow, gateTarget, marginals, rankAffixes, rankWeapons, referenceFoe } from './model.js';
 

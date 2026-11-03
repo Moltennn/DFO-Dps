@@ -127,11 +127,6 @@ export function realTemplate(template, family, { mode = 'uncapped', vampire = fa
   };
 }
 
-/** The best real template in a family for this mode. */
-export function realLoadout(family, { mode = 'uncapped', vampire = false } = {}) {
-  const rows = family.templates.map((t) => realTemplate(t, family, { mode, vampire })).filter(Boolean);
-  return rows.sort((a, b) => b.totalDps - a.totalDps)[0] ?? null;
-}
 /** Every weapon template in every hold configuration, not just the winners. */
 export function realWeaponLoadouts({ modes = ['uncapped', 'cap'], vampire = false } = {}) {
   const out = [];
@@ -150,59 +145,3 @@ export function realWeaponLoadouts({ modes = ['uncapped', 'cap'], vampire = fals
   }
   return out;
 }
-
-/** Best 1H, 2H, DW (or Fists) for every weapon family. */
-export function realFamilyLoadouts({ modes = ['uncapped', 'cap'], vampire = false } = {}) {
-  const out = [];
-  for (const mode of modes) {
-    for (const family of IMPRINT_FAMILIES) {
-      const buckets = new Map();
-      const add = (category, row) => {
-        if (!row) return;
-        if (!buckets.has(category) || row.totalDps > buckets.get(category).totalDps) buckets.set(category, row);
-      };
-      for (const t of family.templates) {
-        const w = WEAPONS[t];
-        if (!w) continue;
-        const category = w.skill === 'HandToHand' ? 'Fists' : w.twoHanded ? '2H' : '1H';
-        add(category, realTemplate(t, family, { mode, vampire }));
-        if (!w.twoHanded && w.skill !== 'Archery' && w.skill !== 'HandToHand') {
-          add('DW', realTemplate(t, family, { mode, vampire, dual: true }));
-        }
-      }
-      const order = family.key === 'HandToHand' ? ['Fists'] : family.key === 'Archery' ? ['1H', '2H'] : ['1H', '2H', 'DW'];
-      for (const category of order) {
-        const row = buckets.get(category);
-        if (row) out.push({ ...row, category });
-      }
-    }
-  }
-  return out;
-}
-
-/** Best 1H, 2H and DW loadouts across the melee families. */
-export function realCategoryLoadouts({ modes = ['uncapped', 'cap'], vampire = false } = {}) {
-  const bySkill = Object.fromEntries(IMPRINT_FAMILIES.map((f) => [f.key, f]));
-  const all = Object.keys(WEAPONS).map(Number).filter((t) => WEAPONS[t] && !WEAPONS[t].ammo);
-  const melee = all.filter((t) => WEAPONS[t].skill !== 'Archery' && WEAPONS[t].skill !== 'HandToHand');
-  const oneHand = melee.filter((t) => !WEAPONS[t].twoHanded);
-  const twoHand = melee.filter((t) => WEAPONS[t].twoHanded);
-  const out = [];
-  for (const mode of modes) {
-    const pick = (category, templates, dual = false) => {
-      const rows = templates.map((t) => {
-        const family = bySkill[WEAPONS[t]?.skill];
-        return family ? realTemplate(t, family, { mode, vampire, dual }) : null;
-      }).filter(Boolean);
-      const best = rows.sort((a, b) => b.totalDps - a.totalDps)[0];
-      if (best) out.push({ ...best, category });
-    };
-    pick('1H', oneHand);
-    pick('2H', twoHand);
-    pick('DW', oneHand, true);
-  }
-  return out;
-}
-
-export const realLoadouts = ({ modes = ['uncapped', 'cap'], vampire = false } = {}) => modes.flatMap((mode) =>
-  IMPRINT_FAMILIES.map((family) => realLoadout(family, { mode, vampire })).filter(Boolean));

@@ -43,7 +43,6 @@ export const ENCHANTMENT_TYPES = Object.freeze({
 export const ENHANCE_SKILL_MOD = 15;
 export const POTENT_VS_FLAT = 5;
 const AFFINITY = Object.freeze({ 0: 'undead', 1: 'daedra', 2: 'humanoid', 3: 'animal' });
-const AFFIX_GROUP = Object.freeze({ undead: 'undead', daedra: 'daedra', humanoid: 'humanoid', animal: 'animal' });
 
 export const enchantmentRows = (item) => (item?.enchantments ?? []).filter((e) => e && e.type >= 0);
 

@@ -19,7 +19,6 @@ export const GEM_GRADE_LINES = Object.freeze({
   malachite: { weapon: { id: 'stat', param: 'strength', value: 8 }, other: { id: 'stat', param: 'endurance', value: 8 } },
   amber: { weapon: { id: 'stat', param: 'speed', value: 8 }, other: { id: 'stat', param: 'luck', value: 6 } },
 });
-export const GEM_KINDS = Object.freeze(Object.keys(GEM_GRADE_LINES));
 
 /** The perfect id a max profile uses. */
 export const perfectGem = (kind) => `perfect-${kind}`;

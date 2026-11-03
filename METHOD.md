@@ -181,7 +181,7 @@ The gate's per-blow cap is `HIT_CAP_X × dpsRef(level)` = 420 at level 30 (unles
 Relay bosses (the Warden, the Remnant, the gate court, the sea serpent) only
 carry bladeturning/stoneskin/thorned; they have no ward, curb or wrath.
 
-The cap is applied **after** backstab's ×3 and after any flat addition to the blow; backstab and poison are not exemptions. It is **per player**: `HIT_CAP_X * dpsRef(level)` for that fighter (times the relay bucket's `blowX`), while the health pool adds a `BOSS_TTK_S * dpsRef(level)` share for each player, so a group's cap does not grow with the group. Curbing only binds when the final blow would take more than 5% of **maximum** health.
+The cap is applied **after** backstab's ×3 and after any flat addition to the blow; backstab and poison are not exemptions. It is **per player**: `HIT_CAP_X * dpsRef(level)` for that fighter (times the relay bucket's `blowX`), while the health pool adds a `BOSS_TTK_S * dpsRef(level)` share for each player, so a group's cap does not grow with the group. Curbing only binds when the final blow would take more than 5% of **maximum** health. The per-account bucket itself (`BUCKET_RATE_X` reference damage a second, `BUCKET_DEPTH_X` deep) and the `GATE_HIT_HZ_MAX` blows/s limit are not modelled; the cap is per blow only.
 If your per-hit is 40 and the boss has 5,000 HP, the cap is 250 and does
 nothing. The report's "Boss cap sensitivity" table shows where it starts to
 matter.

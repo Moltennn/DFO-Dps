@@ -159,67 +159,6 @@ export const ENCHANTMENT_COSTS = Object.freeze({
     ],
   },});
 
-export const ITEM_MAKER_FLAGS = Object.freeze({
-  None: 0,
-  AllowMultiplePrimaryInstances: 1,
-  AllowMultipleSecondaryInstances: 2,
-  AlphaSortSecondaryList: 4,
-  WeaponOnly: 8,
-});
-
-export const ITEM_MAKER_EFFECT_FLAGS = Object.freeze({
-  AbsorbsSpells: 1,
-  BadReactionsFrom: 1,
-  BadRepWith: 1,
-  CastWhenHeld: 1 | 4,
-  CastWhenStrikes: 1 | 4 | 8,
-  CastWhenUsed: 1 | 4,
-  EnhancesSkill: 1 | 4,
-  ExtraSpellPts: 1,
-  ExtraWeight: 0,
-  FeatherWeight: 0,
-  GoodRepWith: 1,
-  HealthLeech: 1,
-  ImprovesTalents: 1,
-  IncreasedWeightAllowance: 0,
-  ItemDeteriorates: 1,
-  LowDamageVs: 1 | 8,
-  PotentVs: 1 | 8,
-  RegensHealth: 1,
-  RepairsObjects: 1,
-  SoulBound: 4,
-  StrengthensArmor: 0,
-  UserTakesDamage: 1,
-  VampiricEffect: 1,
-  WeakensArmor: 0,
-});
-export const hasItemMakerFlag = (type, flag) => ((ITEM_MAKER_EFFECT_FLAGS[type] ?? 0) & flag) !== 0;
-
-export const ENCHANTMENT_EXCLUSIONS = Object.freeze({
-  FeatherWeight: { pairs: ['ExtraWeight'] },
-  ExtraWeight: { pairs: ['FeatherWeight'] },
-  StrengthensArmor: { pairs: ['WeakensArmor'] },
-  WeakensArmor: { pairs: ['StrengthensArmor'] },
-  PotentVs: { sameParam: ['LowDamageVs'] },
-  LowDamageVs: { sameParam: ['PotentVs'] },
-  GoodRepWith: { sameParam: ['BadRepWith'], allParam: 5 },
-  BadRepWith: { sameParam: ['GoodRepWith'], allParam: 5 },
-});
-
-export function isExclusiveTo(type, list = [], param) {
-  const rule = ENCHANTMENT_EXCLUSIONS[type];
-  if (!rule) return false;
-  for (const e of list) {
-    if (rule.allParam !== undefined && e.type === type) {
-      if (e.param === rule.allParam) return true;
-      if (param !== undefined && e.param !== rule.allParam && param === rule.allParam) return true;
-    }
-    if (rule.pairs?.includes(e.type)) return true;
-    if (param !== undefined && rule.sameParam?.includes(e.type) && e.param === param) return true;
-  }
-  return false;
-}
-
 const PARAM_LABELS = Object.freeze({
   BadReactionsFrom: ['Humanoids', 'Animals', 'Daedra'],
   BadRepWith: ['Commoners', 'Merchants', 'Scholars', 'Nobility', 'Underworld', 'All'],
@@ -279,17 +218,6 @@ export function enchantmentCost(type, param) {
   }
   return p === PARAM_NONE ? row.cost : null;
 }
-
-export const isSideEffect = (type) => {
-  const row = ENCHANTMENT_COSTS[type];
-  const costs = row?.costs ?? row?.spells?.map(([, c]) => c) ?? (row ? [row.cost] : []);
-  return costs.length > 0 && costs.every((c) => c <= 0) && costs.some((c) => c < 0);
-};
-export const isPower = (type) => {
-  const row = ENCHANTMENT_COSTS[type];
-  const costs = row?.costs ?? row?.spells?.map(([, c]) => c) ?? (row ? [row.cost] : []);
-  return costs.length > 0 && costs.every((c) => c >= 0) && costs.some((c) => c > 0);
-};
 
 const TEMPLATES = JSON.parse(fs.readFileSync(new URL('../vendor/enchanting/itemTemplates.json', import.meta.url), 'utf8'));
 const BY_INDEX = new Map(TEMPLATES.map((t) => [Number(t.index), t]));

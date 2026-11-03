@@ -13,8 +13,8 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import {
-  BOSS_TRAIT_TEXT, GATE_SHIELDS, GATE_SHIELD_S, MARTIAL_PATHS, MATERIALS, RACE_NAMES, SKILLS, SOURCE, WEAPONS,
-  gateHealth, gateHitCap,
+  MARTIAL_PATHS, RACE_NAMES, SKILLS, SOURCE, WEAPONS,
+  gateHealth,
 } from './data.js';
 import { buildReport } from './report.js';
 import { barChart, graphPage, lineChart, multiGraphPage } from './graph.js';
@@ -24,19 +24,19 @@ import { effectLine, planEnchants, planMatrix, SOUL_GEM_POINTS } from './enchant
 import { applyTree, realWeaponLoadouts } from './realBuild.js';
 import { enchantmentName as enchantmentNameOf } from './enchantData.js';
 import { analyzeSpell, resolveSpells, spellCost, spellRotation, standardSpells } from './spells.js';
-import { ENCHANTMENT_TYPES, castWhenStrikes, enchantDps, procsBeforeBreak, strikeEnchantments } from './enchants.js';
+import { ENCHANTMENT_TYPES, enchantDps, procsBeforeBreak, strikeEnchantments } from './enchants.js';
 import { perfectSockets } from './sockets.js';
 import {
   DAMAGE_AFFIX_MAX, DEFAULT_BLADE, GEAR_CS_LINES, GEAR_H2H_LINES, GEAR_LB_LINES, GEAR_LINE_MAX, GEAR_MASTERY_POINTS,
   GEAR_SKILL_LINES, LONG_BLADES,
-  THEORY_CAPS, THEORY_LEVEL, THEORY_RACES, theoryBlade, theoryCharacter, theoryFists,
+  THEORY_CAPS, THEORY_LEVEL, theoryBlade, theoryCharacter, theoryFists,
 } from './theory.js';
 import {
   analyze, bossTarget, currentWeaponRow, gateTarget, marginals, rankAffixes, rankWeapons, referenceFoe,
   syntheticWeapon, weaponOf,
 } from './model.js';
 import {
-  characterFromSave, characterLabel, effectiveSkill, listSaves, liveStat, loadSave, resolveSave,
+  characterFromSave, characterLabel, effectiveSkill, listSaves, liveStat, loadSave,
   skillName, skillValue,
 } from './save.js';
 
@@ -801,7 +801,7 @@ export async function main(argv = process.argv.slice(2)) {
       sections,
     });
     fs.writeFileSync(out, html, 'utf8');
-    console.log(`loadout page written: ${out}`);
+    if (!values.json) console.log(`loadout page written: ${out}`);
     if (values.json) console.log(JSON.stringify(rows.map(({ enchPlan, ...r }) => r), null, 2));
     return;
   }
@@ -878,7 +878,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
         sections,
       });
       fs.writeFileSync(out, html, 'utf8');
-      console.log(`enchant plans page written: ${out}`);
+      if (!values.json) console.log(`enchant plans page written: ${out}`);
       if (values.json) console.log(JSON.stringify({ modes: results.map((r) => ({ mode: r.key, label: r.label, summary: r.summary, plans: r.matrix.map((x) => ({ family: x.family, weapon: x.weapon, rows: x.plan?.rows })) })) }, null, 2));
       return;
     }
@@ -1015,18 +1015,20 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       return plan;
     });
     if (computed) saveFirmamentCache(cache);
-    console.log(`Firmament plans${cached || computed ? ` (${cached} cached, ${computed} computed)` : ''}`);
-    console.log(table(plans.map((p) => {
-      const s = planSummary(p);
-      return [
-        p.build.name,
-        p.startName,
-        `${p.stars}/${p.starBudget}${p.freeStars ? ` (+${p.freeStars} free)` : ''}`,
-        p.build.skill ? `${s.rows.find((r) => r.key === 'blow')?.value ?? 0}%` : p.build.school ? `${s.rows.find((r) => r.key === 'castCost')?.value ?? 0}%` : `${p.totals.hp ?? 0} HP`,
-        s.counts.notable,
-        s.counts.keystone,
-      ];
-    }), ['Build', 'Start', 'Stars', 'Group', 'Notables', 'Keystones'], ['left', 'left', 'right', 'right', 'right', 'right']));
+    if (!values.json) {
+      console.log(`Firmament plans${cached || computed ? ` (${cached} cached, ${computed} computed)` : ''}`);
+      console.log(table(plans.map((p) => {
+        const s = planSummary(p);
+        return [
+          p.build.name,
+          p.startName,
+          `${p.stars}/${p.starBudget}${p.freeStars ? ` (+${p.freeStars} free)` : ''}`,
+          p.build.skill ? `${s.rows.find((r) => r.key === 'blow')?.value ?? 0}%` : p.build.school ? `${s.rows.find((r) => r.key === 'castCost')?.value ?? 0}%` : `${p.totals.hp ?? 0} HP`,
+          s.counts.notable,
+          s.counts.keystone,
+        ];
+      }), ['Build', 'Start', 'Stars', 'Group', 'Notables', 'Keystones'], ['left', 'left', 'right', 'right', 'right', 'right']));
+    }
     const out = path.resolve(values.out === 'dfo-dps-report.html' ? 'firmament.html' : values.out);
     const html = multiGraphPage({
       title: 'DFO Firmament trees',
@@ -1034,7 +1036,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       sections: plans.map(firmamentSection),
     });
     fs.writeFileSync(out, html, 'utf8');
-    console.log(`firmament page written: ${out}`);
+    if (!values.json) console.log(`firmament page written: ${out}`);
     if (values.json) console.log(JSON.stringify(plans.map((p) => ({ build: p.build.id, name: p.build.name, start: p.tree.start, startName: p.startName, stars: p.stars, budget: p.starBudget, freeStars: p.freeStars, keys: p.tree.keys, totals: p.totals })), null, 2));
     return;
   }
@@ -1048,10 +1050,8 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     const maxCritGear = GEAR_CS_LINES * GEAR_LINE_MAX; // 540
     const maxH2HGear = GEAR_H2H_LINES * GEAR_LINE_MAX; // 510
     const PROF_OF = Object.freeze({ ShortBlade: 1, LongBlade: 2, HandToHand: 4, Axe: 8, BluntWeapon: 16, Archery: 32 });
-    const RACE_KEYS = ['darkelf', 'redguard', 'nord', 'breton', 'highelf', 'woodelf', 'khajiit', 'argonian'];
     const MELEE = Object.keys(WEAPONS).map(Number).filter((t) => WEAPONS[t]?.skill && !WEAPONS[t].ammo);
     const familyOf = (t) => WEAPONS[t]?.skill ?? 'HandToHand';
-    const gearMaxOf = (t) => (familyOf(t) === 'HandToHand' ? maxH2HGear : maxWeaponGear);
     const maxTarget = referenceFoe(level, 'tough');
     const gate = gateTarget(level);
     const maxRun = (ch, share = 1) => analyze(ch, { target: maxTarget, core: 'overhaul', rri: true, healthShare: share, passiveOn: true, stacks: 5, pair: !!ch?._pair, dual: !!ch?._dual });
@@ -1147,7 +1147,6 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     const SKILL_LABELS = { ShortBlade: 'Short Blade', LongBlade: 'Long Blade', Axe: 'Axe', BluntWeapon: 'Blunt Weapon', Archery: 'Archery', HandToHand: 'Hand-to-Hand' };
 
     const cell = (v) => (Number.isFinite(v) ? fmt(v) : '-');
-    const pctCell = (v) => (Number.isFinite(v) ? pc(v) : '-');
     const maxTable = `<table><thead><tr><th>Weapon</th><th>Type</th><th>Hands</th><th>Path</th><th>Firmament DPS</th><th>Boss DPS</th><th>Boss TTK</th></tr></thead><tbody>${displayRows.map((r) => `<tr><td class="k">${r.name}</td><td>${SKILL_LABELS[r.skill] ?? r.skill}</td><td>${r.dual ? 'Dual' : r.skill === 'HandToHand' ? 'Fists' : r.twoHanded ? '2H' : '1H'}</td><td>${r.path}</td><td>${cell(r.maxDps)}</td><td>${cell(r.gateDps)}</td><td>${r.gateTtk ? `${cell(r.gateTtk)} s` : '-'}</td></tr>`).join('')}</tbody></table>`;
     const top = displayRows.slice().sort((a, b) => b.maxDps - a.maxDps)[0];
     const gateTop = rows.slice().sort((a, b) => b.gateDps - a.gateDps)[0];
@@ -1206,7 +1205,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     const csVals = [0, 60, 120, 180, 240, 300, 360, 420, 480, 540];
     const csSeries = topPerFamily.map((row) => ({
       name: row.name,
-      points: csVals.map((v) => ({ x: v, y: maxRun(makeMax(row.template, { race: row.raceF, firmament: firmCharts, critGear: v }), shareFor(row.template)).dps })),
+      points: csVals.map((v) => ({ x: v, y: maxRun(makeMax(row.template, { race: row.race, firmament: firmCharts, critGear: v }), shareFor(row.template)).dps })),
     }));
     const csSection = {
       title: 'Critical Strike scales every weapon',
@@ -1508,9 +1507,9 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     const flags = [values.bare ? 'bare' : '', values['no-effects'] ? 'no effects' : '', values['base-stats'] != null ? `base ${values['base-stats']}` : '', values.uncapped ? 'uncapped' : 'capped'].filter(Boolean).join(', ');
     const subtitle = `${characterLabel(ch)} | ${values.core}${ch.online ? ' / online' : ' / offline'} | ${values.target}${target.health ? ` ${target.maxHealth.toLocaleString()} HP` : ''}${flags ? ` | ${flags}` : ''}`;
     const html = graphPage({ title, subtitle, chart: lineChart({ title, xLabel: 'Value', yLabel: values.uncapped ? 'DPS' : 'Capped DPS', series }) });
-    const out = path.resolve(values.out);
+    const out = path.resolve(values.out === 'dfo-dps-report.html' ? 'graph.html' : values.out);
     fs.writeFileSync(out, html, 'utf8');
-    console.log(`graph written: ${out}`);
+    if (!values.json) console.log(`graph written: ${out}`);
     if (values.json) console.log(JSON.stringify(series, null, 2));
     return;
   }

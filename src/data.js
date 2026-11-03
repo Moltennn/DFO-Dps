@@ -133,10 +133,6 @@ export const WEAPONS = Object.freeze({
   563: { name: 'Hand Wraps', min: 0, max: 0, skill: 'HandToHand', type: 15, weight: 0.5, shortBlade: false, twoHanded: false, wraps: true },
 });
 
-export const WEAPON_SKILL_IDS = Object.freeze(
-  Object.fromEntries(Object.entries(WEAPONS).map(([i, w]) => [i, SKILLS[w.skill]])),
-);
-
 /** FormulaHelper.CalculateSwingModifiers, verbatim. */
 export const SWING_MODS = Object.freeze({
   StrikeLeft: { damage: 0, toHit: 0 },
@@ -265,10 +261,3 @@ export const RRI_WEAPON_DAMAGE = Object.freeze({
   128: { min: 3, max: 18 }, 129: { min: 5, max: 17 }, 130: { min: 5, max: 19 },
 });
 export const RRI_SPEED_REDUCTION_FACTOR = 3.4;
-
-export const TARGET_PRESETS = Object.freeze([
-  { id: 'soft', label: 'Soft monster', isClass: false, armorValue: 6, note: 'rats, imps and the early bestiary' },
-  { id: 'tough', label: 'Tough monster', isClass: false, armorValue: 0, note: 'the middle of the bestiary' },
-  { id: 'armoured', label: 'Armored monster', isClass: false, armorValue: -10, note: 'daedra and ancient undead' },
-  { id: 'human', label: 'Human foe', isClass: true, armorValue: null, note: 'a warrior in mail, flat 60' },
-]);

@@ -11,7 +11,7 @@
  * The ranking is the power's DPS on the family's best max-profile weapon.
  * The Rare's own affixes are separate and are not part of this table.
  */
-import { SKILLS, WEAPONS } from './data.js';
+import { WEAPONS } from './data.js';
 import { THEORY_LEVEL } from './theory.js';
 import { gateTarget } from './model.js';
 import { cappedDpsWith, maxCharacter, maxRun } from './maxprofile.js';

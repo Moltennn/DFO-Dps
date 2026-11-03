@@ -236,7 +236,6 @@ export function magnitudeAt(e, level = 1, mode = 'avg') {
     : (e.magnitudeLevelBase + e.magnitudeLevelHigh) / 2;
   return base + plus * Math.floor(level / Math.max(1, e.magnitudePerLevel));
 }
-export const averageMagnitude = (e, level = 1) => magnitudeAt(e, level, 'avg');
 
 /** A spell's duration in rounds, straight arithmetic (effects.js rollDuration). */
 export function spellRounds(e, level = 1) {

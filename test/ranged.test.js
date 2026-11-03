@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { theoryCharacter } from '../src/theory.js';
-import { analyze, referenceFoe, syntheticWeapon } from '../src/model.js';
+import { analyze, referenceFoe } from '../src/model.js';
 import { SKILLS } from '../src/data.js';
 
 function shooter(templateIndex) {

@@ -126,7 +126,7 @@ The max profile is: attributes 100, raw weapon skill and Critical Strike 200 mas
 The cap is per player: a group scales the boss's health pool (each player
 brings a share), not the cap. The first chart ranks the boss (gate) DPS; the second ranks the uncapped DPS. Every DPS cell is the average.
 
-`weapons-max.html` with `--categories` is the condensed table: one row per weapon type in each slot, including the Hand Wraps fist row, sorted by DPS. The full page has a max-DPS bar chart and table, then one combined chart per family: raw training 100 -> 200 is effective 100 -> 140, and gear lines continue from effective 140 to 140 + the gear cap. One Critical Strike chart covers the best weapon of each family. The Hand-to-Hand row is the wrapped ceiling. Bare fists without Hand Wrap lines are the ~450 band the community tests saw.
+`--categories` writes the condensed table to the same page: one row per weapon type in each slot, including the Hand Wraps fist row, sorted by DPS. The full page has a max-DPS bar chart and table, then one combined chart per family: raw training 100 -> 200 is effective 100 -> 140, and gear lines continue from effective 140 to 140 + the gear cap. One Critical Strike chart covers the best weapon of each family. The Hand-to-Hand row is the wrapped ceiling. Bare fists without Hand Wrap lines are the ~450 band the community tests saw.
 
 `skills` is kept as an alias for the same page.
 
@@ -252,7 +252,7 @@ charts are on the page.
 ```
 
 The table is tree + enchants + imprint, assumes a soul gem on every piece,
-and the hand options are exclusive: one best 1H, one best 2H, one best DW.
+and lists every weapon template separately in each hold it supports.
 
 ## Bows, firearms, spells and enchantments
 
@@ -333,6 +333,8 @@ The gate's server per-hit cap is **420** at level 30 (12 × `dpsRef` 35). A disp
 - martial passives (Flowing Steel, War Rhythm, Hunter's Instinct, Cheap Shot,
   Opening Strike, Frenzy, Purge, Light Step, Windborne)
 - loot-rarity affixes that affect damage: `damage`, `stat`, `skill`, `slayer`
+- weapon enchantment rows: `Cast When Strikes` procs (DoTs priced per tick), `Potent Vs`, `Enhances Skill`
+- the Reforge's 13 Weapon Legendary powers as imprints, priced on the capped and uncapped blow
 - boss traits: Curbing, Warded, Bladeturning, Stoneskin, Thorned, Wrathful
 - time-to-kill and cap loss
 
@@ -341,7 +343,9 @@ The gate's server per-hit cap is **420** at level 30 (12 × `dpsRef` 35). A disp
 - damage is shown **before the foe's worn/natural armor reduction**, exactly
   like the game's Combat Stats card; a human in mail will take less
 - the overhaul's condition-based effectiveness is assumed at 100% condition
-- no loot set powers, sigils, legendary proc damage or First Blood; the simulation is for sustained boss DPS
+- no loot set powers, sigils or First Blood; the simulation is for sustained boss DPS
+- the gate's per-account damage bucket (3x reference damage a second, 15x deep) and its 4 blows/s account limit are not applied; gate DPS is capped per blow only
+- a Legendary record's own affixes and enchantment are not folded into an imprint; the Rare keeps its own lines and gains the power alone
 - no mentor overlay
 - no PvP/peer model
 
