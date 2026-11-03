@@ -60,4 +60,5 @@ test('the damage plan does not buy unaware, rage or backstabbing channels', () =
   const plan = planBuild(buildById('longblade'));
   assert.equal(plan.totals['skill.Backstabbing'], undefined);
   assert.ok(!plan.build.channels.some((c) => /unaware|rage|Backstabbing/.test(c.key)));
+  for (const key of ['axeDmg', 'fistDmg', 'bowDmg', 'beastDmg', 'unawareDmg', 'rageDmg']) assert.equal(plan.totals[key], undefined, key);
 });

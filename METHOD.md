@@ -117,7 +117,9 @@ caps and `treeStats`/`blowPct` reads are the live ones. A build is a weighted
 set of channels; the planner walks the sky one connected path at a time,
 taking the path with the best channel gain per star, and stops when no
 remaining star adds to the build. The unused points are shown as free stars.
-It excludes `unawareDmg`, `rageDmg` and Backstabbing for boss builds; flat
+It excludes `unawareDmg`, `rageDmg` and Backstabbing for boss builds, and
+rejects off-family notables and off-sector targets; small/road connectors may
+still carry unrelated stats but are not scored. Flat
 attributes cap at +15, percent attributes at +15%, while Critical Strike has
 separate +15 flat and +20% channels.
 Keystones are reachable but never walked through, and life stars on the route

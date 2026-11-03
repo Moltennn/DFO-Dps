@@ -33,8 +33,8 @@ const WEAPON_ATTRS = [
   { key: 'pct.luck', weight: 0.12 },
 ];
 
-const weaponBuild = (id, name, skill, extra = [], attrs = WEAPON_ATTRS) => ({
-  id, name, skill, kind: 'weapon',
+const weaponBuild = (id, name, skill, extra = [], attrs = WEAPON_ATTRS, sectors = []) => ({
+  id, name, skill, kind: 'weapon', sectors,
   channels: [
     { key: `skill.${skill}`, weight: 0.90 },
     { key: `skillPct.${skill}`, weight: 0.60 },
@@ -47,10 +47,10 @@ const weaponBuild = (id, name, skill, extra = [], attrs = WEAPON_ATTRS) => ({
 
 /** The build presets. `skill` is the weapon skill whose blow group the tree is read against. */
 export const BUILDS = Object.freeze([
-  weaponBuild('longblade', 'Long Blade', 'LongBlade'),
-  weaponBuild('shortblade', 'Short Blade', 'ShortBlade'),
-  weaponBuild('axe', 'Axe', 'Axe', [{ key: 'endurance', weight: 0.10 }, { key: 'pct.endurance', weight: 0.08 }]),
-  weaponBuild('blunt', 'Blunt Weapon', 'BluntWeapon', [{ key: 'endurance', weight: 0.12 }, { key: 'pct.endurance', weight: 0.08 }]),
+  weaponBuild('longblade', 'Long Blade', 'LongBlade', [], WEAPON_ATTRS, ['st', 'wr', 'sh', 'rt']),
+  weaponBuild('shortblade', 'Short Blade', 'ShortBlade', [], WEAPON_ATTRS, ['sh', 'th', 'st']),
+  weaponBuild('axe', 'Axe', 'Axe', [], WEAPON_ATTRS, ['wr', 'rt', 'st']),
+  weaponBuild('blunt', 'Blunt Weapon', 'BluntWeapon', [], WEAPON_ATTRS, ['wr', 'rt', 'st']),
   weaponBuild('bow', 'Bow', 'Archery', [], [
     { key: 'strength', weight: 0.12 },
     { key: 'pct.strength', weight: 0.08 },
@@ -60,8 +60,8 @@ export const BUILDS = Object.freeze([
     { key: 'pct.speed', weight: 0.25 },
     { key: 'luck', weight: 0.20 },
     { key: 'pct.luck', weight: 0.15 },
-  ]),
-  weaponBuild('fists', 'Hand-to-Hand', 'HandToHand', [{ key: 'endurance', weight: 0.12 }, { key: 'pct.endurance', weight: 0.08 }], [
+  ], ['th', 'sh', 'st']),
+  weaponBuild('fists', 'Hand-to-Hand', 'HandToHand', [], [
     { key: 'strength', weight: 0.40 },
     { key: 'pct.strength', weight: 0.28 },
     { key: 'agility', weight: 0.30 },
@@ -70,9 +70,9 @@ export const BUILDS = Object.freeze([
     { key: 'pct.speed', weight: 0.22 },
     { key: 'luck', weight: 0.18 },
     { key: 'pct.luck', weight: 0.14 },
-  ]),
+  ], ['wr', 'st', 'rt']),
   {
-    id: 'destruction', name: 'Destruction', kind: 'spell', school: 'Destruction',
+    id: 'destruction', name: 'Destruction', kind: 'spell', school: 'Destruction', sectors: ['mg', 'sh'],
     channels: [
       { key: 'spellPower', weight: 1.00 },
       { key: 'castSpeed', weight: 0.70 },
@@ -87,7 +87,7 @@ export const BUILDS = Object.freeze([
     ],
   },
   {
-    id: 'tank', name: 'Tank', kind: 'tank',
+    id: 'tank', name: 'Tank', kind: 'tank', sectors: ['wr', 'rt', 'st'],
     channels: [
       { key: 'hp', weight: 0.80 },
       { key: 'hpPct', weight: 0.50 },
@@ -193,10 +193,45 @@ function statsFromParts(gains, prices) {
   return Object.freeze(out);
 }
 
+const DAMAGE_CHANNELS = new Set([
+  'weaponDmg', 'meleeDmg', 'shortDmg', 'longDmg', 'axeDmg', 'bluntDmg', 'bowDmg', 'fistDmg',
+  'beastDmg', 'undeadDmg', 'daedraDmg', 'unawareDmg', 'rageDmg',
+]);
+const WEAPON_SKILLS = new Set(['ShortBlade', 'LongBlade', 'Axe', 'BluntWeapon', 'HandToHand', 'Archery', 'Backstabbing']);
+const FAMILY_CHANNEL = Object.freeze({ ShortBlade: 'shortDmg', LongBlade: 'longDmg', Axe: 'axeDmg', BluntWeapon: 'bluntDmg', Archery: 'bowDmg', HandToHand: 'fistDmg' });
+
+/** A damage channel or weapon-skill line this build does not use. */
+function offStat(build, key) {
+  if (build.kind === 'spell' || build.kind === 'tank') {
+    if (DAMAGE_CHANNELS.has(key)) return true;
+    if (key.startsWith('skill.') && WEAPON_SKILLS.has(key.slice(6))) return true;
+    if (key.startsWith('skillPct.') && WEAPON_SKILLS.has(key.slice(9))) return true;
+    return false;
+  }
+  const allowed = new Set(['weaponDmg', FAMILY_CHANNEL[build.skill], `skill.${build.skill}`, `skillPct.${build.skill}`, 'skill.CriticalStrike', 'skillPct.CriticalStrike']);
+  if (build.skill !== 'Archery') allowed.add('meleeDmg');
+  if (DAMAGE_CHANNELS.has(key) && !allowed.has(key)) return true;
+  if (key.startsWith('skill.') && !allowed.has(key)) return true;
+  if (key.startsWith('skillPct.') && !allowed.has(key)) return true;
+  return false;
+}
+
+function nodeHasOff(node, build, { connector = false } = {}) {
+  if (!node) return false;
+  let off = false;
+  for (const [key, value] of Object.entries(node.stats)) if (value > 0 && offStat(build, key)) off = true;
+  // A small star or road may be a connector; a notable or keystone may not.
+  return off && !(connector && (node.kind === 'small' || node.kind === 'road'));
+}
+
+function sectorAllows(node, build) {
+  return !build.sectors?.length || build.sectors.includes(node?.sector);
+}
+
 function greedy(start, build, budget) {
   const chosen = [];
   const taken = new Set();
-  const candidates = combatKeys(start);
+  const candidates = combatKeys(start).filter((k) => sectorAllows(FIRM_NODES.get(k), build) && !nodeHasOff(FIRM_NODES.get(k), build));
   let tree = { start, keys: [] };
   const gains = {};
   const prices = {};
@@ -211,7 +246,7 @@ function greedy(start, build, budget) {
     for (const key of candidates) {
       if (taken.has(key)) continue;
       const path = pathFor(paths, key);
-      if (!path.length || path.length > room) continue;
+      if (!path.length || path.length > room || path.some((k) => nodeHasOff(FIRM_NODES.get(k), build, { connector: true }))) continue;
       const nextGains = { ...gains };
       const nextPrices = { ...prices };
       for (const k of path) addParts(nextGains, nextPrices, FIRM_NODES.get(k));
@@ -272,7 +307,7 @@ export function planBuild(build, { stars = FIRMAMENT_STARS, start = null } = {})
   const key = planKey(build?.id ?? '?', budget, start);
   const hit = PLAN_CACHE.get(key);
   if (hit) return hit;
-  const starts = start ? [start] : START_KEYS;
+  const starts = start ? [start] : START_KEYS.filter((k) => sectorAllows(FIRM_NODES.get(k), build));
   let best = null;
   for (const st of starts) {
     if (!FIRM_NODES.has(st)) continue;
@@ -373,7 +408,8 @@ export function firmamentSection(plan) {
   return {
     title: `${plan.build.name} - ${plan.startName}, ${plan.stars}/${plan.starBudget} stars${sum.freeStars ? ` (${sum.freeStars} free)` : ''}`,
     note: `Channel plan: ${sum.counts.small} small, ${sum.counts.road} road, ${sum.counts.notable} notable, ${sum.counts.keystone} keystone. The plan stops when no remaining star adds to this build, so the free points
-are yours. The weapons page +Firmament column is the flat channel ceiling (+15 STR/AGI/SPEED/LUCK, +15 weapon/Critical Strike/Backstabbing, +30% blow); this is a real 98-star path, so it may leave some of those short. It never walks through a keystone.`,
+are yours. Small and road stars can be connectors to a relevant notable; they may carry
+off-build stats but are not scored. The weapons page +Firmament column is the flat channel ceiling (+15 STR/AGI/SPEED/LUCK, +15 weapon/Critical Strike, +30% blow); this is a real path, so it may leave some of those short and leave the rest free. It never walks through a keystone.`,
     chart: `<div style="font-size:12px;color:#a8a092;margin:0 0 8px"><span style="color:#e0b76a">&#9679; start</span> &nbsp; <span style="color:#7fae6a">&#9679; small</span> &nbsp; <span style="color:#6fa8dc">&#9679; road</span> &nbsp; <span style="color:#c08a3e">&#9679; notable</span> &nbsp; <span style="color:#c25b4e">&#9679; keystone</span></div>${firmamentSvg(plan)}`,
     table,
   };

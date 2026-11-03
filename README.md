@@ -218,7 +218,9 @@ channel-coverage plan, not a solver proof: the weapons page `+ Firmament`
 column is the flat channel ceiling (+15 STR/AGI/SPEED/LUCK, +15 weapon /
 Critical Strike, +30% blow), and a real path may leave some of those short.
 The planner excludes `unawareDmg`, `rageDmg` and Backstabbing for boss
-builds. Flat attributes cap at +15; percent attributes cap at +15%; but
+builds. It also rejects off-family notables and keeps each build in its own
+sign sectors; a small or road star on the path can still act as a connector,
+but it is not scored for its unrelated stat. Flat attributes cap at +15; percent attributes cap at +15%; but
 `skill.CriticalStrike` (+15) and `skillPct.CriticalStrike` (20%) are separate
 channels, so Critical Strike can pass the flat +15.
 
