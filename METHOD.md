@@ -119,9 +119,10 @@ taking the path with the best channel gain per star, and stops when no
 remaining star adds to the build. The unused points are shown as free stars.
 It excludes `unawareDmg`, `rageDmg` and Backstabbing for boss builds, and
 rejects off-family notables and off-sector targets; small/road connectors may
-still carry unrelated stats but are not scored. Flat
-attributes cap at +15, percent attributes at +15%, while Critical Strike has
-separate +15 flat and +20% channels.
+still carry unrelated stats but are not scored. A key star's flat points and
+a small star's percent are folded into **one** channel and capped at +15
+(`firmamentPowers.js`), including Critical Strike; the tree cannot take
+Critical Strike past +15.
 Keystones are reachable but never walked through, and life stars on the route
 are paid from the same Star purse because no Craft points are assumed.
 
@@ -131,6 +132,15 @@ draws the lit tree against the sky and lists the channels and the
 notables/keystones taken. It is a channel-coverage plan, not a proof of the
 global optimum, and it does not replace the flat `+ Firmament` ceiling used by
 the weapon page.
+
+## Real loadout
+
+`loadout` applies the real tree to the max character first. Firmament powers
+fold a key star's flat points and a small star's percent into **one**
+channel capped at +15 (`firmamentPowers.js`); the loader does the same, then
+sets the blow group, then applies the enchant plan's +15 skill lines and
+strike rows, then the best eligible imprint. It reports tree DPS, tree +
+enchants, and tree + enchants + imprint for the uncapped and gate targets.
 
 ## Ranged, spells and enchantments
 

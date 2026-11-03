@@ -114,11 +114,31 @@ const BUILD_BY_ID = new Map(BUILDS.map((b) => [b.id, b]));
 export const buildById = (id) => BUILD_BY_ID.get(String(id).toLowerCase()) ?? null;
 export const buildIds = () => BUILDS.map((b) => b.id);
 
+const ATTR_KEYS = Object.freeze(['strength', 'intelligence', 'willpower', 'agility', 'endurance', 'personality', 'speed', 'luck']);
+const SKILL_PREFIX = 'skill.';
+
+/** The game folds a key star's flat points and a small star's percent into ONE channel, capped together. */
+export function effectiveValue(totals, key) {
+  if (ATTR_KEYS.includes(key)) {
+    const flat = totals[key] ?? 0;
+    const pct = totals[`pct.${key}`] ?? 0;
+    return Math.max(0, Math.min(15, flat + Math.floor((100 * pct) / 100)));
+  }
+  if (key.startsWith(SKILL_PREFIX)) {
+    const name = key.slice(SKILL_PREFIX.length);
+    const flat = totals[key] ?? 0;
+    const pct = totals[`skillPct.${name}`] ?? 0;
+    // The theory ceiling is a mastered raw 200 for the weapon/combat lines.
+    return Math.max(0, Math.min(15, flat + Math.floor((200 * pct) / 100)));
+  }
+  return totals[key] ?? 0;
+}
+
 /** A channel's contribution to a build's score: its share of the live cap. */
 function channelScore(totals, spec) {
   const def = statDef(spec.key);
   if (!def) return 0;
-  const value = totals[spec.key] ?? 0;
+  const value = ATTR_KEYS.includes(spec.key) || spec.key.startsWith(SKILL_PREFIX) ? effectiveValue(totals, spec.key) : (totals[spec.key] ?? 0);
   if (spec.invert) return (Math.max(0, -value) / Math.max(1, Math.abs(def.min))) * spec.weight;
   return (Math.max(0, Math.min(def.max, value)) / def.max) * spec.weight;
 }
@@ -127,7 +147,10 @@ function scoreTree(totals, build) {
   let score = 0;
   if (build.skill) score += Math.max(0, Math.min(30, blowPct(totals, { skill: build.skill }))) / 30;
   if (build.school) score += Math.max(0, Math.min(25, castCostPct(totals, [build.school]))) / 25 * 0.7;
-  for (const spec of build.channels) score += channelScore(totals, spec);
+  for (const spec of build.channels) {
+    if (spec.key.startsWith('pct.') || spec.key.startsWith('skillPct.')) continue;
+    score += channelScore(totals, spec);
+  }
   return score;
 }
 
@@ -312,7 +335,14 @@ export function planBuild(build, { stars = FIRMAMENT_STARS, start = null } = {})
   for (const st of starts) {
     if (!FIRM_NODES.has(st)) continue;
     const plan = greedy(st, build, budget);
-    if (!best || plan.score > best.score + tol || (Math.abs(plan.score - best.score) <= tol && plan.stars > best.stars)) best = plan;
+    const sector = st.split('.')[0];
+    const sameSector = plan.tree.keys.filter((k) => FIRM_NODES.get(k)?.sector === sector).length;
+    if (!best
+      || plan.score > best.score + tol
+      || (Math.abs(plan.score - best.score) <= tol && plan.stars < best.stars)
+      || (Math.abs(plan.score - best.score) <= tol && plan.stars === best.stars && sameSector > best.sameSector)) {
+      best = { ...plan, sameSector };
+    }
   }
   const startKey = best?.tree.start ?? START_KEYS[0];
   const plan = {
@@ -340,8 +370,28 @@ export function planSummary(plan) {
     const cost = Math.max(0, Math.min(25, castCostPct(totals, [build.school])));
     rows.push({ key: 'castCost', label: 'Spell cost (group)', value: cost, text: `${cost}% cheaper ${build.school} spells (group cap 25)` });
   }
+  const seen = new Set(['blow', 'castCost']);
+  for (const attr of ATTR_KEYS) {
+    if (!relevant.has(attr) && !relevant.has(`pct.${attr}`)) continue;
+    const value = effectiveValue(totals, attr);
+    if (!value) continue;
+    rows.push({ key: attr, label: attr, value, text: statWords(attr, value) });
+    seen.add(attr); seen.add(`pct.${attr}`);
+  }
+  const skillNames = new Set();
+  for (const key of relevant) {
+    if (key.startsWith(SKILL_PREFIX)) skillNames.add(key.slice(SKILL_PREFIX.length));
+    if (key.startsWith('skillPct.')) skillNames.add(key.slice(9));
+  }
+  for (const name of skillNames) {
+    const key = `${SKILL_PREFIX}${name}`;
+    const value = effectiveValue(totals, key);
+    if (!value) continue;
+    rows.push({ key, label: key, value, text: statWords(key, value) });
+    seen.add(key); seen.add(`skillPct.${name}`);
+  }
   for (const [key, value] of Object.entries(totals)) {
-    if (!value || !relevant.has(key)) continue;
+    if (!value || !relevant.has(key) || seen.has(key) || key.startsWith('pct.') || key.startsWith('skillPct.')) continue;
     rows.push({ key, label: key, value, text: statWords(key, value) });
   }
   rows.sort((a, b) => Math.abs(b.value) - Math.abs(a.value) || a.key.localeCompare(b.key));

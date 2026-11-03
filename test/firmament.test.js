@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BUILDS, buildById, planBuild, planFromTree, planKey, planSummary } from '../src/firmament.js';
+import { BUILDS, buildById, effectiveValue, planBuild, planFromTree, planKey, planSummary } from '../src/firmament.js';
 import { START_KEYS } from '../vendor/firmament/firmamentTree.js';
 import { blowPct, castCostPct, treeFault } from '../vendor/firmament/firmamentLaw.js';
 
@@ -61,4 +61,11 @@ test('the damage plan does not buy unaware, rage or backstabbing channels', () =
   assert.equal(plan.totals['skill.Backstabbing'], undefined);
   assert.ok(!plan.build.channels.some((c) => /unaware|rage|Backstabbing/.test(c.key)));
   for (const key of ['axeDmg', 'fistDmg', 'bowDmg', 'beastDmg', 'unawareDmg', 'rageDmg']) assert.equal(plan.totals[key], undefined, key);
+});
+
+
+test('flat and percent points share one +15 channel', () => {
+  assert.equal(effectiveValue({ strength: 12, 'pct.strength': 15 }, 'strength'), 15);
+  assert.equal(effectiveValue({ 'skill.CriticalStrike': 5, 'skillPct.CriticalStrike': 20 }, 'skill.CriticalStrike'), 15);
+  assert.equal(effectiveValue({ 'pct.agility': 15 }, 'agility'), 15);
 });

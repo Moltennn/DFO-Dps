@@ -21,6 +21,7 @@ import { barChart, graphPage, lineChart, multiGraphPage } from './graph.js';
 import { FIRMAMENT_NODES, buildById, buildIds, firmamentSection, planBuild, planFromTree, planKey, planSummary } from './firmament.js';
 import { imprintFamilyById, rankAll } from './imprints.js';
 import { effectLine, planEnchants, planMatrix, SOUL_GEM_POINTS } from './enchantPlan.js';
+import { realLoadouts } from './realBuild.js';
 import { enchantmentName as enchantmentNameOf } from './enchantData.js';
 import { analyzeSpell, resolveSpells, spellCost, spellRotation, standardSpells } from './spells.js';
 import { ENCHANTMENT_TYPES, castWhenStrikes, enchantDps, procsBeforeBreak, strikeEnchantments } from './enchants.js';
@@ -56,6 +57,7 @@ Usage:
   dfo-dps firmament [options]         HTML page: star-tree plans for each build (cached)
   dfo-dps imprints [options]          HTML page: weapon imprints ranked by family
   dfo-dps enchant-plan [options]      per-piece enchant budget and priority plan
+  dfo-dps loadout [options]           real DPS: tree + enchants + imprint per weapon type
   dfo-dps skills [options]            same page (alias)
   dfo-dps graph [options]             SVG line chart of two or more stats/skills
   dfo-dps saves                       list saves under the DFO user data folder
@@ -94,7 +96,7 @@ Common options:
   --group <undead|daedra|humanoid|animal>  enchant-plan target for Potent Vs (default daedra)
   --repairs <n>                       Repairs Objects copies on the set (default 1; 0 = none)
   --regen <n>                         Regens Health copies (default 0; heal spells are stronger)
-  --cap-aware                         enchant-plan: cap-aware setup; imprints: rank by boss DPS
+  --cap-aware                         enchant-plan/loadout: cap-aware setup; imprints: rank by boss DPS
   --pair                              paired Pistolets (2 shots per cycle, off hand x0.8)
   --dual                              dual wield the left-hand weapon (off hand x0.8, -5 hit)
   --spam                              bow spam (BOW_FAST stacks to x0.2; default paced)
@@ -738,6 +740,49 @@ export async function main(argv = process.argv.slice(2)) {
       console.log(table(r.elements.map((e) => [e.key, e.magnitude != null ? fmt(e.magnitude) : '-', e.rounds ?? 1, fmt(e.damage), e.note ?? '']), ['Effect', 'Magnitude', 'Rounds', 'Damage', 'Note'], ['left', 'right', 'right', 'right', 'left']));
     }
     if (values.json) console.log(JSON.stringify({ index: sp.index, name: sp.name, ...r }, null, 2));
+    return;
+  }
+
+  if (cmd === 'loadout' || cmd === 'real-dps') {
+    const modes = values.uncapped ? ['uncapped'] : values['cap-aware'] ? ['cap'] : ['uncapped', 'cap'];
+    const rows = realLoadouts({ modes });
+    if (!values.json) {
+      for (const mode of modes) {
+        const list = rows.filter((r) => r.mode === mode);
+        console.log(`\nReal loadouts  |  ${mode === 'uncapped' ? 'uncapped theory' : 'level-45 gate'}  |  soul gem +${SOUL_GEM_POINTS}`);
+        console.log(table(list.map((r) => [r.family, r.weapon, `${r.treeStars}/98 (${r.freeStars} free)`, fmt(r.treeDps), fmt(r.enchDps), r.imprint ?? '-', fmt(r.totalDps)]), ['Family', 'Weapon', 'Tree', 'Tree DPS', '+ Enchants', 'Imprint', '+ Imprint'], ['left', 'left', 'right', 'right', 'right', 'left', 'right']));
+      }
+    }
+    const out = path.resolve(values.out === 'dfo-dps-report.html' ? 'loadouts.html' : values.out);
+    const sections = modes.map((mode) => {
+      const list = rows.filter((r) => r.mode === mode);
+      const chart = barChart({
+        title: `${mode === 'uncapped' ? 'Uncapped' : 'Gate'} real DPS`,
+        labels: list.map((r) => r.family),
+        series: [
+          { name: 'Tree', values: list.map((r) => r.treeDps) },
+          { name: '+ Enchants', values: list.map((r) => r.enchDps) },
+          { name: '+ Imprint', values: list.map((r) => r.totalDps) },
+        ],
+      });
+      const body = list.map((r) => `<tr><td class="k">${r.family}</td><td>${r.weapon}</td><td>${r.treeStars}/98 (${r.freeStars} free)</td><td>${fmt(r.treeBlow)}%</td><td>${fmt(r.treeDps)}</td><td>${fmt(r.enchDps)}</td><td>${r.imprint ?? '-'}</td><td>${fmt(r.totalDps)}</td></tr>`).join('');
+      return {
+        title: `${mode === 'uncapped' ? 'Uncapped theory' : 'Gate'} loadouts`,
+        note: mode === 'uncapped'
+          ? 'No per-hit cap. Real tree stars, weapon skill and Critical Strike enchants on every piece, then the best eligible imprint.'
+          : 'Level-45 gate (600 per-hit cap). Cap-aware enchants, real tree, then the best eligible imprint.',
+        chart,
+        table: `<div class="table"><table><thead><tr><th>Family</th><th>Weapon</th><th>Tree</th><th>Blow</th><th>Tree DPS</th><th>+ Enchants</th><th>Imprint</th><th>+ Imprint</th></tr></thead><tbody>${body}</tbody></table></div>`,
+      };
+    });
+    const html = multiGraphPage({
+      title: 'DFO real loadouts',
+      subtitle: 'Tree only, then tree + enchants, then tree + enchants + the best eligible imprint. Soul gem +5,000 on every piece.',
+      sections,
+    });
+    fs.writeFileSync(out, html, 'utf8');
+    console.log(`loadout page written: ${out}`);
+    if (values.json) console.log(JSON.stringify(rows.map(({ enchPlan, ...r }) => r), null, 2));
     return;
   }
 

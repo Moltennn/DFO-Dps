@@ -220,9 +220,28 @@ Critical Strike, +30% blow), and a real path may leave some of those short.
 The planner excludes `unawareDmg`, `rageDmg` and Backstabbing for boss
 builds. It also rejects off-family notables and keeps each build in its own
 sign sectors; a small or road star on the path can still act as a connector,
-but it is not scored for its unrelated stat. Flat attributes cap at +15; percent attributes cap at +15%; but
-`skill.CriticalStrike` (+15) and `skillPct.CriticalStrike` (20%) are separate
-channels, so Critical Strike can pass the flat +15.
+but it is not scored for its unrelated stat. Flat and percent points are
+**one channel**: `firmamentPowers.js` adds a key star's flat points to a
+small star's percent and caps the sum at +15. That applies to attributes and
+to combat skills, including Critical Strike — the tree cannot take Critical
+Strike past +15.
+
+## Real loadouts
+
+`loadout` is the actual DPS chain: the real Firmament tree, then the enchant
+plan, then the best eligible imprint. It applies the tree's flat + percent
+channels together at the live cap (so +15 flat and +15% are **one** +15
+attribute/skill channel, not +30), then the +15 weapon skill / Critical
+Strike enchant lines, then the imprint.
+
+```bash
+./dfo-dps loadout --uncapped       # theory: no per-hit cap
+./dfo-dps loadout --cap-aware      # level-45 gate
+./dfo-dps loadout                  # both
+```
+
+The page shows **Tree DPS**, **+ Enchants**, and **+ Imprint** per weapon
+type, with the tree's used/free stars. It assumes a soul gem on every piece.
 
 ## Bows, firearms, spells and enchantments
 
