@@ -205,10 +205,10 @@ export function buildReport(ch, {
   <p class="sub">${esc(characterLabel(ch))} &middot; ${esc(w ? `${w.materialName} ${w.name}` : 'bare hands')} &middot; ${esc(ruleset)}</p>
 
   <div class="grid">
-    ${card('DPS', n1(r.dps), `${n1(r.dpsMin)}-${n1(r.dpsMax)} range · ${n1(r.perSwing)} per swing x ${n2(r.cadence.aps)}/s`, 'brass')}
-    ${card('Capped DPS', n1(r.cappedDps), r.cap ? `${n1(r.cappedDpsMin)}-${n1(r.cappedDpsMax)} range · ${capLine}` : 'no cap', r.cap ? 'bad' : 'good')}
-    ${r.enchantDps > 0 ? card('Enchant DPS', n1(r.enchantDps), `${n1(r.enchantDpsMin)}-${n1(r.enchantDpsMax)} range · ${n1(r.enchantPerSwing)} per landed hit`, 'brass') : ''}
-    ${r.enchantDps > 0 ? card('Total DPS', n1(r.totalDps), `${n1(r.totalDpsMin)}-${n1(r.totalDpsMax)} range · weapon + procs`, 'good') : ''}
+    ${card('DPS', n1(r.dps), `${n1(r.perSwing)} per swing x ${n2(r.cadence.aps)}/s`, 'brass')}
+    ${card('Capped DPS', n1(r.cappedDps), r.cap ? capLine : 'no cap', r.cap ? 'bad' : 'good')}
+    ${r.enchantDps > 0 ? card('Enchant DPS', n1(r.enchantDps), `${n1(r.enchantPerSwing)} per landed hit`, 'brass') : ''}
+    ${r.enchantDps > 0 ? card('Total DPS', n1(r.totalDps), 'weapon + enchant procs', 'good') : ''}
     ${card('Hit chance', pct(r.hit.hit), `${pct(r.hit.crit.chance)} critical`, '')}
     ${card('Damage / hit', `${r.damage.min}-${r.damage.max}`, `avg ${n1(r.damage.avg)}; crit ${r.damage.critMin}-${r.damage.critMax}`)}
     ${r.backstab?.chance > 0 ? card('Backstab', `${pct(r.backstab.chance)} ×3`, r.backstab.uptime > 0 ? `uptime ${pct(r.backstab.uptime)}; raw crit ${r.backstab.critMin}-${r.backstab.critMax}` : `available; raw crit ${r.backstab.critMin}-${r.backstab.critMax}`) : ''}

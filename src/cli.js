@@ -193,7 +193,6 @@ const n = (v, d = 0) => (v != null && Number.isFinite(Number(v)) ? Number(v) : d
 const fmt = (v) => (Number.isFinite(v) ? (Math.round(v * 10) / 10).toFixed(1) : '-');
 const fmt2 = (v) => (Number.isFinite(v) ? (Math.round(v * 100) / 100).toFixed(2) : '-');
 const pc = (v) => (Number.isFinite(v) ? `${Math.round(v * 100)}%` : '-');
-const rangeText = (min, avg, max) => (Number.isFinite(min) && Number.isFinite(max) ? `${fmt(avg)} (${fmt(min)}-${fmt(max)})` : fmt(avg));
 
 function table(rows, headers, aligns = []) {
   const widths = headers.map((h, i) => Math.max(h.length, ...rows.map((r) => String(r[i] ?? '').length)));
@@ -399,7 +398,7 @@ function scaleRange(values, current, cap) {
 }
 
 function printScale(rows, values) {
-  console.log(table(rows.map((r) => [r.label, r.value, rangeText(r.dpsMin, r.dps, r.dpsMax), rangeText(r.cappedDpsMin, r.cappedDps, r.cappedDpsMax), fmt(r.perSwing), r.ttk ? `${fmt(r.ttk)} s` : '-']), ['Channel', 'Value', 'DPS', 'Capped', 'Per swing', 'TTK'], ['left', 'right', 'right', 'right', 'right', 'right']));
+  console.log(table(rows.map((r) => [r.label, r.value, fmt(r.dps), fmt(r.cappedDps), fmt(r.perSwing), r.ttk ? `${fmt(r.ttk)} s` : '-']), ['Channel', 'Value', 'DPS', 'Capped', 'Per swing', 'TTK'], ['left', 'right', 'right', 'right', 'right', 'right']));
 }
 
 function printBuild(ch, r, targetPreset, values) {
@@ -416,8 +415,8 @@ function printBuild(ch, r, targetPreset, values) {
     ...(r.backstab?.chance > 0 ? [['Backstab hit', `${r.backstab.min}-${r.backstab.max}`, `crit ${r.backstab.critMin}-${r.backstab.critMax}`]] : []),
     ['Expected / swing', fmt(r.perSwing), 'hit chance and criticals included'],
     ['Swing time', `${fmt2(r.cadence.seconds)} s`, `${fmt2(r.cadence.aps)} swings/s`],
-    ['DPS', rangeText(r.dpsMin, r.dps, r.dpsMax), r.cap ? `capped ${rangeText(r.cappedDpsMin, r.cappedDps, r.cappedDpsMax)} (${pc(r.capLoss)} lost)` : 'no per-hit cap'],
-    ...(r.enchantDps > 0 ? [['Enchant procs', rangeText(r.enchantDpsMin, r.enchantDps, r.enchantDpsMax), `${fmt(r.enchantPerSwing)} per landed hit${r.procsBeforeBreak ? `; ${r.procsBeforeBreak} procs before break` : ''}`], ['Total DPS', rangeText(r.totalDpsMin, r.totalDps, r.totalDpsMax), 'weapon + enchant procs']] : []),
+    ['DPS', fmt(r.dps), r.cap ? `capped ${fmt(r.cappedDps)} (${pc(r.capLoss)} lost)` : 'no per-hit cap'],
+    ...(r.enchantDps > 0 ? [['Enchant procs', fmt(r.enchantDps), `${fmt(r.enchantPerSwing)} per landed hit${r.procsBeforeBreak ? `; ${r.procsBeforeBreak} procs before break` : ''}`], ['Total DPS', fmt(r.totalDps), 'weapon + enchant procs']] : []),
     ['Time to kill', (r.totalTtk ?? r.ttk) ? `${fmt(r.totalTtk ?? r.ttk)} s` : '-', r.health ? `${r.health.toLocaleString()} HP${r.ward ? ` + ${r.ward} ward` : ''}${r.shields ? ` + ${r.shields}s shields` : ''}${r.enchantDps > 0 ? ' (weapon + procs)' : ''}` : 'no boss health'],
   ], ['Metric', 'Value', 'Notes']));
   if (r.cap) console.log(`\n${r.capSource === 'hit cap' ? 'Per-hit hit cap' : 'Curbing cap'}: ${r.cap} per hit${r.capSource === 'curbing' ? ` (5% of ${r.health.toLocaleString()} HP)` : ''}.`);
@@ -475,7 +474,7 @@ function printRank(ch, rows, values, current) {
   console.log('');
   console.log(table(all.map((r) => [
     r.current ? `${r.name} (equipped)` : `${r.materialName} ${r.name}`,
-    r.skill, r.twoHanded ? '2H' : '1H', rangeText(r.dpsMin, r.dps, r.dpsMax), rangeText(r.cappedDpsMin, r.cappedDps, r.cappedDpsMax),
+    r.skill, r.twoHanded ? '2H' : '1H', fmt(r.dps), fmt(r.cappedDps),
     fmt(r.perSwing), fmt2(r.aps), pc(r.hit), pc(r.crit),
   ]), ['Weapon', 'Skill', 'Hands', 'DPS', 'Capped', 'Per swing', 'APS', 'Hit', 'Crit'], ['left', 'left', 'left', 'right', 'right', 'right', 'right', 'right', 'right']));
 }
@@ -573,13 +572,13 @@ export async function main(argv = process.argv.slice(2)) {
     const top = list.slice(0, 20);
     const dpsChart = barChart({ title: 'Sustained spell DPS (30s window)', labels: top.map((x) => x.sp.name), series: [{ name: 'DPS', values: top.map((x) => x.r.windowDps) }] });
     const effChart = barChart({ title: 'Damage per spell point', labels: top.map((x) => x.sp.name), series: [{ name: 'dmg/SP', values: top.map((x) => x.r.damage / Math.max(1, x.r.cost)) }] });
-    const tableHtml = `<table><thead><tr><th>Spell</th><th>School</th><th>Cost</th><th>Damage</th><th>Window DPS</th><th>Cast DPS</th><th>DoT DPS</th><th>dmg/SP</th><th>DoT</th></tr></thead><tbody>${top.map(({ sp, r }) => `<tr><td class="k">${sp.name}</td><td>${skillName(r.school)}</td><td>${r.cost}</td><td>${fmt(r.damage)}</td><td>${rangeText(r.windowDpsMin, r.windowDps, r.windowDpsMax)}</td><td>${rangeText(r.manaDpsMin, r.manaDps, r.manaDpsMax)}</td><td>${rangeText(r.dotDpsMin ?? 0, r.dotDps ?? 0, r.dotDpsMax ?? 0)}</td><td>${fmt(r.damage / Math.max(1, r.cost))}</td><td>${r.dotRounds ? `${r.dotRounds} r` : '-'}</td></tr>`).join('')}</tbody></table>`;
+    const tableHtml = `<table><thead><tr><th>Spell</th><th>School</th><th>Cost</th><th>Damage</th><th>Window DPS</th><th>Cast DPS</th><th>DoT DPS</th><th>dmg/SP</th><th>DoT</th></tr></thead><tbody>${top.map(({ sp, r }) => `<tr><td class="k">${sp.name}</td><td>${skillName(r.school)}</td><td>${r.cost}</td><td>${fmt(r.damage)}</td><td>${fmt(r.windowDps)}</td><td>${fmt(r.manaDps)}</td><td>${fmt(r.dotDps ?? 0)}</td><td>${fmt(r.damage / Math.max(1, r.cost))}</td><td>${r.dotRounds ? `${r.dotRounds} r` : '-'}</td></tr>`).join('')}</tbody></table>`;
     const subtitle = `${characterLabel(ch)} | ${list.length} standard damage spells | ${spellTarget.isBoss ? `gate ${spellTarget.maxHealth.toLocaleString()} HP` : `level ${spellTarget.level}`} | ${n(values.seconds, 30)}s window | potency ${n(values.potency, 0)}% | pierce ${n(values.pierce, 0)}`;
     const html = multiGraphPage({
       title: 'DFO spell ceiling',
       subtitle,
       sections: [
-        { title: 'Sustained DPS', note: 'Mana is treated as solved by default; --mana-limit prices the pool. A DoT is one instance per target and renews, never stacks. DPS cells are average (min-max roll); the bar is the average.', chart: dpsChart, table: tableHtml },
+        { title: 'Sustained DPS', note: 'Mana is treated as solved by default; --mana-limit prices the pool. A DoT is one instance per target and renews, never stacks. DPS cells are averages; the bar is the average.', chart: dpsChart, table: tableHtml },
         { title: 'Damage per spell point', note: 'The metric that binds a long fight. A 30s window may not spend the whole pool.', chart: effChart },
       ],
     });
@@ -651,15 +650,15 @@ export async function main(argv = process.argv.slice(2)) {
       ...(r.dotRounds ? [['DoT per tick', fmt(r.dotPerTick)], ['DoT duration', `${r.dotRounds} rounds (${fmt(r.dotSeconds)} s)`], ['DoT total', fmt(r.dotTotal)]] : []),
       ['Damage / cast', fmt(r.damage)],
       ['Cast time', `${fmt2(r.castSeconds)} s`],
-      ['Burst DPS', rangeText(r.burstDpsMin, r.burstDps, r.burstDpsMax)],
-      ['DPS', rangeText(r.dpsMin, r.dps, r.dpsMax)],
+      ['Burst DPS', fmt(r.burstDps)],
+      ['DPS', fmt(r.dps)],
       ['Magicka pool', r.magicka],
       ['Fight window', `${fmt(r.seconds)} s`],
       ['Casts used', r.casts],
       ['Total damage', fmt(r.totalDamage)],
-      ['Cast DPS', rangeText(r.manaDpsMin, r.manaDps, r.manaDpsMax)],
-      ['Window DPS', rangeText(r.windowDpsMin, r.windowDps, r.windowDpsMax)],
-      ...(r.dotRounds ? [['DoT DPS', rangeText(r.dotDpsMin, r.dotDps, r.dotDpsMax)]] : []),
+      ['Cast DPS', fmt(r.manaDps)],
+      ['Window DPS', fmt(r.windowDps)],
+      ...(r.dotRounds ? [['DoT DPS', fmt(r.dotDps)]] : []),
       ['Mana solved', r.manaSolved ? 'yes' : 'no'],
       ...(r.manaSolved ? [] : [['Time to empty', `${fmt(r.timeToEmpty)} s`], ['Pool kill', r.poolKill == null ? '-' : (r.poolKill ? 'yes' : 'no')], ['Mana left', fmt(r.manaLeft)]]),
       ['Saving throw', `${pc(r.saving)} lands`],
@@ -780,13 +779,12 @@ export async function main(argv = process.argv.slice(2)) {
     rows.sort((a, b) => b.maxDpsF - a.maxDpsF || b.maxDps - a.maxDps);
 
     const cell = (v) => (Number.isFinite(v) ? fmt(v) : '-');
-    const dpsCell = (min, avg, max) => (Number.isFinite(min) && Number.isFinite(max) ? `${fmt(avg)} (${fmt(min)}-${fmt(max)})` : fmt(avg));
     const pctCell = (v) => (Number.isFinite(v) ? pc(v) : '-');
-    const maxTable = `<table><thead><tr><th>Weapon</th><th>Skill</th><th>Hands</th><th>Path</th><th>Max gear</th><th>Full gear</th><th>+ Firmament</th><th>Gate</th><th>Gate + Firm</th><th>Gate TTK</th></tr></thead><tbody>${rows.map((r) => `<tr><td class="k">${r.name}</td><td>${r.skill}</td><td>${r.dual ? 'Dual' : r.skill === 'HandToHand' ? 'Fists' : r.twoHanded ? '2H' : '1H'}</td><td>${r.path}</td><td>${dpsCell(r.maxDpsMin, r.maxDps, r.maxDpsMax)}</td><td>${cell(r.full)}</td><td>${dpsCell(r.maxDpsFMin, r.maxDpsF, r.maxDpsFMax)}</td><td>${dpsCell(r.gateDpsMin, r.gateDps, r.gateDpsMax)}</td><td>${dpsCell(r.gateDpsFMin, r.gateDpsF, r.gateDpsFMax)}</td><td>${r.gateTtk ? `${cell(r.gateTtk)} s` : '-'}</td></tr>`).join('')}</tbody></table>`;
+    const maxTable = `<table><thead><tr><th>Weapon</th><th>Skill</th><th>Hands</th><th>Path</th><th>Max gear</th><th>Full gear</th><th>+ Firmament</th><th>Gate</th><th>Gate + Firm</th><th>Gate TTK</th></tr></thead><tbody>${rows.map((r) => `<tr><td class="k">${r.name}</td><td>${r.skill}</td><td>${r.dual ? 'Dual' : r.skill === 'HandToHand' ? 'Fists' : r.twoHanded ? '2H' : '1H'}</td><td>${r.path}</td><td>${cell(r.maxDps)}</td><td>${cell(r.full)}</td><td>${cell(r.maxDpsF)}</td><td>${cell(r.gateDps)}</td><td>${cell(r.gateDpsF)}</td><td>${r.gateTtk ? `${cell(r.gateTtk)} s` : '-'}</td></tr>`).join('')}</tbody></table>`;
     const top = rows[0];
     const topGear = rows.slice().sort((a, b) => b.maxDps - a.maxDps)[0];
     const gateTop = rows.slice().sort((a, b) => b.gateDpsF - a.gateDpsF)[0];
-    const absolute = `<b>${top.name}</b> is the absolute uncapped ceiling: <b>${dpsCell(top.maxDpsFMin, top.maxDpsF, top.maxDpsFMax)} DPS</b> (${top.path} below half, Dunmer) and <b>${dpsCell(top.gateDpsFMin, top.gateDpsF, top.gateDpsFMax)} DPS</b> at the level-45 gate. Its healthy/below-half full-fight rate is <b>${cell(top.full)} DPS</b> on gear alone. On gear alone the top is <b>${topGear.name}</b> at <b>${dpsCell(topGear.maxDpsMin, topGear.maxDps, topGear.maxDpsMax)} DPS</b>. At the gate the cap flips it: <b>${gateTop.name}</b> leads with <b>${dpsCell(gateTop.gateDpsFMin, gateTop.gateDpsF, gateTop.gateDpsFMax)} capped DPS</b> and <b>${gateTop.gateTtk ? `${cell(gateTop.gateTtk)} s` : '-'} TTK</b>.<br><br>Max is the weapon's best health share (Axe/H2H below half, Blunt at or above half). Full gear is the healthy/below-half harmonic on gear alone. +Firmament is the star-tree channel ceiling at the same best share. All rows are Dunmer. DPS cells are average (min-max roll); the bar is the average.`;
+    const absolute = `<b>${top.name}</b> is the absolute uncapped ceiling: <b>${cell(top.maxDpsF)} DPS</b> (${top.path} below half, Dunmer) and <b>${cell(top.gateDpsF)} DPS</b> at the level-45 gate. Its healthy/below-half full-fight rate is <b>${cell(top.full)} DPS</b> on gear alone. On gear alone the top is <b>${topGear.name}</b> at <b>${cell(topGear.maxDps)} DPS</b>. At the gate the cap flips it: <b>${gateTop.name}</b> leads with <b>${cell(gateTop.gateDpsF)} capped DPS</b> and <b>${gateTop.gateTtk ? `${cell(gateTop.gateTtk)} s` : '-'} TTK</b>.<br><br>Max is the weapon's best health share (Axe/H2H below half, Blunt at or above half). Full gear is the healthy/below-half harmonic on gear alone. +Firmament is the star-tree channel ceiling at the same best share. All rows are Dunmer. DPS cells are averages; the bar is the average.`;
 
     const chartFirm = `<svg viewBox="0 0 920 10" width="100%" height="0" aria-hidden="true"></svg>`;
     const bar = barChart({
@@ -985,15 +983,15 @@ export async function main(argv = process.argv.slice(2)) {
     ], ['Term', 'Value', 'Notes']));
 
     console.log('\nPush stages');
-    console.log(table(stages.map((s) => [s.label, s.raw, `${s.gearLB}+${s.gearCS}`, `${s.damage}%`, rangeText(s.dpsMin, s.dps, s.dpsMax), rangeText(s.cappedDpsMin, s.cappedDps, s.cappedDpsMax), rangeText(s.behindMin, s.behind, s.behindMax), fmt(s.perSwing), fmt2(s.aps), s.ttk ? `${fmt(s.ttk)} s` : '-']), ['Stage', 'Raw skill', 'Gear', 'Damage', 'DPS', 'Capped', 'Behind', 'Per swing', 'APS', 'TTK'], ['left', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right']));
+    console.log(table(stages.map((s) => [s.label, s.raw, `${s.gearLB}+${s.gearCS}`, `${s.damage}%`, fmt(s.dps), fmt(s.cappedDps), fmt(s.behind), fmt(s.perSwing), fmt2(s.aps), s.ttk ? `${fmt(s.ttk)} s` : '-']), ['Stage', 'Raw skill', 'Gear', 'Damage', 'DPS', 'Capped', 'Behind', 'Per swing', 'APS', 'TTK'], ['left', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right']));
     console.log('\nCaps (push in this order)');
     console.log(table(THEORY_CAPS.map((c) => [c.channel, c.cap, c.formula, c.note]), ['Channel', 'Cap', 'Formula', 'What it means']));
 
     console.log('\nAttribute scaling (everything else at the ceiling)');
     console.log(table(statScaled.map((x) => [x.stat, fmt(x.d50), fmt(x.d75), fmt(x.d100), fmt(x.capped100), `${x.delta >= 0 ? '+' : ''}${fmt(x.delta)}`, `${x.last10 >= 0 ? '+' : ''}${fmt(x.last10)}`]), ['Attribute', 'DPS 50', 'DPS 75', 'DPS 100', 'Capped 100', '50 -> 100', '90 -> 100'], ['left', 'right', 'right', 'right', 'right', 'right', 'right']));
-    console.log('The DPS columns are uncapped averages and isolate the varied attribute (its star is dropped so 50..100 means the sheet); Capped 100 is the full build at the gate. Min-max roll bars are in the push stages and the HTML pages. Luck is flat here only because Critical Strike already holds chance at 100%.');
+    console.log('The DPS columns are uncapped averages and isolate the varied attribute (its star is dropped so 50..100 means the sheet); Capped 100 is the full build at the gate. Luck is flat here only because Critical Strike already holds chance at 100%.');
 
-    console.log('\nSkill and gear scaling (average DPS; min-max bars are in the push stages)');
+    console.log('\nSkill and gear scaling');
     console.log(table(skillRows.map((x) => [x.label, x.value, fmt(x.dps), fmt(x.cappedDps), fmt(x.behind), fmt(x.perSwing), x.ttk ? `${fmt(x.ttk)} s` : '-']), ['Channel', 'Value', 'DPS', 'Capped', 'Behind', 'Per swing', 'TTK'], ['left', 'right', 'right', 'right', 'right', 'right', 'right']));
 
     // Firmament: the star tree's channels, 0..+15. The tree's stat gain also lifts the live
@@ -1035,18 +1033,18 @@ export async function main(argv = process.argv.slice(2)) {
     console.log(table(budgetRows.map((x) => [x.lines, `${x.lb} / ${x.cs}`, x.lbPts, x.csPts, fmt(x.dps), fmt(x.cappedDps), fmt(x.perSwing), x.ttk ? `${fmt(x.ttk)} s` : '-']), ['Lines', 'LB / CS', 'LB points', 'CS points', 'DPS', 'Capped', 'Per swing', 'TTK'], ['right', 'left', 'right', 'right', 'right', 'right', 'right', 'right']));
 
     console.log('\nLong blades at the ceiling');
-    console.log(table(bladeRows.map((x) => [x.name, x.twoHanded ? '2H' : '1H', rangeText(x.dpsMin, x.dps, x.dpsMax), rangeText(x.cappedDpsMin, x.cappedDps, x.cappedDpsMax), fmt(x.perSwing), fmt2(x.aps), fmt(x.damage), pc(x.capLoss), x.ttk ? `${fmt(x.ttk)} s` : '-']), ['Blade', 'Hands', 'DPS', 'Capped', 'Per swing', 'APS', 'Avg hit', 'Cap loss', 'TTK'], ['left', 'left', 'right', 'right', 'right', 'right', 'right', 'right', 'right']));
+    console.log(table(bladeRows.map((x) => [x.name, x.twoHanded ? '2H' : '1H', fmt(x.dps), fmt(x.cappedDps), fmt(x.perSwing), fmt2(x.aps), fmt(x.damage), pc(x.capLoss), x.ttk ? `${fmt(x.ttk)} s` : '-']), ['Blade', 'Hands', 'DPS', 'Capped', 'Per swing', 'APS', 'Avg hit', 'Cap loss', 'TTK'], ['left', 'left', 'right', 'right', 'right', 'right', 'right', 'right', 'right']));
     console.log('The table holds the two-handed 8/18 line budget. A one-handed blade plus a shield adds one armour-group Long Blade line and one Critical Strike line, so the 1H rows are a lower bound.');
-    console.log(`Best at this target: ${bladeRows[0].name} (${rangeText(bladeRows[0].cappedDpsMin, bladeRows[0].cappedDps, bladeRows[0].cappedDpsMax)} capped DPS, ${rangeText(bladeRows[0].dpsMin, bladeRows[0].dps, bladeRows[0].dpsMax)} uncapped).`);
+    console.log(`Best at this target: ${bladeRows[0].name} (${fmt(bladeRows[0].cappedDps)} capped DPS, ${fmt(bladeRows[0].dps)} uncapped).`);
 
     console.log(`\n${targetName[0].toUpperCase()}${targetName.slice(1)} result`);
     console.log(table([
-      ['Uncapped DPS', rangeText(r.dpsMin, r.dps, r.dpsMax)],
-      ['Capped DPS', rangeText(r.cappedDpsMin, r.cappedDps, r.cappedDpsMax)],
+      ['Uncapped DPS', fmt(r.dps)],
+      ['Capped DPS', fmt(r.cappedDps)],
       ['Per-hit range', `${r.damage.min}-${r.damage.max} (crit ${r.damage.critMin}-${r.damage.critMax})`],
       ['Cap loss', pc(r.capLoss)],
       ['Time to kill', `${fmt(r.ttk)} s`],
-      ['Behind / backstab', `${rangeText(maxBehind.cappedDpsMin, maxBehind.cappedDps, maxBehind.cappedDpsMax)} capped (${pc(maxBehind.backstab.chance)} x3)`],
+      ['Behind / backstab', `${fmt(maxBehind.cappedDps)} capped (${pc(maxBehind.backstab.chance)} x3)`],
       ['Phase shields', `${r.target.phaseShields} x ${r.target.shieldSeconds}s (${r.shields}s)`],
     ], ['Metric', 'Value']));
     if (r.cap && r.hit.crit.chance >= 1 && r.damage.critMin >= r.cap) {
@@ -1240,7 +1238,7 @@ export async function main(argv = process.argv.slice(2)) {
       out.push({ label, hp: t.maxHealth, cap, perHit, headroom, speed: speed.cappedDps, speedMin: speed.cappedDpsMin, speedMax: speed.cappedDpsMax, dmg: dmg.cappedDps, dmgMin: dmg.cappedDpsMin, dmgMax: dmg.cappedDpsMax, verdict });
     }
     console.log(`${characterLabel(ch)}  |  ${values.core}${ch.online ? ' / online' : ' / offline'}  |  real pools`);
-    console.log(table(out.map((x) => [x.label, x.hp.toLocaleString(), x.cap || '-', fmt(x.perHit), x.headroom ? `${fmt(x.headroom)}x` : '-', rangeText(x.speedMin, x.speed, x.speedMax), rangeText(x.dmgMin, x.dmg, x.dmgMax), x.verdict]), ['Boss', 'HP', 'Cap', 'Per hit', 'Headroom', '+5% speed', '+5% dmg', 'Verdict'], ['left', 'right', 'right', 'right', 'right', 'right', 'right', 'left']));
+    console.log(table(out.map((x) => [x.label, x.hp.toLocaleString(), x.cap || '-', fmt(x.perHit), x.headroom ? `${fmt(x.headroom)}x` : '-', fmt(x.speed), fmt(x.dmg), x.verdict]), ['Boss', 'HP', 'Cap', 'Per hit', 'Headroom', '+5% speed', '+5% dmg', 'Verdict'], ['left', 'right', 'right', 'right', 'right', 'right', 'right', 'left']));
     console.log('\n+5% speed and +5% damage are separate one-change DPS runs against each pool.');
     console.log('Headroom = cap / expected landed hit. Above 1x, damage can grow that many times before the cap makes speed strictly better; at or below 1x, speed is already better.');
     for (const [label, t] of [['Gate - Ruhn', gate], ['Curbing 1,000 HP', targets[1].t]]) {
