@@ -93,11 +93,7 @@ export function barChart({ title, labels, series, width = 920, unit = '' }) {
       const val = s.values[i];
       const by = y + 3 + j * (bh + 1);
       const bw = Math.max(1, sx(val) - left);
-      const err = s.errors?.[i];
-      const errorBar = err && Number.isFinite(err.min) && Number.isFinite(err.max)
-        ? `<line x1="${sx(err.min)}" y1="${by + bh / 2}" x2="${sx(err.max)}" y2="${by + bh / 2}" stroke="#e9e4d9" stroke-width="1.2"/><line x1="${sx(err.min)}" y1="${by + bh / 2 - 3}" x2="${sx(err.min)}" y2="${by + bh / 2 + 3}" stroke="#e9e4d9" stroke-width="1.2"/><line x1="${sx(err.max)}" y1="${by + bh / 2 - 3}" x2="${sx(err.max)}" y2="${by + bh / 2 + 3}" stroke="#e9e4d9" stroke-width="1.2"/>`
-        : '';
-      return `<rect x="${left}" y="${by}" width="${bw}" height="${bh}" fill="${COLORS[j % COLORS.length]}" rx="2"/>${errorBar}<text x="${left + bw + 6}" y="${by + bh - 1}" fill="#a8a092" font-size="10">${val.toFixed(0)}${esc(unit)}</text>`;
+      return `<rect x="${left}" y="${by}" width="${bw}" height="${bh}" fill="${COLORS[j % COLORS.length]}" rx="2"/><text x="${left + bw + 6}" y="${by + bh - 1}" fill="#a8a092" font-size="10">${val.toFixed(0)}${esc(unit)}</text>`;
     }).join('');
     return `<text x="${left - 8}" y="${y + rowH / 2 + 4}" fill="#e9e4d9" font-size="11" text-anchor="end">${esc(label)}</text>${bars}`;
   }).join('');

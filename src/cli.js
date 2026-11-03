@@ -571,7 +571,7 @@ export async function main(argv = process.argv.slice(2)) {
       .sort((a, b) => b.r.windowDps - a.r.windowDps);
     if (!list.length) { console.log('No standard damage spells found. Check --data / ARENA2.'); return; }
     const top = list.slice(0, 20);
-    const dpsChart = barChart({ title: 'Sustained spell DPS (30s window)', labels: top.map((x) => x.sp.name), series: [{ name: 'DPS', values: top.map((x) => x.r.windowDps), errors: top.map((x) => ({ min: x.r.windowDpsMin, max: x.r.windowDpsMax })) }] });
+    const dpsChart = barChart({ title: 'Sustained spell DPS (30s window)', labels: top.map((x) => x.sp.name), series: [{ name: 'DPS', values: top.map((x) => x.r.windowDps) }] });
     const effChart = barChart({ title: 'Damage per spell point', labels: top.map((x) => x.sp.name), series: [{ name: 'dmg/SP', values: top.map((x) => x.r.damage / Math.max(1, x.r.cost)) }] });
     const tableHtml = `<table><thead><tr><th>Spell</th><th>School</th><th>Cost</th><th>Damage</th><th>Window DPS</th><th>Cast DPS</th><th>DoT DPS</th><th>dmg/SP</th><th>DoT</th></tr></thead><tbody>${top.map(({ sp, r }) => `<tr><td class="k">${sp.name}</td><td>${skillName(r.school)}</td><td>${r.cost}</td><td>${fmt(r.damage)}</td><td>${rangeText(r.windowDpsMin, r.windowDps, r.windowDpsMax)}</td><td>${rangeText(r.manaDpsMin, r.manaDps, r.manaDpsMax)}</td><td>${rangeText(r.dotDpsMin ?? 0, r.dotDps ?? 0, r.dotDpsMax ?? 0)}</td><td>${fmt(r.damage / Math.max(1, r.cost))}</td><td>${r.dotRounds ? `${r.dotRounds} r` : '-'}</td></tr>`).join('')}</tbody></table>`;
     const subtitle = `${characterLabel(ch)} | ${list.length} standard damage spells | ${spellTarget.isBoss ? `gate ${spellTarget.maxHealth.toLocaleString()} HP` : `level ${spellTarget.level}`} | ${n(values.seconds, 30)}s window | potency ${n(values.potency, 0)}% | pierce ${n(values.pierce, 0)}`;
@@ -579,7 +579,7 @@ export async function main(argv = process.argv.slice(2)) {
       title: 'DFO spell ceiling',
       subtitle,
       sections: [
-        { title: 'Sustained DPS', note: 'Mana is treated as solved by default; --mana-limit prices the pool. A DoT is one instance per target and renews, never stacks. DPS cells are average (min-max roll); the bar chart draws that range as an error bar.', chart: dpsChart, table: tableHtml },
+        { title: 'Sustained DPS', note: 'Mana is treated as solved by default; --mana-limit prices the pool. A DoT is one instance per target and renews, never stacks. DPS cells are average (min-max roll); the bar is the average.', chart: dpsChart, table: tableHtml },
         { title: 'Damage per spell point', note: 'The metric that binds a long fight. A 30s window may not spend the whole pool.', chart: effChart },
       ],
     });
@@ -786,15 +786,15 @@ export async function main(argv = process.argv.slice(2)) {
     const top = rows[0];
     const topGear = rows.slice().sort((a, b) => b.maxDps - a.maxDps)[0];
     const gateTop = rows.slice().sort((a, b) => b.gateDpsF - a.gateDpsF)[0];
-    const absolute = `<b>${top.name}</b> is the absolute uncapped ceiling: <b>${dpsCell(top.maxDpsFMin, top.maxDpsF, top.maxDpsFMax)} DPS</b> (${top.path} below half, Dunmer) and <b>${dpsCell(top.gateDpsFMin, top.gateDpsF, top.gateDpsFMax)} DPS</b> at the level-45 gate. Its healthy/below-half full-fight rate is <b>${cell(top.full)} DPS</b> on gear alone. On gear alone the top is <b>${topGear.name}</b> at <b>${dpsCell(topGear.maxDpsMin, topGear.maxDps, topGear.maxDpsMax)} DPS</b>. At the gate the cap flips it: <b>${gateTop.name}</b> leads with <b>${dpsCell(gateTop.gateDpsFMin, gateTop.gateDpsF, gateTop.gateDpsFMax)} capped DPS</b> and <b>${gateTop.gateTtk ? `${cell(gateTop.gateTtk)} s` : '-'} TTK</b>.<br><br>Max is the weapon's best health share (Axe/H2H below half, Blunt at or above half). Full gear is the healthy/below-half harmonic on gear alone. +Firmament is the star-tree channel ceiling at the same best share. All rows are Dunmer. DPS cells are average (min-max roll); the bar chart draws the same range as an error bar.`;
+    const absolute = `<b>${top.name}</b> is the absolute uncapped ceiling: <b>${dpsCell(top.maxDpsFMin, top.maxDpsF, top.maxDpsFMax)} DPS</b> (${top.path} below half, Dunmer) and <b>${dpsCell(top.gateDpsFMin, top.gateDpsF, top.gateDpsFMax)} DPS</b> at the level-45 gate. Its healthy/below-half full-fight rate is <b>${cell(top.full)} DPS</b> on gear alone. On gear alone the top is <b>${topGear.name}</b> at <b>${dpsCell(topGear.maxDpsMin, topGear.maxDps, topGear.maxDpsMax)} DPS</b>. At the gate the cap flips it: <b>${gateTop.name}</b> leads with <b>${dpsCell(gateTop.gateDpsFMin, gateTop.gateDpsF, gateTop.gateDpsFMax)} capped DPS</b> and <b>${gateTop.gateTtk ? `${cell(gateTop.gateTtk)} s` : '-'} TTK</b>.<br><br>Max is the weapon's best health share (Axe/H2H below half, Blunt at or above half). Full gear is the healthy/below-half harmonic on gear alone. +Firmament is the star-tree channel ceiling at the same best share. All rows are Dunmer. DPS cells are average (min-max roll); the bar is the average.`;
 
     const chartFirm = `<svg viewBox="0 0 920 10" width="100%" height="0" aria-hidden="true"></svg>`;
     const bar = barChart({
       title: 'Maximum uncapped DPS by weapon',
       labels: rows.map((r) => r.name),
       series: [
-        { name: 'Max gear', values: rows.map((r) => r.maxDps), errors: rows.map((r) => ({ min: r.maxDpsMin, max: r.maxDpsMax })) },
-        { name: '+ Firmament', values: rows.map((r) => r.maxDpsF), errors: rows.map((r) => ({ min: r.maxDpsFMin, max: r.maxDpsFMax })) },
+        { name: 'Max gear', values: rows.map((r) => r.maxDps) },
+        { name: '+ Firmament', values: rows.map((r) => r.maxDpsF) },
       ],
     });
 
