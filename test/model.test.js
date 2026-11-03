@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { characterFromSave, effectiveSkill } from '../src/save.js';
 import {
-  analyze, bossTarget, cadence, damageModifier, expectedCapped, pcaaoDamageModifier,
+  analyze, bossTarget, cadence, damageModifier, expectedCapped, gateTarget, pcaaoDamageModifier,
   referenceFoe, swingFrameSeconds, syntheticWeapon, weaponOf,
 } from '../src/model.js';
+import { gateHealth, gateHitCap } from '../src/data.js';
 
 const STATS = {
   strength: 80, intelligence: 50, willpower: 50, agility: 50,
@@ -162,4 +163,20 @@ test('a live equip table is the authority, and First Blood is 60% on the opening
   const base = analyze(ch, { target: referenceFoe(5, 'soft'), core: 'overhaul' });
   const open = analyze(ch, { target: referenceFoe(5, 'soft'), core: 'overhaul', firstBlow: true });
   assert.ok(Math.abs(open.damage.avg / base.damage.avg - 1.6) < 0.06, `${base.damage.avg} -> ${open.damage.avg}`);
+});
+
+test('the real gate boss: 8,400 HP, plate 60, 420 hit cap, two 3s shields at level 30', () => {
+  assert.equal(gateHealth(30), 8400);
+  assert.equal(gateHitCap(30), 420);
+  const t = gateTarget(30);
+  assert.equal(t.maxHealth, 8400);
+  assert.equal(t.armorValues[0], 60);
+  assert.equal(t.hitCap, 420);
+  assert.equal(t.phaseShields, 2);
+  assert.equal(t.shieldSeconds, 3);
+  const ch = characterFromSave(testSave(), { online: false });
+  const r = analyze(ch, { target: t, health: t.maxHealth, traits: [] });
+  assert.equal(r.cap, 420);
+  assert.equal(r.capSource, 'hit cap');
+  assert.ok(r.ttk > t.maxHealth / r.cappedDps, 'the shield seconds are in the TTK');
 });

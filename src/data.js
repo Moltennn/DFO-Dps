@@ -215,6 +215,19 @@ export const MARTIAL_PATHS = Object.freeze({
   windrunner: { name: 'Windrunner', passive: 'Windborne', text: '+10 Speed, +15 Running, +15 Jumping.' },
 });
 
+
+/** The gate boss's real health pool (net/gate/gateBrain.js): 240 seconds of
+ * reference damage at the player's claim level. dpsRef(level) = 5 + level,
+ * so a level-30 solo gate is 8,400 HP. The server also caps one blow at
+ * 12 x dpsRef (420 at level 30) and stands him shielded for 3s at 66% and 33%. */
+export const GATE_TTK_S = 240;
+export const GATE_HIT_CAP_X = 12;
+export const GATE_SHIELD_S = 3;
+export const GATE_SHIELDS = 2;
+export const gateRefDps = (level) => 5 + Math.max(1, Math.min(60, Math.floor(Number(level) || 1)));
+export const gateHealth = (level) => GATE_TTK_S * gateRefDps(level);
+export const gateHitCap = (level) => GATE_HIT_CAP_X * gateRefDps(level);
+
 export const TARGET_PRESETS = Object.freeze([
   { id: 'soft', label: 'Soft monster', isClass: false, armorValue: 6, note: 'rats, imps and the early bestiary' },
   { id: 'tough', label: 'Tough monster', isClass: false, armorValue: 0, note: 'the middle of the bestiary' },

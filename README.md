@@ -73,6 +73,19 @@ dfo eval '(() => { const e = window.__playerEntity; const equipSlots = {}; for (
 
 The live card's **Damage** and **Per swing** tiles show the **opening** blow when a First Blood item is worn. Pass `--first-blow` to compare exactly; without it the tool shows the sustained swing.
 
+## Theorycraft numbers
+
+`--target gate` uses the real solo gate boss: **240 seconds of reference damage** at your level, i.e. **8,400 HP at level 30** (`dpsRef(level) = 5 + level`), plate armour 60, a **420 per-blow server cap** (12 x reference), and **two 3s phase shields**. It has no Curbing; Curbing is a separate trait on elite/world bosses and is 5% of max HP.
+
+`tradeoff` prints the speed/damage crossover:
+
+- headroom = cap / expected landed hit
+- at or below 1x, speed is already better than damage
+- above 1x, damage can grow that many times before the cap makes speed strictly better
+- plus the best weapon at each Curbing boss health, so the fast/slow crossover is visible
+
+`scale` walks one channel from current to its cap (`--stat`, `--skill`, `--gear-skill`), or `--all` summarizes every channel. `--bare`, `--no-effects` and `--base-stats 50` give a naked theorycraft baseline.
+
 ## What is modelled
 
 - classic `FormulaHelper` and the PCAAO v1.44 overhaul

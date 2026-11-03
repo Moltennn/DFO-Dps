@@ -19,6 +19,7 @@ import {
   SWING_HEFT_MAX, SWING_HEFT_PER_KG, SWING_MODS, SWING_SHORT_BLADE,
   SWING_TEMPO_AT_0, SWING_TEMPO_AT_100, SWING_TWO_HANDED,
   WARD_SHARE, WEAPON_MATERIAL_MODIFIER, WEAPON_TYPES, WEAPONS, WRATH_AFTER_S,
+  GATE_SHIELDS, GATE_SHIELD_S, gateHealth, gateHitCap,
 } from './data.js';
 import {
   effectiveSkill, liveStat, masterCappedSkill, PROFICIENCY_FLAG, skillModOf,
@@ -480,6 +481,8 @@ export function weaponBlow(ch, w, damage, target, opts = {}) {
   if (slayer > 0) d = applyPct(d, slayer);
   const gear = gearBlowPct(ch, opts);
   if (gear > 0) d = applyPct(d, gear);
+  const theory = num(opts.damagePct, 0);
+  if (theory) d = applyPct(d, theory);
   return d;
 }
 
@@ -563,8 +566,12 @@ export function analyze(ch, {
   const cmin = Math.max(0, Math.round(dmg.critMin * resist));
   const cmax = Math.max(0, Math.round(dmg.critMax * resist));
   const bossHealth = num(health, 0);
-  const cap = traits.includes('curbing') && bossHealth > 0
+  const curbCap = traits.includes('curbing') && bossHealth > 0
     ? Math.max(1, Math.round(bossHealth * CURB_SHARE)) : 0;
+  const hardCap = num(t.hitCap, 0);
+  const caps = [curbCap, hardCap].filter((n) => n > 0);
+  const cap = caps.length ? Math.min(...caps) : 0;
+  const capSource = cap === 0 ? null : (hardCap > 0 && (!curbCap || hardCap <= curbCap) ? 'hit cap' : 'curbing');
   const ePlain = cap > 0
     ? (dmax <= cap ? dmg.avg * resist : expectedCapped(dmin, dmax, cap))
     : dmg.avg * resist;
@@ -576,12 +583,13 @@ export function analyze(ch, {
   const dps = perSwing * cad.aps;
   const cappedDps = cappedPerSwing * cad.aps;
   const ward = traits.includes('warded') && bossHealth > 0 ? Math.max(1, Math.round(bossHealth * WARD_SHARE)) : 0;
-  const ttk = bossHealth > 0 && cappedDps > 0 ? (bossHealth + ward) / cappedDps : null;
+  const shields = Math.max(0, num(t.phaseShields, 0)) * Math.max(0, num(t.shieldSeconds, 0));
+  const ttk = bossHealth > 0 && cappedDps > 0 ? (bossHealth + ward) / cappedDps + shields : null;
   const wrath = traits.includes('wrathful');
   return {
     core, weapon: w, target: tgt, swing, hit, damage: dmg, cadence: cad,
-    perSwing, dps, cappedPerSwing, cappedDps, cap, capLoss: dps > 0 ? 1 - cappedDps / dps : 0,
-    resist, health: bossHealth || null, ward, ttk, wrath, wrathAt: WRATH_AFTER_S,
+    perSwing, dps, cappedPerSwing, cappedDps, cap, capSource, capLoss: dps > 0 ? 1 - cappedDps / dps : 0,
+    resist, health: bossHealth || null, ward, shields, ttk, wrath, wrathAt: WRATH_AFTER_S,
     traits, healthShare: simOpts.healthShare,
     notes: {
       preArmor: true,
@@ -612,14 +620,26 @@ export function referenceFoe(level, preset = 'tough') {
 }
 
 /** A boss target: level, armour class, health, traits. */
-export function bossTarget({ level = 30, armorValue = 0, isClass = false, health = 5000, traits = [], group = null } = {}) {
+export function bossTarget({ level = 30, armorValue = 0, isClass = false, health = 5000, traits = [], group = null, hitCap = 0, phaseShields = 0, shieldSeconds = 0 } = {}) {
   const t = referenceFoe(level, { isClass, armorValue });
   t.health = health;
   t.maxHealth = health;
+  t.isBoss = true;
   t.bossTraits = [...traits];
   t.group = group;
   t.healthShare = 1;
+  t.hitCap = hitCap;
+  t.phaseShields = phaseShields;
+  t.shieldSeconds = shieldSeconds;
   return t;
+}
+
+/** The real gate boss (Valkynaz Ruhn): a plate-armour monster, the solo pool for this level, the server hit cap and the two phase shields. */
+export function gateTarget(level, { health = gateHealth(level), traits = [], hitCap = gateHitCap(level) } = {}) {
+  return bossTarget({
+    level, armorValue: 12, health, traits, // 12 x5 = 60, the gate's flat plate armour
+    hitCap, phaseShields: GATE_SHIELDS, shieldSeconds: GATE_SHIELD_S,
+  });
 }
 
 /** The marginal DPS of a +N change, against the same target. */
@@ -667,7 +687,7 @@ export function rankWeapons(ch, scenario = {}, { top = 20, materials = 10 } = {}
       rows.push({
         templateIndex: Number(key), name: t.name, material: m, materialName: MATERIALS[m],
         skill: t.skill, twoHanded: t.twoHanded,
-        dps: r.dps, cappedDps: r.cappedDps, perSwing: r.perSwing, aps: r.cadence.aps,
+        dps: r.dps, cappedDps: r.cappedDps, perSwing: r.perSwing, perHit: r.perSwing / Math.max(1e-9, r.hit.hit), aps: r.cadence.aps,
         hit: r.hit.hit, crit: r.hit.crit.chance, damage: r.damage.avg, capLoss: r.capLoss,
       });
     }

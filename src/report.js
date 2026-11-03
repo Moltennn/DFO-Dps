@@ -4,9 +4,9 @@
  * Everything is precomputed here; the page needs no server and no network.
  * The palette follows the game's enhanced skin so it reads beside DFO.
  */
-import { BOSS_TRAITS, BOSS_TRAIT_TEXT, MATERIALS, MARTIAL_PATHS, SOURCE } from './data.js';
-import { characterLabel } from './save.js';
-import { analyze, bossTarget, currentWeaponRow, marginals, rankAffixes, rankWeapons, referenceFoe } from './model.js';
+import { BOSS_TRAITS, BOSS_TRAIT_TEXT, GATE_SHIELDS, GATE_SHIELD_S, MATERIALS, MARTIAL_PATHS, SOURCE, gateHealth, gateHitCap } from './data.js';
+import { characterLabel, liveStat } from './save.js';
+import { analyze, bossTarget, currentWeaponRow, gateTarget, marginals, rankAffixes, rankWeapons, referenceFoe } from './model.js';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const n1 = (n) => (Number.isFinite(n) ? (Math.round(n * 10) / 10).toFixed(1) : '-');
@@ -68,8 +68,10 @@ function targetTable(ch, scenario) {
   const hp = scenario.health || 5000;
   const b = analyze(ch, { ...scenario, target: bossTarget({ level: ch.level, armorValue: 0, health: hp, traits: scenario.traits }), health: hp });
   rows.push({ id: 'boss', r: b });
+  const g = analyze(ch, { ...scenario, target: gateTarget(ch.level), health: gateHealth(ch.level), traits: [] });
+  rows.push({ id: 'gate', r: g });
   return rows.map(({ id, r }) => {
-    const label = id === 'boss' ? `Boss${scenario.traits.length ? ` (${scenario.traits.join(', ')})` : ''}` : id[0].toUpperCase() + id.slice(1);
+    const label = id === 'boss' ? `Boss${scenario.traits.length ? ` (${scenario.traits.join(', ')})` : ''}` : id === 'gate' ? 'Gate - Ruhn' : id[0].toUpperCase() + id.slice(1);
     const armor = r.target.isClass ? '60 (class)' : String(r.target.armorValues?.[0] ?? 0);
     return `<tr><td class="k">${esc(label)}</td><td>${esc(armor)}</td><td>${pct(r.hit.hit)}</td><td class="v">${n1(r.dps)}</td><td class="v">${n1(r.cappedDps)}</td><td>${r.ttk ? `${n1(r.ttk)} s` : '-'}</td></tr>`;
   }).join('');
@@ -82,6 +84,50 @@ function traitTable(ch, scenario) {
     const r = analyze(ch, { ...scenario, target: bossTarget({ level: ch.level, armorValue: 0, health: hp, traits: [t] }), health: hp, traits: [t] });
     return `<tr><td class="k">${esc(t)}</td><td class="v">${n1(r.dps)}</td><td class="v">${n1(r.cappedDps)}</td><td>${pct(r.capLoss)}</td><td>${r.ttk ? `${n1(r.ttk)} s` : '-'}</td><td class="d">${esc(BOSS_TRAIT_TEXT[t] ?? '')}</td></tr>`;
   }).join('');
+}
+
+function theoryTable(ch, scenario) {
+  const pools = [
+    { label: 'Gate - Ruhn', t: gateTarget(ch.level), traits: [] },
+    { label: 'Curbing 1,000', t: bossTarget({ level: ch.level, health: 1000, traits: ['curbing'] }), traits: ['curbing'] },
+    { label: 'Curbing 2,000', t: bossTarget({ level: ch.level, health: 2000, traits: ['curbing'] }), traits: ['curbing'] },
+    { label: 'Curbing 5,000', t: bossTarget({ level: ch.level, health: 5000, traits: ['curbing'] }), traits: ['curbing'] },
+    { label: 'Curbing 10,000', t: bossTarget({ level: ch.level, health: 10000, traits: ['curbing'] }), traits: ['curbing'] },
+  ];
+  const rows = pools.map(({ label, t, traits }) => {
+    const sc = { ...scenario, target: t, health: t.maxHealth, traits };
+    const a = analyze(ch, sc);
+    const perHit = a.perSwing / Math.max(1e-9, a.hit.hit);
+    const best = rankWeapons(ch, sc, { top: 1 })[0];
+    const headroom = a.cap > 0 ? a.cap / perHit : null;
+    const bestTtk = best ? (t.maxHealth + a.ward) / best.cappedDps + (t.phaseShields ? t.phaseShields * t.shieldSeconds : 0) : a.ttk;
+    return `<tr><td class="k">${esc(label)}</td><td>${(t.maxHealth || 0).toLocaleString()}</td><td>${a.cap || '-'}</td><td>${n1(perHit)}</td><td>${headroom ? `${n2(headroom)}x` : '-'}</td><td>${best ? esc(`${best.materialName} ${best.name}`) : '-'}</td><td class="v">${n1(best?.cappedDps ?? a.cappedDps)}</td><td>${bestTtk ? `${n1(bestTtk)} s` : '-'}</td></tr>`;
+  }).join('');
+  return rows;
+}
+
+function scalingTable(ch, scenario, r) {
+  const rows = [];
+  const base = r.cappedDps ?? r.dps;
+  const run = (label, current, cap, set) => {
+    const c = JSON.parse(JSON.stringify(ch));
+    set(c, cap);
+    const rr = analyze(c, { ...scenario, weapon: undefined });
+    const dps = rr.cappedDps ?? rr.dps;
+    rows.push({ label, current, cap, dps: base, atCap: dps, delta: dps - base });
+  };
+  for (const k of ['strength', 'agility', 'speed', 'luck']) {
+    const cur = liveStat(ch, k);
+    run(`stat ${k}`, cur, 100, (c, v) => { c.stats[k] = v; });
+  }
+  const weaponId = r.weapon?.skillId ?? 30;
+  const ws = ch.skills?.[weaponId] ?? 0;
+  run(`weapon skill`, ws, 200, (c, v) => { c.skills[weaponId] = v; });
+  const crit = ch.skills?.[34] ?? 0;
+  run(`Critical Strike`, crit, 200, (c, v) => { c.skills[34] = v; });
+  const gear = ch._mods?.skills?.[weaponId] ?? 0;
+  run(`gear ${r.weapon?.skill ?? 'weapon'}`, gear, gear + 100, (c, v) => { c._mods.skills[weaponId] = v; });
+  return rows.map((x) => `<tr><td class="k">${esc(x.label)}</td><td>${x.current} → ${x.cap}</td><td class="v">${n1(x.dps)}</td><td class="v">${n1(x.atCap)}</td><td>${x.delta >= 0 ? '+' : ''}${n1(x.delta)}</td></tr>`).join('');
 }
 
 function capTable(ch, scenario) {
@@ -112,7 +158,9 @@ export function buildReport(ch, {
   const cur = currentWeaponRow(baseCh, scenario);
   const targetLabel = target?.isClass ? 'Human foe' : `Monster, armor ${target?.armorValues?.[0] ?? 0}`;
   const ruleset = `${core}${ch.online ? ' / online' : ' / offline'}${ch.martialPath ? ` / ${MARTIAL_PATHS[ch.martialPath]?.name ?? ch.martialPath}` : ''}`;
-  const capLine = r.cap ? `Curbing cap: ${r.cap} per hit (5% of ${health.toLocaleString()} HP)` : 'No per-hit cap active';
+  const capLine = r.cap
+    ? `${r.capSource === 'hit cap' ? 'Hit cap' : 'Curbing cap'}: ${r.cap} per hit${r.capSource === 'curbing' ? ` (5% of ${health.toLocaleString()} HP)` : ''}`
+    : 'No per-hit cap active';
   const affinity = target?.group ? `, ${target.group}` : '';
 
   const html = `<!doctype html>
@@ -192,7 +240,7 @@ export function buildReport(ch, {
 
   <h2>Boss cap sensitivity</h2>
       <table><thead><tr><th>Boss HP</th><th>Cap</th><th>DPS</th><th>Capped</th><th>Loss</th><th>TTK</th></tr></thead><tbody>${capTable(baseCh, scenario)}</tbody></table>
-      <p class="note"><b>Curbing</b> binds only when a blow would take more than 5% of the boss's maximum health. At this build's per-hit, that starts below about ${Math.round((r.damage.max / 0.05)).toLocaleString()} HP. Above it, the cap does nothing.</p>
+      <p class="note"><b>Curbing</b> binds only when a blow would take more than 5% of the boss's maximum health. At this build's <b>expected landed hit</b> (${n1(r.perSwing / Math.max(1e-9, r.hit.hit))}), that starts below about ${Math.round((r.perSwing / Math.max(1e-9, r.hit.hit)) / 0.05).toLocaleString()} HP. Above it, the cap does nothing.</p>
     </section>
   </div>
 
@@ -200,7 +248,16 @@ export function buildReport(ch, {
   <table><thead><tr><th>Weapon</th><th>Skill</th><th>Hands</th><th>DPS</th><th>Capped</th><th>Per swing</th><th>APS</th><th>Hit</th><th>Crit</th><th></th></tr></thead><tbody>${weaponTable(weapons, cur)}</tbody></table>
   <p class="note">The ranking holds the character's skills, effects and gear skill affixes fixed, and gives every candidate a fresh 100% condition item. The equipped row keeps its own affixes. Materials are Iron through Daedric.</p>
 
+  <h2>Real boss pools and the speed/damage crossover</h2>
+  <table><thead><tr><th>Pool</th><th>HP</th><th>Cap</th><th>Landed hit</th><th>Headroom</th><th>Best weapon</th><th>Best DPS</th><th>TTK</th></tr></thead><tbody>${theoryTable(baseCh, scenario)}</tbody></table>
+  <p class="note">The gate boss's real solo pool at level ${ch.level} is ${gateHealth(ch.level).toLocaleString()} HP (240 seconds of level reference damage) with a ${gateHitCap(ch.level)} per-blow server cap and two 3s phase shields. Curbing is 5% of max HP. <b>Headroom</b> is cap / expected landed hit: above 1x, damage can grow that many times before speed is strictly better; at or below 1x, speed is already better.</p>
+
+  <h2>Scaling headroom</h2>
+  <table><thead><tr><th>Channel</th><th>Current → cap</th><th>DPS now</th><th>DPS at cap</th><th>Δ</th></tr></thead><tbody>${scalingTable(baseCh, scenario, r)}</tbody></table>
+  <p class="note">Stats are live-capped at 100; there is no more DPS from attributes once they read 100. Only a <b>mastered</b> skill may read past 100: Long Blade is mastered here, so its raw climb to 200 pays; Critical Strike is not, so its raw value stops at 100 and the gear/enchant/effect lines are what carry it above. Gear skill is the affix channel and is not capped by the softcap.</p>
+
   <h2>Targets</h2>
+
   <table><thead><tr><th>Target</th><th>Armor</th><th>Hit</th><th>DPS</th><th>Capped</th><th>TTK</th></tr></thead><tbody>${targetTable(baseCh, scenario)}</tbody></table>
 
   <h2>Boss traits, one at a time</h2>

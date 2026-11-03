@@ -11,10 +11,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { BOSS_TRAIT_TEXT, MARTIAL_PATHS, MATERIALS, RACE_NAMES, SOURCE, WEAPONS } from './data.js';
+import {
+  BOSS_TRAIT_TEXT, GATE_SHIELDS, GATE_SHIELD_S, MARTIAL_PATHS, MATERIALS, RACE_NAMES, SOURCE, WEAPONS,
+  gateHealth, gateHitCap,
+} from './data.js';
 import { buildReport } from './report.js';
 import {
-  analyze, bossTarget, currentWeaponRow, marginals, rankAffixes, rankWeapons, referenceFoe,
+  analyze, bossTarget, currentWeaponRow, gateTarget, marginals, rankAffixes, rankWeapons, referenceFoe,
   syntheticWeapon, weaponOf,
 } from './model.js';
 import {
@@ -29,12 +32,14 @@ Usage:
   dfo-dps rank weapons [options]      rank every melee template/material
   dfo-dps report [options]            write a single-file HTML report
   dfo-dps compare [options]           baseline vs one change
+  dfo-dps scale [options]             stat/skill scaling curve to the caps
+  dfo-dps tradeoff [options]          speed vs damage against real boss pools
   dfo-dps saves                       list saves under the DFO user data folder
   dfo-dps doctor                      show save/build/ruleset information
 
 Common options:
   --save <SAVE4|path>                 save slot or SaveData.txt (default: newest)
-  --target <soft|tough|armoured|human|boss>   reference foe (default: armoured)
+  --target <soft|tough|armoured|human|boss|gate>  reference foe or the real gate boss (default: armoured)
   --level <n>                         target level (default: character level)
   --armor <n>                         boss armor value (default: 0)
   --health <n>                        boss maximum health (default: 5000)
@@ -51,6 +56,15 @@ Common options:
   --health-share <0..1>               foe's health share for Axe/Blunt mastery (default: 1)
   --no-crit-damage                    overhaul crit adds hit only
   --no-passive                        switch the path passive off
+  --bare                              strip gear affixes/enchants/legendaries (theorycraft baseline)
+  --base-stats <n>                    set all eight base attributes to n (theorycraft baseline)
+  --no-effects                        drop active effects too (with --bare, a truly naked baseline)
+  --stat <name>                       scale one attribute (with scale)
+  --skill <id>                        scale one raw skill id (with scale)
+  --gear-skill <id>                   scale one gear skill affix (with scale)
+  --from <n> --to <n> --step <n>      scale range (default: current to cap)
+  --all                               scale/compare every relevant channel
+  --damage-pct <n>                    add N% weapon damage (theorycraft)
   --json                              machine-readable output
   --top <n>                           rows in a ranking (default: 20)
   --out <file>                        report output (default: dfo-dps-report.html)
@@ -74,6 +88,16 @@ const optsSpec = {
   unaware: { type: 'boolean', default: false },
   'first-blow': { type: 'boolean', default: false },
   'health-share': { type: 'string' },
+  bare: { type: 'boolean', default: false },
+  'base-stats': { type: 'string' },
+  'no-effects': { type: 'boolean', default: false },
+  all: { type: 'boolean', default: false },
+  from: { type: 'string' },
+  to: { type: 'string' },
+  step: { type: 'string', default: '10' },
+  skill: { type: 'string' },
+  'gear-skill': { type: 'string' },
+  'damage-pct': { type: 'string' },
   'no-crit-damage': { type: 'boolean', default: false },
   'no-passive': { type: 'boolean', default: false },
   json: { type: 'boolean', default: false },
@@ -101,7 +125,7 @@ function table(rows, headers, aligns = []) {
 
 function loadCharacter(values) {
   const { entry, save } = loadSave(values.save);
-  const ch = characterFromSave(save, {
+  let ch = characterFromSave(save, {
     online: !values.offline,
     slot: entry.slot,
     file: entry.file,
@@ -109,7 +133,22 @@ function loadCharacter(values) {
       ? (values.passive === 'none' ? null : values.passive)
       : undefined,
   });
+  if (values.bare) ch = bareCharacter(ch);
+  if (values['no-effects']) ch.activeEffects = [];
+  if (values['base-stats'] != null) {
+    const v = n(values['base-stats'], 50);
+    for (const k of ['strength', 'intelligence', 'willpower', 'agility', 'endurance', 'personality', 'speed', 'luck']) ch.stats[k] = v;
+  }
   return { ch, entry, save };
+}
+
+function bareCharacter(ch) {
+  const c = JSON.parse(JSON.stringify(ch));
+  c._mods = { stats: {}, skills: {} };
+  c._enchantMods = { skillMods: {}, chanceToHitMod: 0 };
+  c.legendaries = [];
+  if (c.weapon) c.weapon = { ...c.weapon, affixes: [] };
+  return c;
 }
 
 function traitsOf(values) {
@@ -119,6 +158,9 @@ function traitsOf(values) {
 function targetOf(ch, values, traits) {
   const level = n(values.level, ch.level);
   const target = String(values.target ?? 'armoured').toLowerCase();
+  if (target === 'gate' || target === 'ruhn') {
+    return gateTarget(level, { health: n(values.health, gateHealth(level)), traits });
+  }
   if (target === 'boss') {
     return bossTarget({
       level,
@@ -142,7 +184,7 @@ function scenarioOf(ch, values, traits, target) {
     target,
     core: values.core === 'classic' ? 'classic' : 'overhaul',
     traits,
-    health: String(values.target).toLowerCase() === 'boss' ? n(values.health, 5000) : n(values.health, 0),
+    health: target.isBoss ? target.maxHealth : n(values.health, 0),
     swing: values.swing,
     critDamage: !values['no-crit-damage'],
     passiveOn: !values['no-passive'],
@@ -191,6 +233,21 @@ function summary(ch, r, extra = {}) {
   };
 }
 
+function scaleRange(values, current, cap) {
+  const from = n(values.from, current);
+  const to = n(values.to, cap);
+  const step = Math.max(1, n(values.step, 10));
+  const out = [];
+  if (!(to >= from)) return out;
+  for (let v = from; v <= to + 1e-9; v += step) out.push(Math.round(v * 100) / 100);
+  if (out[out.length - 1] !== to) out.push(to);
+  return out;
+}
+
+function printScale(rows, values) {
+  console.log(table(rows.map((r) => [r.label, r.value, fmt(r.dps), fmt(r.cappedDps), fmt(r.perSwing), r.ttk ? `${fmt(r.ttk)} s` : '-']), ['Channel', 'Value', 'DPS', 'Capped', 'Per swing', 'TTK'], ['left', 'right', 'right', 'right', 'right', 'right']));
+}
+
 function printBuild(ch, r, targetPreset, values) {
   const w = r.weapon;
   const traits = r.traits;
@@ -206,9 +263,10 @@ function printBuild(ch, r, targetPreset, values) {
     ['Expected / swing', fmt(r.perSwing), 'hit chance and criticals included'],
     ['Swing time', `${fmt2(r.cadence.seconds)} s`, `${fmt2(r.cadence.aps)} swings/s`],
     ['DPS', fmt(r.dps), r.cap ? `capped ${fmt(r.cappedDps)} (${pc(r.capLoss)} lost)` : 'no per-hit cap'],
-    ['Time to kill', r.ttk ? `${fmt(r.ttk)} s` : '-', r.ward ? `${r.health?.toLocaleString()} HP + ${r.ward} ward` : (r.health ? `${r.health.toLocaleString()} HP` : 'no boss health')],
+    ['Time to kill', r.ttk ? `${fmt(r.ttk)} s` : '-', r.health ? `${r.health.toLocaleString()} HP${r.ward ? ` + ${r.ward} ward` : ''}${r.shields ? ` + ${r.shields}s shields` : ''}` : 'no boss health'],
   ], ['Metric', 'Value', 'Notes']));
-  if (r.cap) console.log(`\nCurbing cap: ${r.cap} per hit (5% of ${r.health.toLocaleString()} HP).`);
+  if (r.cap) console.log(`\n${r.capSource === 'hit cap' ? 'Per-hit hit cap' : 'Curbing cap'}: ${r.cap} per hit${r.capSource === 'curbing' ? ` (5% of ${r.health.toLocaleString()} HP)` : ''}.`);
+  if (r.target?.phaseShields) console.log(`Phase shields: ${r.target.phaseShields} x ${r.target.shieldSeconds}s (${r.shields}s added to TTK).`);
   if (r.wrath) console.log(`Wrathful: enrages at ${r.wrathAt}s.`);
   console.log('\nWhere the damage comes from');
   const p = r.damage.parts;
@@ -310,6 +368,124 @@ export async function main(argv = process.argv.slice(2)) {
   const target = targetOf(ch, values, traits);
   const scenario = scenarioOf(ch, values, traits, target);
   const r = analyze(ch, scenario);
+
+  if (cmd === 'scale') {
+    const { ch } = loadCharacter(values);
+    const traits = traitsOf(values);
+    const target = targetOf(ch, values, traits);
+    const scenario = scenarioOf(ch, values, traits, target);
+    const one = (label, kind, id, current, cap) => {
+      const rows = [];
+      for (const value of scaleRange(values, current, cap)) {
+        const c = JSON.parse(JSON.stringify(ch));
+        if (kind === 'stat') c.stats[id] = value;
+        else if (kind === 'skill') c.skills[id] = value;
+        else {
+          c._mods = c._mods ?? { stats: {}, skills: {} };
+          c._mods.skills = c._mods.skills ?? {};
+          c._mods.skills[id] = value;
+        }
+        const rr = analyze(c, { ...scenario, weapon: scenario.weapon });
+        rows.push({ label, value, dps: rr.dps, cappedDps: rr.cappedDps, perSwing: rr.perSwing, ttk: rr.ttk });
+      }
+      return rows;
+    };
+    const rows = [];
+    const weaponId = r?.weapon?.skillId ?? weaponOf(ch.weapon)?.skillId ?? 30;
+    if (values.all) {
+      const summary = [];
+      const addSummary = (label, current, cap, make) => {
+        const c0 = JSON.parse(JSON.stringify(ch));
+        const c1 = JSON.parse(JSON.stringify(ch));
+        make(c0, current); make(c1, cap);
+        const r0 = analyze(c0, scenario); const r1 = analyze(c1, scenario);
+        summary.push({ label, value: `${current} → ${cap}`, dps: r0.dps, cappedDps: r0.cappedDps, perSwing: r1.perSwing, ttk: r1.ttk, delta: r1.cappedDps - r0.cappedDps });
+      };
+      for (const k of ['strength', 'agility', 'speed', 'luck', 'endurance', 'willpower']) {
+        const cur = liveStat(ch, k);
+        addSummary(`stat ${k}`, cur, 100, (c, v) => { c.stats[k] = v; });
+      }
+      for (const [label, id] of [['skill weapon', weaponId], ['skill critical', 34]]) {
+        const cur = ch.skills?.[id] ?? 0;
+        addSummary(label, cur, 200, (c, v) => { c.skills[id] = v; });
+      }
+      const gearCur = ch._mods?.skills?.[weaponId] ?? 0;
+      addSummary('gear skill', gearCur, gearCur + 100, (c, v) => { c._mods.skills[weaponId] = v; });
+      console.log(`${characterLabel(ch)}  |  ${values.core}${ch.online ? ' / online' : ' / offline'}  |  ${values.target}`);
+      console.log(table(summary.map((x) => [x.label, x.value, fmt(x.cappedDps), `${x.delta >= 0 ? '+' : ''}${fmt(x.delta)}`, fmt(x.perSwing), x.ttk ? `${fmt(x.ttk)} s` : '-']), ['Channel', 'Current → cap', 'Capped DPS now', 'Δ at cap', 'Per swing at cap', 'TTK at cap'], ['left', 'right', 'right', 'right', 'right', 'right']));
+      return;
+    }
+    if (values.stat) {
+      const k = String(values.stat).toLowerCase();
+      if (!['strength', 'intelligence', 'willpower', 'agility', 'endurance', 'personality', 'speed', 'luck'].includes(k)) throw new Error(`unknown stat ${k}`);
+      rows.push(...one(`stat ${k}`, 'stat', k, liveStat(ch, k), 100));
+    } else if (values.skill) {
+      const id = n(values.skill, -1);
+      if (!(id >= 0 && id < 35)) throw new Error('--skill expects a skill id 0..34');
+      rows.push(...one(`skill ${id}`, 'skill', id, ch.skills?.[id] ?? 0, 200));
+    } else if (values['gear-skill']) {
+      const id = n(values['gear-skill'], -1);
+      if (!(id >= 0 && id < 35)) throw new Error('--gear-skill expects a skill id 0..34');
+      const cur = ch._mods?.skills?.[id] ?? 0;
+      rows.push(...one(`gear skill ${id}`, 'gear', id, cur, cur + 100));
+    } else {
+      throw new Error('scale needs --stat <name>, --skill <id>, --gear-skill <id>, or --all');
+    }
+    console.log(`${characterLabel(ch)}  |  target ${values.target}  |  ${values.core}${ch.online ? ' / online' : ' / offline'}`);
+    printScale(rows, values);
+    if (values.json) console.log(JSON.stringify(rows, null, 2));
+    return;
+  }
+
+  if (cmd === 'tradeoff') {
+    const { ch } = loadCharacter(values);
+    const traits = traitsOf(values);
+    const gate = gateTarget(ch.level);
+    const targets = [
+      { label: 'Gate - Ruhn', t: gate },
+      { label: 'Curbing 1,000 HP', t: bossTarget({ level: ch.level, health: 1000, traits: ['curbing'] }) },
+      { label: 'Curbing 2,000 HP', t: bossTarget({ level: ch.level, health: 2000, traits: ['curbing'] }) },
+      { label: 'Curbing 5,000 HP', t: bossTarget({ level: ch.level, health: 5000, traits: ['curbing'] }) },
+      { label: 'Curbing 10,000 HP', t: bossTarget({ level: ch.level, health: 10000, traits: ['curbing'] }) },
+      { label: 'Curbing 25,000 HP', t: bossTarget({ level: ch.level, health: 25000, traits: ['curbing'] }) },
+    ];
+    const out = [];
+    for (const { label, t } of targets) {
+      const baseScenario = { ...scenarioOf(ch, values, traits, t), target: t, health: t.maxHealth, traits: t.bossTraits ?? [] };
+      const base = analyze(ch, baseScenario);
+      const speed = analyze(ch, { ...baseScenario, attackSpeedPct: 5 });
+      const dmg = analyze(ch, { ...baseScenario, damagePct: 5 });
+      const perHit = base.perSwing / Math.max(1e-9, base.hit.hit);
+      const cap = base.cap;
+      const headroom = cap > 0 ? cap / perHit : null;
+      let verdict;
+      if (!cap) verdict = 'equal (no cap)';
+      else if (perHit >= cap) verdict = 'speed wins now';
+      else verdict = `damage until +${fmt((headroom - 1) * 100)}%`;
+      out.push({ label, hp: t.maxHealth, cap, perHit, headroom, speed: speed.cappedDps, dmg: dmg.cappedDps, verdict });
+    }
+    console.log(`${characterLabel(ch)}  |  ${values.core}${ch.online ? ' / online' : ' / offline'}  |  real pools`);
+    console.log(table(out.map((x) => [x.label, x.hp.toLocaleString(), x.cap || '-', fmt(x.perHit), x.headroom ? `${fmt(x.headroom)}x` : '-', fmt(x.speed), fmt(x.dmg), x.verdict]), ['Boss', 'HP', 'Cap', 'Per hit', 'Headroom', '+5% speed', '+5% dmg', 'Verdict'], ['left', 'right', 'right', 'right', 'right', 'right', 'right', 'left']));
+    console.log('\n+5% speed and +5% damage are separate one-change DPS runs against each pool.');
+    console.log('Headroom = cap / expected landed hit. Above 1x, damage can grow that many times before the cap makes speed strictly better; at or below 1x, speed is already better.');
+    for (const [label, t] of [['Gate - Ruhn', gate], ['Curbing 1,000 HP', targets[1].t]]) {
+      const rows = rankWeapons(ch, { ...scenarioOf(ch, values, traits, t), target: t, health: t.maxHealth, traits: t.bossTraits ?? [] }, { top: 5 });
+      console.log(`\nTop weapons - ${label}`);
+      console.log(table(rows.map((x) => [`${x.materialName} ${x.name}`, x.twoHanded ? '2H' : '1H', fmt(x.cappedDps), fmt(x.perSwing), fmt2(x.aps)]), ['Weapon', 'Hands', 'Capped DPS', 'Per swing', 'APS'], ['left', 'left', 'right', 'right', 'right']));
+    }
+    const crossover = [];
+    for (const hp of [500, 750, 1000, 1500, 2000, 2500, 3000, 4000, 5000, 6000, 8400, 12000]) {
+      const t = bossTarget({ level: ch.level, health: hp, traits: ['curbing'] });
+      const sc = { ...scenarioOf(ch, values, traits, t), target: t, health: hp, traits: ['curbing'] };
+      const best = rankWeapons(ch, sc, { top: 1 })[0];
+      const a = analyze(ch, sc);
+      crossover.push({ hp, cap: a.cap, best: best ? `${best.materialName} ${best.name}` : '-', dps: best?.cappedDps ?? 0, perHit: best?.perHit ?? 0 });
+    }
+    console.log('\nBest weapon by Curbing boss health (the speed/damage crossover)');
+    console.log(table(crossover.map((x) => [x.hp.toLocaleString(), x.cap, x.best, fmt(x.dps), fmt(x.perHit)]), ['Boss HP', 'Cap', 'Best weapon', 'Capped DPS', 'Best landed hit'], ['right', 'right', 'left', 'right', 'right']));
+    if (values.json) console.log(JSON.stringify({ pools: out, crossover }, null, 2));
+    return;
+  }
 
   if (cmd === 'rank') {
     const rows = rankWeapons(ch, scenario, { top: n(values.top, 20) });
