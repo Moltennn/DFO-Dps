@@ -52,8 +52,8 @@ export function weaponOf(item) {
     templateIndex: item.templateIndex,
     name: item.name || t.name,
     baseName: t.name,
-    min: t.min,
-    max: t.max,
+    min: Number.isFinite(item.minDamage) && item.minDamage > 0 ? item.minDamage : t.min,
+    max: Number.isFinite(item.maxDamage) && item.maxDamage > 0 ? item.maxDamage : t.max,
     skillId: WEAPON_SKILL[item.templateIndex] ?? SKILLS.HandToHand,
     skill: t.skill,
     type: t.type,
@@ -463,7 +463,13 @@ function conditionMultiplier(w, powerful = false) {
   return 0.25;
 }
 
-/** The blow's damage after the registered blow modifiers (martial, mastery, slayer). */
+/** Legendary powers that add to a blow. First Blood (Duelist's Vambrace) is the opening hit. */
+export function gearBlowPct(ch, opts = {}) {
+  if (!opts.firstBlow) return 0;
+  return (ch.legendaries ?? []).some((l) => l.id === 'duelists-vambrace') ? 60 : 0;
+}
+
+/** The blow's damage after the registered blow modifiers (martial, mastery, slayer, gear). */
 export function weaponBlow(ch, w, damage, target, opts = {}) {
   let d = damage;
   const mastery = masteryPct(ch, w, target, opts);
@@ -472,6 +478,8 @@ export function weaponBlow(ch, w, damage, target, opts = {}) {
   if (martial > 0) d = applyPct(d, martial);
   const slayer = w?.slayer ?? 0;
   if (slayer > 0) d = applyPct(d, slayer);
+  const gear = gearBlowPct(ch, opts);
+  if (gear > 0) d = applyPct(d, gear);
   return d;
 }
 
@@ -528,7 +536,7 @@ export function damageModel(ch, w, target, swingKey, core, opts = {}) {
     parts: {
       roll: [Math.min(...rolls), Math.max(...rolls)],
       matMod, strMod, prof: prof.damage, racial: race.damage, twoHanded: !!w?.twoHanded,
-      mastery: masteryPct(ch, w, target, opts), martial: martialBlowPct(ch, target, opts), slayer: w?.slayer ?? 0,
+      mastery: masteryPct(ch, w, target, opts), martial: martialBlowPct(ch, target, opts), slayer: w?.slayer ?? 0, gear: gearBlowPct(ch, opts),
     },
     crit,
   };

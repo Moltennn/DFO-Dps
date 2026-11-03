@@ -60,6 +60,19 @@ table on load; this tool does the same rebuild. The in-game **Combat Stats**
 card is the oracle for the per-hit model: if the two disagree, the import or
 the model is wrong, not the build.
 
+## Live snapshots
+
+A save is a snapshot; a live character can differ (gear changed, gems, set powers). The tool accepts a live snapshot JSON from `window.__playerEntity` with `equipSlots` and `_enchantMods`. When `equipSlots` is present it uses the game's real equip table and its item affixes, not the saved `items[].equipSlot` or the stale `_mods` cache. That is what matches the live Combat Stats card.
+
+```bash
+# from the debug game, with CDP on 9222
+dfo eval '(() => { const e = window.__playerEntity; const equipSlots = {}; for (const [k, v] of Object.entries(e.equip?.slots ?? {})) if (v) equipSlots[k] = v; return { name: e.name, level: e.level, raceId: e.raceId, race: e.race, gender: e.gender, career: e.career, reflexes: e.reflexes, health: e.health, maxHealth: e.maxHealth, stats: e.stats, skills: e.skills, skillOverrides: e.skillOverrides, activeEffects: e.activeEffects, items: e.items, equipSlots, martialPath: e.martialPath, masterSkills: e.masterSkills, masteredSkills: e.masteredSkills, _mods: e._mods, _enchantMods: e._enchantMods, _online: e._online }; })()' > /tmp/live.json
+
+./dfo-dps build --save /tmp/live.json --first-blow
+```
+
+The live card's **Damage** and **Per swing** tiles show the **opening** blow when a First Blood item is worn. Pass `--first-blow` to compare exactly; without it the tool shows the sustained swing.
+
 ## What is modelled
 
 - classic `FormulaHelper` and the PCAAO v1.44 overhaul
@@ -81,7 +94,7 @@ the model is wrong, not the build.
 - damage is shown **before the foe's worn/natural armor reduction**, exactly
   like the game's Combat Stats card; a human in mail will take less
 - the overhaul's condition-based effectiveness is assumed at 100% condition
-- no loot set powers, sigils or legendary proc damage
+- no loot set powers, sigils or legendary proc damage; **First Blood** (Duelist's Vambrace) is modelled because it changes the opening blow
 - no mentor overlay
 - no PvP/peer model
 

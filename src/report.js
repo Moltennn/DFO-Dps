@@ -101,6 +101,10 @@ export function buildReport(ch, {
   const baseCh = weapon?.item ? { ...ch, weapon: weapon.item } : ch;
   const scenario = { target, core, traits, health, swing, passiveOn, stacks, rhythm, unaware, firstBlow, healthShare };
   const r = analyze(baseCh, scenario);
+  const sustained = analyze(baseCh, { ...scenario, firstBlow: false });
+  const opening = (ch.legendaries ?? []).some((l) => l.id === 'duelists-vambrace')
+    ? analyze(baseCh, { ...scenario, firstBlow: true })
+    : null;
   const w = r.weapon;
   const rs = marginals(baseCh, r, scenario);
   const affixes = rankAffixes(baseCh, r, scenario);
@@ -165,6 +169,7 @@ export function buildReport(ch, {
     ${card('Time to kill', r.ttk ? `${n1(r.ttk)} s` : '-', r.health ? `${r.health.toLocaleString()} HP${r.ward ? ` + ${r.ward} ward` : ''}` : 'no boss health set')}
   </div>
 
+  ${opening ? `<div class="note"><b>First Blood (Duelist's Vambrace):</b> the opening blow deals 60% more. Opening per swing ${n1(opening.perSwing)}; sustained per swing ${n1(sustained.perSwing)}. The live Combat Stats card's Damage and Per swing tiles show the opening value; the cards above show the ${scenario.firstBlow ? 'opening' : 'sustained'} one. Add or remove <code>--first-blow</code> to switch.</div>` : ''}
   <div class="note"><b>Target:</b> ${esc(targetLabel)}${esc(affinity)}, level ${esc(target?.level ?? '-')}.
     ${r.cap ? `<br><b>${esc(capLine)}</b> Your per-hit range is ${r.damage.min}-${r.damage.max} (crit ${r.damage.critMin}-${r.damage.critMax}); ${pct(r.capLoss)} of the uncapped DPS is lost to the cap.` : ''}
     ${r.ward ? `<br><b>Warded:</b> ${r.ward} points absorb the first blows; the time-to-kill includes that pool.` : ''}
@@ -216,7 +221,7 @@ export function buildReport(ch, {
     <tr><td class="k">Armor</td><td class="d">damage is shown before the foe's worn/natural armor reduction; the game's Combat Stats card does the same</td></tr>
   </tbody></table>
 
-  <footer><div class="foot"><span>dfo-dps - model from ${esc(SOURCE.repo)} @ ${esc(SOURCE.commit.slice(0, 7))} (${esc(SOURCE.date)})</span><span>not affiliated with Bethesda Softworks or ZeniMax Media</span></div></footer>
+  <footer><div class="foot"><span>dfo-dps - model from ${esc(SOURCE.repo)} @ ${esc(SOURCE.commit.slice(0, 7))} (${esc(SOURCE.date)}) · live check ${esc(SOURCE.verified)}</span><span>not affiliated with Bethesda Softworks or ZeniMax Media</span></div></footer>
 </main></body></html>`;
   return html;
 }

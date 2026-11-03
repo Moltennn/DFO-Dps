@@ -69,6 +69,12 @@ If your per-hit is 40 and the boss has 5,000 HP, the cap is 250 and does
 nothing. The report's "Boss cap sensitivity" table shows where it starts to
 matter.
 
+## Live snapshot and First Blood
+
+When a JSON with `equipSlots` is imported, the actual equip table wins over the saved `items[].equipSlot` and the live `_mods` cache. Its item `affixes` are folded into `_mods.skills`/`_mods.stats`; `_enchantMods.skillMods` is added separately. That reproduces the live Combat Stats card's skill line: for Moltenn, Long Blade 168, Critical Strike 217, Dodging 112, and the hit term `298`.
+
+`First Blood` (the Duelist's Vambrace legendary) adds 60% to the **opening** blow. The live card's Damage and Per swing tiles show that opening blow; `--first-blow` reproduces it. Without it the tool shows the sustained swing.
+
 ## Save import
 
 `SaveData.txt` stores base stats/skills plus items, affixes, enchantments and

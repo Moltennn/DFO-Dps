@@ -133,7 +133,7 @@ export function masterCappedSkill(ch, id, raw) {
 
 /** Skill mods on top of the softcap: gear, the enchantment channel, racial effects. */
 export function skillModOf(ch, id) {
-  let mod = ch._mods?.skills?.[id] ?? 0;
+  let mod = (ch._enchantMods?.skillMods?.[id] ?? 0) + (ch._mods?.skills?.[id] ?? 0);
   for (const a of ch.activeEffects ?? []) {
     if (a?.kind === 'racialOverride' && !a.ended) mod += a.skillMods?.[id] ?? 0;
   }
@@ -205,8 +205,19 @@ export function characterFromSave(save, { online = true, martialPath, ...opts } 
   }
   const skills = ARRAY(save.skills).map((v) => NUM(v, 0));
   const items = ARRAY(save.items).map((it) => ({ ...it }));
-  const worn = items.filter((it) => Number.isInteger(it?.equipSlot) && it.equipSlot >= 0);
-  const mods = rebuildMods(items);
+  // A live snapshot carries the game's real equip table (`equip.slots`). The save's
+  // `items[].equipSlot` can be stale or include packed pieces, so prefer the table:
+  // its item affixes are what the live Combat Stats card reads.
+  const liveWorn = save.equipSlots && typeof save.equipSlots === 'object'
+    ? Object.entries(save.equipSlots)
+      .filter(([, it]) => it && typeof it === 'object')
+      .map(([slot, it]) => ({ ...it, equipSlot: Number(slot) }))
+    : null;
+  const worn = liveWorn ?? items.filter((it) => Number.isInteger(it?.equipSlot) && it.equipSlot >= 0);
+  const mods = liveWorn
+    ? rebuildMods(liveWorn)
+    : (save._mods ? { stats: save._mods.stats ?? {}, skills: save._mods.skills ?? {} } : rebuildMods(items));
+  const legendaries = worn.filter((it) => it?.legendary).map((it) => ({ id: it.legendary, name: it.name }));
   const right = worn.find((it) => it.group === 'Weapons' && it.equipSlot === SLOT.RightHand)
     ?? worn.find((it) => it.group === 'Weapons' && it.equipSlot === SLOT.LeftHand)
     ?? null;
@@ -230,10 +241,11 @@ export function characterFromSave(save, { online = true, martialPath, ...opts } 
     weapon: right,
     items,
     worn,
-    _mods: { stats: mods.stats, skills: mods.skills },
-    _enchantMods: { skillMods: {}, chanceToHitMod: 0 },
+    _mods: liveWorn ? { stats: mods.stats, skills: mods.skills } : (save._mods ? { ...save._mods, stats: { ...(save._mods.stats ?? {}) }, skills: { ...(save._mods.skills ?? {}) } } : { stats: mods.stats, skills: mods.skills }),
+    _enchantMods: save._enchantMods ? { ...save._enchantMods, skillMods: { ...(save._enchantMods.skillMods ?? {}) } } : { skillMods: {}, chanceToHitMod: 0 },
     weaponDamagePct: mods.weaponDamagePct,
     slayer: mods.slayer,
+    legendaries,
     saveSlot: opts.slot ?? null,
     saveFile: opts.file ?? null,
   };

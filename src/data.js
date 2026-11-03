@@ -11,6 +11,7 @@ export const SOURCE = Object.freeze({
   commit: 'a3eb1605ea1dc391b691fe314377458a7e63e483',
   date: '2026-11-02',
   game: 'DFO Online',
+  verified: '0.1.14516',
 });
 
 export const SKILLS = Object.freeze({

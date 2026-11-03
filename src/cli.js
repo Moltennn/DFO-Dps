@@ -47,7 +47,7 @@ Common options:
   --stacks <0-5>                      Flowing Steel stacks (default: 5)
   --rhythm                            War Rhythm is up (Warblade)
   --unaware                           target has not noticed you (Cutthroat)
-  --first-blow                        first blow at this foe (Assassin)
+  --first-blow                        first blow at this foe (Assassin; also First Blood / Duelist's Vambrace)
   --health-share <0..1>               foe's health share for Axe/Blunt mastery (default: 1)
   --no-crit-damage                    overhaul crit adds hit only
   --no-passive                        switch the path passive off
@@ -196,6 +196,8 @@ function printBuild(ch, r, targetPreset, values) {
   const traits = r.traits;
   console.log(`${characterLabel(ch)}`);
   console.log(`${w ? `${w.materialName} ${w.name}` : 'bare hands'}  |  ${r.core}${ch.online ? ' / online' : ' / offline'}${ch.martialPath ? ` / ${MARTIAL_PATHS[ch.martialPath]?.name ?? ch.martialPath}` : ''}`);
+  const hasFirstBlood = (ch.legendaries ?? []).some((l) => l.id === 'duelists-vambrace');
+  if (hasFirstBlood) console.log(`First Blood (Duelist's Vambrace): ${values['first-blow'] ? 'on - opening blow +60%' : 'available - opening blow +60%, sustained shown (pass --first-blow to compare the card)'}`);
   console.log(`target: ${targetPreset}${r.target.isClass ? ' (class)' : ''}, level ${r.target.level}${r.health ? `, ${r.health.toLocaleString()} HP` : ''}${traits.length ? `, traits: ${traits.join(', ')}` : ''}`);
   console.log('');
   console.log(table([
@@ -284,7 +286,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   if (cmd === 'doctor') {
-    console.log(`dfo-dps  |  model ${SOURCE.repo} @ ${SOURCE.commit.slice(0, 7)} (${SOURCE.date})`);
+    console.log(`dfo-dps  |  model ${SOURCE.repo} @ ${SOURCE.commit.slice(0, 7)} (${SOURCE.date})  |  live-checked ${SOURCE.verified}`);
     const saves = listSaves();
     console.log(`saves: ${saves.length ? saves.map((s) => s.slot).join(', ') : '(none)'}`);
     try {
