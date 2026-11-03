@@ -73,7 +73,7 @@ Common options:
   --backstab <0..1>                   share of swings from behind (expected backstab)
   --players <n>                       gate boss group size (health per player; default 1)
   --blow-x <n>                        gate relayBlowX (Elite/Vestiges cap multiplier; default 1)
-  --categories                        condense the weapons page to the best of each type in 1H, 2H and DW
+  --categories                        condense the weapons page to the best of each type, sorted by DPS
   --pair                              paired Pistolets (2 shots per cycle, off hand x0.8)
   --dual                              dual wield the left-hand weapon (off hand x0.8, -5 hit)
   --spam                              bow spam (BOW_FAST stacks to x0.2; default paced)
@@ -782,12 +782,12 @@ export async function main(argv = process.argv.slice(2)) {
     const categoryMetric = firmCharts ? 'maxDpsF' : 'maxDps';
     // One winner per weapon type in each hand slot, so a single blade family
     // cannot take the whole page. Hand-to-Hand is its own shape, not 1H/2H/DW.
-    const categorySlots = ['1H', '2H', 'DW'];
-    const categoryTypes = ['LongBlade', 'ShortBlade', 'Axe', 'BluntWeapon', 'Archery'];
+    const categorySlots = ['1H', '2H', 'DW', 'Fists'];
     const topRows = categorySlots.flatMap((cat) => rows
       .filter((r) => categoryOf(r) === cat)
       .sort((a, b) => b[categoryMetric] - a[categoryMetric])
-      .filter((r, i, list) => list.findIndex((x) => x.skill === r.skill) === i));
+      .filter((r, i, list) => list.findIndex((x) => x.skill === r.skill) === i))
+      .sort((a, b) => b[categoryMetric] - a[categoryMetric]);
     const displayRows = values.categories ? topRows : rows;
     const SKILL_LABELS = { ShortBlade: 'Short Blade', LongBlade: 'Long Blade', Axe: 'Axe', BluntWeapon: 'Blunt Weapon', Archery: 'Archery', HandToHand: 'Hand-to-Hand' };
 
@@ -797,8 +797,8 @@ export async function main(argv = process.argv.slice(2)) {
     const top = displayRows.slice().sort((a, b) => b.maxDpsF - a.maxDpsF)[0];
     const topGear = displayRows.slice().sort((a, b) => b.maxDps - a.maxDps)[0];
     const gateTop = rows.slice().sort((a, b) => b.gateDpsF - a.gateDpsF)[0];
-    const scope = values.categories ? 'Best of the 1H / 2H / DW type winners' : 'The absolute uncapped ceiling';
-    const absolute = `<b>${scope}: ${top.name}</b> at <b>${cell(top.maxDpsF)} DPS</b> (${top.path}, Dunmer). On gear alone the best of these is <b>${topGear.name}</b> at <b>${cell(topGear.maxDps)} DPS</b>. At the gate the full pool is led by <b>${gateTop.name}</b> at <b>${cell(gateTop.gateDpsF)} capped DPS</b> (${gateTop.gateTtk ? `${cell(gateTop.gateTtk)} s TTK` : '-'}).<br><br>Full health and Blademaster only: Berserker's below-half upkeep is not assumed. Max is the full-health DPS; +Firmament adds the star-tree channel ceiling. All rows are Dunmer. DPS cells are averages; the bar is the average.${values.categories ? ' One row per weapon type per slot; H2H wraps (fists) is outside 1H/2H/DW, see the full weapons page.' : ''}`;
+    const scope = values.categories ? 'Best of every type' : 'The absolute uncapped ceiling';
+    const absolute = `<b>${scope}: ${top.name}</b> at <b>${cell(top.maxDpsF)} DPS</b> (${top.path}, Dunmer). On gear alone the best of these is <b>${topGear.name}</b> at <b>${cell(topGear.maxDps)} DPS</b>. At the gate the full pool is led by <b>${gateTop.name}</b> at <b>${cell(gateTop.gateDpsF)} capped DPS</b> (${gateTop.gateTtk ? `${cell(gateTop.gateTtk)} s TTK` : '-'}).<br><br>Full health and Blademaster only: Berserker's below-half upkeep is not assumed. Max is the full-health DPS; +Firmament adds the star-tree channel ceiling. All rows are Dunmer. DPS cells are averages; the bar is the average.${values.categories ? ' One row per weapon type per slot, sorted by DPS; Hand Wraps is the fist row.' : ''}`;
 
     const chartFirm = `<svg viewBox="0 0 920 10" width="100%" height="0" aria-hidden="true"></svg>`;
     const bar = barChart({
@@ -860,7 +860,7 @@ export async function main(argv = process.argv.slice(2)) {
       title: 'DFO weapon ceiling and skill scaling',
       subtitle,
       sections: values.categories
-        ? [{ title: 'Top per type - 1H / 2H / DW', note: absolute, chart: bar, table: maxTable }]
+        ? [{ title: 'Top per type - sorted by DPS', note: absolute, chart: bar, table: maxTable }]
         : [{ title: 'Absolute maximum', note: absolute, chart: bar, table: maxTable }, ...familySections, csSection],
     });
     const defaultOut = cmd === 'weapons' ? 'weapons.html' : 'skills.html';
