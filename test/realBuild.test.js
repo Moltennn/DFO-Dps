@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { realCategoryLoadouts, realFamilyLoadouts, realLoadouts } from '../src/realBuild.js';
+import { realCategoryLoadouts, realFamilyLoadouts, realLoadouts, realWeaponLoadouts } from '../src/realBuild.js';
 
 const rows = realLoadouts();
 
@@ -46,4 +46,15 @@ test('every family gets its own best hand options', () => {
   assert.deepEqual(long, ['1H', '2H', 'DW']);
   const cap2h = rows.find((r) => r.family === 'Long Blade' && r.category === '2H');
   assert.equal(cap2h.imprintPower, 'Many Endings');
+});
+
+
+test('all weapon loadouts list every template and exclude monster-type damage imprints', () => {
+  const rows = realWeaponLoadouts({ modes: ['uncapped', 'cap'] });
+  assert.ok(rows.length >= 30);
+  const forbidden = new Set(['Dragonsbane', 'Sanctified', "Hunter's Moon"]);
+  assert.ok(rows.every((r) => !forbidden.has(r.imprintPower)));
+  const long = rows.filter((r) => r.mode === 'cap' && r.family === 'Long Blade');
+  assert.ok(long.some((r) => r.category === '1H') && long.some((r) => r.category === '2H') && long.some((r) => r.category === 'DW'));
+  assert.ok(long.some((r) => r.imprintPower === 'Many Endings'));
 });

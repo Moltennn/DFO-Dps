@@ -22,6 +22,7 @@ const BUILD_ID = Object.freeze({
   LongBlade: 'longblade', ShortBlade: 'shortblade', Axe: 'axe', BluntWeapon: 'blunt',
   Archery: 'bow', HandToHand: 'fists',
 });
+const MONSTER_KINDS = new Set(['bane', 'sanctified', 'moon']);
 const ENCHANT_ID = Object.freeze({
   CastWhenStrikes: ENCHANTMENT_TYPES.CastWhenStrikes,
   PotentVs: ENCHANTMENT_TYPES.PotentVs,
@@ -85,10 +86,15 @@ function applyEnchants(ch, plan) {
 
 /** The best eligible imprint for this weapon and target. */
 function bestImprint(template, run, capped) {
-  const rows = imprintsFor(template).map((rec) => ({
-    name: rec.name, power: rec.power,
-    dps: powerDps(rec.power, run, false, { capped }),
-  })).sort((a, b) => b.dps - a.dps);
+  const baseline = capped ? run.cappedDps : run.dps;
+  const rows = imprintsFor(template)
+    .filter((rec) => !MONSTER_KINDS.has(rec.power.kind))
+    .map((rec) => ({
+      name: rec.name, power: rec.power,
+      dps: powerDps(rec.power, run, false, { capped }),
+    }))
+    .filter((rec) => rec.dps > baseline + 1e-9)
+    .sort((a, b) => b.dps - a.dps);
   return rows[0] ?? null;
 }
 
@@ -126,6 +132,25 @@ export function realLoadout(family, { mode = 'uncapped', vampire = false } = {})
   const rows = family.templates.map((t) => realTemplate(t, family, { mode, vampire })).filter(Boolean);
   return rows.sort((a, b) => b.totalDps - a.totalDps)[0] ?? null;
 }
+/** Every weapon template in every hold configuration, not just the winners. */
+export function realWeaponLoadouts({ modes = ['uncapped', 'cap'], vampire = false } = {}) {
+  const out = [];
+  for (const mode of modes) {
+    for (const family of IMPRINT_FAMILIES) {
+      for (const t of family.templates) {
+        const w = WEAPONS[t];
+        if (!w) continue;
+        const category = w.skill === 'HandToHand' ? 'Fists' : w.twoHanded ? '2H' : '1H';
+        out.push({ ...realTemplate(t, family, { mode, vampire }), category });
+        if (!w.twoHanded && w.skill !== 'Archery' && w.skill !== 'HandToHand') {
+          out.push({ ...realTemplate(t, family, { mode, vampire, dual: true }), category: 'DW' });
+        }
+      }
+    }
+  }
+  return out;
+}
+
 /** Best 1H, 2H, DW (or Fists) for every weapon family. */
 export function realFamilyLoadouts({ modes = ['uncapped', 'cap'], vampire = false } = {}) {
   const out = [];
