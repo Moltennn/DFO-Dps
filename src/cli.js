@@ -708,6 +708,11 @@ export async function main(argv = process.argv.slice(2)) {
     const plan = planEnchants({ weapon, shield, soulGem: !!values['soul-gem'], group });
     if (!values.json) {
       console.log(`Enchant plan  |  ${plan.weaponName}${plan.shield ? ` + ${plan.shield}` : ''}  |  ${plan.soulGem ? `soul gem +${SOUL_GEM_POINTS}` : 'template points only'}  |  Potent Vs: ${group}`);
+      if (plan.imprint?.base) {
+        const b = plan.imprint.base;
+        const t = plan.imprint.trigger;
+        console.log(`Weapon imprint (separate from the budget): ${b.power.name} ${fmt(b.baseDps)} DPS (+${fmt(b.baseDps - plan.baseDps)}); best trigger ${t.power.name} ${fmt(t.triggerDps)} (+${fmt(t.triggerDps - plan.baseDps)})`);
+      }
       console.log('');
       console.log(table(plan.rows.map((r) => [
         r.slot, r.item, r.base, r.soul || '-', r.budget, r.spent, r.left,
@@ -740,7 +745,7 @@ export async function main(argv = process.argv.slice(2)) {
     const html = multiGraphPage({
       title: 'DFO enchant plan',
       subtitle: `${plan.weaponName}${plan.rows.find((r) => /Shield|Buckler/.test(r.slot)) ? ` + ${plan.rows.find((r) => /Shield|Buckler/.test(r.slot)).item}` : ''}; ${plan.soulGem ? `soul gem +${SOUL_GEM_POINTS} on every piece` : 'template enchantment points only'}. Budgets are the game's ItemTemplates enchantmentPoints plus the stated soul gem; a POWER is positive, a side effect negative.`,
-      sections: [{ title: 'Per piece', note: `Priority fill for a ${group} target. One-piece effects go out once, then the build's skills fill what is left. ${plan.soulGem ? 'The soul gem is applied to every piece.' : 'No soul gem: base template points only.'}`, chart: '', table: pieceTable + oneTable + stackTable + weaponTable }],
+      sections: [{ title: 'Per piece', note: `Priority fill for a ${group} target. One-piece effects go out once, then the build's skills fill what is left. ${plan.soulGem ? 'The soul gem is applied to every piece.' : 'No soul gem: base template points only.'}${plan.imprint?.base ? ` The weapon's imprint is separate from this budget: ${plan.imprint.base.power.name} is the best unconditional (${fmt(plan.imprint.base.baseDps)} DPS), ${plan.imprint.trigger.power.name} the best trigger (${fmt(plan.imprint.trigger.triggerDps)} DPS).` : ''}`, chart: '', table: pieceTable + oneTable + stackTable + weaponTable }],
     });
     fs.writeFileSync(out, html, 'utf8');
     if (!values.json) console.log(`enchant plan written: ${out}`);

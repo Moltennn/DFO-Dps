@@ -9,6 +9,7 @@
  */
 import { SKILLS, WEAPONS } from './data.js';
 import { maxCharacter, maxRun } from './maxprofile.js';
+import { imprintsFor, powerDps } from './imprints.js';
 import { referenceFoe } from './model.js';
 import { enchantDps, ENCHANTMENT_TYPES } from './enchants.js';
 import {
@@ -185,10 +186,15 @@ export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, s
     base: p.base, soul: p.soul, budget: p.budget, spent: p.spent, left: p.budget - p.spent,
     effects: p.effects,
   }));
+  const imprintPool = imprintsFor(w.template)
+    .map((rec) => ({ name: rec.name, power: rec.power, baseDps: powerDps(rec.power, base, false), triggerDps: powerDps(rec.power, base, true) }));
+  const imprintBase = imprintPool.slice().sort((a, b) => b.baseDps - a.baseDps)[0] ?? null;
+  const imprintTrigger = imprintPool.slice().sort((a, b) => b.triggerDps - a.triggerDps)[0] ?? null;
+  const imprint = { base: imprintBase, trigger: imprintTrigger };
   return {
     weapon: w.template, weaponName: w.item, shield: pieces.find((p) => /Shield|Buckler/.test(p.slot))?.template ?? null,
     soulGem: !!soulGem, soulPoints: soulGem ? SOUL_GEM_POINTS : 0,
-    group, baseDps: base.dps, skillId, rows,
+    group, baseDps: base.dps, skillId, rows, imprint,
     onePiece: ONE_PIECE, stacks: STACKS, weaponOnly: WEAPON_ONLY,
   };
 }
