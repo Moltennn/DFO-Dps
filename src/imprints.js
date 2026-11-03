@@ -81,10 +81,9 @@ export function powerDps(power, base, conditional = false, { capped = false } = 
     case 'bane': if (conditional) mult += (power.pct ?? 0) / 100; break;
     case 'unaware': if (conditional) mult += (power.pct ?? 0) / 100; break;
     case 'sanctified': if (conditional) mult += (power.pct ?? 0) / 100; break;
-    case 'moon': if (conditional) mult += (power.beast ?? power.pct ?? 0) / 100; break;
+    case 'moon': if (conditional) mult += ((power.pct ?? 0) + (power.beast ?? 0)) / 100; break;
     case 'rage': if (conditional) mult += (power.pct ?? 0) / 100; break;
-    case 'chain': if (conditional) mult += (power.share ?? 0) / 100; break;
-    case 'quake': if (conditional) mult += (power.share ?? 0) / 100; break;
+    case 'chain': case 'quake': break; // other targets: no single-target gain
     case 'flow': mult += ((power.pct ?? 0) * (power.max ?? 1)) / 100; break;
     case 'echo':
       // Many Endings' extra strike is its own hit, so it gets its own cap.

@@ -182,7 +182,7 @@ function applyPlanDps(ch, plan, target) {
   return { dps: r.totalDps, cappedDps: r.cappedDps, procDps: r.enchantDps, weaponDps: r.cappedDps };
 }
 
-export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, skill = null, group = 'humanoid', repairs = 1, regen = 0, forceSkills = true, target = gateTarget(THEORY_LEVEL) } = {}) {
+export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, skill = null, group = 'humanoid', repairs = 1, regen = 0, forceSkills = false, target = gateTarget(THEORY_LEVEL) } = {}) {
   const pieces = gearPieces({ weapon, shield });
   for (const p of pieces) {
     p.soul = soulGem ? SOUL_GEM_POINTS : 0;
@@ -332,7 +332,7 @@ export function bestWeaponForFamily(family, target) {
 }
 
 /** One plan per weapon family, on that family's best weapon. */
-export function planMatrix({ soulGem = false, repairs = 1, regen = 0, group = 'daedra', forceSkills = true, target = gateTarget(THEORY_LEVEL) } = {}) {
+export function planMatrix({ soulGem = false, repairs = 1, regen = 0, group = 'daedra', forceSkills = false, target = gateTarget(THEORY_LEVEL) } = {}) {
   return IMPRINT_FAMILIES.map((family) => {
     const best = bestWeaponForFamily(family, target);
     if (!best) return { family: family.name, key: family.key, weapon: null, plan: null };

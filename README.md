@@ -140,14 +140,14 @@ Dai-katana. **Boss** is the level-45 gate (Daedra, 600 per-hit cap);
 power's condition where it can occur at the gate (low health, below half).
 Triggers that cannot happen there (undead, dragons, unaware, night, a
 second foe) are marked and do not inflate the boss column. Gains are against
-the row's **On** weapon, which can be a faster family member than the family
-title. Chain and quake are one extra target; poison is before resistance.
-**Many Endings** is an extra strike and therefore its own hit: it gets its
-own cap, which is why it still gains at the gate when Flow or Serpent's Kiss
-do not. **Cast When Strikes** spells are separate hits too; Flow, Serpent's
-Kiss, Potent Vs and the conditional damage powers ride the same hit and share
-its cap. The table says which powers are `same hit`, `extra hit`, `other
-target` or `utility`.
+the row's **On** weapon. `--uncapped` sorts by the uncapped gain;
+`--cap-aware` sorts by boss gain. Chain and quake are one extra target and
+not single-target DPS; poison is before resistance. **Many Endings** is an
+extra strike and therefore its own hit: it gets its own cap, which is why it
+still gains at the gate when Flow or Serpent's Kiss do not. **Cast When
+Strikes** spells are separate hits too; Flow, Serpent's Kiss, Potent Vs and
+the conditional damage powers ride the same hit and share its cap. The table
+says which powers are `same hit`, `extra hit`, `other target` or `utility`.
 
 ```bash
 ./dfo-dps imprints
@@ -170,15 +170,15 @@ and utility), so an empty piece is an explicit "nothing else added capped
 DPS" result, not an omission. Strike payloads (Cast When Strikes, Potent Vs, Low
 Damage Vs) are weapon-only; the weapon's own condition limits how many
 Cast When Strikes rows the gate fight can pay (10 condition a proc).
-`--all` runs every weapon type and prints the best weapon, weapon-skill and
-Critical Strike coverage, procs, gate plan DPS, no-cap plan DPS and spend.
-The weapon package is an exact knapsack under the budget, 10-setting cap and
-proc limit. By default it is future-proof: weapon skill and Critical Strike
-go on **every piece**, so a cap change does not invalidate the setup. Use
-`--cap-aware` for the old current-cap behaviour; then only Short Blade and
-Axe have enough gate headroom to buy skill. `--uncapped` prices the plans
-without the gate cap. For melee, the default layout is one template — only
-the weapon-skill name changes.
+`--all` prints both setups per weapon type: **uncapped theory** (no
+per-hit cap, weapon skill and Critical Strike on every piece) and
+**cap-aware** (the level-45 gate and its 600 cap, skill lines only where
+their marginal DPS is positive). The weapon package is an exact knapsack
+under the budget, 10-setting cap and proc limit. A single `enchant-plan`
+defaults to cap-aware; add `--uncapped` for the theory setup or
+`--cap-aware` explicitly. `--all --uncapped` or `--all --cap-aware` prints
+only that setup. For melee, the uncapped layout is one template — only the
+weapon-skill name changes.
 
 ```bash
 ./dfo-dps enchant-plan --weapon 123

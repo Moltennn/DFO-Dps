@@ -85,3 +85,11 @@ test('Many Endings is a separate hit, so it survives the main hit\'s cap', () =>
   assert.ok(boss > base.cappedDps);
   assert.ok(Math.abs(boss - base.cappedDps * 1.1) < 1e-9);
 });
+
+
+test('moon adds both night and animal shares, and chain/quake are other-target only', () => {
+  const base = maxRun(maxCharacter(123));
+  assert.ok(Math.abs(powerDps({ kind: 'moon', pct: 35, beast: 35 }, base, true) / base.dps - 1.7) < 1e-9);
+  assert.equal(powerDps({ kind: 'chain', share: 50 }, base, true), base.dps);
+  assert.equal(powerDps({ kind: 'quake', share: 25 }, base, true), base.dps);
+});

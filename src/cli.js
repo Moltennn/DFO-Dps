@@ -85,8 +85,8 @@ Common options:
   --build <id,...>                    firmament build(s): longblade, shortblade, axe, blunt, bow, fists, destruction, tank
   --stars <n>                         firmament stars to spend (default 98)
   --refresh                           recompute firmament plans instead of using the cache
-  --all                               enchant-plan: rank every weapon type instead of one weapon
-  --uncapped                          enchant-plan: price plans without the boss per-hit cap
+  --all                               enchant-plan: both uncapped and cap-aware weapon-type matrices
+  --uncapped                          imprints: rank by uncapped DPS; enchant-plan: uncapped theory setup
   --family <key>                      imprints family: LongBlade, ShortBlade, Axe, BluntWeapon, Archery, HandToHand
   --sort <boss|uncapped|conditional>  imprints order (default boss)
   --shield <template|none|auto>       enchant-plan shield (default auto)
@@ -94,7 +94,7 @@ Common options:
   --group <undead|daedra|humanoid|animal>  enchant-plan target for Potent Vs (default daedra)
   --repairs <n>                       Repairs Objects copies on the set (default 1; 0 = none)
   --regen <n>                         Regens Health copies (default 0; heal spells are stronger)
-  --cap-aware                         enchant-plan: only buy +skill where the current cap gives DPS
+  --cap-aware                         enchant-plan: cap-aware setup; imprints: rank by boss DPS
   --pair                              paired Pistolets (2 shots per cycle, off hand x0.8)
   --dual                              dual wield the left-hand weapon (off hand x0.8, -5 hit)
   --spam                              bow spam (BOW_FAST stacks to x0.2; default paced)
@@ -751,44 +751,74 @@ export async function main(argv = process.argv.slice(2)) {
     }
     const repairs = Math.max(0, Math.trunc(n(values.repairs, 1)));
     const regen = Math.max(0, Math.trunc(n(values.regen, 0)));
-    const target = values.uncapped ? referenceFoe(THEORY_LEVEL, 'tough') : gateTarget(THEORY_LEVEL);
+    const gate = gateTarget(THEORY_LEVEL);
+    const uncappedTarget = referenceFoe(THEORY_LEVEL, 'tough');
+    const allModes = [
+      { key: 'uncapped', label: 'Uncapped theory', forceSkills: true, target: uncappedTarget },
+      { key: 'cap', label: 'Cap-aware', forceSkills: false, target: gate },
+    ];
+    const selectedModes = values.uncapped ? [allModes[0]] : values['cap-aware'] ? [allModes[1]] : values.all ? allModes : [allModes[1]];
+
+    const summarize = (matrix) => matrix.map((x) => {
+      const rows = x.plan?.rows ?? [];
+      return {
+        family: x.family, weapon: x.weapon ?? '-', skillPieces: x.skillPieces ?? 0, csPieces: x.csPieces ?? 0,
+        procs: rows[0]?.effects.filter((e) => e.type === 'CastWhenStrikes').length ?? 0,
+        repairs: rows.flatMap((r) => r.effects).filter((e) => e.type === 'RepairsObjects').length,
+        base: x.plan?.baseDps ?? 0, dps: x.plan?.dps ?? 0, futureDps: x.plan?.uncappedPlanDps ?? 0,
+        spent: rows.reduce((a, r) => a + r.spent, 0), budget: rows.reduce((a, r) => a + r.budget, 0),
+        left: rows.reduce((a, r) => a + (r.budget - r.spent), 0),
+      };
+    });
+    const summaryHtml = (summary, modeKey) => {
+      const cap = modeKey === 'cap';
+      const head = `<tr><th>Family</th><th>Best weapon</th><th>Weapon skill pieces</th><th>CS pieces</th><th>Procs</th><th>Repairs</th><th>Weapon DPS</th>${cap ? '<th>Gate plan</th><th>No-cap plan</th>' : '<th>Plan DPS</th>'}<th>Spent</th><th>Left</th></tr>`;
+      return `<div class="table"><table><thead>${head}</thead><tbody>${summary.map((x) => `<tr><td class="k">${x.family}</td><td>${x.weapon}</td><td>${x.skillPieces}</td><td>${x.csPieces}</td><td>${x.procs}</td><td>${x.repairs}</td><td>${fmt(x.base)}</td>${cap ? `<td>${fmt(x.dps)}</td><td>${fmt(x.futureDps)}</td>` : `<td>${fmt(x.dps)}</td>`}<td>${x.spent}</td><td>${x.left}</td></tr>`).join('')}</tbody></table></div>`;
+    };
+    const canonical = (matrix, modeKey) => {
+      const melee = matrix.filter((x) => ['LongBlade', 'ShortBlade', 'Axe', 'BluntWeapon', 'HandToHand'].includes(x.key));
+      return modeKey === 'cap' ? melee.sort((a, b) => (b.skillPieces ?? 0) - (a.skillPieces ?? 0))[0] : melee[0];
+    };
+    const canonicalHtml = (melee) => melee?.plan ? `<div class="table"><h3>Canonical melee layout (${melee.family} - ${melee.weapon})</h3><table><thead><tr><th>Slot</th><th>Item</th><th>Enchantments</th></tr></thead><tbody>${melee.plan.rows.map((r) => `<tr><td class="k">${r.slot}</td><td>${r.item}</td><td style="white-space:normal;min-width:320px">${r.effects.map((e) => effectLine(e)).join('<br>') || '-'}</td></tr>`).join('')}</tbody></table></div>` : '';
+
     if (values.all) {
-      const matrix = planMatrix({ soulGem: !!values['soul-gem'], repairs, regen, group, forceSkills: !values['cap-aware'], target });
-      const summary = matrix.map((x) => {
-        const rows = x.plan?.rows ?? [];
-        return {
-          family: x.family, weapon: x.weapon ?? '-', skillPieces: x.skillPieces ?? 0, csPieces: x.csPieces ?? 0,
-          procs: rows[0]?.effects.filter((e) => e.type === 'CastWhenStrikes').length ?? 0,
-          repairs: rows.flatMap((r) => r.effects).filter((e) => e.type === 'RepairsObjects').length,
-          base: x.plan?.baseDps ?? 0, dps: x.plan?.dps ?? 0, futureDps: x.plan?.uncappedPlanDps ?? 0,
-          spent: rows.reduce((a, r) => a + r.spent, 0), budget: rows.reduce((a, r) => a + r.budget, 0),
-          left: rows.reduce((a, r) => a + (r.budget - r.spent), 0),
-        };
+      const results = selectedModes.map((mode) => {
+        const matrix = planMatrix({ soulGem: !!values['soul-gem'], repairs, regen, group, forceSkills: mode.forceSkills, target: mode.target });
+        return { ...mode, matrix, summary: summarize(matrix), melee: canonical(matrix, mode.key) };
       });
       if (!values.json) {
-        console.log(`Enchant plans by weapon type  |  ${values.uncapped ? 'uncapped' : `gate ${target.hitCap} cap`}  |  ${values['soul-gem'] ? `soul gem +${SOUL_GEM_POINTS}` : 'template points only'}`);
-        console.log(table(summary.map((x) => [x.family, x.weapon, x.skillPieces, x.csPieces, x.procs, x.repairs, fmt(x.base), fmt(x.dps), fmt(x.futureDps), x.spent, x.left]), ['Family', 'Best', 'Weapon skill', 'CS', 'Procs', 'Repairs', 'Weapon DPS', 'Gate plan', 'No-cap plan', 'Spent', 'Left'], ['left', 'left', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right']));
-        const melee = matrix.filter((x) => ['LongBlade', 'ShortBlade', 'Axe', 'BluntWeapon', 'HandToHand'].includes(x.key)).sort((a, b) => (b.skillPieces ?? 0) - (a.skillPieces ?? 0))[0];
-        if (melee?.plan) {
-          console.log(`\nCanonical melee layout (${melee.family} - ${melee.weapon})`);
-          console.log(table(melee.plan.rows.map((r) => [r.slot, r.item, r.effects.map((e) => effectLine(e)).join('; ') || '-']), ['Slot', 'Item', 'Enchantments'], ['left', 'left', 'left']));
+        for (const r of results) {
+          console.log(`
+Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem +${SOUL_GEM_POINTS}` : 'template points only'}`);
+          const cap = r.key === 'cap';
+          console.log(table(r.summary.map((x) => [x.family, x.weapon, x.skillPieces, x.csPieces, x.procs, x.repairs, fmt(x.base), ...(cap ? [fmt(x.dps), fmt(x.futureDps)] : [fmt(x.dps)]), x.spent, x.left]), ['Family', 'Best', 'Weapon skill', 'CS', 'Procs', 'Repairs', 'Weapon DPS', ...(cap ? ['Gate plan', 'No-cap plan'] : ['Plan DPS']), 'Spent', 'Left'], ['left', 'left', 'right', 'right', 'right', 'right', 'right', ...(cap ? ['right', 'right'] : ['right']), 'right', 'right']));
+          if (r.melee?.plan) {
+            console.log(`\nCanonical melee layout (${r.melee.family} - ${r.melee.weapon})`);
+            console.log(table(r.melee.plan.rows.map((row) => [row.slot, row.item, row.effects.map((e) => effectLine(e)).join('; ') || '-']), ['Slot', 'Item', 'Enchantments'], ['left', 'left', 'left']));
+          }
         }
       }
-      const summaryTable = `<div class="table"><table><thead><tr><th>Family</th><th>Best weapon</th><th>Weapon skill pieces</th><th>CS pieces</th><th>Procs</th><th>Repairs</th><th>Weapon DPS</th><th>Gate plan</th><th>No-cap plan</th><th>Spent</th><th>Left</th></tr></thead><tbody>${summary.map((x) => `<tr><td class="k">${x.family}</td><td>${x.weapon}</td><td>${x.skillPieces}</td><td>${x.csPieces}</td><td>${x.procs}</td><td>${x.repairs}</td><td>${fmt(x.base)}</td><td>${fmt(x.dps)}</td><td>${fmt(x.futureDps)}</td><td>${x.spent}</td><td>${x.left}</td></tr>`).join('')}</tbody></table></div>`;
-      const melee = matrix.filter((x) => ['LongBlade', 'ShortBlade', 'Axe', 'BluntWeapon', 'HandToHand'].includes(x.key)).sort((a, b) => (b.skillPieces ?? 0) - (a.skillPieces ?? 0))[0];
-      const meleeTable = melee?.plan ? `<div class="table"><h3>Canonical melee layout (${melee.family} - ${melee.weapon})</h3><table><thead><tr><th>Slot</th><th>Item</th><th>Enchantments</th></tr></thead><tbody>${melee.plan.rows.map((r) => `<tr><td class="k">${r.slot}</td><td>${r.item}</td><td style="white-space:normal;min-width:320px">${r.effects.map((e) => effectLine(e)).join('<br>') || '-'}</td></tr>`).join('')}</tbody></table></div>` : '';
       const out = path.resolve(values.out === 'dfo-dps-report.html' ? 'enchant-plans.html' : values.out);
+      const sections = results.map((r) => ({
+        title: `${r.label} per weapon type`,
+        note: r.key === 'uncapped'
+          ? 'Theoretical maximum: no per-hit cap, weapon skill and Critical Strike on every piece. Every melee family uses the same shape; only the weapon-skill name changes.'
+          : 'Current gate: 600 per-hit cap. Skill lines are bought only where their capped marginal DPS is positive.',
+        chart: '',
+        table: summaryHtml(r.summary, r.key) + canonicalHtml(r.melee),
+      }));
       const html = multiGraphPage({
         title: 'DFO enchant plans by weapon type',
-        subtitle: `${values.uncapped ? 'Uncapped' : `Gate ${target.hitCap} per-hit cap`} | ${values['soul-gem'] ? `soul gem +${SOUL_GEM_POINTS} on every piece` : 'template points only'} | ${values['cap-aware'] ? 'cap-aware skill buying' : 'future-proof: weapon skill + Critical Strike on every piece'}. ${values.uncapped ? 'Every melee family uses the same layout; only the weapon-skill name changes.' : ''}`,
-        sections: [{ title: 'Best per weapon type', note: 'Weapon skill and Critical Strike columns count the pieces that bought +15. Plan DPS applies every chosen skill and weapon proc to the max character.', chart: '', table: summaryTable + meleeTable }],
+        subtitle: `${values['soul-gem'] ? `Soul gem +${SOUL_GEM_POINTS} on every piece` : 'Template points only'} | uncapped theory and cap-aware setups side by side.`,
+        sections,
       });
       fs.writeFileSync(out, html, 'utf8');
       console.log(`enchant plans page written: ${out}`);
-      if (values.json) console.log(JSON.stringify({ target: values.uncapped ? 'uncapped' : 'gate', summary, plans: matrix.map((x) => ({ family: x.family, weapon: x.weapon, rows: x.plan?.rows })) }, null, 2));
+      if (values.json) console.log(JSON.stringify({ modes: results.map((r) => ({ mode: r.key, label: r.label, summary: r.summary, plans: r.matrix.map((x) => ({ family: x.family, weapon: x.weapon, rows: x.plan?.rows })) })) }, null, 2));
       return;
     }
-    const plan = planEnchants({ weapon, shield, soulGem: !!values['soul-gem'], group, repairs, regen, forceSkills: !values['cap-aware'], target });
+    const mode = selectedModes[0];
+    const plan = planEnchants({ weapon, shield, soulGem: !!values['soul-gem'], group, repairs, regen, forceSkills: mode.forceSkills, target: mode.target });
     if (!values.json) {
       console.log(`Enchant plan  |  ${plan.weaponName}${plan.shield ? ` + ${plan.shield}` : ''}  |  ${plan.soulGem ? `soul gem +${SOUL_GEM_POINTS}` : 'template points only'}  |  Potent Vs: ${group}  |  ${plan.maxProcs} strike proc${plan.maxProcs === 1 ? '' : 's'} (condition)`);
       if (plan.imprint?.base) {
@@ -838,7 +868,7 @@ export async function main(argv = process.argv.slice(2)) {
     const html = multiGraphPage({
       title: 'DFO enchant plan',
       subtitle: `${plan.weaponName}${plan.rows.find((r) => /Shield|Buckler/.test(r.slot)) ? ` + ${plan.rows.find((r) => /Shield|Buckler/.test(r.slot)).item}` : ''}; ${plan.soulGem ? `soul gem +${SOUL_GEM_POINTS} on every piece` : 'template enchantment points only'}. Budgets are the game's ItemTemplates enchantmentPoints plus the stated soul gem; a POWER is positive, a side effect negative.`,
-      sections: [{ title: 'Per piece', note: `Boss-first fill against the level-45 gate (${group}, 600 per-hit cap). Backstabbing is not planned: its ×3 is capped after the roll, so +15 Backstabbing adds no capped DPS on the capped weapons. By default weapon skill and Critical Strike go on every piece for future cap changes; --cap-aware buys only what the current cap pays. One-piece effects go out once; Repairs Objects is a player-chosen count (default 1); Regens Health is optional and off by default (heal spells are stronger). Empty pieces have no remaining effect that added capped DPS. Strike procs are capped per hit too; the weapon holds ${plan.maxProcs} proc row${plan.maxProcs === 1 ? '' : 's'} over its ${plan.swings}-swing gate fight (10 condition a proc). ${plan.soulGem ? 'The soul gem is applied to every piece.' : 'No soul gem: base template points only.'}${plan.imprint?.base ? ` The weapon's imprint is separate from this budget: best boss ${plan.imprint.base.power.name} (${fmt(plan.imprint.base.baseDps)} DPS), best uncapped ${plan.imprint.uncapped.power.name} (${fmt(plan.imprint.uncapped.uncappedDps)} DPS).` : ''}`, chart: '', table: pieceTable + oneTable + stackTable + weaponTable + ratingTable }],
+      sections: [{ title: 'Per piece', note: `Boss-first fill against the level-45 gate (${group}, 600 per-hit cap). Backstabbing is not planned: its ×3 is capped after the roll, so +15 Backstabbing adds no capped DPS on the capped weapons. Uncapped theory puts weapon skill and Critical Strike on every piece; cap-aware buys only what the current cap pays. One-piece effects go out once; Repairs Objects is a player-chosen count (default 1); Regens Health is optional and off by default (heal spells are stronger). Empty pieces have no remaining effect that added capped DPS. Strike procs are capped per hit too; the weapon holds ${plan.maxProcs} proc row${plan.maxProcs === 1 ? '' : 's'} over its ${plan.swings}-swing gate fight (10 condition a proc). ${plan.soulGem ? 'The soul gem is applied to every piece.' : 'No soul gem: base template points only.'}${plan.imprint?.base ? ` The weapon's imprint is separate from this budget: best boss ${plan.imprint.base.power.name} (${fmt(plan.imprint.base.baseDps)} DPS), best uncapped ${plan.imprint.uncapped.power.name} (${fmt(plan.imprint.uncapped.uncappedDps)} DPS).` : ''}`, chart: '', table: pieceTable + oneTable + stackTable + weaponTable + ratingTable }],
     });
     fs.writeFileSync(out, html, 'utf8');
     if (!values.json) console.log(`enchant plan written: ${out}`);
@@ -852,7 +882,7 @@ export async function main(argv = process.argv.slice(2)) {
       console.error(`unknown imprint family: ${values.family}`);
       process.exit(2);
     }
-    const sort = values.sort === 'uncapped' ? 'uncapped' : values.sort === 'conditional' ? 'conditional' : 'boss';
+    const sort = values.uncapped ? 'uncapped' : values['cap-aware'] ? 'boss' : values.sort === 'uncapped' ? 'uncapped' : values.sort === 'conditional' ? 'conditional' : 'boss';
     const rows = family
       ? rankAll({ firmament: !!values.firmament, vampire: !!values.vampire, sort }).filter((f) => f.key === family.key)
       : rankAll({ firmament: !!values.firmament, vampire: !!values.vampire, sort });
@@ -884,7 +914,7 @@ export async function main(argv = process.argv.slice(2)) {
     });
     const html = multiGraphPage({
       title: 'DFO weapon imprints',
-      subtitle: `The Reforge's Rare imprints on each family's best max-profile weapon${values.firmament ? ', +Firmament' : ''}. Boss is the level-45 gate with its 600 cap; Uncapped is the same weapon without it.`,
+      subtitle: `The Reforge's Rare imprints on each family's best max-profile weapon${values.firmament ? ', +Firmament' : ''}. Boss is the level-45 gate with its 600 cap; Uncapped is the same weapon without it. Ranked by ${sort === 'uncapped' ? 'uncapped' : sort === 'conditional' ? 'trigger' : 'boss'} DPS.`,
       sections,
     });
     fs.writeFileSync(out, html, 'utf8');
