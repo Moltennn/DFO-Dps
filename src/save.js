@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { RACE_NAMES, SKILLS } from './data.js';
+import { RACE_NAMES, SKILL_NAMES, SKILLS } from './data.js';
 
 export function userDataDir(home = os.homedir()) {
   if (process.env.DAGGER_USER_DATA) return path.resolve(process.env.DAGGER_USER_DATA);
@@ -248,5 +248,5 @@ export function characterLabel(ch) {
 }
 
 export function skillName(id) {
-  return SKILLS[Object.keys(SKILLS).find((k) => SKILLS[k] === id)] ?? String(id);
+  return SKILL_NAMES[id] ?? String(id);
 }

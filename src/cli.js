@@ -14,7 +14,7 @@ import { parseArgs } from 'node:util';
 import { BOSS_TRAIT_TEXT, MARTIAL_PATHS, MATERIALS, RACE_NAMES, SOURCE, WEAPONS } from './data.js';
 import { buildReport } from './report.js';
 import {
-  analyze, bossTarget, currentWeaponRow, marginals, rankWeapons, referenceFoe,
+  analyze, bossTarget, currentWeaponRow, marginals, rankAffixes, rankWeapons, referenceFoe,
   syntheticWeapon, weaponOf,
 } from './model.js';
 import {
@@ -233,6 +233,14 @@ function printBuild(ch, r, targetPreset, values) {
   });
   console.log(`\nWhat matters (${r.cap ? 'capped DPS' : 'DPS'})`);
   console.log(table(ms.map((m) => [m.label, `${m.delta >= 0 ? '+' : ''}${fmt(m.delta)}`, `${m.delta >= 0 ? '+' : ''}${fmt(m.pct)}%`]), ['Change', r.cap ? 'Capped DPS' : 'DPS', '%'], ['left', 'right', 'right']));
+  const affixes = rankAffixes(marginalCh, r, {
+    target: r.target, core: r.core, traits, health: r.health ?? 0, swing: values.swing,
+    passiveOn: !values['no-passive'], stacks: n(values.stacks, 5), rhythm: values.rhythm,
+    unaware: values.unaware, firstBlow: values['first-blow'], healthShare: n(values['health-share'], 1),
+    critDamage: !values['no-crit-damage'],
+  });
+  console.log(`\nAffixes / enchants (${r.cap ? 'capped DPS' : 'DPS'})`);
+  console.log(table(affixes.map((m) => [m.label, `${m.delta >= 0 ? '+' : ''}${fmt(m.delta)}`, `${m.delta >= 0 ? '+' : ''}${fmt(m.pct)}%`]), ['Change', r.cap ? 'Capped DPS' : 'DPS', '%'], ['left', 'right', 'right']));
   const ranking = rankWeapons(ch, {
     target: r.target, core: r.core, traits, health: r.health ?? 0, swing: values.swing,
     passiveOn: !values['no-passive'], stacks: n(values.stacks, 5), rhythm: values.rhythm,
@@ -263,10 +271,10 @@ export async function main(argv = process.argv.slice(2)) {
     console.error(`\n${HELP}`);
     process.exit(2);
   }
+  const parsed = parseArgs({ args: argv, options: optsSpec, allowPositionals: true, strict: true });
+  values = parsed.values;
   if (values.help) { console.log(HELP); return; }
-  const command = argv.find((a, i) => !a.startsWith('-') && (i === 0 || argv[i - 1] !== '--save' && argv[i - 1] !== '--target' && argv[i - 1] !== '--traits' && argv[i - 1] !== '--weapon' && argv[i - 1] !== '--core' && argv[i - 1] !== '--out' && argv[i - 1] !== '--stat')) ?? 'build';
-  const sub = argv[0] === 'rank' ? 'weapons' : null;
-  const cmd = argv[0] === 'rank' ? 'rank' : command;
+  const cmd = parsed.positionals[0] ?? 'build';
 
   if (cmd === 'saves') {
     const saves = listSaves();
@@ -314,7 +322,8 @@ export async function main(argv = process.argv.slice(2)) {
     const html = buildReport(ch, {
       target, core: scenario.core, traits, health: scenario.health, swing: scenario.swing,
       passiveOn: scenario.passiveOn, stacks: scenario.stacks, rhythm: scenario.rhythm,
-      unaware: scenario.unaware, firstBlow: scenario.firstBlow, weapon: scenario.weapon,
+      unaware: scenario.unaware, firstBlow: scenario.firstBlow, healthShare: scenario.healthShare,
+      weapon: scenario.weapon,
     });
     const out = path.resolve(values.out);
     fs.writeFileSync(out, html, 'utf8');

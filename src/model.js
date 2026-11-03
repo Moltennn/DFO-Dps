@@ -542,7 +542,7 @@ export function analyze(ch, {
   const w = weapon === undefined ? weaponOf(ch.weapon) : weapon;
   const t = target ?? { ...referenceFoe(ch.level, 'tough') };
   const tgt = { ...t, group: t.group ?? null, affinity: t.affinity ?? null };
-  const simOpts = { ...opts, passiveOn, critDamage, healthShare: t.healthShare ?? 1 };
+  const simOpts = { ...opts, passiveOn, critDamage, healthShare: opts.healthShare ?? t.healthShare ?? 1 };
   const hit = hitModel(ch, w, tgt, swing, core, simOpts);
   const dmg = damageModel(ch, w, tgt, swing, core, simOpts);
   const c = hit.crit.chance;
@@ -666,6 +666,50 @@ export function rankWeapons(ch, scenario = {}, { top = 20, materials = 10 } = {}
   }
   rows.sort((a, b) => b.cappedDps - a.cappedDps || b.dps - a.dps);
   return rows.slice(0, top);
+}
+
+
+/** Affix / enchant what-ifs on the equipped weapon (or the selected one). */
+export function rankAffixes(ch, baseline, scenario = {}) {
+  const w = weaponOf(ch.weapon);
+  if (!w) return [];
+  const base = baseline.cappedDps ?? baseline.dps;
+  const skillId = w.skillId;
+  const rows = [];
+  const run = (label, fn) => {
+    const c = JSON.parse(JSON.stringify(ch));
+    fn(c);
+    const r = analyze(c, { ...scenario, weapon: undefined });
+    const dps = r.cappedDps ?? r.dps;
+    rows.push({ label, dps, delta: dps - base, pct: base > 0 ? (dps / base - 1) * 100 : 0 });
+  };
+  for (const v of [5, 10, 15]) {
+    run(`+${v}% damage affix`, (c) => {
+      c.weapon = { ...(c.weapon ?? {}), affixes: [...(c.weapon?.affixes ?? []), { id: 'damage', value: v }] };
+    });
+  }
+  for (const v of [5, 10, 20]) {
+    run(`+${v} weapon skill affix`, (c) => {
+      c._mods = c._mods ?? { stats: {}, skills: {} };
+      c._mods.skills = c._mods.skills ?? {};
+      c._mods.skills[skillId] = (c._mods.skills[skillId] ?? 0) + v;
+    });
+  }
+  for (const v of [5, 10]) {
+    run(`+${v} Critical Strike affix`, (c) => {
+      c._mods = c._mods ?? { stats: {}, skills: {} };
+      c._mods.skills = c._mods.skills ?? {};
+      c._mods.skills[SKILLS.CriticalStrike] = (c._mods.skills[SKILLS.CriticalStrike] ?? 0) + v;
+    });
+  }
+  for (const v of [5, 10]) {
+    run(`+${v} Strength affix`, (c) => {
+      c._mods = c._mods ?? { stats: {}, skills: {} };
+      c._mods.stats = c._mods.stats ?? {};
+      c._mods.stats.strength = (c._mods.stats.strength ?? 0) + v;
+    });
+  }
+  return rows;
 }
 
 /** The current weapon with its affixes, for the ranking's comparison row. */

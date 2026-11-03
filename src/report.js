@@ -6,7 +6,7 @@
  */
 import { BOSS_TRAITS, BOSS_TRAIT_TEXT, MATERIALS, MARTIAL_PATHS, SOURCE } from './data.js';
 import { characterLabel } from './save.js';
-import { analyze, bossTarget, currentWeaponRow, marginals, rankWeapons, referenceFoe } from './model.js';
+import { analyze, bossTarget, currentWeaponRow, marginals, rankAffixes, rankWeapons, referenceFoe } from './model.js';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const n1 = (n) => (Number.isFinite(n) ? (Math.round(n * 10) / 10).toFixed(1) : '-');
@@ -96,13 +96,14 @@ function capTable(ch, scenario) {
 export function buildReport(ch, {
   target, core = 'overhaul', traits = [], health = 0, swing = 'StrikeLeft',
   passiveOn = true, stacks = 5, rhythm = false, unaware = false, firstBlow = false,
-  weapon = null,
+  healthShare = 1, weapon = null,
 } = {}) {
   const baseCh = weapon?.item ? { ...ch, weapon: weapon.item } : ch;
-  const scenario = { target, core, traits, health, swing, passiveOn, stacks, rhythm, unaware, firstBlow };
+  const scenario = { target, core, traits, health, swing, passiveOn, stacks, rhythm, unaware, firstBlow, healthShare };
   const r = analyze(baseCh, scenario);
   const w = r.weapon;
   const rs = marginals(baseCh, r, scenario);
+  const affixes = rankAffixes(baseCh, r, scenario);
   const weapons = rankWeapons(baseCh, scenario, { top: 15 });
   const cur = currentWeaponRow(baseCh, scenario);
   const targetLabel = target?.isClass ? 'Human foe' : `Monster, armor ${target?.armorValues?.[0] ?? 0}`;
@@ -180,7 +181,11 @@ export function buildReport(ch, {
       <p class="note">Stats are live-capped at 100. Once a stat reads 100, more points are wasted unless a max-stat effect lifts the ceiling. Weapon skill still pays past 100 online: it adds to hit chance and, through mastery, damage or pace.</p>
     </section>
     <section>
-      <h2>Boss cap sensitivity</h2>
+      <h2>Affixes and enchants</h2>
+  <table><thead><tr><th>Change</th><th>${r.cap ? 'Capped DPS' : 'DPS'}</th><th>%</th><th></th></tr></thead><tbody>${marginalTable(affixes, r.cap ? 'Capped DPS' : 'DPS')}</tbody></table>
+  <p class="note">Affixes are the loot-rarity lines. <b>+N% damage</b> is the weapon's own roll multiplier. <b>+N weapon skill</b> is a gear skill line: it adds to hit chance and, online, to the past-100 mastery and gear damage. <b>+N Strength</b> is a stat line and is wasted once the live stat is at 100. Enchantment procs (CastWhenStrikes) are not scored in v1.</p>
+
+  <h2>Boss cap sensitivity</h2>
       <table><thead><tr><th>Boss HP</th><th>Cap</th><th>DPS</th><th>Capped</th><th>Loss</th><th>TTK</th></tr></thead><tbody>${capTable(baseCh, scenario)}</tbody></table>
       <p class="note"><b>Curbing</b> binds only when a blow would take more than 5% of the boss's maximum health. At this build's per-hit, that starts below about ${Math.round((r.damage.max / 0.05)).toLocaleString()} HP. Above it, the cap does nothing.</p>
     </section>
@@ -205,6 +210,7 @@ export function buildReport(ch, {
   <table><tbody>
     <tr><td class="k">Combat core</td><td class="d">${esc(core === 'overhaul' ? 'Physical Combat And Armor Overhaul v1.44 (default)' : 'Classic DFO / Daggerfall Unity FormulaHelper')}</td></tr>
     <tr><td class="k">Online rules</td><td class="d">${ch.online ? 'on - past-100 weapon mastery, gear skill affixes' : 'off - past-100 skills read as 100'}</td></tr>
+    <tr><td class="k">Weapon condition</td><td class="d">${pct(r.notes.condition)}${r.notes.condition < 1 ? ' - the overhaul\'s condition multiplier is applied' : ''}</td></tr>
     <tr><td class="k">Martial path</td><td class="d">${esc(ch.martialPath ? `${MARTIAL_PATHS[ch.martialPath]?.name ?? ch.martialPath} - ${MARTIAL_PATHS[ch.martialPath]?.passive ?? ''}` : 'none')}</td></tr>
     <tr><td class="k">Mentor</td><td class="d">off (solo build planning)</td></tr>
     <tr><td class="k">Armor</td><td class="d">damage is shown before the foe's worn/natural armor reduction; the game's Combat Stats card does the same</td></tr>
