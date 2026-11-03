@@ -2,10 +2,12 @@
  * dfo-dps - tiny dependency-free SVG line charts for the single-file reports.
  */
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const COLORS = ['#c08a3e', '#7fae6a', '#c25b4e', '#6fa8dc', '#c9a0dc'];
+const COLORS = ['#c08a3e', '#7fae6a', '#c25b4e', '#6fa8dc', '#c9a0dc', '#e0d36a', '#8fd3c7', '#d98cb3'];
 
 export function lineChart({ title, xLabel, yLabel, series, width = 920, height = 430 }) {
-  const left = 64, right = 24, top = 46, bottom = 54;
+  const legendCols = 5;
+  const legendRows = Math.max(1, Math.ceil(series.length / legendCols));
+  const left = 64, right = 24, top = 46 + (legendRows - 1) * 16, bottom = 54;
   const w = width - left - right, h = height - top - bottom;
   const all = series.flatMap((s) => s.points.map((p) => p.y));
   const xs = series.flatMap((s) => s.points.map((p) => p.x));
@@ -32,7 +34,10 @@ export function lineChart({ title, xLabel, yLabel, series, width = 920, height =
     const dots = s.points.map((p) => `<circle cx="${sx(p.x).toFixed(1)}" cy="${sy(p.y).toFixed(1)}" r="2.2" fill="${COLORS[i % COLORS.length]}"><title>${esc(s.name)} ${p.x}: ${p.y.toFixed(2)}</title></circle>`).join('');
     return `<polyline points="${pts}" fill="none" stroke="${COLORS[i % COLORS.length]}" stroke-width="2"/>${dots}`;
   }).join('');
-  const legend = series.map((s, i) => `<g transform="translate(${left + i * 190}, ${top - 18})"><rect width="10" height="10" fill="${COLORS[i % COLORS.length]}"/><text x="15" y="9" fill="#e9e4d9" font-size="12">${esc(s.name)}</text></g>`).join('');
+  const legend = series.map((s, i) => {
+    const col = i % legendCols, row = Math.floor(i / legendCols);
+    return `<g transform="translate(${left + col * 170}, ${top - 18 - row * 16})"><rect width="10" height="10" fill="${COLORS[i % COLORS.length]}"/><text x="15" y="9" fill="#e9e4d9" font-size="12">${esc(s.name)}</text></g>`;
+  }).join('');
   return `<svg viewBox="0 0 ${width} ${height}" width="100%" role="img" aria-label="${esc(title)}" style="display:block;max-width:100%;height:auto">
     <rect x="0" y="0" width="${width}" height="${height}" fill="#12100e"/>
     <text x="${left}" y="22" fill="#e0b76a" font-size="16" font-family="Georgia,serif">${esc(title)}</text>
@@ -70,4 +75,32 @@ export function multiGraphPage({ title, subtitle, sections, width = 1100 }) {
   .k{color:#e9e4d9}
 </style></head>
 <body><main><h1>${esc(title)}</h1><p>${esc(subtitle)}</p>${body}</main></body></html>`;
+}
+
+
+/** A horizontal grouped bar chart: one label per row, one thin bar per series. */
+export function barChart({ title, labels, series, width = 920, unit = '' }) {
+  const left = 170, right = 70, top = 48, rowH = 26, bottom = 24;
+  const height = top + labels.length * rowH + bottom;
+  const max = Math.max(1, ...series.flatMap((s) => s.values));
+  const w = width - left - right;
+  const sx = (v) => left + (v / max) * w;
+  const rows = labels.map((label, i) => {
+    const y = top + i * rowH;
+    const n = series.length;
+    const bh = Math.max(3, (rowH - 7) / n - 1);
+    const bars = series.map((s, j) => {
+      const val = s.values[i];
+      const by = y + 3 + j * (bh + 1);
+      const bw = Math.max(1, sx(val) - left);
+      return `<rect x="${left}" y="${by}" width="${bw}" height="${bh}" fill="${COLORS[j % COLORS.length]}" rx="2"/><text x="${left + bw + 6}" y="${by + bh - 1}" fill="#a8a092" font-size="10">${val.toFixed(0)}${esc(unit)}</text>`;
+    }).join('');
+    return `<text x="${left - 8}" y="${y + rowH / 2 + 4}" fill="#e9e4d9" font-size="11" text-anchor="end">${esc(label)}</text>${bars}`;
+  }).join('');
+  const legend = series.map((s, j) => `<g transform="translate(${left + j * 190}, ${top - 20})"><rect width="10" height="10" fill="${COLORS[j % COLORS.length]}"/><text x="15" y="9" fill="#e9e4d9" font-size="12">${esc(s.name)}</text></g>`).join('');
+  return `<svg viewBox="0 0 ${width} ${height}" width="100%" role="img" aria-label="${esc(title)}" style="display:block;max-width:100%;height:auto">
+    <rect x="0" y="0" width="${width}" height="${height}" fill="#12100e"/>
+    <text x="${left}" y="24" fill="#e0b76a" font-size="16" font-family="Georgia,serif">${esc(title)}</text>
+    ${legend}${rows}
+  </svg>`;
 }

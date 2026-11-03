@@ -111,18 +111,22 @@ Use `--firmament` for the +15 channel ceiling, or enter your own stars:
 
 The `theory` output prices every star channel from +0 to +15 at the ceiling, and the blow channel from +0% to +30%. The short version: **Strength** is the only attribute that keeps paying past 100 (damage and RRI swing speed); **Speed** is clamped to 98/100 by the swing law; **Agility** only moves on integer thresholds; **Luck** needs 125 to move the critical divisor, so +15 is dead. Skill stars are small: Long Blade +15 is +6.6% mastery, Critical Strike +15 is +0.15 critical multiplier, and Backstabbing is already at 100% chance.
 
-## Skill scaling page
+## Weapon ceiling page
 
-`skills` writes a self-contained HTML page you can open directly. It holds attributes at the live maximum and varies only skill level, so the raw/gear/star curves are not mixed with stat changes.
+`weapons` writes a self-contained HTML page you can open directly. It compares every melee weapon at the best build the model can justify, then shows how each weapon family's damage scales with its own skill.
 
 ```bash
-./dfo-dps skills                    # writes ./skills.html
-./dfo-dps skills --out ~/dfo-skills.html
-./dfo-dps skills --firmament        # attributes 115, skill stars +15, Firmament blow +30%
-./dfo-dps skills --blade 121 --race redguard
+./dfo-dps weapons                   # writes ./weapons.html
+./dfo-dps weapons --vampire         # true ceiling: vampire +30 Critical Strike
+./dfo-dps weapons --firmament       # charts use 115 attributes, +15 skill stars, +30% Firmament blow
+./dfo-dps weapons --out ~/dfo-weapons.html
 ```
 
-The page has six charts: raw skill 100 -> 200 with no gear, the same against the gate cap, gear skill 0 -> its practical cap, the gate-capped gear curves, Firmament skill +0 -> +15, and a Hand-to-Hand reference. The H2H reference is the sanity check: with H2H expertise and no Critical Strike gear it reaches the reported ~450 around 320-340 gear points with the Firmament channels, or around 450 without them.
+The max profile is: attributes 100 (115 with `--firmament`), raw weapon skill and Critical Strike 200 mastered, weapon skill gear 240 (8 lines), Critical Strike gear 540 (18 lines), 40% damage affix, the weapon's own career expertise, the best race for that weapon, and the best martial path for its family (Blademaster for blades/blunt, Berserker for axe/H2H). The `Max gear` column is that build; `+ Firmament` adds the star-tree channel ceiling (+15 attributes, +15 skill, +30% blow). The gate column is the same build against the level-45 gate's 600 per-hit cap.
+
+The page has a max-DPS bar chart and table, then two charts per family (raw skill 100 -> 200 and gear skill 0 -> its cap), and one Critical Strike chart across the best weapon of each family. The Hand-to-Hand row is included as the sanity check: with H2H expertise, Berserker below half and no Critical Strike gear it reaches the reported ~450 band around 240 gear points with the Firmament channels, or around 450 without them.
+
+`skills` is kept as an alias for the same page.
 
 ## Graphs
 

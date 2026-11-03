@@ -79,8 +79,8 @@ export function theoryCharacter({
 } = {}) {
   const raceId = typeof race === 'number' ? race : (THEORY_RACES[String(race).toLowerCase()] ?? THEORY_RACES.darkelf);
   const templateIndex = Number(blade);
-  if (!WEAPONS[templateIndex] || WEAPONS[templateIndex].skill !== 'LongBlade') {
-    throw new Error(`theory expects a long-blade template, got ${blade}`);
+  if (!WEAPONS[templateIndex]) {
+    throw new Error(`theory expects a melee weapon template, got ${blade}`);
   }
   const skills = Array.from({ length: 35 }, () => 100);
   skills[SKILLS.LongBlade] = rawBlade;

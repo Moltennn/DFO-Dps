@@ -64,9 +64,9 @@ The level-45 gate is `240 x 50 = 12,000 HP` with a `12 x 50 = 600` per-hit cap a
 
 The `theory` command prices each star channel from +0 to +15. At the ceiling, Strength is the only attribute that still pays (damage plus RRI swing speed); Speed is clamped to 98/100; Agility moves only on integer thresholds; Luck's critical divisor steps at 125, so +15 from 100 does nothing.
 
-## Skill-scaling page
+## Weapon-ceiling page
 
-`skills` renders the same model as a standalone HTML page. Attributes are held at 100 (115 with `--firmament`), and each series varies one skill channel: raw 100 -> 200 with no gear, a gear line 0 -> its practical cap with every other gear channel at 0, and the Firmament skill star +0 -> +15. The Hand-to-Hand reference uses the H2H proficiency flag and no Critical Strike gear; with the Firmament channels it crosses the reported ~450 band around 320-340 gear points. The practical H2H gear cap is 17 lines (510 points: seven armour pieces and ten jewellery slots, never a weapon).
+`weapons` renders the same model as a standalone HTML page. It ranks all sixteen melee templates at a max profile (attributes 100/115, raw weapon skill and Critical Strike 200 mastered, weapon skill gear 240, Critical Strike gear 540, 40% damage affix, the weapon's career expertise, the best race, and the best martial path for the family) and shows raw 100 -> 200 and gear 0 -> 240 curves per family. Axe and H2H use Berserker and are measured below half health; Blunt uses Blademaster at or above half. The Hand-to-Hand reference uses the H2H proficiency flag and no Critical Strike gear; with the Firmament channels it crosses the reported ~450 band around 240 gear points (about 450 without them). The practical H2H gear cap is 17 lines (510 points: seven armour pieces and ten jewellery slots, never a weapon).
 
 ## Backstab and the cap
 

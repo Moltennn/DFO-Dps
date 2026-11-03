@@ -92,12 +92,13 @@ test('the Firmament blow channel raises uncapped DPS and is priced apart from ge
 test('the Hand-to-Hand reference lands in the reported ~450 band', () => {
   assert.equal(GEAR_H2H_LINES, 17);
   const c = theoryFists({
-    gearH2H: 320,
+    gearH2H: 240,
     starStats: { strength: 15, agility: 15, speed: 15, luck: 15 },
     starSkills: { 30: 15, 34: 15, 19: 15 },
     starDamage: 30,
   });
   assert.equal(c.weapon, null);
-  const r = analyze(c, { target: gateTarget(45), core: 'overhaul', rri: true, health: 12000 });
+  c.martialPath = 'berserker';
+  const r = analyze(c, { target: gateTarget(45), core: 'overhaul', rri: true, health: 12000, healthShare: 0.49 });
   assert.ok(r.dps > 420 && r.dps < 480, `H2H at 320 gear + Firmament: ${r.dps}`);
 });

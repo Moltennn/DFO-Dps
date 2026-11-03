@@ -12,11 +12,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import {
-  BOSS_TRAIT_TEXT, GATE_SHIELDS, GATE_SHIELD_S, MARTIAL_PATHS, MATERIALS, RACE_NAMES, SOURCE, WEAPONS,
+  BOSS_TRAIT_TEXT, GATE_SHIELDS, GATE_SHIELD_S, MARTIAL_PATHS, MATERIALS, RACE_NAMES, SKILLS, SOURCE, WEAPONS,
   gateHealth, gateHitCap,
 } from './data.js';
 import { buildReport } from './report.js';
-import { graphPage, lineChart, multiGraphPage } from './graph.js';
+import { barChart, graphPage, lineChart, multiGraphPage } from './graph.js';
 import {
   DAMAGE_AFFIX_MAX, DEFAULT_BLADE, GEAR_CS_LINES, GEAR_H2H_LINES, GEAR_LB_LINES, GEAR_LINE_MAX, GEAR_MASTERY_POINTS,
   GEAR_SKILL_LINES, LONG_BLADES,
@@ -41,7 +41,8 @@ Usage:
   dfo-dps scale [options]             stat/skill scaling curve to the caps
   dfo-dps tradeoff [options]          speed vs damage against real boss pools
   dfo-dps theory [options]            level-45 long-blade ceiling and minmax curves
-  dfo-dps skills [options]            HTML page: skill-level scaling at max attributes
+  dfo-dps weapons [options]           HTML page: all melee weapons, max DPS and skill scaling
+  dfo-dps skills [options]            same page (alias)
   dfo-dps graph [options]             SVG line chart of two or more stats/skills
   dfo-dps saves                       list saves under the DFO user data folder
   dfo-dps doctor                      show save/build/ruleset information
@@ -449,7 +450,7 @@ export async function main(argv = process.argv.slice(2)) {
   values = parsed.values;
   if (values.help) { console.log(HELP); return; }
   const cmd = parsed.positionals[0] ?? 'build';
-  if (cmd === 'theory' || cmd === 'skills') values.theory = true;
+  if (cmd === 'theory' || cmd === 'weapons' || cmd === 'skills') values.theory = true;
 
   if (cmd === 'saves') {
     const saves = listSaves();
@@ -484,117 +485,171 @@ export async function main(argv = process.argv.slice(2)) {
   const scenario = scenarioOf(ch, values, traits, target);
   const r = analyze(ch, scenario);
 
-  if (cmd === 'skills') {
+  if (cmd === 'weapons' || cmd === 'skills') {
     const level = n(values.level, THEORY_LEVEL);
-    const blade = ch.weapon?.templateIndex ?? DEFAULT_BLADE;
-    const material = ch.weapon?.material ?? 9;
-    const { starStats, starSkills } = starOptions(values);
-    const starDamage = values['star-damage'] != null ? n(values['star-damage'], 0) : (values.firmament ? 30 : 0);
-    const damage = values['damage-pct'] != null ? n(values['damage-pct'], 0) : DAMAGE_AFFIX_MAX;
-    const maxLB = GEAR_LB_LINES * GEAR_LINE_MAX;
-    const maxCS = GEAR_CS_LINES * GEAR_LINE_MAX;
-    const maxH2H = GEAR_H2H_LINES * GEAR_LINE_MAX;
-    const baseOpts = { level, race: values.race ?? 'darkelf', blade, material, vampire: values.vampire };
-    const merge = (base, over) => ({ ...base, ...(over ?? {}) });
-    const makeBlade = (over = {}) => theoryCharacter({
-      ...baseOpts,
-      ...over,
-      starStats: merge(starStats, over.starStats),
-      starSkills: merge(starSkills, over.starSkills),
-      starDamage: over.starDamage ?? starDamage,
-    });
-    const makeFists = (over = {}) => theoryFists({
-      ...baseOpts,
-      ...over,
-      starStats: merge(starStats, over.starStats),
-      starSkills: merge(starSkills, over.starSkills),
-      starDamage: over.starDamage ?? starDamage,
-    });
-    const sc = (c, extra = {}) => ({ ...scenarioOf(c, values, traits, target), ...extra });
-    const run = (c, extra = {}) => analyze(c, sc(c, extra));
-    // Isolate one skill at a time: only the varied skill's own gear is on, every other gear channel is 0.
-    const bladeAt = (over) => run(makeBlade({ gearLB: 0, gearCS: 0, damagePct: 0, ...over }));
-    const fistsAt = (over) => run(makeFists({ gearH2H: 0, gearCrit: 0, ...over }));
+    const firmCharts = !!values.firmament;
+    const fixedRace = values.race ? String(values.race).toLowerCase() : null;
+    const vampire = !!values.vampire;
+    const maxWeaponGear = GEAR_LB_LINES * GEAR_LINE_MAX; // 240
+    const maxCritGear = GEAR_CS_LINES * GEAR_LINE_MAX; // 540
+    const maxH2HGear = GEAR_H2H_LINES * GEAR_LINE_MAX; // 510
+    const PROF_OF = Object.freeze({ ShortBlade: 1, LongBlade: 2, HandToHand: 4, Axe: 8, BluntWeapon: 16 });
+    const RACE_KEYS = ['darkelf', 'redguard', 'nord', 'breton', 'highelf', 'woodelf', 'khajiit', 'argonian'];
+    const MELEE = Object.keys(WEAPONS).map(Number).filter((t) => WEAPONS[t]?.skill && WEAPONS[t].skill !== 'Archery');
+    const familyOf = (t) => WEAPONS[t]?.skill ?? 'HandToHand';
+    const gearMaxOf = (t) => (familyOf(t) === 'HandToHand' ? maxH2HGear : maxWeaponGear);
+    const maxTarget = referenceFoe(level, 'tough');
+    const gate = gateTarget(level);
+    const maxRun = (ch, share = 1) => analyze(ch, { target: maxTarget, core: 'overhaul', rri: true, healthShare: share, passiveOn: true, stacks: 5 });
+    const gateRun = (ch) => analyze(ch, { target: gate, core: 'overhaul', rri: true, health: gate.maxHealth, healthShare: 1, passiveOn: true, stacks: 5 });
+    const martialFor = (t) => (familyOf(t) === 'Axe' || familyOf(t) === 'HandToHand' ? 'berserker' : 'blademaster');
+    const shareFor = (t) => (familyOf(t) === 'Axe' || familyOf(t) === 'HandToHand' ? 0.49 : 1);
 
-    const defs = [
-      { id: 'lb', name: 'Long Blade', raw: (v) => bladeAt({ rawBlade: v }), gear: (v) => bladeAt({ gearLB: v }), star: (v) => bladeAt({ gearLB: maxLB, starSkills: { [29]: v } }), gearMax: maxLB },
-      { id: 'cs', name: 'Critical Strike', raw: (v) => bladeAt({ rawCrit: v }), gear: (v) => bladeAt({ gearCS: v }), star: (v) => bladeAt({ gearCS: maxCS, starSkills: { [34]: v } }), gearMax: maxCS },
-      { id: 'bs', name: 'Backstabbing (behind)', raw: (v) => run(makeBlade({ rawBackstab: v }), { backstabUptime: 1 }), gear: () => run(makeBlade({}), { backstabUptime: 1 }), star: (v) => run(makeBlade({ starSkills: { [19]: v } }), { backstabUptime: 1 }), gearMax: 0, chart: false },
-      { id: 'h2h', name: 'Hand-to-Hand', raw: (v) => fistsAt({ rawH2H: v }), gear: (v) => fistsAt({ gearH2H: v }), star: (v) => fistsAt({ gearH2H: maxH2H, starSkills: { [30]: v } }), gearMax: maxH2H },
-    ];
-    const rawValues = [100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200];
-    const gearValues = { lb: [0, 30, 60, 90, 120, 150, 180, 210, 240], cs: [0, 60, 120, 180, 240, 300, 360, 420, 480, 540], bs: [0], h2h: [0, 60, 120, 180, 240, 300, 360, 420, 480, 510] };
-    const starValues = [0, 3, 6, 9, 12, 15];
+    const makeMax = (t, {
+      race = 'darkelf', firmament = false, raw = 200, gear = null, critGear = maxCritGear, martial = martialFor(t),
+    } = {}) => {
+      if (familyOf(t) === 'HandToHand') {
+        const starStats = firmament ? { strength: 15, agility: 15, speed: 15, luck: 15 } : {};
+        const starSkills = firmament ? { [SKILLS.HandToHand]: 15, [SKILLS.CriticalStrike]: 15, [SKILLS.Backstabbing]: 15 } : {};
+        const ch = theoryFists({
+          race, rawH2H: raw, gearH2H: gear ?? maxH2HGear, gearCrit: critGear,
+          starStats, starSkills, starDamage: firmament ? 30 : 0, vampire,
+        });
+        ch.martialPath = martial;
+        ch.name = 'Level 45 Hand-to-Hand';
+        return ch;
+      }
+      const tpl = WEAPONS[t];
+      const skillId = SKILLS[tpl.skill];
+      const starStats = firmament ? { strength: 15, agility: 15, speed: 15, luck: 15 } : {};
+      const starSkills = firmament ? { [skillId]: 15, [SKILLS.CriticalStrike]: 15, [SKILLS.Backstabbing]: 15 } : {};
+      const ch = theoryCharacter({
+        blade: t, race, gearLB: 0, gearCS: 0, damagePct: DAMAGE_AFFIX_MAX,
+        vampire, starStats, starSkills, starDamage: firmament ? 30 : 0,
+      });
+      ch.career = { ...(ch.career ?? {}), weaponArmorShieldsBitfield: (PROF_OF[tpl.skill] ?? 0) << 16 };
+      ch.skills[skillId] = raw;
+      ch.masteredSkills = [skillId, SKILLS.CriticalStrike, SKILLS.Backstabbing];
+      ch._mods.skills = {
+        ...(ch._mods.skills ?? {}),
+        [skillId]: (gear ?? maxWeaponGear) + (firmament ? 15 : 0),
+        [SKILLS.CriticalStrike]: critGear + (firmament ? 15 : 0),
+      };
+      ch.martialPath = martial;
+      ch.name = `Level 45 ${tpl.name}`;
+      return ch;
+    };
 
-    const chartDefs = defs.filter((d) => d.chart !== false);
-    const rawSeries = chartDefs.map((d) => ({ name: d.name, points: rawValues.map((v) => ({ x: v, y: d.raw(v).dps })) }));
-    const rawCappedSeries = chartDefs.map((d) => ({ name: d.name, points: rawValues.map((v) => ({ x: v, y: d.raw(v).cappedDps })) }));
-    const gearSeries = chartDefs.filter((d) => d.gearMax > 0).map((d) => ({ name: d.name, points: gearValues[d.id].map((v) => ({ x: v, y: d.gear(v).dps })) }));
-    const gearCappedSeries = chartDefs.filter((d) => d.gearMax > 0).map((d) => ({ name: d.name, points: gearValues[d.id].map((v) => ({ x: v, y: d.gear(v).cappedDps })) }));
-    const starSeries = chartDefs.map((d) => ({ name: d.name, points: starValues.map((v) => ({ x: v, y: d.star(v).dps })) }));
+    const bestRace = (t, { firmament = false } = {}) => {
+      if (fixedRace) return fixedRace;
+      let best = null;
+      for (const race of RACE_KEYS) {
+        const r = maxRun(makeMax(t, { race, firmament }), shareFor(t));
+        if (!best || r.dps > best.dps) best = { race, dps: r.dps };
+      }
+      return best.race;
+    };
 
-    const h2hGear = [0, 60, 120, 180, 240, 300, 360, 420, 450, 480, 510];
-    const h2hBase = h2hGear.map((v) => ({ x: v, y: run(makeFists({ gearH2H: v, gearCrit: 0, starStats: {}, starSkills: {}, starDamage: 0 })).dps }));
-    const h2hFirm = h2hGear.map((v) => ({ x: v, y: run(makeFists({ gearH2H: v, gearCrit: 0, starStats: { strength: 15, agility: 15, speed: 15, luck: 15 }, starSkills: { [30]: 15, [34]: 15, [19]: 15 }, starDamage: 30 })).dps }));
+    const nameOf = (t) => (familyOf(t) === 'HandToHand' ? 'Hand-to-Hand' : WEAPONS[t].name);
+    const rows = MELEE.map((t) => {
+      const race = bestRace(t, { firmament: false });
+      const raceF = bestRace(t, { firmament: true });
+      const ch = makeMax(t, { race, firmament: false });
+      const chF = makeMax(t, { race: raceF, firmament: true });
+      const r = maxRun(ch, shareFor(t));
+      const rF = maxRun(chF, shareFor(t));
+      const healthy = maxRun(ch, 1).dps;
+      const low = (familyOf(t) === 'Axe' || familyOf(t) === 'HandToHand') ? maxRun(ch, 0.49).dps : healthy;
+      const full = healthy > 0 && low > 0 ? (2 * healthy * low) / (healthy + low) : 0;
+      const g = gateRun(ch);
+      const gF = gateRun(chF);
+      return {
+        template: t, name: nameOf(t), skill: familyOf(t), twoHanded: familyOf(t) === 'HandToHand' ? false : WEAPONS[t].twoHanded,
+        path: martialFor(t), race, raceF, maxDps: r.dps, maxDpsF: rF.dps, full, gateDps: g.cappedDps, gateDpsF: gF.cappedDps,
+        gateTtk: g.ttk, gateTtkF: gF.ttk, perSwing: r.perSwing, aps: r.cadence.aps,
+      };
+    }).sort((a, b) => b.maxDpsF - a.maxDpsF || b.maxDps - a.maxDps);
 
     const cell = (v) => (Number.isFinite(v) ? fmt(v) : '-');
-    const rawTable = `<table><thead><tr><th>Skill</th><th>100</th><th>150</th><th>200</th><th>Capped 200</th></tr></thead><tbody>${defs.map((d) => {
-      const at = (v) => d.raw(v);
-      return `<tr><td class="k">${d.name}</td><td>${cell(at(100).dps)}</td><td>${cell(at(150).dps)}</td><td>${cell(at(200).dps)}</td><td>${cell(at(200).cappedDps)}</td></tr>`;
-    }).join('')}</tbody></table>`;
-    const gearTable = `<table><thead><tr><th>Skill</th><th>0</th><th>half</th><th>max</th><th>Capped max</th></tr></thead><tbody>${defs.filter((d) => d.gearMax > 0).map((d) => {
-      const mid = Math.round(d.gearMax / 2 / 30) * 30;
-      return `<tr><td class="k">${d.name}</td><td>${cell(d.gear(0).dps)}</td><td>${cell(d.gear(Math.min(mid, d.gearMax)).dps)}</td><td>${cell(d.gear(d.gearMax).dps)}</td><td>${cell(d.gear(d.gearMax).cappedDps)}</td></tr>`;
-    }).join('')}</tbody></table>`;
-    const starTable = `<table><thead><tr><th>Skill</th><th>+0</th><th>+15</th><th>Delta</th></tr></thead><tbody>${defs.map((d) => {
-      const a = d.star(0).dps, b = d.star(15).dps;
-      return `<tr><td class="k">${d.name}</td><td>${cell(a)}</td><td>${cell(b)}</td><td>${b - a >= 0 ? '+' : ''}${cell(b - a)}</td></tr>`;
-    }).join('')}</tbody></table>`;
-    const h2hTable = `<table><thead><tr><th>H2H gear</th><th>No Firmament</th><th>Firmament</th></tr></thead><tbody>${h2hGear.filter((v) => [0, 200, 300, 400, 450, 510].includes(v)).map((v, i) => `<tr><td class="k">${v}</td><td>${cell(h2hBase[h2hGear.indexOf(v)].y)}</td><td>${cell(h2hFirm[h2hGear.indexOf(v)].y)}</td></tr>`).join('')}</tbody></table>`;
+    const pctCell = (v) => (Number.isFinite(v) ? pc(v) : '-');
+    const maxTable = `<table><thead><tr><th>Weapon</th><th>Skill</th><th>Hands</th><th>Path</th><th>Max gear</th><th>Full gear</th><th>+ Firmament</th><th>Gate</th><th>Gate + Firm</th><th>Gate TTK</th><th>Best race</th></tr></thead><tbody>${rows.map((r) => `<tr><td class="k">${r.name}</td><td>${r.skill}</td><td>${r.twoHanded ? '2H' : '1H'}</td><td>${r.path}</td><td>${cell(r.maxDps)}</td><td>${cell(r.full)}</td><td>${cell(r.maxDpsF)}</td><td>${cell(r.gateDps)}</td><td>${cell(r.gateDpsF)}</td><td>${r.gateTtk ? `${cell(r.gateTtk)} s` : '-'}</td><td>${RACE_NAMES[({ darkelf: 4, redguard: 2, nord: 3, breton: 1, highelf: 5, woodelf: 6, khajiit: 7, argonian: 8 })[r.raceF] ?? r.raceF]}</td></tr>`).join('')}</tbody></table>`;
+    const top = rows[0];
+    const topGear = rows.slice().sort((a, b) => b.maxDps - a.maxDps)[0];
+    const gateTop = rows.slice().sort((a, b) => b.gateDpsF - a.gateDpsF)[0];
+    const absolute = `<b>${top.name}</b> is the absolute uncapped ceiling: <b>${cell(top.maxDpsF)} DPS</b> (${top.path} below half, best race) and <b>${cell(top.gateDpsF)} DPS</b> at the level-45 gate. Its healthy/below-half full-fight rate is <b>${cell(top.full)} DPS</b> on gear alone. On gear alone the top is <b>${topGear.name}</b> at <b>${cell(topGear.maxDps)} DPS</b>. At the gate the cap flips it: <b>${gateTop.name}</b> leads with <b>${cell(gateTop.gateDpsF)} capped DPS</b> and <b>${gateTop.gateTtk ? `${cell(gateTop.gateTtk)} s` : '-'} TTK</b>.<br><br>Max is the weapon's best health share (Axe/H2H below half, Blunt at or above half). Full gear is the healthy/below-half harmonic on gear alone. +Firmament is the star-tree channel ceiling at the same best share. Best race is the +Firmament best.`;
 
-    const statLabel = values.firmament ? '115 (Firmament)' : '100 (base max)';
-    const sections = [
-      {
-        title: 'Raw skill level, no gear',
-        note: `Attributes ${statLabel}. No gear skill lines and no damage affix: this is the raw 100 -> 200 curve alone. Backstabbing is omitted from the chart because raw 100 already gives 100% x3; it is flat in the table.`,
-        chart: lineChart({ title: 'Raw skill 100 -> 200', xLabel: 'Raw skill', yLabel: 'DPS', series: rawSeries }),
-        table: rawTable,
-      },
-      {
-        title: 'Raw skill level, gate-capped',
-        note: 'The same no-gear runs against the level-45 gate: 12,000 HP, 600 per-hit cap. With no gear every blow stays under 600, so the capped line is identical; the cap only starts binding once gear pushes the hit over it.',
-        chart: lineChart({ title: 'Raw skill 100 -> 200 (gate-capped)', xLabel: 'Raw skill', yLabel: 'Capped DPS', series: rawCappedSeries }),
-      },
-      {
-        title: 'Gear skill lines, raw 200',
-        note: 'Each gear line is 30 points at the legendary maximum. Long Blade stops at 8 lines (240), Critical Strike at 18 (540), Hand-to-Hand at 17 (510). Uncapped DPS.',
-        chart: lineChart({ title: 'Gear skill 0 -> practical cap', xLabel: 'Gear skill points', yLabel: 'DPS', series: gearSeries }),
-        table: gearTable,
-      },
-      {
-        title: 'Gear skill lines, gate-capped',
-        note: 'Against the gate the cap flattens every gear curve. Long Blade saturates first; Critical Strike keeps paying longest because its multiplier has no formula cap.',
-        chart: lineChart({ title: 'Gear skill 0 -> practical cap (gate-capped)', xLabel: 'Gear skill points', yLabel: 'Capped DPS', series: gearCappedSeries }),
-      },
-      {
-        title: 'Firmament skill stars, gear max',
-        note: 'The star channel is +15 per skill, on top of effectiveSkill(raw). It is small next to gear: Long Blade +15 is +6.6% mastery, Critical Strike +15 is +0.15 critical multiplier. Uncapped DPS.',
-        chart: lineChart({ title: 'Firmament skill 0 -> +15', xLabel: 'Star points', yLabel: 'DPS', series: starSeries }),
-        table: starTable,
-      },
-      {
-        title: 'Hand-to-Hand reference, raw 200',
-        note: 'A H2H build with H2H expertise and no Critical Strike gear. The reported ~450 sits on this curve around 320-340 gear points with the Firmament channels, or around 450 gear without them. Level-45 gate; H2H stays under the 600 per-hit cap here.',
-        chart: lineChart({ title: 'Hand-to-Hand 0 -> 510 gear points', xLabel: 'H2H gear points', yLabel: 'DPS', series: [{ name: 'No Firmament', points: h2hBase }, { name: 'Firmament', points: h2hFirm }] }),
-        table: h2hTable,
-      },
+    const chartFirm = `<svg viewBox="0 0 920 10" width="100%" height="0" aria-hidden="true"></svg>`;
+    const bar = barChart({
+      title: 'Maximum uncapped DPS by weapon',
+      labels: rows.map((r) => r.name),
+      series: [
+        { name: 'Max gear', values: rows.map((r) => r.maxDps) },
+        { name: '+ Firmament', values: rows.map((r) => r.maxDpsF) },
+      ],
+    });
+
+    const families = [
+      { key: 'LongBlade', title: 'Long blades', templates: [118, 119, 120, 121, 122, 123] },
+      { key: 'ShortBlade', title: 'Short blades', templates: [113, 114, 116, 117] },
+      { key: 'BluntWeapon', title: 'Blunt weapons', templates: [115, 124, 125, 126] },
+      { key: 'Axe', title: 'Axes', templates: [127, 128] },
+      { key: 'HandToHand', title: 'Hand-to-Hand', templates: [null] },
     ];
-    const subtitle = `Level ${level} ${RACE_NAMES[ch.raceId] ?? ch.race} | attributes ${statLabel} | Daedric ${WEAPONS[blade].name} | target gate level ${target.level} (${target.maxHealth.toLocaleString()} HP, ${target.hitCap ?? 600} per-hit cap) | gear maxima LB ${maxLB}, CS ${maxCS}, H2H ${maxH2H}`;
-    const html = multiGraphPage({ title: 'DFO skill scaling at max attributes', subtitle, sections });
-    const out = path.resolve(values.out === 'dfo-dps-report.html' ? 'skills.html' : values.out);
+    const rawVals = [100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200];
+    const familySections = families.map((f) => {
+      const gearMax = f.key === 'HandToHand' ? maxH2HGear : maxWeaponGear;
+      const gearVals = f.key === 'HandToHand' ? [0, 60, 120, 180, 240, 300, 360, 420, 480, 510] : [0, 30, 60, 90, 120, 150, 180, 210, 240];
+      const rawSeries = f.templates.map((t) => {
+        const race = bestRace(t, { firmament: firmCharts });
+        return {
+          name: nameOf(t),
+          points: rawVals.map((v) => ({ x: v, y: maxRun(makeMax(t, { race, firmament: firmCharts, raw: v }), shareFor(t)).dps })),
+        };
+      });
+      const gearSeries = f.templates.map((t) => {
+        const race = bestRace(t, { firmament: firmCharts });
+        return {
+          name: nameOf(t),
+          points: gearVals.map((v) => ({ x: v, y: maxRun(makeMax(t, { race, firmament: firmCharts, gear: v }), shareFor(t)).dps })),
+        };
+      });
+      const note = `${f.key === 'HandToHand' ? 'H2H gear 0 -> 510.' : `Gear 0 -> ${gearMax}.`} Top: raw skill 100 -> 200. Bottom: gear skill. Max gear, best race, career expertise, best path, 40% damage affix, no per-hit cap.${f.key === 'Axe' ? ' Axe uses Berserker and is measured below half health for its 2x climb.' : f.key === 'BluntWeapon' ? ' Blunt uses Blademaster and is measured at or above half health for its 2x climb.' : f.key === 'HandToHand' ? ' H2H uses Berserker and is measured below half health; the reported ~450 sits around 240 gear points with the Firmament channels, or around 450 without them (run --firmament to see the star version).' : ''}${firmCharts ? ' Firmament channels on.' : ''}`;
+      return {
+        title: f.title,
+        note,
+        chart: lineChart({ title: `${f.title}: raw skill`, xLabel: 'Raw skill', yLabel: 'DPS', series: rawSeries })
+          + `<div style="height:14px"></div>`
+          + lineChart({ title: `${f.title}: gear skill`, xLabel: 'Gear skill points', yLabel: 'DPS', series: gearSeries }),
+      };
+    });
+
+    const topPerFamily = families.map((f) => rows.find((r) => familyOf(r.template) === f.key)).filter(Boolean);
+    const csVals = [0, 60, 120, 180, 240, 300, 360, 420, 480, 540];
+    const csSeries = topPerFamily.map((row) => ({
+      name: row.name,
+      points: csVals.map((v) => ({ x: v, y: maxRun(makeMax(row.template, { race: row.raceF, firmament: firmCharts, critGear: v }), shareFor(row.template)).dps })),
+    }));
+    const csSection = {
+      title: 'Critical Strike scales every weapon',
+      note: 'The best weapon of each family, raw 200 and max weapon gear, with Critical Strike gear from 0 to 540. Critical Strike is the shared multiplier: chance caps at 100%, then every point adds 0.01 to the multiplier.',
+      chart: lineChart({ title: 'Critical Strike gear 0 -> 540', xLabel: 'Critical Strike gear points', yLabel: 'DPS', series: csSeries }),
+    };
+
+    const subtitle = `Level ${level} | attributes 100 base / 115 Firmament | best race per weapon | career expertise | best martial path per family (Blademaster / Berserker) | 40% damage affix | target: level-${level} tough, no per-hit cap | gate column: ${gate.maxHealth.toLocaleString()} HP, ${gate.hitCap} per-hit cap${vampire ? ' | vampire +30 CS' : ''}`;
+    const html = multiGraphPage({
+      title: 'DFO weapon ceiling and skill scaling',
+      subtitle,
+      sections: [
+        { title: 'Absolute maximum', note: absolute, chart: bar, table: maxTable },
+        ...familySections,
+        csSection,
+      ],
+    });
+    const defaultOut = cmd === 'weapons' ? 'weapons.html' : 'skills.html';
+    const out = path.resolve(values.out === 'dfo-dps-report.html' ? defaultOut : values.out);
     fs.writeFileSync(out, html, 'utf8');
-    if (!values.json) console.log(`skills page written: ${out}`);
-    if (values.json) console.log(JSON.stringify({ raw: rawSeries, rawCapped: rawCappedSeries, gear: gearSeries, gearCapped: gearCappedSeries, stars: starSeries, h2h: { base: h2hBase, firmament: h2hFirm } }, null, 2));
+    if (!values.json) console.log(`weapons page written: ${out}`);
+    if (values.json) console.log(JSON.stringify({ level, firmCharts, rows, cs: csSeries }, null, 2));
     return;
   }
 
