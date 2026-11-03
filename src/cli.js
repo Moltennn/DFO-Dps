@@ -20,7 +20,7 @@ import { buildReport } from './report.js';
 import { barChart, graphPage, lineChart, multiGraphPage } from './graph.js';
 import { FIRMAMENT_NODES, buildById, buildIds, firmamentSection, planBuild, planFromTree, planKey, planSummary } from './firmament.js';
 import { imprintFamilyById, rankAll } from './imprints.js';
-import { effectLine, planEnchants, SOUL_GEM_POINTS } from './enchantPlan.js';
+import { effectLine, planEnchants, planMatrix, SOUL_GEM_POINTS } from './enchantPlan.js';
 import { enchantmentName as enchantmentNameOf } from './enchantData.js';
 import { analyzeSpell, resolveSpells, spellCost, spellRotation, standardSpells } from './spells.js';
 import { ENCHANTMENT_TYPES, castWhenStrikes, enchantDps, procsBeforeBreak, strikeEnchantments } from './enchants.js';
@@ -85,6 +85,8 @@ Common options:
   --build <id,...>                    firmament build(s): longblade, shortblade, axe, blunt, bow, fists, destruction, tank
   --stars <n>                         firmament stars to spend (default 98)
   --refresh                           recompute firmament plans instead of using the cache
+  --all                               enchant-plan: rank every weapon type instead of one weapon
+  --uncapped                          enchant-plan: price plans without the boss per-hit cap
   --family <key>                      imprints family: LongBlade, ShortBlade, Axe, BluntWeapon, Archery, HandToHand
   --sort <boss|uncapped|conditional>  imprints order (default boss)
   --shield <template|none|auto>       enchant-plan shield (default auto)
@@ -747,7 +749,44 @@ export async function main(argv = process.argv.slice(2)) {
     }
     const repairs = Math.max(0, Math.trunc(n(values.repairs, 1)));
     const regen = Math.max(0, Math.trunc(n(values.regen, 0)));
-    const plan = planEnchants({ weapon, shield, soulGem: !!values['soul-gem'], group, repairs, regen });
+    const target = values.uncapped ? referenceFoe(THEORY_LEVEL, 'tough') : gateTarget(THEORY_LEVEL);
+    if (values.all) {
+      const matrix = planMatrix({ soulGem: !!values['soul-gem'], repairs, regen, group, target });
+      const summary = matrix.map((x) => {
+        const rows = x.plan?.rows ?? [];
+        return {
+          family: x.family, weapon: x.weapon ?? '-', skillPieces: x.skillPieces ?? 0, csPieces: x.csPieces ?? 0,
+          procs: rows[0]?.effects.filter((e) => e.type === 'CastWhenStrikes').length ?? 0,
+          repairs: rows.flatMap((r) => r.effects).filter((e) => e.type === 'RepairsObjects').length,
+          base: x.plan?.baseDps ?? 0, dps: x.plan?.dps ?? 0,
+          spent: rows.reduce((a, r) => a + r.spent, 0), budget: rows.reduce((a, r) => a + r.budget, 0),
+          left: rows.reduce((a, r) => a + (r.budget - r.spent), 0),
+        };
+      });
+      if (!values.json) {
+        console.log(`Enchant plans by weapon type  |  ${values.uncapped ? 'uncapped' : `gate ${target.hitCap} cap`}  |  ${values['soul-gem'] ? `soul gem +${SOUL_GEM_POINTS}` : 'template points only'}`);
+        console.log(table(summary.map((x) => [x.family, x.weapon, x.skillPieces, x.csPieces, x.procs, x.repairs, fmt(x.base), fmt(x.dps), x.spent, x.left]), ['Family', 'Best', 'Weapon skill', 'CS', 'Procs', 'Repairs', 'Weapon DPS', 'Plan DPS', 'Spent', 'Left'], ['left', 'left', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right']));
+        const melee = matrix.filter((x) => ['LongBlade', 'ShortBlade', 'Axe', 'BluntWeapon', 'HandToHand'].includes(x.key)).sort((a, b) => (b.skillPieces ?? 0) - (a.skillPieces ?? 0))[0];
+        if (melee?.plan) {
+          console.log(`\nCanonical melee layout (${melee.family} - ${melee.weapon})`);
+          console.log(table(melee.plan.rows.map((r) => [r.slot, r.item, r.effects.map((e) => effectLine(e)).join('; ') || '-']), ['Slot', 'Item', 'Enchantments'], ['left', 'left', 'left']));
+        }
+      }
+      const summaryTable = `<div class="table"><table><thead><tr><th>Family</th><th>Best weapon</th><th>Weapon skill pieces</th><th>CS pieces</th><th>Procs</th><th>Repairs</th><th>Weapon DPS</th><th>Plan DPS</th><th>Spent</th><th>Left</th></tr></thead><tbody>${summary.map((x) => `<tr><td class="k">${x.family}</td><td>${x.weapon}</td><td>${x.skillPieces}</td><td>${x.csPieces}</td><td>${x.procs}</td><td>${x.repairs}</td><td>${fmt(x.base)}</td><td>${fmt(x.dps)}</td><td>${x.spent}</td><td>${x.left}</td></tr>`).join('')}</tbody></table></div>`;
+      const melee = matrix.filter((x) => ['LongBlade', 'ShortBlade', 'Axe', 'BluntWeapon', 'HandToHand'].includes(x.key)).sort((a, b) => (b.skillPieces ?? 0) - (a.skillPieces ?? 0))[0];
+      const meleeTable = melee?.plan ? `<div class="table"><h3>Canonical melee layout (${melee.family} - ${melee.weapon})</h3><table><thead><tr><th>Slot</th><th>Item</th><th>Enchantments</th></tr></thead><tbody>${melee.plan.rows.map((r) => `<tr><td class="k">${r.slot}</td><td>${r.item}</td><td style="white-space:normal;min-width:320px">${r.effects.map((e) => effectLine(e)).join('<br>') || '-'}</td></tr>`).join('')}</tbody></table></div>` : '';
+      const out = path.resolve(values.out === 'dfo-dps-report.html' ? 'enchant-plans.html' : values.out);
+      const html = multiGraphPage({
+        title: 'DFO enchant plans by weapon type',
+        subtitle: `${values.uncapped ? 'Uncapped' : `Gate ${target.hitCap} per-hit cap`} | ${values['soul-gem'] ? `soul gem +${SOUL_GEM_POINTS} on every piece` : 'template points only'}. ${values.uncapped ? 'Every melee family converges on the same layout: weapon skill + Critical Strike on every piece, three weapon procs, one Repairs. Only the weapon-skill name changes.' : 'At the gate only the families with per-hit headroom buy weapon skill; the capped families leave those points empty.'}`,
+        sections: [{ title: 'Best per weapon type', note: 'Weapon skill and Critical Strike columns count the pieces that bought +15. Plan DPS applies every chosen skill and weapon proc to the max character.', chart: '', table: summaryTable + meleeTable }],
+      });
+      fs.writeFileSync(out, html, 'utf8');
+      console.log(`enchant plans page written: ${out}`);
+      if (values.json) console.log(JSON.stringify({ target: values.uncapped ? 'uncapped' : 'gate', summary, plans: matrix.map((x) => ({ family: x.family, weapon: x.weapon, rows: x.plan?.rows })) }, null, 2));
+      return;
+    }
+    const plan = planEnchants({ weapon, shield, soulGem: !!values['soul-gem'], group, repairs, regen, target });
     if (!values.json) {
       console.log(`Enchant plan  |  ${plan.weaponName}${plan.shield ? ` + ${plan.shield}` : ''}  |  ${plan.soulGem ? `soul gem +${SOUL_GEM_POINTS}` : 'template points only'}  |  Potent Vs: ${group}  |  ${plan.maxProcs} strike proc${plan.maxProcs === 1 ? '' : 's'} (condition)`);
       if (plan.imprint?.base) {

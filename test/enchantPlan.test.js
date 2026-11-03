@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { gearPieces, planEnchants, SOUL_GEM_POINTS } from '../src/enchantPlan.js';
+import { gearPieces, planEnchants, planMatrix, SOUL_GEM_POINTS } from '../src/enchantPlan.js';
+import { referenceFoe } from '../src/model.js';
 import { ITEM_ENCHANTMENT_MAX } from '../src/enchantData.js';
 
 test('a two-handed weapon has no shield, a one-handed one does', () => {
@@ -61,4 +62,17 @@ test('strike enchantments only sit on the weapon', () => {
     if (row.slot !== 'Weapon') assert.ok(!row.effects.some((e) => e.type === 'CastWhenStrikes'), row.slot);
   }
   assert.ok(plan.rows[0].effects.some((e) => e.type === 'CastWhenStrikes'));
+});
+
+
+test('the weapon-type matrix prices every family on its best weapon', () => {
+  const gate = planMatrix({ soulGem: true });
+  assert.equal(gate.length, 6);
+  assert.ok(gate.every((x) => x.plan && x.plan.dps > 0));
+  const uncapped = planMatrix({ soulGem: true, target: referenceFoe(45, 'tough') });
+  for (const id of ['LongBlade', 'ShortBlade', 'Axe', 'BluntWeapon', 'HandToHand']) {
+    const row = uncapped.find((x) => x.key === id);
+    assert.ok(row.skillPieces >= 15, `${id} weapon skill pieces ${row.skillPieces}`);
+    assert.ok(row.csPieces >= 15, `${id} CS pieces ${row.csPieces}`);
+  }
 });

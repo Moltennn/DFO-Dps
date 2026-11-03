@@ -10,7 +10,7 @@
 import { SKILLS, WEAPONS } from './data.js';
 import { THEORY_LEVEL } from './theory.js';
 import { cappedDpsWith, maxCharacter, maxRun } from './maxprofile.js';
-import { imprintsFor, powerDps } from './imprints.js';
+import { IMPRINT_FAMILIES, imprintsFor, powerDps } from './imprints.js';
 import { gateTarget } from './model.js';
 import { enchantDps, ENCHANTMENT_TYPES } from './enchants.js';
 import {
@@ -135,6 +135,53 @@ function weaponCandidates(ch, base, group, target) {
 }
 
 /** A priority plan: one-piece utilities first, then skills, then regeneration. */
+/** Exact best weapon package under the item budget, the 10-setting cap and the proc limit. */
+function selectWeaponCandidates(cands, budget, maxProcs) {
+  const states = new Map([['0|0|0', { value: 0, picks: [] }]]);
+  for (const c of cands) {
+    for (const [, state] of [...states]) {
+      const count = state.picks.length;
+      const procs = state.picks.filter((p) => p.type === 'CastWhenStrikes').length;
+      const spent = state.picks.reduce((a, p) => a + p.cost, 0);
+      if (count >= ITEM_ENCHANTMENT_MAX || spent + c.cost > budget) continue;
+      if (c.type === 'CastWhenStrikes' && procs >= maxProcs) continue;
+      const next = { value: state.value + c.value, picks: [...state.picks, c] };
+      const key = `${spent + c.cost}|${count + 1}|${procs + (c.type === 'CastWhenStrikes' ? 1 : 0)}`;
+      const old = states.get(key);
+      if (!old || next.value > old.value) states.set(key, next);
+    }
+  }
+  let best = { value: 0, picks: [] };
+  for (const state of states.values()) if (state.value > best.value) best = state;
+  return best.picks.sort((a, b) => b.value / b.cost - a.value / a.cost);
+}
+
+const ITEM_ENCHANT_ID = Object.freeze({
+  CastWhenStrikes: ENCHANTMENT_TYPES.CastWhenStrikes,
+  PotentVs: ENCHANTMENT_TYPES.PotentVs,
+});
+
+/** Apply a plan's skill lines and weapon procs, then read the resulting DPS. */
+function applyPlanDps(ch, plan, target) {
+  const c = JSON.parse(JSON.stringify(ch));
+  const item = c.weapon ?? c.wraps;
+  const skills = { ...(c._mods.skills ?? {}) };
+  const enchants = [...(item?.enchantments ?? [])];
+  for (const row of plan.rows) {
+    for (const e of row.effects) {
+      if (e.type === 'EnhancesSkill') skills[e.param] = (skills[e.param] ?? 0) + 15;
+      else if (ITEM_ENCHANT_ID[e.type]) enchants.push({ type: ITEM_ENCHANT_ID[e.type], param: e.param });
+    }
+  }
+  c._mods.skills = skills;
+  if (item) {
+    item.enchantments = enchants;
+    item.currentCondition = item.maxCondition = Math.max(1, Number(item.maxCondition) || 800);
+  }
+  const r = maxRun(c, { target });
+  return { dps: r.totalDps, cappedDps: r.cappedDps, procDps: r.enchantDps, weaponDps: r.cappedDps };
+}
+
 export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, skill = null, group = 'humanoid', repairs = 1, regen = 0, target = gateTarget(THEORY_LEVEL) } = {}) {
   const pieces = gearPieces({ weapon, shield });
   for (const p of pieces) {
@@ -154,13 +201,10 @@ export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, s
 
   // Weapon: strike procs first, limited by the condition a fight can pay, then skills.
   const weaponCands = weaponCandidates(ch, base, group, target);
-  let procs = 0;
-  for (const c of weaponCands) {
-    if (w.effects.length >= ITEM_ENCHANTMENT_MAX) break;
-    if (c.type === 'CastWhenStrikes' && procs >= maxProcs) continue;
+  const weaponPicks = selectWeaponCandidates(weaponCands, w.budget, maxProcs);
+  for (const c of weaponPicks) {
     if (addEffect(w, c.type, c.param, c.cost, `${Math.round(c.value)} DPS`)) {
       if (c.type === 'EnhancesSkill') extra[c.param] = (extra[c.param] ?? 0) + 15;
-      if (c.type === 'CastWhenStrikes') procs++;
     }
   }
 
@@ -249,15 +293,44 @@ export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, s
   const imprintTrigger = imprintPool.slice().sort((a, b) => b.triggerDps - a.triggerDps)[0] ?? null;
   const imprintUncapped = imprintPool.slice().sort((a, b) => b.uncappedDps - a.uncappedDps)[0] ?? null;
   const imprint = { base: imprintBase, trigger: imprintTrigger, uncapped: imprintUncapped };
+  const applied = applyPlanDps(ch, { rows }, target);
   return {
     weapon: w.template, weaponName: w.item, shield: pieces.find((p) => /Shield|Buckler/.test(p.slot))?.template ?? null,
     soulGem: !!soulGem, soulPoints: soulGem ? SOUL_GEM_POINTS : 0,
-    group, baseDps: base.cappedDps, uncappedDps: raw.dps, skillId, rows, imprint, swings, maxProcs,
+    group, baseDps: base.cappedDps, uncappedDps: raw.dps, dps: applied.dps, procDps: applied.procDps, skillId, rows, imprint, swings, maxProcs,
     repairs: Math.max(0, Math.trunc(Number(repairs) || 0)), regen: Math.max(0, Math.trunc(Number(regen) || 0)),
     ratings: { weapon: weaponRatings, skills: skillRatings, utility: utilityRatings },
     onePiece: ONE_PIECE, stacks: STACKS, weaponOnly: WEAPON_ONLY,
   };
 }
+
+/** The family's best weapon at this target, by capped DPS. */
+export function bestWeaponForFamily(family, target) {
+  let best = null;
+  for (const t of family.templates) {
+    if (!WEAPONS[t]) continue;
+    const run = maxRun(maxCharacter(t), { target });
+    if (!best || run.cappedDps > best.dps) best = { template: t, name: WEAPONS[t].name, dps: run.cappedDps };
+  }
+  return best;
+}
+
+/** One plan per weapon family, on that family's best weapon. */
+export function planMatrix({ soulGem = false, repairs = 1, regen = 0, group = 'daedra', target = gateTarget(THEORY_LEVEL) } = {}) {
+  return IMPRINT_FAMILIES.map((family) => {
+    const best = bestWeaponForFamily(family, target);
+    if (!best) return { family: family.name, key: family.key, weapon: null, plan: null };
+    const plan = planEnchants({ weapon: best.template, soulGem, repairs, regen, group, target });
+    const skillPieces = plan.rows.filter((r) => r.effects.some((e) => e.type === 'EnhancesSkill' && e.param === plan.skillId)).length;
+    const csPieces = plan.rows.filter((r) => r.effects.some((e) => e.type === 'EnhancesSkill' && e.param === SKILLS.CriticalStrike)).length;
+    return { family: family.name, key: family.key, weapon: best.name, template: best.template, skillPieces, csPieces, plan };
+  });
+}
+
+/** The per-piece signature, ignoring which weapon skill is named. */
+export const planSignature = (plan) => plan.rows.map((r) => r.slot === 'Weapon'
+  ? `W:${r.effects.filter((e) => e.type === 'CastWhenStrikes').length}`
+  : r.effects.map((e) => e.type === 'EnhancesSkill' && e.param === plan.skillId ? 'WS' : e.type).join('+')).join('|');
 
 /** Readable effect line, e.g. "Cast When Strikes: Hand of Decay (1,830)". */
 export const effectLine = (e) => `${e.name}${e.paramName && e.paramName !== 'undefined' ? `: ${e.paramName}` : ''} (${e.cost.toLocaleString()}${e.benefit ? `; ${e.benefit}` : ''})`;

@@ -170,11 +170,21 @@ and utility), so an empty piece is an explicit "nothing else added capped
 DPS" result, not an omission. Strike payloads (Cast When Strikes, Potent Vs, Low
 Damage Vs) are weapon-only; the weapon's own condition limits how many
 Cast When Strikes rows the gate fight can pay (10 condition a proc).
+`--all` runs every weapon type and prints the best weapon, weapon-skill and
+Critical Strike coverage, procs, plan DPS and spend. The weapon package is an
+exact knapsack under the budget, 10-setting cap and proc limit; armour and
+jewellery take +15 skill lines by their next marginal DPS. At the gate only Short
+Blade and Axe have enough headroom to buy weapon skill; with `--uncapped`
+every melee family converges on the same layout — weapon skill and Critical
+Strike on every piece, three procs, one Repairs — so one melee setup works,
+only the weapon-skill name changes.
 
 ```bash
 ./dfo-dps enchant-plan --weapon 123
 ./dfo-dps enchant-plan --weapon 121 --soul-gem --out enchant-plan.html
 ./dfo-dps enchant-plan --weapon 123 --soul-gem --group undead --repairs 2 --regen 0 --json
+./dfo-dps enchant-plan --all --soul-gem                 # every weapon type
+./dfo-dps enchant-plan --all --uncapped --soul-gem      # no boss cap
 ```
 
 The base set is the weapon, the seven armour pieces, a shield when the
