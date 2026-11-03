@@ -17,6 +17,7 @@ import {
 } from './data.js';
 import { buildReport } from './report.js';
 import { barChart, graphPage, lineChart, multiGraphPage } from './graph.js';
+import { FIRMAMENT_NODES, buildById, buildIds, firmamentSection, planBuild, planSummary } from './firmament.js';
 import { analyzeSpell, resolveSpells, spellCost, spellRotation, standardSpells } from './spells.js';
 import { ENCHANTMENT_TYPES, castWhenStrikes, enchantDps, procsBeforeBreak, strikeEnchantments } from './enchants.js';
 import { perfectSockets } from './sockets.js';
@@ -48,6 +49,7 @@ Usage:
   dfo-dps spells [options]            HTML page: every standard damage spell
   dfo-dps enchant [options]           the equipped weapon's enchantment procs
   dfo-dps weapons [options]           HTML page: all weapons, max DPS and skill scaling
+  dfo-dps firmament [options]         HTML page: star-tree plans for each build
   dfo-dps skills [options]            same page (alias)
   dfo-dps graph [options]             SVG line chart of two or more stats/skills
   dfo-dps saves                       list saves under the DFO user data folder
@@ -74,6 +76,8 @@ Common options:
   --players <n>                       gate boss group size (health per player; default 1)
   --blow-x <n>                        gate relayBlowX (Elite/Vestiges cap multiplier; default 1)
   --categories                        condense the weapons page to the best of each type, sorted by DPS
+  --build <id,...>                    firmament build(s): longblade, shortblade, axe, blunt, bow, fists, destruction, tank
+  --stars <n>                         firmament stars to spend (default 98)
   --pair                              paired Pistolets (2 shots per cycle, off hand x0.8)
   --dual                              dual wield the left-hand weapon (off hand x0.8, -5 hit)
   --spam                              bow spam (BOW_FAST stacks to x0.2; default paced)
@@ -145,6 +149,8 @@ const optsSpec = {
   players: { type: 'string', default: '1' },
   'blow-x': { type: 'string', default: '1' },
   categories: { type: 'boolean', default: false },
+  build: { type: 'string' },
+  stars: { type: 'string' },
   pair: { type: 'boolean', default: false },
   dual: { type: 'boolean', default: false },
   spam: { type: 'boolean', default: false },
@@ -676,6 +682,39 @@ export async function main(argv = process.argv.slice(2)) {
     return;
   }
 
+  if (cmd === 'firmament') {
+    const ids = values.build ? String(values.build).split(',').map((x) => x.trim()).filter(Boolean) : buildIds();
+    const unknown = ids.filter((id) => !buildById(id));
+    if (unknown.length) {
+      console.error(`unknown firmament build: ${unknown.join(', ')} (choose ${buildIds().join(', ')})`);
+      process.exit(2);
+    }
+    const stars = values.stars != null ? Math.max(0, Math.min(98, Math.trunc(n(values.stars, 98)))) : 98;
+    const plans = ids.map((id) => planBuild(buildById(id), { stars }));
+    console.log('Firmament plans');
+    console.log(table(plans.map((p) => {
+      const s = planSummary(p);
+      return [
+        p.build.name,
+        p.startName,
+        `${p.stars}/${p.starBudget}`,
+        p.build.skill ? `${s.rows.find((r) => r.key === 'blow')?.value ?? 0}%` : p.build.school ? `${s.rows.find((r) => r.key === 'castCost')?.value ?? 0}%` : `${p.totals.hp ?? 0} HP`,
+        s.counts.notable,
+        s.counts.keystone,
+      ];
+    }), ['Build', 'Start', 'Stars', 'Group', 'Notables', 'Keystones'], ['left', 'left', 'right', 'right', 'right', 'right']));
+    const out = path.resolve(values.out === 'dfo-dps-report.html' ? 'firmament.html' : values.out);
+    const html = multiGraphPage({
+      title: 'DFO Firmament trees',
+      subtitle: `The game's own ${FIRMAMENT_NODES} stars, ${stars} Stars per build, no Craft points assumed. One deterministic channel-coverage plan per build; keystones are never walked through. The weapons page +Firmament column is the flat channel ceiling, not this allocation.`,
+      sections: plans.map(firmamentSection),
+    });
+    fs.writeFileSync(out, html, 'utf8');
+    console.log(`firmament page written: ${out}`);
+    if (values.json) console.log(JSON.stringify(plans.map((p) => ({ build: p.build.id, name: p.build.name, start: p.tree.start, startName: p.startName, stars: p.stars, budget: p.starBudget, keys: p.tree.keys, totals: p.totals })), null, 2));
+    return;
+  }
+
   if (cmd === 'weapons' || cmd === 'skills') {
     const level = n(values.level, THEORY_LEVEL);
     const firmCharts = !!values.firmament;
@@ -797,18 +836,29 @@ export async function main(argv = process.argv.slice(2)) {
     const top = displayRows.slice().sort((a, b) => b.maxDpsF - a.maxDpsF)[0];
     const topGear = displayRows.slice().sort((a, b) => b.maxDps - a.maxDps)[0];
     const gateTop = rows.slice().sort((a, b) => b.gateDpsF - a.gateDpsF)[0];
-    const scope = values.categories ? 'Best of every type' : 'The absolute uncapped ceiling';
-    const absolute = `<b>${scope}: ${top.name}</b> at <b>${cell(top.maxDpsF)} DPS</b> (${top.path}, Dunmer). On gear alone the best of these is <b>${topGear.name}</b> at <b>${cell(topGear.maxDps)} DPS</b>. At the gate the full pool is led by <b>${gateTop.name}</b> at <b>${cell(gateTop.gateDpsF)} capped DPS</b> (${gateTop.gateTtk ? `${cell(gateTop.gateTtk)} s TTK` : '-'}).<br><br>Full health and Blademaster only: Berserker's below-half upkeep is not assumed. Max is the full-health DPS; +Firmament adds the star-tree channel ceiling. All rows are Dunmer. DPS cells are averages; the bar is the average.${values.categories ? ' One row per weapon type per slot, sorted by DPS; Hand Wraps is the fist row.' : ''}`;
+    const scope = values.categories ? 'best of every type' : 'absolute uncapped ceiling';
 
-    const chartFirm = `<svg viewBox="0 0 920 10" width="100%" height="0" aria-hidden="true"></svg>`;
-    const bar = barChart({
-      title: 'Maximum uncapped DPS by weapon',
-      labels: displayRows.map((r) => r.name),
+    const bossRows = displayRows.slice().sort((a, b) => b.gateDpsF - a.gateDpsF || b.gateDps - a.gateDps);
+    const uncappedRows = displayRows.slice().sort((a, b) => b.maxDpsF - a.maxDpsF || b.maxDps - a.maxDps);
+    const bossBar = barChart({
+      title: 'Boss DPS by weapon - level-45 gate',
+      labels: bossRows.map((r) => r.name),
       series: [
-        { name: 'Max gear', values: displayRows.map((r) => r.maxDps) },
-        { name: '+ Firmament', values: displayRows.map((r) => r.maxDpsF) },
+        { name: 'Gate', values: bossRows.map((r) => r.gateDps) },
+        { name: 'Gate + Firmament', values: bossRows.map((r) => r.gateDpsF) },
       ],
     });
+    const uncappedBar = barChart({
+      title: 'Uncapped DPS by weapon - no per-hit cap',
+      labels: uncappedRows.map((r) => r.name),
+      series: [
+        { name: 'Max gear', values: uncappedRows.map((r) => r.maxDps) },
+        { name: '+ Firmament', values: uncappedRows.map((r) => r.maxDpsF) },
+      ],
+    });
+    const bossTop = bossRows[0];
+    const bossNote = `<b>${bossTop.name}</b> leads this list at <b>${cell(bossTop.gateDpsF)} capped DPS</b>${bossTop.gateTtk ? ` (${cell(bossTop.gateTtk)} s TTK)` : ''}. The full pool's gate winner is <b>${gateTop.name}</b> at <b>${cell(gateTop.gateDpsF)} capped DPS</b>. Bars are Gate and Gate + Firmament, sorted by the +Firmament value. This is the level-45 gate: ${gate.maxHealth.toLocaleString()} HP and a ${gate.hitCap} per-hit cap.`;
+    const uncappedNote = `<b>${top.name}</b> is the ${scope} at <b>${cell(top.maxDpsF)} DPS</b> (${top.path}, Dunmer); on gear alone the best is <b>${topGear.name}</b> at <b>${cell(topGear.maxDps)} DPS</b>. No per-hit cap. Full health and Blademaster only: Berserker's below-half upkeep is not assumed. All rows are Dunmer; DPS cells are averages.${values.categories ? ' One row per weapon type per slot, including the Hand Wraps fist row; the table is sorted by uncapped DPS.' : ''}`;
 
     const families = [
       { key: 'LongBlade', title: 'Long blades', templates: [118, 119, 120, 121, 122, 123] },
@@ -860,8 +910,16 @@ export async function main(argv = process.argv.slice(2)) {
       title: 'DFO weapon ceiling and skill scaling',
       subtitle,
       sections: values.categories
-        ? [{ title: 'Top per type - sorted by DPS', note: absolute, chart: bar, table: maxTable }]
-        : [{ title: 'Absolute maximum', note: absolute, chart: bar, table: maxTable }, ...familySections, csSection],
+        ? [
+            { title: 'Boss DPS - level-45 gate', note: bossNote, chart: bossBar },
+            { title: 'Uncapped DPS', note: uncappedNote, chart: uncappedBar, table: maxTable },
+          ]
+        : [
+            { title: 'Boss DPS - level-45 gate', note: bossNote, chart: bossBar },
+            { title: 'Uncapped DPS', note: uncappedNote, chart: uncappedBar, table: maxTable },
+            ...familySections,
+            csSection,
+          ],
     });
     const defaultOut = cmd === 'weapons' ? 'weapons.html' : 'skills.html';
     const out = path.resolve(values.out === 'dfo-dps-report.html' ? defaultOut : values.out);

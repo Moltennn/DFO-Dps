@@ -66,7 +66,24 @@ The `theory` command prices each star channel from +0 to +15. At the ceiling, St
 
 ## Weapon-ceiling page
 
-`weapons` renders the same model as a standalone HTML page. DPS values are averages; the bar chart's bar is the average. `--categories` condenses the table to the best of each weapon type (Long Blade, Short Blade, Axe, Blunt Weapon, Archery, Hand-to-Hand) in the 1H, 2H and dual slots, sorted by DPS. It ranks every weapon template (melee, bows and the port's firearms) at a max profile (attributes 100/115, raw weapon skill and Critical Strike 200 mastered, weapon skill gear 240, Critical Strike gear 540, 40% damage affix, the weapon's career expertise, Dunmer (the default; `--race` overrides), and the best martial path for the family) and shows raw 100 -> 200 and gear 0 -> 240 curves per family. Every family uses Blademaster at full health; Berserker's below-half upkeep is not assumed. Blunt keeps its own at-or-above-half mastery. The Hand-to-Hand row is the Hand Wraps ceiling (damage/sockets/procs); bare fists without wrap lines are the ~450 band the community tests saw. The practical H2H gear cap is 17 lines (510 points: seven armour pieces and ten jewellery slots, never a weapon).
+`weapons` renders the same model as a standalone HTML page. The first chart is boss (level-45 gate) DPS; the second is uncapped DPS. DPS values are averages; each bar is the average. `--categories` condenses the table to the best of each weapon type (Long Blade, Short Blade, Axe, Blunt Weapon, Archery, Hand-to-Hand) in the 1H, 2H and dual slots, sorted by DPS. It ranks every weapon template (melee, bows and the port's firearms) at a max profile (attributes 100/115, raw weapon skill and Critical Strike 200 mastered, weapon skill gear 240, Critical Strike gear 540, 40% damage affix, the weapon's career expertise, Dunmer (the default; `--race` overrides), and the best martial path for the family) and shows raw 100 -> 200 and gear 0 -> 240 curves per family. Every family uses Blademaster at full health; Berserker's below-half upkeep is not assumed. Blunt keeps its own at-or-above-half mastery. The Hand-to-Hand row is the Hand Wraps ceiling (damage/sockets/procs); bare fists without wrap lines are the ~450 band the community tests saw. The practical H2H gear cap is 17 lines (510 points: seven armour pieces and ten jewellery slots, never a weapon).
+
+## Firmament planner
+
+`firmament` imports the game's own `firmamentTree.js` and `firmamentLaw.js`
+(vendored under `vendor/firmament/`), so the nodes, signs, adjacency, channel
+caps and `treeStats`/`blowPct` reads are the live ones. A build is a weighted
+set of channels; the planner walks the sky one connected path at a time,
+taking the path with the best channel gain per star, and ends at 98 stars.
+Keystones are reachable but never walked through, and life stars on the route
+are paid from the same Star purse because no Craft points are assumed.
+
+`--build` selects one or more of `longblade`, `shortblade`, `axe`, `blunt`,
+`bow`, `fists`, `destruction`, `tank`; `--stars` caps the purse; the HTML page
+draws the lit tree against the sky and lists the channels and the
+notables/keystones taken. It is a channel-coverage plan, not a proof of the
+global optimum, and it does not replace the flat `+ Firmament` ceiling used by
+the weapon page.
 
 ## Ranged, spells and enchantments
 
