@@ -10,7 +10,7 @@
 import { SKILLS, WEAPONS } from './data.js';
 import { blowPct } from '../vendor/firmament/firmamentLaw.js';
 import { buildById, effectiveValue, planBuild } from './firmament.js';
-import { bestWeaponForFamily, planEnchants } from './enchantPlan.js';
+import { planEnchants } from './enchantPlan.js';
 import { IMPRINT_FAMILIES, imprintsFor, powerDps } from './imprints.js';
 import { maxCharacter, maxRun } from './maxprofile.js';
 import { gateTarget, referenceFoe } from './model.js';
@@ -30,7 +30,7 @@ const ENCHANT_ID = Object.freeze({
 const clone = (v) => JSON.parse(JSON.stringify(v));
 
 /** Apply the real tree channels: flat + percent held together at each channel's cap. */
-function applyFirmament(ch, plan) {
+export function applyFirmament(ch, plan) {
   const totals = plan.totals;
   const stats = { ...(ch._mods.stats ?? {}) };
   const statMax = { ...(ch._mods.statMax ?? {}) };
@@ -57,6 +57,11 @@ function applyFirmament(ch, plan) {
   ch._mods.skills = skills;
   ch.firmamentDamagePct = blowPct(totals, { skill: plan.build.skill });
   return ch;
+}
+
+/** Apply the real Firmament plan for a weapon family to a character. */
+export function applyTree(ch, familyKey) {
+  return applyFirmament(ch, planBuild(buildById(BUILD_ID[familyKey] ?? familyKey), {}));
 }
 
 /** Apply the enchant plan's skill lines and weapon strike rows. */
@@ -87,15 +92,12 @@ function bestImprint(template, run, capped) {
   return rows[0] ?? null;
 }
 
-/** One real loadout for a family. */
-export function realLoadout(family, { mode = 'uncapped' } = {}) {
+/** One real loadout for one template. */
+export function realTemplate(template, family, { mode = 'uncapped', vampire = false } = {}) {
   const capped = mode !== 'uncapped';
   const target = capped ? gateTarget(THEORY_LEVEL) : referenceFoe(THEORY_LEVEL, 'tough');
-  const weapon = bestWeaponForFamily(family, target);
-  if (!weapon) return null;
-  const template = weapon.template;
   const tree = planBuild(buildById(BUILD_ID[family.key] ?? family.key), {});
-  const treeCh = applyFirmament(maxCharacter(template, {}), tree);
+  const treeCh = applyFirmament(maxCharacter(template, { vampire }), tree);
   const treeRun = maxRun(treeCh, { target });
   const enchPlan = planEnchants({ weapon: template, soulGem: true, forceSkills: !capped, target });
   const enchCh = applyEnchants(clone(treeCh), enchPlan);
@@ -103,13 +105,18 @@ export function realLoadout(family, { mode = 'uncapped' } = {}) {
   const imprint = bestImprint(template, enchRun, capped);
   const total = enchRun.enchantDps + (imprint?.dps ?? enchRun.cappedDps);
   return {
-    mode, family: family.name, key: family.key, weapon: weapon.name, template,
+    mode, family: family.name, key: family.key, weapon: WEAPONS[template]?.name ?? String(template), template,
     treeStars: tree.stars, freeStars: tree.freeStars, treeBlow: treeCh.firmamentDamagePct,
-    treeDps: treeRun.totalDps, enchDps: enchRun.totalDps, totalDps: total,
+    treeDps: treeRun.totalDps, enchDps: enchRun.totalDps, totalDps: total, ttk: enchRun.ttk,
     imprint: imprint?.name ?? null, imprintPower: imprint?.power?.name ?? null,
     enchPlan,
   };
 }
 
-export const realLoadouts = ({ modes = ['uncapped', 'cap'] } = {}) => modes.flatMap((mode) =>
-  IMPRINT_FAMILIES.map((family) => realLoadout(family, { mode })).filter(Boolean));
+/** The best real template in a family for this mode. */
+export function realLoadout(family, { mode = 'uncapped', vampire = false } = {}) {
+  const rows = family.templates.map((t) => realTemplate(t, family, { mode, vampire })).filter(Boolean);
+  return rows.sort((a, b) => b.totalDps - a.totalDps)[0] ?? null;
+}
+export const realLoadouts = ({ modes = ['uncapped', 'cap'], vampire = false } = {}) => modes.flatMap((mode) =>
+  IMPRINT_FAMILIES.map((family) => realLoadout(family, { mode, vampire })).filter(Boolean));

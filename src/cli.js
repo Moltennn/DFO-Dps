@@ -21,7 +21,7 @@ import { barChart, graphPage, lineChart, multiGraphPage } from './graph.js';
 import { FIRMAMENT_NODES, buildById, buildIds, firmamentSection, planBuild, planFromTree, planKey, planSummary } from './firmament.js';
 import { imprintFamilyById, rankAll } from './imprints.js';
 import { effectLine, planEnchants, planMatrix, SOUL_GEM_POINTS } from './enchantPlan.js';
-import { realLoadouts } from './realBuild.js';
+import { applyTree, realLoadouts } from './realBuild.js';
 import { enchantmentName as enchantmentNameOf } from './enchantData.js';
 import { analyzeSpell, resolveSpells, spellCost, spellRotation, standardSpells } from './spells.js';
 import { ENCHANTMENT_TYPES, castWhenStrikes, enchantDps, procsBeforeBreak, strikeEnchantments } from './enchants.js';
@@ -745,7 +745,7 @@ export async function main(argv = process.argv.slice(2)) {
 
   if (cmd === 'loadout' || cmd === 'real-dps') {
     const modes = values.uncapped ? ['uncapped'] : values['cap-aware'] ? ['cap'] : ['uncapped', 'cap'];
-    const rows = realLoadouts({ modes });
+    const rows = realLoadouts({ modes, vampire: !!values.vampire });
     if (!values.json) {
       for (const mode of modes) {
         const list = rows.filter((r) => r.mode === mode);
@@ -1087,42 +1087,34 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     const nameOf = (t) => (familyOf(t) === 'HandToHand' ? 'H2H (wraps)' : WEAPONS[t].name);
     const rows = MELEE.map((t) => {
       const race = bestRace(t, { firmament: false });
-      const raceF = bestRace(t, { firmament: true });
       const ch = makeMax(t, { race, firmament: false });
-      const chF = makeMax(t, { race: raceF, firmament: true });
-      const r = maxRun(ch, shareFor(t));
-      const rF = maxRun(chF, shareFor(t));
-      const full = r.dps;
-      const g = gateRun(ch);
-      const gF = gateRun(chF);
+      const treeCh = applyTree(ch, familyOf(t));
+      const r = maxRun(treeCh, shareFor(t));
+      const g = gateRun(treeCh);
       return {
         template: t, name: nameOf(t), skill: familyOf(t), twoHanded: familyOf(t) === 'HandToHand' ? false : WEAPONS[t].twoHanded,
-        path: martialFor(t), race, raceF, maxDps: r.dps, maxDpsF: rF.dps, full, gateDps: g.cappedDps, gateDpsF: gF.cappedDps,
-        gateTtk: g.ttk, gateTtkF: gF.ttk, perSwing: r.perSwing, aps: r.cadence.aps,
+        path: martialFor(t), race, maxDps: r.dps, gateDps: g.cappedDps,
+        gateTtk: g.ttk, perSwing: r.perSwing, aps: r.cadence.aps,
       };
-    }).sort((a, b) => b.maxDpsF - a.maxDpsF || b.maxDps - a.maxDps);
+    }).sort((a, b) => b.maxDps - a.maxDps);
 
     // Dual pairs: the one-handed templates, both hands of the same weapon.
     for (const t of [113, 114, 116, 117, 118, 119, 120, 121, 124, 127]) {
       const race = bestRace(t, { firmament: false, dual: true });
-      const raceF = bestRace(t, { firmament: true, dual: true });
       const ch = makeDual(t, { race, firmament: false });
-      const chF = makeDual(t, { race: raceF, firmament: true });
-      const r = maxRun(ch, shareFor(t));
-      const rF = maxRun(chF, shareFor(t));
-      const g = gateRun(ch);
-      const gF = gateRun(chF);
+      const treeCh = applyTree(ch, familyOf(t));
+      const r = maxRun(treeCh, shareFor(t));
+      const g = gateRun(treeCh);
       rows.push({
         template: t, name: `Dual ${nameOf(t)}`, skill: familyOf(t), twoHanded: false, dual: true,
-        path: martialFor(t), race, raceF, maxDps: r.dps, maxDpsMin: r.dpsMin, maxDpsMax: r.dpsMax, maxDpsF: rF.dps, maxDpsFMin: rF.dpsMin, maxDpsFMax: rF.dpsMax, full: r.dps,
-        gateDps: g.cappedDps, gateDpsMin: g.cappedDpsMin, gateDpsMax: g.cappedDpsMax, gateDpsF: gF.cappedDps, gateDpsFMin: gF.cappedDpsMin, gateDpsFMax: gF.cappedDpsMax, gateTtk: g.ttk, gateTtkF: gF.ttk,
+        path: martialFor(t), race, maxDps: r.dps, gateDps: g.cappedDps, gateTtk: g.ttk,
         perSwing: r.perSwing, aps: r.cadence.aps,
       });
     }
-    rows.sort((a, b) => b.maxDpsF - a.maxDpsF || b.maxDps - a.maxDps);
+    rows.sort((a, b) => b.maxDps - a.maxDps);
 
     const categoryOf = (r) => (r.dual ? 'DW' : r.skill === 'HandToHand' ? 'Fists' : r.twoHanded ? '2H' : '1H');
-    const categoryMetric = firmCharts ? 'maxDpsF' : 'maxDps';
+    const categoryMetric = 'maxDps';
     // One winner per weapon type in each hand slot, so a single blade family
     // cannot take the whole page. Hand-to-Hand is its own shape, not 1H/2H/DW.
     const categorySlots = ['1H', '2H', 'DW', 'Fists'];
@@ -1136,33 +1128,27 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
 
     const cell = (v) => (Number.isFinite(v) ? fmt(v) : '-');
     const pctCell = (v) => (Number.isFinite(v) ? pc(v) : '-');
-    const maxTable = `<table><thead><tr><th>Weapon</th><th>Type</th><th>Hands</th><th>Path</th><th>Max gear</th><th>+ Firmament</th><th>Gate</th><th>Gate + Firm</th><th>Gate TTK</th></tr></thead><tbody>${displayRows.map((r) => `<tr><td class="k">${r.name}</td><td>${SKILL_LABELS[r.skill] ?? r.skill}</td><td>${r.dual ? 'Dual' : r.skill === 'HandToHand' ? 'Fists' : r.twoHanded ? '2H' : '1H'}</td><td>${r.path}</td><td>${cell(r.maxDps)}</td><td>${cell(r.maxDpsF)}</td><td>${cell(r.gateDps)}</td><td>${cell(r.gateDpsF)}</td><td>${r.gateTtk ? `${cell(r.gateTtk)} s` : '-'}</td></tr>`).join('')}</tbody></table>`;
-    const top = displayRows.slice().sort((a, b) => b.maxDpsF - a.maxDpsF)[0];
-    const topGear = displayRows.slice().sort((a, b) => b.maxDps - a.maxDps)[0];
-    const gateTop = rows.slice().sort((a, b) => b.gateDpsF - a.gateDpsF)[0];
+    const maxTable = `<table><thead><tr><th>Weapon</th><th>Type</th><th>Hands</th><th>Path</th><th>Firmament DPS</th><th>Boss DPS</th><th>Boss TTK</th></tr></thead><tbody>${displayRows.map((r) => `<tr><td class="k">${r.name}</td><td>${SKILL_LABELS[r.skill] ?? r.skill}</td><td>${r.dual ? 'Dual' : r.skill === 'HandToHand' ? 'Fists' : r.twoHanded ? '2H' : '1H'}</td><td>${r.path}</td><td>${cell(r.maxDps)}</td><td>${cell(r.gateDps)}</td><td>${r.gateTtk ? `${cell(r.gateTtk)} s` : '-'}</td></tr>`).join('')}</tbody></table>`;
+    const top = displayRows.slice().sort((a, b) => b.maxDps - a.maxDps)[0];
+    const topGear = top;
+    const gateTop = rows.slice().sort((a, b) => b.gateDps - a.gateDps)[0];
     const scope = values.categories ? 'best of every type' : 'absolute uncapped ceiling';
 
-    const bossRows = displayRows.slice().sort((a, b) => b.gateDpsF - a.gateDpsF || b.gateDps - a.gateDps);
-    const uncappedRows = displayRows.slice().sort((a, b) => b.maxDpsF - a.maxDpsF || b.maxDps - a.maxDps);
+    const bossRows = displayRows.slice().sort((a, b) => b.gateDps - a.gateDps);
+    const uncappedRows = displayRows.slice().sort((a, b) => b.maxDps - a.maxDps);
     const bossBar = barChart({
       title: 'Boss DPS by weapon - level-45 gate',
       labels: bossRows.map((r) => r.name),
-      series: [
-        { name: 'Gate', values: bossRows.map((r) => r.gateDps) },
-        { name: 'Gate + Firmament', values: bossRows.map((r) => r.gateDpsF) },
-      ],
+      series: [{ name: 'Boss', values: bossRows.map((r) => r.gateDps) }],
     });
     const uncappedBar = barChart({
       title: 'Uncapped DPS by weapon - no per-hit cap',
       labels: uncappedRows.map((r) => r.name),
-      series: [
-        { name: 'Max gear', values: uncappedRows.map((r) => r.maxDps) },
-        { name: '+ Firmament', values: uncappedRows.map((r) => r.maxDpsF) },
-      ],
+      series: [{ name: 'Firmament', values: uncappedRows.map((r) => r.maxDps) }],
     });
     const bossTop = bossRows[0];
-    const bossNote = `<b>${bossTop.name}</b> leads this list at <b>${cell(bossTop.gateDpsF)} capped DPS</b>${bossTop.gateTtk ? ` (${cell(bossTop.gateTtk)} s TTK)` : ''}. The full pool's gate winner is <b>${gateTop.name}</b> at <b>${cell(gateTop.gateDpsF)} capped DPS</b>. Bars are Gate and Gate + Firmament, sorted by the +Firmament value. This is the level-45 gate: ${gate.maxHealth.toLocaleString()} HP and a ${gate.hitCap} per-hit cap.`;
-    const uncappedNote = `<b>${top.name}</b> is the ${scope} at <b>${cell(top.maxDpsF)} DPS</b> (${top.path}, Dunmer); on gear alone the best is <b>${topGear.name}</b> at <b>${cell(topGear.maxDps)} DPS</b>. No per-hit cap. Full health and Blademaster only: Berserker's below-half upkeep is not assumed. All rows are Dunmer; DPS cells are averages.${values.categories ? ' One row per weapon type per slot, including the Hand Wraps fist row; the table is sorted by uncapped DPS.' : ''}`;
+    const bossNote = `<b>${bossTop.name}</b> leads this list at <b>${cell(bossTop.gateDps)} capped DPS</b>${bossTop.gateTtk ? ` (${cell(bossTop.gateTtk)} s TTK)` : ''}. The full pool's gate winner is <b>${gateTop.name}</b> at <b>${cell(gateTop.gateDps)} capped DPS</b>. This is the real Firmament tree at the level-45 gate: ${gate.maxHealth.toLocaleString()} HP and a ${gate.hitCap} per-hit cap.`;
+    const uncappedNote = `<b>${top.name}</b> is the ${scope} at <b>${cell(top.maxDps)} DPS</b> (${top.path}, Dunmer), using the real Firmament tree and no per-hit cap. Enchants and imprints are on the loadout page, not this table. Full health and Blademaster only: Berserker's below-half upkeep is not assumed. All rows are Dunmer; DPS cells are averages.${values.categories ? ' One row per weapon type per slot, including the Hand Wraps fist row; the table is sorted by uncapped DPS.' : ''}`;
 
     const families = [
       { key: 'LongBlade', title: 'Long blades', templates: [118, 119, 120, 121, 122, 123] },
@@ -1189,7 +1175,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
         }
         return { name: nameOf(t), points };
       });
-      const note = `One line per weapon: raw training 100 -> 200 is effective 100 -> 140; gear lines continue from effective 140 to ${140 + gearMax}. Max gear, Dunmer, career expertise, best path, 40% damage affix, sockets, no per-hit cap.${f.key === 'Axe' || f.key === 'HandToHand' ? ' Blademaster, full health; no Berserker below-half assumption.' : ''}${firmCharts ? ' Firmament channels on.' : ''}${rangedNote}`;
+      const note = `One line per weapon: raw training 100 -> 200 is effective 100 -> 140; gear lines continue from effective 140 to ${140 + gearMax}. Max gear, Dunmer, career expertise, best path, 40% damage affix, sockets, no per-hit cap. The table uses the real Firmament tree; these curves are the flat skill-scaling view.${f.key === 'Axe' || f.key === 'HandToHand' ? ' Blademaster, full health; no Berserker below-half assumption.' : ''}${firmCharts ? ' Firmament channels on.' : ''}${rangedNote}`;
       return {
         title: f.title,
         note,
@@ -1209,7 +1195,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       chart: lineChart({ title: 'Critical Strike gear 0 -> 540', xLabel: 'Critical Strike gear points', yLabel: 'DPS', series: csSeries }),
     };
 
-    const subtitle = `Level ${level} | attributes 100 base / 115 Firmament | Dunmer | career expertise | Blademaster, no Berserker | 40% damage affix | target: level-${level} tough, no per-hit cap | gate column: ${gate.maxHealth.toLocaleString()} HP, ${gate.hitCap} per-hit cap${vampire ? ' | vampire +30 CS' : ''}`;
+    const subtitle = `Level ${level} | real Firmament tree | Dunmer | career expertise | Blademaster, no Berserker | 40% damage affix | target: level-${level} tough, no per-hit cap | boss: ${gate.maxHealth.toLocaleString()} HP, ${gate.hitCap} per-hit cap${vampire ? ' | vampire +30 CS' : ''}`;
     const html = multiGraphPage({
       title: 'DFO weapon ceiling and skill scaling',
       subtitle,

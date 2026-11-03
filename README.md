@@ -118,13 +118,13 @@ The `theory` output prices every star channel from +0 to +15 at the ceiling, and
 ```bash
 ./dfo-dps weapons                   # writes ./weapons.html
 ./dfo-dps weapons --vampire         # true ceiling: vampire +30 Critical Strike
-./dfo-dps weapons --firmament       # charts use 115 attributes, +15 skill stars, +30% Firmament blow
+./dfo-dps weapons --firmament       # flat channel ceiling on the scaling charts
 ./dfo-dps weapons --out ~/dfo-weapons.html
 ```
 
-The max profile is: attributes 100 (115 with `--firmament`), raw weapon skill and Critical Strike 200 mastered, weapon skill gear 240 (8 lines), Critical Strike gear 540 (18 lines), 40% damage affix, **perfect diamond sockets** (short blade 1, one-handed 2, two-handed 3, +12% damage each), the weapon's own career expertise, **Dunmer** (the default race; `--race` overrides), and **Blademaster** for every family; Berserker's below-half upkeep is not assumed. Hand-to-Hand uses a pair of **Hand Wraps** (damage/sockets/procs carry the fist blow). The table also includes dual-wield pairs, both hands of the same one-handed weapon at the off-hand x0.8 / -5 hit terms. The `Max gear` column is that build; `+ Firmament` adds the star-tree channel ceiling (+15 attributes, +15 skill, +30% blow). The gate column is the same build against the level-45 gate's 600 per-hit cap.
+The max profile is: attributes 100, raw weapon skill and Critical Strike 200 mastered, weapon skill gear 240 (8 lines), Critical Strike gear 540 (18 lines), a **Legendary damage affix** (20–40%; the max profile assumes the perfect 40 roll), **perfect diamond sockets** (short blade 1, one-handed 2, two-handed 3, +12% damage each), the weapon's own career expertise, **Dunmer** (the default race; `--race` overrides), and **Blademaster** for every family; Berserker's below-half upkeep is not assumed. Hand-to-Hand uses a pair of **Hand Wraps** (damage/sockets/procs carry the fist blow). The table also includes dual-wield pairs, both hands of the same one-handed weapon at the off-hand x0.8 / -5 hit terms. **Firmament DPS** is the real tree plan; **Boss DPS** is the same against the level-45 gate's 600 per-hit cap. The 40% affix is the weapon's own Legendary `damage` affix (`AFFIX_RANGES.damage.legendary = [20,40]`), not a Firmament or enchant channel.
 The cap is per player: a group scales the boss's health pool (each player
-brings a share), not the cap. The first chart ranks the boss (gate) DPS; the second ranks the uncapped DPS. Every DPS cell is the average; the bar chart's bar is the average.
+brings a share), not the cap. The first chart ranks the boss (gate) DPS; the second ranks the uncapped DPS. Every DPS cell is the average.
 
 `weapons-max.html` with `--categories` is the condensed table: one row per weapon type in each slot, including the Hand Wraps fist row, sorted by DPS. The full page has a max-DPS bar chart and table, then one combined chart per family: raw training 100 -> 200 is effective 100 -> 140, and gear lines continue from effective 140 to 140 + the gear cap. One Critical Strike chart covers the best weapon of each family. The Hand-to-Hand row is the wrapped ceiling. Bare fists without Hand Wrap lines are the ~450 band the community tests saw.
 
