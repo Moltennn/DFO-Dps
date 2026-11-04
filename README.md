@@ -317,6 +317,10 @@ known level, and the HP/DPS figures are shown with a tilde.
 Older captures can live in `captures/old/`; `./dfo-dps probe --old` reads the
 newest there, and the default reads only the live folder.
 
+The gate state is used only for Breach captures; a Sky-ketch or Abyss capture
+ignores a stale breach gate and only keeps a chart whose title matches its own
+boss.
+
 The reader prefers the gate state for the boss pool and fighters, and treats
 a chart that says **has fallen** (or a confirmed kill marker) as the kill even
 when the last gate HP sample lagged. A capture that starts mid-fight adds

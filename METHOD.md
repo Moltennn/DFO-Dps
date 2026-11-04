@@ -161,7 +161,9 @@ TTK model.
 
 ## Combat probe
 
-`probe` reads the newest live capture, or `--old` for `captures/old/`.
+`probe` reads the newest live capture, or `--old` for `captures/old/`. The gate
+hook is only read for a Breach fight; a Sky-ketch or Abyss capture never
+inherits the previous breach's gate or chart.
 
 `probe` reads a local Combat Probe capture (the mod is not in the mods repo;
 its source is in `~/.local/share/dfo-tools/probe-mod`). The probe starts on
