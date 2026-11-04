@@ -1079,10 +1079,11 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       for (const [i, f] of summary.fights.entries()) {
         console.log(`\nFight ${i + 1}  |  ${f.content}  |  ${f.name || 'boss'}  |  ${fmt(f.seconds)} s`);
         console.log(table([
-          ['Boss health', f.maxHp != null ? fmt(f.maxHp) : '-'],
-          ['Landing damage', f.damage != null ? fmt(f.damage) : `${fmt(f.hpLost)}%`],
-          ['Landed DPS', f.dps != null ? fmt(f.dps) : '-'],
-          ['Burst 5s', f.burst5 != null ? fmt(f.burst5) : '-'],
+          ['Boss health', f.maxHp != null ? `${f.maxHpEstimated ? '~' : ''}${fmt(f.maxHp)}` : '-'],
+          ['Landing damage', f.damage != null ? `${f.maxHpEstimated ? '~' : ''}${fmt(f.damage)}` : `${fmt(f.hpLost)}%`],
+          ['Landed DPS', f.dps != null ? `${f.maxHpEstimated ? '~' : ''}${fmt(f.dps)}` : '-'],
+          ['Burst 5s', f.burst5 != null ? `${f.maxHpEstimated ? '~' : ''}${fmt(f.burst5)}` : '-'],
+          ['Levels', `${f.levels.length} known / ${f.players} players${f.maxHpEstimated ? `, fill ${f.levelFill}` : ''}`],
           ['Largest 0.1s step', f.maxStep != null ? fmt(f.maxStep) : `${fmt(f.maxStepPct)}%`],
           ['No-damage time', `${fmt(f.immunityS)} s (${pc(f.immunityShare)})`],
           ['Warded time', f.wardedS > 0 ? `${fmt(f.wardedS)} s` : '-'],
@@ -1108,13 +1109,14 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       const chart = chartTotals(f.chart);
       return [{
         title: `${f.content} - ${f.name || 'boss'} (${fmt(f.seconds)} s)`,
-        note: `HP-derived figures, not the fight-end chart. Largest 0.1 s step is the best cap probe; no-damage time is the known immunity (tuning forks, phase shields).${chart?.names?.length ? ` Chart names: ${chart.names.join(', ')}.` : ''}`,
+        note: `HP-derived figures, not the fight-end chart. Largest 0.1 s step is the best cap probe; no-damage time is the known immunity (tuning forks, phase shields). A tilde means the chart listed only the top 10 and the remaining players are filled at the median known level.${chart?.names?.length ? ` Chart names: ${chart.names.join(', ')}.` : ''}`,
         chart: hpCurve,
         table: `<div class="table"><table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>${[
-          ['Boss health', f.maxHp != null ? fmt(f.maxHp) : '-'],
-          ['Landing damage', f.damage != null ? fmt(f.damage) : `${fmt(f.hpLost)}%`],
-          ['Landed DPS', f.dps != null ? fmt(f.dps) : '-'],
-          ['Burst 5s', f.burst5 != null ? fmt(f.burst5) : '-'],
+          ['Boss health', f.maxHp != null ? `${f.maxHpEstimated ? '~' : ''}${fmt(f.maxHp)}` : '-'],
+          ['Landing damage', f.damage != null ? `${f.maxHpEstimated ? '~' : ''}${fmt(f.damage)}` : `${fmt(f.hpLost)}%`],
+          ['Landed DPS', f.dps != null ? `${f.maxHpEstimated ? '~' : ''}${fmt(f.dps)}` : '-'],
+          ['Burst 5s', f.burst5 != null ? `${f.maxHpEstimated ? '~' : ''}${fmt(f.burst5)}` : '-'],
+          ['Levels', `${f.levels.length} known / ${f.players} players${f.maxHpEstimated ? `, fill ${f.levelFill}` : ''}`],
           ['Largest 0.1 s step', f.maxStep != null ? fmt(f.maxStep) : `${fmt(f.maxStepPct)}%`],
           ['No-damage time', `${fmt(f.immunityS)} s (${pc(f.immunityShare)})`],
           ['Warded time', f.wardedS > 0 ? `${fmt(f.wardedS)} s` : '-'],

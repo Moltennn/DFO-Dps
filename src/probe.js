@@ -50,7 +50,12 @@ export function fightSummary(samples, { content = 'unknown', level = 45, players
   const last = samples.at(-1);
   const seconds = Math.max(1e-9, (last.t - first.t) / 1000);
   const boss = encounterById(content);
-  const lvList = levels.length ? levels : Array.from({ length: Math.max(1, players) }, () => level);
+  const known = levels.filter((v) => Number.isFinite(v) && v >= 1 && v <= 60);
+  const count = Math.max(1, players, known.length);
+  const sorted = known.slice().sort((a, b) => a - b);
+  const fill = sorted.length ? sorted[Math.floor(sorted.length / 2)] : level;
+  const lvList = [...known, ...Array(Math.max(0, count - known.length)).fill(fill)];
+  const maxHpEstimated = count > 1 && count > known.length;
   const maxHp = boss ? lvList.reduce((a, l) => a + boss.shareX * bossRef(l) * (boss.hpX ?? 1), 0) : null;
   const hpLost = Math.max(0, hpOf(first) - hpOf(last));
   const damage = maxHp != null ? (hpLost / 100) * maxHp : null;
@@ -124,7 +129,9 @@ export function fightSummary(samples, { content = 'unknown', level = 45, players
     sub: first.boss.sub ?? '',
     level,
     players: lvList.length,
-    levels: lvList,
+    levels: known,
+    levelFill: fill,
+    maxHpEstimated,
     maxHp,
     seconds,
     hpLost,
@@ -149,7 +156,7 @@ export function summarizeProbe(data, { level, players } = {}) {
   if (!data || data.version !== 1) throw new Error('not a Combat Probe capture (version 1)');
   const lv = isNum(level) ? Number(level) : Number(data.level) || 45;
   const levels = Array.isArray(data.levels) ? data.levels.map(Number).filter((v) => Number.isFinite(v) && v >= 1 && v <= 60) : [];
-  const pl = isNum(players) ? Number(players) : levels.length || Number(data.players) || 1;
+  const pl = isNum(players) ? Number(players) : Number(data.players) || levels.length || 1;
   const samples = Array.isArray(data.samples) ? data.samples : [];
   const fights = splitFights(samples).map((f) => {
     const content = bossContent(f[0].boss?.name, f[0].boss?.sub)
@@ -158,7 +165,7 @@ export function summarizeProbe(data, { level, players } = {}) {
     out.chart = data.chart ?? null;
     return out;
   });
-  return { build: data.build ?? '', startedAt: data.startedAt ?? 0, endedAt: data.endedAt ?? 0, level: lv, players: levels.length || pl, fights };
+  return { build: data.build ?? '', startedAt: data.startedAt ?? 0, endedAt: data.endedAt ?? 0, level: lv, players: pl || levels.length || 1, fights };
 }
 
 /** The capture's own damage chart, summed per player. */

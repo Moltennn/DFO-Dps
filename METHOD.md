@@ -169,9 +169,11 @@ through a local sink, with no save dialog. It samples the boss bar every
 100 ms and records the content, the main fill, the `.wb-boss-half` split
 fills, the no-damage gaps and the fight-end chart. The level is
 `window.__playerEntity.level` (kept set by the Skill Tracker's skyhook) or
-the bar's level text; the group size is the damage chart's row count or the
-bar's deck count. Both are in the capture; the CLI `--level` and `--players`
-only override them.
+the bar's level text; the group size is the bar's "n in the court" / "n on
+the bridge" count, not the damage chart (the chart is a top-10 list). The
+chart's levels fill the known players; the rest are filled at their median
+level, and the report marks the estimate with a tilde. Both are in the
+capture; the CLI `--level` and `--players` only override them.
 `src/probe.js` splits the samples into pulls, derives landed damage from the
 health bar and the content's share, and reports DPS, the first-five-second
 burst, the largest single sample step (a cap probe), the no-damage share (an

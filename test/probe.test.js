@@ -86,3 +86,15 @@ test('per-player levels from the chart add their own share', () => {
   assert.equal(f.maxHp, 24000);
   assert.ok(Math.abs(f.damage - 24000) < 1, `damage ${f.damage}`);
 });
+
+test('a top-10 chart fills the remaining players at the median level', () => {
+  const data = capture();
+  data.players = 49;
+  data.levels = Array.from({ length: 10 }, () => 31);
+  const f = summarizeProbe(data).fights[0];
+  assert.equal(f.players, 49);
+  assert.equal(f.levels.length, 10);
+  assert.equal(f.levelFill, 31);
+  assert.equal(f.maxHpEstimated, true);
+  assert.equal(f.maxHp, 240 * 36 * 49);
+});
