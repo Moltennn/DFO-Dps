@@ -266,9 +266,11 @@ Firmament plans used.
 ```
 
 The content names are **Breach**, **Sky-ketch** and **Abyss**. Elite Breach
-is currently bugged and is not offered. The Sky-ketch's immune windows and the
-Abyss's phase split are not calibrated yet; those sections are marked
-"uncalibrated mechanics" and their TTK is the purse-only baseline.
+is currently bugged and is not offered. The Sky-ketch is calibrated from one solo capture (6.6 s opening immunity
+and a 35.2 s The Discord window). The Abyss is not calibrated yet; that
+section is marked "uncalibrated mechanics" and its TTK is the purse-only
+baseline. The breach capture also shows warded Ruhn's Blade/Flame windows
+beyond the source's 3 s shields; those are not in the TTK model.
 
 The table is tree + enchants + imprint, assumes a soul gem on every piece,
 and lists every weapon template separately in each hold it supports.

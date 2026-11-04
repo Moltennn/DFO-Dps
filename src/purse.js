@@ -42,6 +42,7 @@ export function simulatePurse(base, encounterId, { level = 45, maxSeconds = 3600
   const phases = [...(encounter.phases ?? [])].sort((a, b) => b.at - a.at);
   const immunityShare = encounter.immunity?.share;
   const calibrated = !!encounter.calibrated;
+  const openingS = Math.max(0, Number(encounter.openingS) || 0);
 
   let t = 0;
   let hp = total;
@@ -71,7 +72,7 @@ export function simulatePurse(base, encounterId, { level = 45, maxSeconds = 3600
     hp -= got;
     landed += got;
     hits += 1;
-    if (t <= 5) burst5 += got;
+    if (t <= Math.max(0, 5 - openingS)) burst5 += got;
     while (phaseAt < phases.length && hp <= total * phases[phaseAt].at) {
       shieldUntil = Math.max(shieldUntil, t + (Number(phases[phaseAt].shieldS) || 0));
       phaseAt += 1;
@@ -80,7 +81,7 @@ export function simulatePurse(base, encounterId, { level = 45, maxSeconds = 3600
 
   // An uncalibrated immunity is a share of the fight in which nothing lands.
   const immune = Number.isFinite(immunityShare) ? Math.max(0, Math.min(0.95, immunityShare)) : 0;
-  const ttk = t / Math.max(1e-9, 1 - immune) + Math.max(0, splitPenaltyS);
+  const ttk = openingS + t / Math.max(1e-9, 1 - immune) + Math.max(0, splitPenaltyS);
   const sustainedDps = ttk > 0 ? landed / ttk : 0;
   return {
     encounter: encounter.id,
@@ -98,6 +99,7 @@ export function simulatePurse(base, encounterId, { level = 45, maxSeconds = 3600
     hitHz,
     ref,
     immunityShare: immune,
+    openingS,
     splitPenaltyS,
     phases: phases.length,
   };

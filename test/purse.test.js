@@ -29,7 +29,7 @@ test('the Sky-ketch target is 30,000 HP and still uses the 600 cap', () => {
   const t = encounterTarget('skyketch', 45);
   assert.equal(t.health, 30000);
   assert.equal(t.hitCap, 600);
-  assert.equal(ENCOUNTERS.skyketch.calibrated, false);
+  assert.equal(ENCOUNTERS.skyketch.calibrated, true);
 });
 
 test('a build above the purse refill drains it, then settles at the refill rate', () => {
@@ -42,8 +42,8 @@ test('a build above the purse refill drains it, then settles at the refill rate'
 });
 
 test('a build below the refill never empties the purse', () => {
-  // Sky-ketch has no phase shields, so this is the pure purse time.
-  const r = simulatePurse(base({ cappedPerSwing: 100 }), 'skyketch', { level: 45 });
+  // Abyss has no phase shields or immunity, so this is the pure purse time.
+  const r = simulatePurse(base({ cappedPerSwing: 100 }), 'abyss', { level: 45 });
   assert.ok(Math.abs(r.ttk - 120) < 1e-6, `ttk ${r.ttk}`);
   assert.ok(r.burst5 > 0);
 });
@@ -61,16 +61,20 @@ test('the per-blow cap binds above 600', () => {
 
 test('phase shields add their seconds to the kill', () => {
   const slow = base({ cappedPerSwing: 100 });
-  const plain = simulatePurse(slow, 'skyketch', { level: 45 });
+  const plain = simulatePurse(slow, 'abyss', { level: 45 });
   const breach = simulatePurse(slow, 'breach', { level: 45 });
   assert.equal(breach.phases, 2);
   assert.ok(breach.ttk - plain.ttk >= 5.5, `breach ${breach.ttk}, plain ${plain.ttk}`);
 });
 
-test('an uncalibrated immunity scales the time and is flagged', () => {
+test('the Sky-ketch capture turns its immunity into an opening and a share', () => {
   const r = simulatePurse(base(), 'skyketch', { level: 45 });
-  assert.equal(r.calibrated, false);
-  assert.equal(r.immunityShare, 0);
+  assert.equal(r.calibrated, true);
+  assert.equal(r.openingS, 6.6);
+  assert.ok(r.immunityShare > 0.17 && r.immunityShare < 0.19);
+  assert.equal(r.burst5, 0);
+  const plain = simulatePurse(base(), 'abyss', { level: 45 });
+  assert.equal(plain.calibrated, false);
 });
 
 test('the split penalty is added only when asked for', () => {

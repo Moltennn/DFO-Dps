@@ -1049,8 +1049,13 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       const dir = path.join(os.homedir(), '.local/share/dfo-tools/probe-mod/captures');
       try {
         const latest = fs.readdirSync(dir).filter((f) => f.endsWith('.json'))
-          .map((f) => ({ f, m: fs.statSync(path.join(dir, f)).mtimeMs }))
-          .sort((a, b) => b.m - a.m)[0];
+          .map((f) => {
+            const full = path.join(dir, f);
+            let at = fs.statSync(full).mtimeMs;
+            try { at = Date.parse(JSON.parse(fs.readFileSync(full, 'utf8')).capturedAt) || at; } catch { /* use mtime */ }
+            return { f, at };
+          })
+          .sort((a, b) => b.at - a.at)[0];
         if (latest) file = path.join(dir, latest.f);
       } catch { /* no probe folder yet */ }
       if (!file) {
@@ -1065,7 +1070,9 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       console.error(`probe: cannot read ${file}: ${e.message}`);
       process.exit(2);
     }
-    const summary = summarizeProbe(data, { level: values.level, players: values.players });
+    const levelOverride = argv.includes('--level') || argv.some((a) => a.startsWith('--level=')) ? values.level : undefined;
+    const playersOverride = argv.includes('--players') || argv.some((a) => a.startsWith('--players=')) ? values.players : undefined;
+    const summary = summarizeProbe(data, { level: levelOverride, players: playersOverride });
     if (!values.json) {
       console.log(`Combat Probe  |  ${summary.fights.length} fight${summary.fights.length === 1 ? '' : 's'}  |  level ${summary.level}, ${summary.players} player${summary.players === 1 ? '' : 's'}  |  build ${summary.build || '-'}`);
       if (!summary.fights.length) console.log('No boss health samples found. Arm the probe before the pull and stop it after.');
@@ -1078,6 +1085,8 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
           ['Burst 5s', f.burst5 != null ? fmt(f.burst5) : '-'],
           ['Largest 0.1s step', f.maxStep != null ? fmt(f.maxStep) : `${fmt(f.maxStepPct)}%`],
           ['No-damage time', `${fmt(f.immunityS)} s (${pc(f.immunityShare)})`],
+          ['Warded time', f.wardedS > 0 ? `${fmt(f.wardedS)} s` : '-'],
+          ['Sub-phases', f.subs.length ? f.subs.slice(0, 3).map((x) => `${x.name} ${fmt(x.seconds)}s`).join('; ') : '-'],
           ['Split samples', f.halves.length ? `${f.halves.length} samples with halves` : '-'],
         ], ['Metric', 'Value'], ['left', 'right']));
       }
@@ -1108,6 +1117,8 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
           ['Burst 5s', f.burst5 != null ? fmt(f.burst5) : '-'],
           ['Largest 0.1 s step', f.maxStep != null ? fmt(f.maxStep) : `${fmt(f.maxStepPct)}%`],
           ['No-damage time', `${fmt(f.immunityS)} s (${pc(f.immunityShare)})`],
+          ['Warded time', f.wardedS > 0 ? `${fmt(f.wardedS)} s` : '-'],
+          ['Sub-phases', f.subs.length ? f.subs.slice(0, 3).map((x) => `${x.name} ${fmt(x.seconds)}s`).join('; ') : '-'],
           ['Split samples', f.halves.length ? `${f.halves.length}` : '-'],
         ].map(([k, v]) => `<tr><td class="k">${k}</td><td>${v}</td></tr>`).join('')}</tbody></table></div>`,
       }, {

@@ -57,7 +57,7 @@ export const ENCOUNTERS = Object.freeze({
     immunity: null,
     split: null,
     calibrated: true,
-    note: 'Dagon\'s Breach: 240 s share per player, two 3 s phase shields.',
+    note: 'Dagon\'s Breach: 240 s share per player, two 3 s phase shields. The capture shows extra warded Ruhn\'s Blade/Flame windows; the model applies only the source\'s 3 s shields.',
   }),
   skyketch: Object.freeze({
     id: 'skyketch',
@@ -68,12 +68,13 @@ export const ENCOUNTERS = Object.freeze({
     armorValue: 0,
     phases: null,
     immunity: Object.freeze({
-      share: null,
-      reasons: Object.freeze(['tuning forks up', 'a second mechanic']),
+      share: 0.178,
+      reasons: Object.freeze(['tuning forks up', 'The Discord']),
     }),
+    openingS: 6.6,
     split: null,
-    calibrated: false,
-    note: 'Sky-ketch: 600 s share per player, the same purse; the boss is immune while the tuning forks are up and during one other mechanic, and it has phases.',
+    calibrated: true,
+    note: 'Sky-ketch: 600 s share per player, the same purse. One solo capture: 6.6 s opening immunity and a 35.2 s The Discord window; the other no-damage gaps are downtime.',
   }),
   abyss: Object.freeze({
     id: 'abyss',

@@ -153,10 +153,11 @@ The capped side applies the boss purse (`net/gate/gateBrain.js`,
 `12 * ref`, and a four-blow token bucket (`ref = 5 + level`). The share is
 `240 * ref` per player for Breach and Abyss and `600 * ref` for Sky-ketch.
 Content names only: **Breach**, **Sky-ketch**, **Abyss** (`--encounter`,
-`--all-encounters`). Elite Breach is bugged and not offered. The Sky-ketch
-and Abyss carry their known mechanics (immune tuning-fork windows, the
-gold/silver split) but are marked uncalibrated until the probe measures
-them.
+`--all-encounters`). Elite Breach is bugged and not offered. The Sky-ketch is calibrated from one solo capture (6.6 s opening immunity
+and a 35.2 s The Discord window). The Abyss is still marked uncalibrated
+until a capture is available. The breach capture shows warded Ruhn's
+Blade/Flame windows beyond the source's 3 s shields; those are not in the
+TTK model.
 
 ## Combat probe
 

@@ -12,6 +12,15 @@
 import { bossRef, encounterById, purseOf } from './encounters.js';
 
 const isNum = (v) => Number.isFinite(Number(v));
+
+/** Content from the boss itself, so a capture with a stale label still reads right. */
+export function bossContent(name = '', sub = '') {
+  const s = `${name} ${sub}`.toLowerCase();
+  if (/ketch|tonal|steersman/.test(s)) return 'skyketch';
+  if (/abyss|brass|remnant|clock/.test(s)) return 'abyss';
+  if (/valkynaz|ruhn|burning|rime|dagon|breach|court|champion|warden/.test(s)) return 'breach';
+  return null;
+}
 const hpOf = (s) => (s?.boss && isNum(s.boss.hp) ? Number(s.boss.hp) : null);
 
 /** Split samples at a gap, a name change or a health refill. */
@@ -84,8 +93,20 @@ export function fightSummary(samples, { content = 'unknown', level = 45, players
   const immunityShare = Math.min(0.95, gapS / seconds);
 
   const halves = samples
-    .filter((s) => (s.boss?.halves?.length ?? 0) > 0)
+    .filter((s) => (s.boss?.halves?.length ?? 0) > 0
+      && (content === 'abyss' || s.boss.halves.some((h) => /gold|silver/i.test(h.name ?? ''))))
     .map((s) => ({ t: s.t, halves: s.boss.halves }));
+
+  let wardedS = 0;
+  const subMap = new Map();
+  for (let i = 1; i < samples.length; i++) {
+    const dt = (samples[i].t - samples[i - 1].t) / 1000;
+    const prev = samples[i - 1].boss;
+    if ((prev?.halves ?? []).some((h) => Number(h.hp) > 0 && (/warded/i.test(h.state ?? '') || /warded/.test(h.cls ?? '')))) wardedS += dt;
+    const name = prev?.sub || '(no sub-phase)';
+    subMap.set(name, (subMap.get(name) ?? 0) + dt);
+  }
+  const subs = [...subMap].map(([name, seconds]) => ({ name, seconds })).sort((a, b) => b.seconds - a.seconds);
 
   const curve = samples.map((s) => ({ t: (s.t - first.t) / 1000, hp: hpOf(s) }));
   const dpsCurve = [];
@@ -114,6 +135,8 @@ export function fightSummary(samples, { content = 'unknown', level = 45, players
     maxStepPct,
     immunityS: gapS,
     immunityShare,
+    wardedS,
+    subs,
     halves,
     curve,
     dpsCurve,
@@ -129,12 +152,13 @@ export function summarizeProbe(data, { level, players } = {}) {
   const pl = isNum(players) ? Number(players) : levels.length || Number(data.players) || 1;
   const samples = Array.isArray(data.samples) ? data.samples : [];
   const fights = splitFights(samples).map((f) => {
-    const content = data.content && data.content !== 'auto' ? data.content : (f[0].boss?.content ?? 'unknown');
+    const content = bossContent(f[0].boss?.name, f[0].boss?.sub)
+      ?? (data.content && data.content !== 'auto' ? data.content : (f[0].boss?.content ?? 'unknown'));
     const out = fightSummary(f, { content, level: lv, players: pl, levels });
     out.chart = data.chart ?? null;
     return out;
   });
-  return { build: data.build ?? '', startedAt: data.startedAt ?? 0, endedAt: data.endedAt ?? 0, level: lv, players: pl, fights };
+  return { build: data.build ?? '', startedAt: data.startedAt ?? 0, endedAt: data.endedAt ?? 0, level: lv, players: levels.length || pl, fights };
 }
 
 /** The capture's own damage chart, summed per player. */
