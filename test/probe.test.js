@@ -76,3 +76,13 @@ test('a slow weapon cadence is not mistaken for immunity', () => {
   const f = summarizeProbe({ version: 1, level: 45, players: 1, samples }).fights[0];
   assert.ok(f.immunityS < 0.5, `gap ${f.immunityS}`);
 });
+
+test('per-player levels from the chart add their own share', () => {
+  const data = capture();
+  data.levels = [45, 45];
+  data.players = 2;
+  const f = summarizeProbe(data).fights[0];
+  assert.equal(f.players, 2);
+  assert.equal(f.maxHp, 24000);
+  assert.ok(Math.abs(f.damage - 24000) < 1, `damage ${f.damage}`);
+});

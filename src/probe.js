@@ -36,12 +36,13 @@ export function splitFights(samples = [], { gapMs = 5000, minSeconds = 1 } = {})
 }
 
 /** The capture's damage figures for one fight. */
-export function fightSummary(samples, { content = 'unknown', level = 45, players = 1 } = {}) {
+export function fightSummary(samples, { content = 'unknown', level = 45, players = 1, levels = [] } = {}) {
   const first = samples[0];
   const last = samples.at(-1);
   const seconds = Math.max(1e-9, (last.t - first.t) / 1000);
   const boss = encounterById(content);
-  const maxHp = boss ? boss.shareX * bossRef(level) * (boss.hpX ?? 1) * players : null;
+  const lvList = levels.length ? levels : Array.from({ length: Math.max(1, players) }, () => level);
+  const maxHp = boss ? lvList.reduce((a, l) => a + boss.shareX * bossRef(l) * (boss.hpX ?? 1), 0) : null;
   const hpLost = Math.max(0, hpOf(first) - hpOf(last));
   const damage = maxHp != null ? (hpLost / 100) * maxHp : null;
   const dps = damage != null ? damage / seconds : null;
@@ -101,7 +102,8 @@ export function fightSummary(samples, { content = 'unknown', level = 45, players
     name: first.boss.name ?? '',
     sub: first.boss.sub ?? '',
     level,
-    players,
+    players: lvList.length,
+    levels: lvList,
     maxHp,
     seconds,
     hpLost,
@@ -123,11 +125,12 @@ export function fightSummary(samples, { content = 'unknown', level = 45, players
 export function summarizeProbe(data, { level, players } = {}) {
   if (!data || data.version !== 1) throw new Error('not a Combat Probe capture (version 1)');
   const lv = isNum(level) ? Number(level) : Number(data.level) || 45;
-  const pl = isNum(players) ? Number(players) : Number(data.players) || 1;
+  const levels = Array.isArray(data.levels) ? data.levels.map(Number).filter((v) => Number.isFinite(v) && v >= 1 && v <= 60) : [];
+  const pl = isNum(players) ? Number(players) : levels.length || Number(data.players) || 1;
   const samples = Array.isArray(data.samples) ? data.samples : [];
   const fights = splitFights(samples).map((f) => {
     const content = data.content && data.content !== 'auto' ? data.content : (f[0].boss?.content ?? 'unknown');
-    const out = fightSummary(f, { content, level: lv, players: pl });
+    const out = fightSummary(f, { content, level: lv, players: pl, levels });
     out.chart = data.chart ?? null;
     return out;
   });

@@ -282,13 +282,23 @@ part of the mods repo: its source lives in
 `~/.local/share/dfo-tools/probe-mod`, with an ignored symlink at
 `DFO-Mods/probe-mod`. The loader still discovers it like any other mod.
 
-In game: **ESC -> Mods -> Combat Probe**, pick the content label, **Start**,
-fight, **Stop**, **Download JSON**. It reads `.wb-boss-fill` and the
-`.wb-boss-half` split bars, records the fight-end chart as a cross-check, and
-never changes a game value or sends anything.
+It records automatically. The mod starts on load, opens a fight when the boss
+bar appears, and saves at the fall: a JSON in the browser's probe store and,
+by default, a download in `~/Downloads`. The pane (ESC -> Mods -> Combat
+Probe) has **Pause/Resume**, **Download last**, **Download saved**, an
+auto-download toggle and a content-label override. It reads
+`.wb-boss-fill` and `.wb-boss-half`, records the fight-end chart as a
+cross-check, and never changes a game value or sends anything.
+
+**Level** comes from `window.__playerEntity` (the Skill Tracker's skyhook
+keeps it set) or the boss bar's level text. **Group size** comes from the
+fight-end damage-chart rows, or the bar's "n on the deck" count. No manual
+level or player count is needed; the capture carries both.
 
 ```bash
-./dfo-dps probe ~/Downloads/dfo-probe-....json --level 45 --players 1
+./dfo-dps probe ~/Downloads/dfo-probe-breach-....json
+# --level / --players are optional overrides if a capture was taken before
+# the auto-detection existed
 ```
 
 The reader uses the health bar, not the chart, for landed damage, burst and

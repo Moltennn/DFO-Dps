@@ -161,9 +161,15 @@ them.
 ## Combat probe
 
 `probe` reads a local Combat Probe capture (the mod is not in the mods repo;
-its source is in `~/.local/share/dfo-tools/probe-mod`). The probe samples the
-boss bar every 100 ms and records the content label, the main fill, the
-`.wb-boss-half` split fills, the no-damage gaps and the fight-end chart.
+its source is in `~/.local/share/dfo-tools/probe-mod`). The probe starts on
+load, records each boss bar automatically, and saves the fight at the fall to
+the browser's probe store and (by default) a download. It samples the boss
+bar every 100 ms and records the content, the main fill, the `.wb-boss-half`
+split fills, the no-damage gaps and the fight-end chart. The level is
+`window.__playerEntity.level` (kept set by the Skill Tracker's skyhook) or
+the bar's level text; the group size is the damage chart's row count or the
+bar's deck count. Both are in the capture; the CLI `--level` and `--players`
+only override them.
 `src/probe.js` splits the samples into pulls, derives landed damage from the
 health bar and the content's share, and reports DPS, the first-five-second
 burst, the largest single sample step (a cap probe), the no-damage share (an
