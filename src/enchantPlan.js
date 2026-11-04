@@ -119,9 +119,9 @@ function weaponCandidates(ch, base, group, target) {
     });
     if (raw.dps > 0) out.push({ type: 'CastWhenStrikes', param, cost, value: raw.dps, label: enchantmentParamName('CastWhenStrikes', param) });
   }
-  const pv = GROUP_PARAM[String(group).toLowerCase()] ?? 2;
-  const pvValue = Math.max(0, cappedDpsWith(base, { flat: 5 }) - base.cappedDps);
-  if (pvValue > 0) out.push({ type: 'PotentVs', param: pv, cost: enchantmentCost('PotentVs', pv), value: pvValue, label: `${enchantmentName('PotentVs')}: ${enchantmentParamName('PotentVs', pv)}` });
+  const pv = group == null || group === 'none' ? null : GROUP_PARAM[String(group).toLowerCase()] ?? 2;
+  const pvValue = pv == null ? 0 : Math.max(0, cappedDpsWith(base, { flat: 5 }) - base.cappedDps);
+  if (pv != null && pvValue > 0) out.push({ type: 'PotentVs', param: pv, cost: enchantmentCost('PotentVs', pv), value: pvValue, label: `${enchantmentName('PotentVs')}: ${enchantmentParamName('PotentVs', pv)}` });
   for (const id of skillIdsFor(ch._template)) {
     const value = skillGain(ch, base, id, {}, target);
     if (value > 0) out.push({ type: 'EnhancesSkill', param: id, cost: enchantmentCost('EnhancesSkill', id), value, label: enchantmentParamName('EnhancesSkill', id) });
@@ -271,8 +271,8 @@ export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, s
     type: c.type, param: c.param, label: c.label, cost: c.cost, value: c.value, benefit: `${Math.round(c.value)} DPS`,
     chosen: chosenCount(c.type, c.param), rate: c.value / c.cost,
   }));
-  const pvParam = GROUP_PARAM[String(group).toLowerCase()] ?? 2;
-  if (!weaponRatings.some((r) => r.type === 'PotentVs')) {
+  const pvParam = group == null || group === 'none' ? null : GROUP_PARAM[String(group).toLowerCase()] ?? 2;
+  if (pvParam != null && !weaponRatings.some((r) => r.type === 'PotentVs')) {
     const pvValue = Math.max(0, cappedDpsWith(base, { flat: 5 }) - base.cappedDps);
     const pvCost = enchantmentCost('PotentVs', pvParam);
     weaponRatings.push({ type: 'PotentVs', param: pvParam, label: `${enchantmentName('PotentVs')}: ${enchantmentParamName('PotentVs', pvParam)}`, cost: pvCost, value: pvValue, benefit: `${Math.round(pvValue)} DPS`, chosen: chosenCount('PotentVs', pvParam), rate: pvCost > 0 ? pvValue / pvCost : 0 });

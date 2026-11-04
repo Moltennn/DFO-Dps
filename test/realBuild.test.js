@@ -38,3 +38,12 @@ test('all weapon loadouts list every template and exclude monster-type damage im
   assert.ok(long.some((r) => r.category === '1H') && long.some((r) => r.category === '2H') && long.some((r) => r.category === 'DW'));
   assert.ok(long.some((r) => r.imprintPower === 'Many Endings'));
 });
+
+test('the capped loadout carries the purse metrics per content', () => {
+  const breach = realWeaponLoadouts({ modes: ['cap'], encounter: 'breach' });
+  assert.ok(breach.every((r) => r.calibrated));
+  assert.ok(breach.every((r) => r.ttk > 0 && r.burst5 > 0 && r.sustainedDps > 0));
+  const ketch = realWeaponLoadouts({ modes: ['cap'], encounter: 'skyketch' });
+  assert.ok(ketch.every((r) => !r.calibrated));
+  assert.ok(ketch[0].ttk > breach[0].ttk, `${ketch[0].ttk} vs ${breach[0].ttk}`);
+});

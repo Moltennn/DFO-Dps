@@ -22,6 +22,7 @@ import { FIRMAMENT_NODES, buildById, buildIds, firmamentSection, planBuild, plan
 import { imprintFamilyById, rankAll } from './imprints.js';
 import { effectLine, planEnchants, planMatrix, SOUL_GEM_POINTS } from './enchantPlan.js';
 import { applyTree, realWeaponLoadouts } from './realBuild.js';
+import { ENCOUNTERS, ENCOUNTER_IDS, encounterById } from './encounters.js';
 import { enchantmentName as enchantmentNameOf } from './enchantData.js';
 import { analyzeSpell, resolveSpells, spellCost, spellRotation, standardSpells } from './spells.js';
 import { ENCHANTMENT_TYPES, enchantDps, procsBeforeBreak, strikeEnchantments } from './enchants.js';
@@ -65,7 +66,7 @@ Usage:
 
 Common options:
   --save <SAVE4|path>                 save slot or SaveData.txt (default: newest)
-  --target <soft|tough|armoured|human|boss|gate>  reference foe or the real gate boss (default: armoured)
+  --target <soft|tough|armoured|human|boss|breach|gate>  reference foe or the real Breach boss (default: armoured)
   --level <n>                         target level (default: character level)
   --armor <n>                         boss armor value (default: 0)
   --health <n>                        boss maximum health (default: 5000)
@@ -97,6 +98,8 @@ Common options:
   --repairs <n>                       Repairs Objects copies on the set (default 1; 0 = none)
   --regen <n>                         Regens Health copies (default 0; heal spells are stronger)
   --cap-aware                         enchant-plan/loadout: cap-aware setup; imprints: rank by boss DPS
+  --encounter <id>                    loadout: breach, skyketch or abyss (default breach)
+  --all-encounters                    loadout: one cap-aware section per content
   --pair                              paired Pistolets (2 shots per cycle, off hand x0.8)
   --dual                              dual wield the left-hand weapon (off hand x0.8, -5 hit)
   --spam                              bow spam (BOW_FAST stacks to x0.2; default paced)
@@ -179,6 +182,8 @@ const optsSpec = {
   repairs: { type: 'string', default: '1' },
   regen: { type: 'string', default: '0' },
   'cap-aware': { type: 'boolean', default: false },
+  encounter: { type: 'string', default: 'breach' },
+  'all-encounters': { type: 'boolean', default: false },
   pair: { type: 'boolean', default: false },
   dual: { type: 'boolean', default: false },
   spam: { type: 'boolean', default: false },
@@ -337,7 +342,7 @@ function targetOf(ch, values, traits) {
   const target = String(values.target ?? 'armoured').toLowerCase() === 'armoured' && values.theory
     ? 'gate'
     : String(values.target ?? 'armoured').toLowerCase();
-  if (target === 'gate' || target === 'ruhn') {
+  if (target === 'gate' || target === 'breach' || target === 'ruhn') {
     return gateTarget(level, { health: n(values.health, gateHealth(level)), traits, players: n(values.players, 1), blowX: n(values['blow-x'], 1) });
   }
   if (target === 'boss') {
@@ -642,7 +647,7 @@ export async function main(argv = process.argv.slice(2)) {
     const dpsChart = barChart({ title: 'Sustained spell DPS (30s window)', labels: top.map((x) => x.sp.name), series: [{ name: 'DPS', values: top.map((x) => x.r.windowDps) }] });
     const effChart = barChart({ title: 'Damage per spell point', labels: top.map((x) => x.sp.name), series: [{ name: 'dmg/SP', values: top.map((x) => x.r.damage / Math.max(1, x.r.cost)) }] });
     const tableHtml = `<table><thead><tr><th>Spell</th><th>School</th><th>Cost</th><th>Damage</th><th>Window DPS</th><th>Cast DPS</th><th>DoT DPS</th><th>dmg/SP</th><th>DoT</th></tr></thead><tbody>${top.map(({ sp, r }) => `<tr><td class="k">${sp.name}</td><td>${skillName(r.school)}</td><td>${r.cost}</td><td>${fmt(r.damage)}</td><td>${fmt(r.windowDps)}</td><td>${fmt(r.manaDps)}</td><td>${fmt(r.dotDps ?? 0)}</td><td>${fmt(r.damage / Math.max(1, r.cost))}</td><td>${r.dotRounds ? `${r.dotRounds} r` : '-'}</td></tr>`).join('')}</tbody></table>`;
-    const subtitle = `${characterLabel(ch)} | ${list.length} standard damage spells | ${spellTarget.isBoss ? `gate ${spellTarget.maxHealth.toLocaleString()} HP` : `level ${spellTarget.level}`} | ${n(values.seconds, 30)}s window | potency ${n(values.potency, 0)}% | pierce ${n(values.pierce, 0)}`;
+    const subtitle = `${characterLabel(ch)} | ${list.length} standard damage spells | ${spellTarget.isBoss ? `Breach ${spellTarget.maxHealth.toLocaleString()} HP` : `level ${spellTarget.level}`} | ${n(values.seconds, 30)}s window | potency ${n(values.potency, 0)}% | pierce ${n(values.pierce, 0)}`;
     const html = multiGraphPage({
       title: 'DFO spell ceiling',
       subtitle,
@@ -732,7 +737,7 @@ export async function main(argv = process.argv.slice(2)) {
       ...(r.manaSolved ? [] : [['Time to empty', `${fmt(r.timeToEmpty)} s`], ['Pool kill', r.poolKill == null ? '-' : (r.poolKill ? 'yes' : 'no')], ['Mana left', fmt(r.manaLeft)]]),
       ['Saving throw', `${pc(r.saving)} lands`],
       ['Power multiplier', `x${fmt2(r.powerMult)}`],
-      ['Target', `${spellTarget.isBoss ? 'gate' : values.target}, level ${spellTarget.level}${spellTarget.isBoss ? `, ${spellTarget.maxHealth.toLocaleString()} HP` : ''}`],
+      ['Target', `${spellTarget.isBoss ? 'Breach' : values.target}, level ${spellTarget.level}${spellTarget.isBoss ? `, ${spellTarget.maxHealth.toLocaleString()} HP` : ''}`],
       ['Time to kill', r.ttk ? `${fmt(r.ttk)} s` : '-'],
     ], ['Metric', 'Value']));
     if (r.elements?.length) {
@@ -745,16 +750,35 @@ export async function main(argv = process.argv.slice(2)) {
 
   if (cmd === 'loadout' || cmd === 'real-dps') {
     const modes = values.uncapped ? ['uncapped'] : values['cap-aware'] ? ['cap'] : ['uncapped', 'cap'];
-    const rows = realWeaponLoadouts({ modes, vampire: !!values.vampire });
-    const sorted = (mode) => rows.filter((r) => r.mode === mode).sort((a, b) => b.totalDps - a.totalDps);
+    const requested = values['all-encounters'] ? [...ENCOUNTER_IDS] : [String(values.encounter ?? 'breach').toLowerCase()];
+    const unknown = requested.filter((id) => !encounterById(id));
+    if (unknown.length) {
+      console.error(`unknown encounter: ${unknown.join(', ')} (choose ${ENCOUNTER_IDS.join(', ')})`);
+      process.exit(2);
+    }
+    const wantsUncapped = modes.includes('uncapped');
+    const wantsCap = modes.includes('cap');
+    const uncappedRows = wantsUncapped ? realWeaponLoadouts({ modes: ['uncapped'], vampire: !!values.vampire }) : [];
+    const capRows = new Map();
+    if (wantsCap) for (const id of requested) capRows.set(id, realWeaponLoadouts({ modes: ['cap'], vampire: !!values.vampire, encounter: id }));
+    const rows = [...uncappedRows, ...[...capRows.values()].flat()];
+    const byDps = (list) => list.slice().sort((a, b) => b.totalDps - a.totalDps);
     if (!values.json) {
-      for (const mode of modes) {
-        const list = sorted(mode);
-        console.log(`\nReal loadouts  |  ${mode === 'uncapped' ? 'uncapped theory' : 'level-45 gate'}  |  soul gem +${SOUL_GEM_POINTS}`);
+      if (wantsUncapped) {
+        const list = byDps(uncappedRows);
+        console.log(`\nReal loadouts  |  uncapped theory  |  soul gem +${SOUL_GEM_POINTS}`);
         console.log(table(list.map((r) => [`${r.category} · ${r.family}`, r.weapon, r.imprint ?? '-', fmt(r.totalDps)]), ['Family', 'Weapon', 'Imprint', 'Total DPS'], ['left', 'left', 'left', 'right']));
       }
+      if (wantsCap) for (const id of requested) {
+        const e = ENCOUNTERS[id];
+        const list = byDps(capRows.get(id));
+        console.log(`\nReal loadouts  |  ${e.name}  |  soul gem +${SOUL_GEM_POINTS}${e.calibrated ? '' : '  |  uncalibrated mechanics'}`);
+        console.log(table(list.map((r) => [`${r.category} · ${r.family}`, r.weapon, r.imprint ?? '-', fmt(r.totalDps), fmt(r.burst5), fmt(r.sustainedDps), fmt(r.ttk), pc(r.landedShare)]), ['Family', 'Weapon', 'Imprint', 'Total DPS', 'Burst 5s', 'Avg DPS', 'TTK', 'Kept'], ['left', 'left', 'left', 'right', 'right', 'right', 'right', 'right']));
+      }
     }
-    const shared = rows.find((r) => r.mode === 'uncapped' && r.category === '1H')?.enchPlan ?? rows[0]?.enchPlan;
+    const shared = uncappedRows.find((r) => r.category === '1H')?.enchPlan
+      ?? [...capRows.values()].flat().find((r) => r.category === '1H')?.enchPlan
+      ?? rows[0]?.enchPlan;
     const imprintRows = rankAll({ sort: 'uncapped' }).flatMap((f) => f.rows.slice(0, 3).map((r) => ({ family: f.name, power: r.power.name, weapon: r.weapon, boss: r.baseDps, uncapped: r.uncappedDps })));
     const builds = buildIds().map((id) => {
       const build = buildById(id);
@@ -764,19 +788,47 @@ export async function main(argv = process.argv.slice(2)) {
     });
     const out = path.resolve(values.out === 'dfo-dps-report.html' ? 'loadouts.html' : values.out);
     const sections = [];
-    for (const mode of modes) {
-      const list = sorted(mode);
+    if (wantsUncapped) {
+      const list = byDps(uncappedRows);
       const chart = barChart({
-        title: `${mode === 'uncapped' ? 'Uncapped' : 'Gate'} loadouts by DPS`,
+        title: 'Uncapped loadouts by DPS',
         labels: list.map((r) => `${r.category} ${r.weapon}`),
         series: [{ name: 'Total DPS', values: list.map((r) => r.totalDps) }],
       });
       const body = list.map((r) => `<tr><td class="k">${r.category} · ${r.family}</td><td>${r.weapon}</td><td>${r.imprint ?? '-'}</td><td>${fmt(r.totalDps)}</td></tr>`).join('');
       sections.push({
-        title: `${mode === 'uncapped' ? 'Uncapped theory' : 'Gate'} - all weapons and hold configurations`,
+        title: 'Uncapped theory - all weapons and hold configurations',
         note: 'Every weapon template in every hand configuration. Total is tree + enchants + the best eligible positive imprint; null means no positive imprint was used.',
         chart,
         table: `<div class="table"><table><thead><tr><th>Family</th><th>Weapon</th><th>Imprint</th><th>Total DPS</th></tr></thead><tbody>${body}</tbody></table></div>`,
+      });
+    }
+    if (wantsCap) for (const id of requested) {
+      const e = ENCOUNTERS[id];
+      const list = byDps(capRows.get(id));
+      const chart = barChart({
+        title: `${e.name} loadouts by per-hit-cap DPS`,
+        labels: list.map((r) => `${r.category} ${r.weapon}`),
+        series: [{ name: 'Total DPS', values: list.map((r) => r.totalDps) }],
+      });
+      const ttkList = list.slice().sort((a, b) => (a.ttk ?? Infinity) - (b.ttk ?? Infinity));
+      const ttkChart = barChart({
+        title: `${e.name} time to kill - lower is better`,
+        labels: ttkList.map((r) => `${r.category} ${r.weapon}`),
+        series: [{ name: 'TTK', values: ttkList.map((r) => r.ttk ?? 0) }],
+      });
+      const body = list.map((r) => `<tr><td class="k">${r.category} · ${r.family}</td><td>${r.weapon}</td><td>${r.imprint ?? '-'}</td><td>${fmt(r.totalDps)}</td><td>${fmt(r.burst5)}</td><td>${fmt(r.sustainedDps)}</td><td>${fmt(r.ttk)}</td><td>${pc(r.landedShare)}</td></tr>`).join('');
+      sections.push({
+        title: `${e.name} - all weapons and hold configurations${e.calibrated ? '' : ' (uncalibrated mechanics)'}`,
+        note: `${e.note} Total DPS is the per-hit-cap ceiling; Burst 5s, Avg DPS and TTK apply the boss purse (750 depth, 150/s, 600 per blow, four blows/s at level 45). Purse kept is the share of that ceiling which lands after the purse. The imprint is chosen on the per-hit ceiling; under the purse Many Endings is not credited, because its extra blow is capped and spends the same four-blow budget.${e.calibrated ? '' : ' The purse is known; the encounter immunity/split timing is not yet measured, so TTK is a purse-only baseline.'}`,
+        chart,
+        table: `<div class="table"><table><thead><tr><th>Family</th><th>Weapon</th><th>Imprint</th><th>Total DPS</th><th>Burst 5s</th><th>Avg DPS</th><th>TTK</th><th>Purse kept</th></tr></thead><tbody>${body}</tbody></table></div>`,
+      });
+      sections.push({
+        title: `${e.name} - time to kill`,
+        note: 'Sorted by TTK, not DPS. Every build above the refill rate converges; the remaining differences are burst and phase time.',
+        chart: ttkChart,
+        table: '',
       });
     }
     if (shared) {
@@ -785,7 +837,7 @@ export async function main(argv = process.argv.slice(2)) {
     }
     sections.push({
       title: 'Imprint ratings',
-      note: 'Top three eligible imprints per family. Boss is the 600 cap; Uncapped has no cap. Monster-type damage imprints are shown for reference but are not used in the loadouts.',
+      note: 'Top three eligible imprints per family. Boss is the breach purse; Uncapped has no cap. Monster-type damage imprints are shown for reference but are not used in the loadouts.',
       chart: '',
       table: `<div class="table"><table><thead><tr><th>Family</th><th>Imprint</th><th>Weapon</th><th>Boss DPS</th><th>Uncapped DPS</th></tr></thead><tbody>${imprintRows.map((r) => `<tr><td class="k">${r.family}</td><td>${r.power}</td><td>${r.weapon}</td><td>${fmt(r.boss)}</td><td>${fmt(r.uncapped)}</td></tr>`).join('')}</tbody></table></div>`,
     });
@@ -797,7 +849,7 @@ export async function main(argv = process.argv.slice(2)) {
     });
     const html = multiGraphPage({
       title: 'DFO real loadouts',
-      subtitle: 'Tree + enchants + best eligible positive imprint. Every weapon template, 1H / 2H / DW / Fists, in both uncapped and capped modes. Monster-type damage imprints are excluded.',
+      subtitle: `Tree + enchants + best eligible positive imprint. Every weapon template, 1H / 2H / DW / Fists, in ${wantsUncapped ? 'uncapped' : ''}${wantsUncapped && wantsCap ? ' and ' : ''}${wantsCap ? requested.map((id) => ENCOUNTERS[id].name).join(' / ') : ''} modes. Monster-type damage imprints are excluded.`,
       sections,
     });
     fs.writeFileSync(out, html, 'utf8');
@@ -868,7 +920,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
         title: `${r.label} per weapon type`,
         note: r.key === 'uncapped'
           ? 'Theoretical maximum: no per-hit cap, weapon skill and Critical Strike on every piece. Every melee family uses the same shape; only the weapon-skill name changes.'
-          : 'Current gate: 600 per-hit cap. Skill lines are bought only where their capped marginal DPS is positive.',
+          : 'Current Breach: 600 per-hit cap. Skill lines are bought only where their capped marginal DPS is positive.',
         chart: '',
         table: summaryHtml(r.summary, r.key) + canonicalHtml(r.melee),
       }));
@@ -927,13 +979,13 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     const weaponTable = `<div class="table"><h3>Weapon only</h3><table><thead><tr><th>Effect</th><th>Why</th></tr></thead><tbody>${plan.weaponOnly.map((u) => `<tr><td class="k">${enchantmentNameOf(u.type)}</td><td style="white-space:normal">${u.why}</td></tr>`).join('')}</tbody></table></div>`;
     const ratingTable = `<div class="table"><h3>How the effects rate</h3><table><thead><tr><th>Category</th><th>Effect</th><th>Benefit</th><th>Cost</th><th>Chosen</th></tr></thead><tbody>${[
       ...plan.ratings.weapon.map((r) => ['Weapon proc', r.label, `${fmt(r.value)} DPS (${fmt(r.value * 1000 / r.cost)} / 1k)`, r.cost, r.chosen]),
-      ...plan.ratings.skills.map((r) => ['Skill +15', r.label, `${fmt(r.futureValue)} DPS no-cap, ${fmt(r.value)} at gate`, r.cost, r.chosen]),
+      ...plan.ratings.skills.map((r) => ['Skill +15', r.label, `${fmt(r.futureValue)} DPS no-cap, ${fmt(r.value)} at the cap`, r.cost, r.chosen]),
       ...plan.ratings.utility.map((r) => ['Utility', r.label, r.benefit, r.cost, r.chosen]),
     ].map((r) => `<tr><td class="k">${r[0]}</td><td>${r[1]}</td><td style="white-space:normal">${r[2]}</td><td>${r[3]}</td><td>${r[4]}</td></tr>`).join('')}</tbody></table></div>`;
     const html = multiGraphPage({
       title: 'DFO enchant plan',
       subtitle: `${plan.weaponName}${plan.rows.find((r) => /Shield|Buckler/.test(r.slot)) ? ` + ${plan.rows.find((r) => /Shield|Buckler/.test(r.slot)).item}` : ''}; ${plan.soulGem ? `soul gem +${SOUL_GEM_POINTS} on every piece` : 'template enchantment points only'}. Budgets are the game's ItemTemplates enchantmentPoints plus the stated soul gem; a POWER is positive, a side effect negative.`,
-      sections: [{ title: 'Per piece', note: `Boss-first fill against the level-45 gate (${group}, 600 per-hit cap). Backstabbing is not planned: its ×3 is capped after the roll, so +15 Backstabbing adds no capped DPS on the capped weapons. Uncapped theory puts weapon skill and Critical Strike on every piece; cap-aware buys only what the current cap pays. One-piece effects go out once; Repairs Objects is a player-chosen count (default 1); Regens Health is optional and off by default (heal spells are stronger). Empty pieces have no remaining effect that added capped DPS. Strike procs are capped per hit too; the weapon holds ${plan.maxProcs} proc row${plan.maxProcs === 1 ? '' : 's'} over its ${plan.swings}-swing gate fight (10 condition a proc). ${plan.soulGem ? 'The soul gem is applied to every piece.' : 'No soul gem: base template points only.'}${plan.imprint?.base ? ` The weapon's imprint is separate from this budget: best boss ${plan.imprint.base.power.name} (${fmt(plan.imprint.base.baseDps)} DPS), best uncapped ${plan.imprint.uncapped.power.name} (${fmt(plan.imprint.uncapped.uncappedDps)} DPS).` : ''}`, chart: '', table: pieceTable + oneTable + stackTable + weaponTable + ratingTable }],
+      sections: [{ title: 'Per piece', note: `Boss-first fill against the level-45 Breach (${group}, 600 per-hit cap). Backstabbing is not planned: its ×3 is capped after the roll, so +15 Backstabbing adds no capped DPS on the capped weapons. Uncapped theory puts weapon skill and Critical Strike on every piece; cap-aware buys only what the current cap pays. One-piece effects go out once; Repairs Objects is a player-chosen count (default 1); Regens Health is optional and off by default (heal spells are stronger). Empty pieces have no remaining effect that added capped DPS. Strike procs are capped per hit too; the weapon holds ${plan.maxProcs} proc row${plan.maxProcs === 1 ? '' : 's'} over its ${plan.swings}-swing Breach fight (10 condition a proc). ${plan.soulGem ? 'The soul gem is applied to every piece.' : 'No soul gem: base template points only.'}${plan.imprint?.base ? ` The weapon's imprint is separate from this budget: best boss ${plan.imprint.base.power.name} (${fmt(plan.imprint.base.baseDps)} DPS), best uncapped ${plan.imprint.uncapped.power.name} (${fmt(plan.imprint.uncapped.uncappedDps)} DPS).` : ''}`, chart: '', table: pieceTable + oneTable + stackTable + weaponTable + ratingTable }],
     });
     fs.writeFileSync(out, html, 'utf8');
     if (!values.json) console.log(`enchant plan written: ${out}`);
@@ -972,14 +1024,14 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       const body = f.rows.map((r) => `<tr><td class="k" style="white-space:normal;min-width:300px">${r.power.name}<br><span style="color:#a8a092;font-size:11px">of ${r.name} - ${r.power.brief}</span></td><td>${r.weapon}</td><td>${r.hit}</td><td>${fmt(r.baseDps)}</td><td>${fmt(r.delta)}</td><td>${fmt(r.uncappedDps)}</td><td>${fmt(r.uncappedDelta)}</td><td style="white-space:normal;min-width:180px">${r.trigger}</td></tr>`).join('');
       return {
         title: `${f.name} - ${f.weapon}`,
-        note: `Every Weapon Legendary's power may sit on any weapon of its group; only Chain Lightning (a shot) and Earthshaker (a melee blow) narrow it. Each row reads the power on this family's best weapon. Boss is the level-${THEORY_LEVEL} gate (Daedra, 600 per-hit cap); Uncapped is the same weapon with no cap. Trigger applies the condition only where it can occur at the gate; otherwise it is marked. The imprint is the Legendary power only; the Rare's own affixes are separate.`,
+        note: `Every Weapon Legendary's power may sit on any weapon of its group; only Chain Lightning (a shot) and Earthshaker (a melee blow) narrow it. Each row reads the power on this family's best weapon. Boss is the level-${THEORY_LEVEL} Breach (Daedra, 600 per-hit cap); Uncapped is the same weapon with no cap. Trigger applies the condition only where it can occur at the Breach; otherwise it is marked. The imprint is the Legendary power only; the Rare's own affixes are separate.`,
         chart,
         table: `<div class="table"><table><thead><tr><th>Imprint</th><th>On</th><th>Hit</th><th>Boss DPS</th><th>Boss gain</th><th>Uncapped DPS</th><th>Uncapped gain</th><th>Trigger</th></tr></thead><tbody>${body}</tbody></table></div>`,
       };
     });
     const html = multiGraphPage({
       title: 'DFO weapon imprints',
-      subtitle: `The Reforge's Rare imprints on each family's best max-profile weapon${values.firmament ? ', +Firmament' : ''}. Boss is the level-45 gate with its 600 cap; Uncapped is the same weapon without it. Ranked by ${sort === 'uncapped' ? 'uncapped' : sort === 'conditional' ? 'trigger' : 'boss'} DPS.`,
+      subtitle: `The Reforge's Rare imprints on each family's best max-profile weapon${values.firmament ? ', +Firmament' : ''}. Boss is the level-45 Breach with its 600 cap; Uncapped is the same weapon without it. Ranked by ${sort === 'uncapped' ? 'uncapped' : sort === 'conditional' ? 'trigger' : 'boss'} DPS.`,
       sections,
     });
     fs.writeFileSync(out, html, 'utf8');
@@ -1155,7 +1207,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     const bossRows = displayRows.slice().sort((a, b) => b.gateDps - a.gateDps);
     const uncappedRows = displayRows.slice().sort((a, b) => b.maxDps - a.maxDps);
     const bossBar = barChart({
-      title: 'Boss DPS by weapon - level-45 gate',
+      title: 'Boss DPS by weapon - level-45 Breach',
       labels: bossRows.map((r) => r.name),
       series: [{ name: 'Boss', values: bossRows.map((r) => r.gateDps) }],
     });
@@ -1165,7 +1217,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       series: [{ name: 'Firmament', values: uncappedRows.map((r) => r.maxDps) }],
     });
     const bossTop = bossRows[0];
-    const bossNote = `<b>${bossTop.name}</b> leads this list at <b>${cell(bossTop.gateDps)} capped DPS</b>${bossTop.gateTtk ? ` (${cell(bossTop.gateTtk)} s TTK)` : ''}. The full pool's gate winner is <b>${gateTop.name}</b> at <b>${cell(gateTop.gateDps)} capped DPS</b>. This is the real Firmament tree at the level-45 gate: ${gate.maxHealth.toLocaleString()} HP and a ${gate.hitCap} per-hit cap.`;
+    const bossNote = `<b>${bossTop.name}</b> leads this list at <b>${cell(bossTop.gateDps)} capped DPS</b>${bossTop.gateTtk ? ` (${cell(bossTop.gateTtk)} s TTK)` : ''}. The full pool's Breach winner is <b>${gateTop.name}</b> at <b>${cell(gateTop.gateDps)} capped DPS</b>. This is the real Firmament tree at the level-45 Breach: ${gate.maxHealth.toLocaleString()} HP and a ${gate.hitCap} per-hit cap.`;
     const uncappedNote = `<b>${top.name}</b> is the ${scope} at <b>${cell(top.maxDps)} DPS</b> (${top.path}, Dunmer), using the real Firmament tree and no per-hit cap. Enchants and imprints are on the loadout page, not this table. Full health and Blademaster only: Berserker's below-half upkeep is not assumed. All rows are Dunmer; DPS cells are averages.${values.categories ? ' One row per weapon type per slot, including the Hand Wraps fist row; the table is sorted by uncapped DPS.' : ''}`;
 
     const families = [
@@ -1219,11 +1271,11 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       subtitle,
       sections: values.categories
         ? [
-            { title: 'Boss DPS - level-45 gate', note: bossNote, chart: bossBar },
+            { title: 'Boss DPS - level-45 Breach', note: bossNote, chart: bossBar },
             { title: 'Uncapped DPS', note: uncappedNote, chart: uncappedBar, table: maxTable },
           ]
         : [
-            { title: 'Boss DPS - level-45 gate', note: bossNote, chart: bossBar },
+            { title: 'Boss DPS - level-45 Breach', note: bossNote, chart: bossBar },
             { title: 'Uncapped DPS', note: uncappedNote, chart: uncappedBar, table: maxTable },
             ...familySections,
             csSection,
@@ -1367,7 +1419,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
 
     console.log('\nAttribute scaling (everything else at the ceiling)');
     console.log(table(statScaled.map((x) => [x.stat, fmt(x.d50), fmt(x.d75), fmt(x.d100), fmt(x.capped100), `${x.delta >= 0 ? '+' : ''}${fmt(x.delta)}`, `${x.last10 >= 0 ? '+' : ''}${fmt(x.last10)}`]), ['Attribute', 'DPS 50', 'DPS 75', 'DPS 100', 'Capped 100', '50 -> 100', '90 -> 100'], ['left', 'right', 'right', 'right', 'right', 'right', 'right']));
-    console.log('The DPS columns are uncapped averages and isolate the varied attribute (its star is dropped so 50..100 means the sheet); Capped 100 is the full build at the gate. Luck is flat here only because Critical Strike already holds chance at 100%.');
+    console.log('The DPS columns are uncapped averages and isolate the varied attribute (its star is dropped so 50..100 means the sheet); Capped 100 is the full build at the Breach. Luck is flat here only because Critical Strike already holds chance at 100%.');
 
     console.log('\nSkill and gear scaling');
     console.log(table(skillRows.map((x) => [x.label, x.value, fmt(x.dps), fmt(x.cappedDps), fmt(x.behind), fmt(x.perSwing), x.ttk ? `${fmt(x.ttk)} s` : '-']), ['Channel', 'Value', 'DPS', 'Capped', 'Behind', 'Per swing', 'TTK'], ['left', 'right', 'right', 'right', 'right', 'right', 'right']));
@@ -1619,7 +1671,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     console.log(table(out.map((x) => [x.label, x.hp.toLocaleString(), x.cap || '-', fmt(x.perHit), x.headroom ? `${fmt(x.headroom)}x` : '-', fmt(x.speed), fmt(x.dmg), x.verdict]), ['Boss', 'HP', 'Cap', 'Per hit', 'Headroom', '+5% speed', '+5% dmg', 'Verdict'], ['left', 'right', 'right', 'right', 'right', 'right', 'right', 'left']));
     console.log('\n+5% speed and +5% damage are separate one-change DPS runs against each pool.');
     console.log('Headroom = cap / expected landed hit. Above 1x, damage can grow that many times before the cap makes speed strictly better; at or below 1x, speed is already better.');
-    for (const [label, t] of [['Gate - Ruhn', gate], ['Curbing 1,000 HP', targets[1].t]]) {
+    for (const [label, t] of [['Breach', gate], ['Curbing 1,000 HP', targets[1].t]]) {
       const rows = rankWeapons(ch, { ...scenarioOf(ch, values, traits, t), target: t, health: t.maxHealth, traits: t.bossTraits ?? [] }, { top: 5 });
       console.log(`\nTop weapons - ${label}`);
       console.log(table(rows.map((x) => [`${x.materialName} ${x.name}`, x.twoHanded ? '2H' : '1H', fmt(x.cappedDps), fmt(x.perSwing), fmt2(x.aps)]), ['Weapon', 'Hands', 'Capped DPS', 'Per swing', 'APS'], ['left', 'left', 'right', 'right', 'right']));

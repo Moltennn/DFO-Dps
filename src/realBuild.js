@@ -13,7 +13,9 @@ import { buildById, effectiveValue, planBuild } from './firmament.js';
 import { planEnchants } from './enchantPlan.js';
 import { IMPRINT_FAMILIES, imprintsFor, powerDps } from './imprints.js';
 import { maxCharacter, maxRun } from './maxprofile.js';
-import { gateTarget, referenceFoe } from './model.js';
+import { referenceFoe } from './model.js';
+import { encounterTarget } from './encounters.js';
+import { simulatePurse } from './purse.js';
 import { THEORY_LEVEL } from './theory.js';
 import { ENCHANTMENT_TYPES } from './enchants.js';
 
@@ -98,10 +100,18 @@ function bestImprint(template, run, capped) {
   return rows[0] ?? null;
 }
 
+/** The same-hit imprint effect on one blow. Echo is not credited by the purse. */
+function imprintEffect(power) {
+  if (!power) return {};
+  if (power.kind === 'flow') return { mult: 1 + ((power.pct ?? 0) * (power.max ?? 1)) / 100 };
+  if (power.kind === 'venom') return { flat: power.flat ?? 0 };
+  return {};
+}
+
 /** One real loadout for one template. */
-export function realTemplate(template, family, { mode = 'uncapped', vampire = false, dual = false } = {}) {
+export function realTemplate(template, family, { mode = 'uncapped', vampire = false, dual = false, encounter = 'breach' } = {}) {
   const capped = mode !== 'uncapped';
-  const target = capped ? gateTarget(THEORY_LEVEL) : referenceFoe(THEORY_LEVEL, 'tough');
+  const target = capped ? encounterTarget(encounter, THEORY_LEVEL) : referenceFoe(THEORY_LEVEL, 'tough');
   const tree = planBuild(buildById(BUILD_ID[family.key] ?? family.key), {});
   const treeCh = applyFirmament(maxCharacter(template, { vampire }), tree);
   if (dual) {
@@ -109,7 +119,8 @@ export function realTemplate(template, family, { mode = 'uncapped', vampire = fa
     treeCh._dual = true;
   }
   const treeRun = maxRun(treeCh, { target });
-  const enchPlan = planEnchants({ weapon: template, soulGem: true, forceSkills: !capped, target });
+  const group = target.group ?? (capped ? 'none' : 'humanoid');
+  const enchPlan = planEnchants({ weapon: template, soulGem: true, forceSkills: !capped, target, group });
   const enchCh = applyEnchants(clone(treeCh), enchPlan);
   if (dual && enchCh.offWeapon) {
     enchCh.offWeapon.enchantments = [...(enchCh.weapon?.enchantments ?? [])];
@@ -118,17 +129,23 @@ export function realTemplate(template, family, { mode = 'uncapped', vampire = fa
   const enchRun = maxRun(enchCh, { target });
   const imprint = bestImprint(template, enchRun, capped);
   const total = enchRun.enchantDps + (imprint?.dps ?? enchRun.cappedDps);
+  const purse = capped ? simulatePurse(enchRun, encounter, { level: THEORY_LEVEL, ...imprintEffect(imprint?.power) }) : null;
   return {
-    mode, family: family.name, key: family.key, weapon: WEAPONS[template]?.name ?? String(template), template, dual,
+    mode, family: family.name, key: family.key, weapon: WEAPONS[template]?.name ?? String(template), template, dual, encounter,
     treeStars: tree.stars, freeStars: tree.freeStars, treeBlow: treeCh.firmamentDamagePct,
-    treeDps: treeRun.totalDps, enchDps: enchRun.totalDps, totalDps: total, ttk: enchRun.ttk,
+    treeDps: treeRun.totalDps, enchDps: enchRun.totalDps, totalDps: total,
+    ttk: purse?.ttk ?? enchRun.ttk,
+    burst5: purse?.burst5 ?? null,
+    sustainedDps: purse?.sustainedDps ?? null,
+    landedShare: purse?.landedShare ?? null,
+    calibrated: purse?.calibrated ?? true,
     imprint: imprint?.name ?? null, imprintPower: imprint?.power?.name ?? null,
     enchPlan,
   };
 }
 
 /** Every weapon template in every hold configuration, not just the winners. */
-export function realWeaponLoadouts({ modes = ['uncapped', 'cap'], vampire = false } = {}) {
+export function realWeaponLoadouts({ modes = ['uncapped', 'cap'], vampire = false, encounter = 'breach' } = {}) {
   const out = [];
   for (const mode of modes) {
     for (const family of IMPRINT_FAMILIES) {
@@ -136,9 +153,9 @@ export function realWeaponLoadouts({ modes = ['uncapped', 'cap'], vampire = fals
         const w = WEAPONS[t];
         if (!w) continue;
         const category = w.skill === 'HandToHand' ? 'Fists' : w.twoHanded ? '2H' : '1H';
-        out.push({ ...realTemplate(t, family, { mode, vampire }), category });
+        out.push({ ...realTemplate(t, family, { mode, vampire, encounter }), category });
         if (!w.twoHanded && w.skill !== 'Archery' && w.skill !== 'HandToHand') {
-          out.push({ ...realTemplate(t, family, { mode, vampire, dual: true }), category: 'DW' });
+          out.push({ ...realTemplate(t, family, { mode, vampire, dual: true, encounter }), category: 'DW' });
         }
       }
     }

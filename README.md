@@ -86,7 +86,7 @@ The live card's **Damage** and **Per swing** tiles can include the Duelist's Vam
 
 The practical skill-line ceiling comes from the item rules, not a made-up budget. Long Blade can only roll on the weapon and the seven armour pieces (**8 lines**); Critical Strike can also roll on all ten jewellery slots (**18 lines**). That is **26 lines x 30 points = 780 points**, and the command searches the feasible Long Blade / Critical Strike split at every lower budget too. The weapon damage affix is capped at 40%.
 
-At the level-45 gate the **600 per-hit cap**, not the character sheet, is the wall: the fully geared build is **~1,198 uncapped DPS**, but only **~821 capped DPS** and **~20.6 s TTK**. Past about 24 skill lines the extra damage is almost entirely eaten by the cap.
+At the level-45 Breach the **600 per-hit cap**, not the character sheet, is the wall: the fully geared build is **~1,198 uncapped DPS**, but only **~821 capped DPS** and **~20.6 s TTK**. Past about 24 skill lines the extra damage is almost entirely eaten by the cap.
 
 ### The Firmament (star tree) and values past the base caps
 
@@ -122,9 +122,9 @@ The `theory` output prices every star channel from +0 to +15 at the ceiling, and
 ./dfo-dps weapons --out ~/dfo-weapons.html
 ```
 
-The max profile is: attributes 100, raw weapon skill and Critical Strike 200 mastered, weapon skill gear 240 (8 lines), Critical Strike gear 540 (18 lines), a **Legendary damage affix** (20–40%; the max profile assumes the perfect 40 roll), **perfect diamond sockets** (short blade 1, one-handed 2, two-handed 3, +12% damage each), the weapon's own career expertise, **Dunmer** (the default race; `--race` overrides), and **Blademaster** for every family; Berserker's below-half upkeep is not assumed. Hand-to-Hand uses a pair of **Hand Wraps** (damage/sockets/procs carry the fist blow). The table also includes dual-wield pairs, both hands of the same one-handed weapon at the off-hand x0.8 / -5 hit terms. **Firmament DPS** is the real tree plan; **Boss DPS** is the same against the level-45 gate's 600 per-hit cap. The 40% affix is the weapon's own Legendary `damage` affix (`AFFIX_RANGES.damage.legendary = [20,40]`), not a Firmament or enchant channel.
+The max profile is: attributes 100, raw weapon skill and Critical Strike 200 mastered, weapon skill gear 240 (8 lines), Critical Strike gear 540 (18 lines), a **Legendary damage affix** (20–40%; the max profile assumes the perfect 40 roll), **perfect diamond sockets** (short blade 1, one-handed 2, two-handed 3, +12% damage each), the weapon's own career expertise, **Dunmer** (the default race; `--race` overrides), and **Blademaster** for every family; Berserker's below-half upkeep is not assumed. Hand-to-Hand uses a pair of **Hand Wraps** (damage/sockets/procs carry the fist blow). The table also includes dual-wield pairs, both hands of the same one-handed weapon at the off-hand x0.8 / -5 hit terms. **Firmament DPS** is the real tree plan; **Boss DPS** is the same against the level-45 Breach's 600 per-hit cap. The 40% affix is the weapon's own Legendary `damage` affix (`AFFIX_RANGES.damage.legendary = [20,40]`), not a Firmament or enchant channel.
 The cap is per player: a group scales the boss's health pool (each player
-brings a share), not the cap. The first chart ranks the boss (gate) DPS; the second ranks the uncapped DPS. Every DPS cell is the average.
+brings a share), not the cap. The first chart ranks the boss (Breach) DPS; the second ranks the uncapped DPS. Every DPS cell is the average.
 
 `--categories` writes the condensed table to the same page: one row per weapon type in each slot, including the Hand Wraps fist row, sorted by DPS. The full page has a max-DPS bar chart and table, then one combined chart per family: raw training 100 -> 200 is effective 100 -> 140, and gear lines continue from effective 140 to 140 + the gear cap. One Critical Strike chart covers the best weapon of each family. The Hand-to-Hand row is the wrapped ceiling. Bare fists without Hand Wrap lines are the ~450 band the community tests saw.
 
@@ -137,16 +137,16 @@ imprint is a Legendary power of the piece's own group, so **any weapon
 Legendary may sit on any weapon**; only the power's own fit narrows it
 (Chain Lightning needs a shot, Earthshaker a melee blow). A record's
 template list is only which base a Legendary drops as. Each power is priced
-on the best weapon of that family. **Boss** is the level-45 gate (Daedra,
+on the best weapon of that family. **Boss** is the level-45 Breach (Daedra,
 600 per-hit cap); **Uncapped** is the same weapon without the cap;
-**Trigger** applies the power's condition where it can occur at the gate
+**Trigger** applies the power's condition where it can occur at the Breach
 (low health, below half). Triggers that cannot happen there (undead,
 dragons, unaware, night, a second foe) are marked and do not inflate the
 boss column. Gains are against the row's **On** weapon. `--uncapped` sorts
 by the uncapped gain; `--cap-aware` sorts by boss gain. Chain and quake are
 one extra target and not single-target DPS; poison is before resistance.
 **Many Endings** is an extra strike and therefore its own hit: it gets its
-own cap, which is why it still gains at the gate when Flow or Serpent's
+own cap, which is why it still gains at the Breach when Flow or Serpent's
 Kiss do not. **Cast When Strikes** spells are separate hits too; Flow,
 Serpent's Kiss, Potent Vs and the conditional damage powers ride the same
 hit and share its cap. The table says which powers are `same hit`,
@@ -161,7 +161,7 @@ hit and share its cap. The table says which powers are `same hit`,
 `enchant-plan` reads the game's own `enchantmentPoints` for every piece,
 adds the stated **5,000** soul-gem channel when `--soul-gem` is used, and
 fills each item inside that budget. It values everything on the **level-45
-gate** and its 600 per-hit cap, so a +skill or +damage effect that the cap
+Breach** and its 600 per-hit cap, so a +skill or +damage effect that the cap
 eats is not bought. Backstabbing is never planned: its ×3 is capped after
 the roll, so +15 Backstabbing adds no capped boss DPS on the capped
 weapons. The non-stacking effects are placed once (Strengthens Armor,
@@ -172,10 +172,10 @@ also rates every candidate it considered (weapon proc DPS, +15 skill DPS,
 and utility), so an empty piece is an explicit "nothing else added capped
 DPS" result, not an omission. Strike payloads (Cast When Strikes, Potent Vs, Low
 Damage Vs) are weapon-only; the weapon's own condition limits how many
-Cast When Strikes rows the gate fight can pay (10 condition a proc).
+Cast When Strikes rows the Breach fight can pay (10 condition a proc).
 `--all` prints both setups per weapon type: **uncapped theory** (no
 per-hit cap, weapon skill and Critical Strike on every piece) and
-**cap-aware** (the level-45 gate and its 600 cap, skill lines only where
+**cap-aware** (the level-45 Breach and its 600 cap, skill lines only where
 their marginal DPS is positive). The weapon package is an exact knapsack
 under the budget, 10-setting cap and proc limit. A single `enchant-plan`
 defaults to cap-aware; add `--uncapped` for the theory setup or
@@ -237,19 +237,38 @@ channels together at the live cap (so +15 flat and +15% are **one** +15
 attribute/skill channel, not +30), then the +15 weapon skill / Critical
 Strike enchant lines, then the imprint.
 
+The capped side also applies the boss **purse**, which is the boss body's own
+law and is always on:
+
+- depth **15 x reference**, refill **3 x reference a second**
+- per-blow cap **12 x reference**, and **4 blows a second** (four in hand,
+  four a second back)
+
+The reference is `5 + level`, so at level 45 the purse is 750 deep, refills
+150/s, caps a blow at 600 and allows four blows a second. The purse starts
+full only when you join at 100% boss HP. Above the refill rate every build
+converges; the differences become burst and time-to-kill, not raw DPS.
+
 The page lists **every weapon template** in every hold configuration --
-1H, 2H, DW, or Fists -- for both modes, sorts the charts by final DPS, and
-uses the requested columns: **Family, weapon, imprint, Total DPS**. Monster-
-type damage imprints (dragons/giants, undead, animals) are not used in the
-loadout; an empty imprint means no positive-unconditional imprint fits. It also carries the shared enchant template, the
-imprint ratings and the Firmament plans used. Both uncapped and cap-aware
-charts are on the page.
+1H, 2H, DW, or Fists -- for both modes, and uses the columns: **Family,
+weapon, imprint, Total DPS, Burst 5s, Avg DPS, TTK, Purse kept**. Total DPS
+is the per-hit-cap ceiling; the other four apply the purse. Monster-type
+damage imprints (dragons/giants, undead, animals) are not used in the
+loadout; an empty imprint means no positive-unconditional imprint fits. The
+page also carries the shared enchant template, the imprint ratings and the
+Firmament plans used.
 
 ```bash
-./dfo-dps loadout --uncapped       # theory: no per-hit cap
-./dfo-dps loadout --cap-aware      # level-45 gate
-./dfo-dps loadout                  # both
+./dfo-dps loadout --uncapped                    # theory: no per-hit cap
+./dfo-dps loadout --cap-aware                   # Breach purse
+./dfo-dps loadout --cap-aware --encounter skyketch
+./dfo-dps loadout --cap-aware --all-encounters  # Breach, Sky-ketch, Abyss
 ```
+
+The content names are **Breach**, **Sky-ketch** and **Abyss**. Elite Breach
+is currently bugged and is not offered. The Sky-ketch's immune windows and the
+Abyss's phase split are not calibrated yet; those sections are marked
+"uncalibrated mechanics" and their TTK is the purse-only baseline.
 
 The table is tree + enchants + imprint, assumes a soul gem on every piece,
 and lists every weapon template separately in each hold it supports.
@@ -260,10 +279,10 @@ The same model now covers the other damage lanes:
 
 ```bash
 # bows (Short Bow 129, Long Bow 130) and the port's guns (560 Thunderlock, 562 Pistolet)
-./dfo-dps build --save /tmp/live.json --weapon 129:9 --target gate
-./dfo-dps build --save /tmp/live.json --weapon 562:4 --pair --target gate
-./dfo-dps build --save /tmp/live.json --weapon 129:9 --spam --target gate
-./dfo-dps build --save /tmp/live.json --dual --target gate
+./dfo-dps build --save /tmp/live.json --weapon 129:9 --target breach
+./dfo-dps build --save /tmp/live.json --weapon 562:4 --pair --target breach
+./dfo-dps build --save /tmp/live.json --weapon 129:9 --spam --target breach
+./dfo-dps build --save /tmp/live.json --dual --target breach
 
 # spells: the live formula, standard SPELLS.STD records, cost, cast time and mana
 ./dfo-dps spell --save /tmp/live.json --spell Fireball
@@ -287,30 +306,30 @@ Enchantments: a `Cast When Strikes` row fires its `SPELLS.STD` spell on every la
 
 ```bash
 # live character
-./dfo-dps graph --save /tmp/live.json --target gate \
+./dfo-dps graph --save /tmp/live.json --target breach \
   --series stat:strength,stat:agility --from 50 --to 100 --step 5 --out stats.html
 
 # theory character: what each attribute buys at the ceiling
-./dfo-dps graph --theory --target gate \
+./dfo-dps graph --theory --target breach \
   --series stat:strength,stat:speed,stat:agility \
   --from 50 --to 100 --step 5 --out theory-stats.html
 
 # theory character: gear skill against the practical line budget
-./dfo-dps graph --theory --target gate --series gear:29,gear:34 \
+./dfo-dps graph --theory --target breach --series gear:29,gear:34 \
   --from 0 --to 540 --step 30 --out theory-gear.html
 ```
 
-Series syntax is `stat:strength`, `stat:agility`, `skill:29`, `gear:29`, `star:strength`, etc. A `star:` series varies the Firmament channel from 0 to +15 while the base stays 100. The Y axis is capped DPS against the selected target, so the gate's per-hit cap is in the line, not hidden. Add `--uncapped` to plot raw DPS and see the full stat slope before the cap flattens it.
+Series syntax is `stat:strength`, `stat:agility`, `skill:29`, `gear:29`, `star:strength`, etc. A `star:` series varies the Firmament channel from 0 to +15 while the base stays 100. The Y axis is capped DPS against the selected target, so the Breach's per-hit cap is in the line, not hidden. Add `--uncapped` to plot raw DPS and see the full stat slope before the cap flattens it.
 
 ## Backstab and the 600s
 
 A normal front crit on the live card is 189–290; **Backstab is 99% ×3**, so a critical backstab is **567–870**. That is the 600s you see. The tool was showing front swings only; `--behind` (100% behind) or `--backstab 0.5` (uptime) now adds it. The card's **Damage** and **Per swing** are front/opening values; the Backstab tile is separate.
 
-The gate's server per-hit cap is **420** at level 30 (12 × `dpsRef` 35). A displayed 600 backstab is therefore **raw**; the health bar may only lose 420. If the bar really loses 600, the fight has a `relayBlowX` above 1.43 (Elite/Vestiges/might) or a different pool; model it with `--blow-x 1.5` (or the fight's factor). `--players n` scales the gate's health per player; the cap is per player.
+The Breach's server per-hit cap is **420** at level 30 (12 × `dpsRef` 35). A displayed 600 backstab is therefore **raw**; the health bar may only lose 420. If the bar really loses 600, the fight has a `relayBlowX` above 1.43 (Elite/Vestiges/might) or a different pool; model it with `--blow-x 1.5` (or the fight's factor). `--players n` scales the Breach's health per player; the cap is per player.
 
 ## Theorycraft numbers
 
-`--target gate` uses the real solo gate boss: **240 seconds of reference damage** at your level, i.e. **8,400 HP at level 30** (`dpsRef(level) = 5 + level`), plate armour 60, a **420 per-blow server cap** (12 x reference), and **two 3s phase shields**. It has no Curbing; Curbing is a separate trait on elite/world bosses and is 5% of max HP.
+`--target breach` uses the real solo Breach boss: **240 seconds of reference damage** at your level, i.e. **8,400 HP at level 30** (`dpsRef(level) = 5 + level`), plate armour 60, a **420 per-blow server cap** (12 x reference), and **two 3s phase shields**. It has no Curbing; Curbing is a separate trait on elite/world bosses and is 5% of max HP.
 
 `tradeoff` prints the speed/damage crossover:
 
@@ -344,8 +363,9 @@ The gate's server per-hit cap is **420** at level 30 (12 × `dpsRef` 35). A disp
   like the game's Combat Stats card; a human in mail will take less
 - the overhaul's condition-based effectiveness is assumed at 100% condition
 - no loot set powers, sigils or First Blood; the simulation is for sustained boss DPS
-- the gate's per-account damage bucket (3x reference damage a second, 15x deep) and its 4 blows/s account limit are not applied; gate DPS is capped per blow only
+- the breach, Sky-ketch and Abyss purse is modelled (15x deep, 3x a second, 12x a blow, 4 blows/s); the Sky-ketch's immune windows and the Abyss's gold/silver split timing are not calibrated yet
 - a Legendary record's own affixes and enchantment are not folded into an imprint; the Rare keeps its own lines and gains the power alone
+- Elite Breach is currently bugged and is not modelled or offered
 - no mentor overlay
 - no PvP/peer model
 
