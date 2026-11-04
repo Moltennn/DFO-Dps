@@ -175,3 +175,12 @@ test('a mid-fight join reports since-join damage and keeps the whole kill total'
   assert.ok(Math.abs(f.joinedAtPct - (18535 / 27300) * 100) < 1e-9);
   assert.equal(f.outcome, 'kill');
 });
+
+test('the player snapshot names the weapon and imprint', () => {
+  const data = capture({ seconds: 60 });
+  data.playerEnd = { weapon: { name: 'Broadsword', imprint: 'warp-edge' }, offWeapon: { name: 'Broadsword' } };
+  const f = summarizeProbe(data).fights[0];
+  assert.equal(f.weapon, 'Broadsword');
+  assert.equal(f.offWeapon, 'Broadsword');
+  assert.equal(f.imprint, 'warp-edge');
+});

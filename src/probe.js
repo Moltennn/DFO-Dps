@@ -45,7 +45,7 @@ export function splitFights(samples = [], { gapMs = 5000, minSeconds = 1 } = {})
 }
 
 /** The capture's damage figures for one fight. */
-export function fightSummary(samples, { content = 'unknown', level = 45, players = 1, levels = [], gate = null, chartKill = false, outcome = null } = {}) {
+export function fightSummary(samples, { content = 'unknown', level = 45, players = 1, levels = [], gate = null, chartKill = false, outcome = null, playerEnd = null } = {}) {
   const first = samples[0];
   const last = samples.at(-1);
   const seconds = Math.max(1e-9, (last.t - first.t) / 1000);
@@ -66,7 +66,7 @@ export function fightSummary(samples, { content = 'unknown', level = 45, players
   const firstGate = samples.map((s) => s.gate).filter(Boolean)[0] ?? null;
   const gateM0 = Number(firstGate?.max) > 0 ? Number(firstGate.max) : null;
   const gateH0 = Number.isFinite(Number(firstGate?.hp)) ? Number(firstGate.hp) : null;
-  const midFight = gateM0 != null && gateH0 != null && gateH0 < gateM0 * 0.995;
+  const midFight = gateM0 != null && gateH0 != null && gateH0 < gateM0 * 0.95;
   const barLost = hpOf(first) != null && hpOf(last) != null ? Math.max(0, hpOf(first) - hpOf(last)) : null;
   const damage = kill && gateMax != null ? gateMax : gateMax != null && gateHp != null ? Math.max(0, gateMax - gateHp) : barLost != null && maxHp != null ? (barLost / 100) * maxHp : null;
   const hpLost = kill ? 100 : gateMax != null && damage != null ? (damage / gateMax) * 100 : barLost;
@@ -150,6 +150,9 @@ export function fightSummary(samples, { content = 'unknown', level = 45, players
     maxHpEstimated,
     gate: g ? { max: gateMax, hp: gateHp, fighters: gatePlayers, phase: g.phase ?? null } : null,
     outcome: kill ? 'kill' : gateOutcome(g, samples),
+    weapon: playerEnd?.weapon?.name ?? null,
+    offWeapon: playerEnd?.offWeapon?.name ?? null,
+    imprint: playerEnd?.weapon?.imprint ?? playerEnd?.offWeapon?.imprint ?? null,
     maxHp,
     seconds,
     hpLost,
@@ -188,7 +191,7 @@ export function summarizeProbe(data, { level, players } = {}) {
     const content = bossContent(f[0].boss?.name, f[0].boss?.sub)
       ?? (data.content && data.content !== 'auto' ? data.content : (f[0].boss?.content ?? 'unknown'));
     const fg = data.gate ?? f.map((s) => s.gate).filter(Boolean).at(-1) ?? null;
-    const out = fightSummary(f, { content, level: lv, players: pl, levels, gate: fg, chartKill, outcome: data.outcome });
+    const out = fightSummary(f, { content, level: lv, players: pl, levels, gate: fg, chartKill, outcome: data.outcome, playerEnd: data.playerEnd ?? data.playerStart ?? null });
     out.chart = data.chart ?? null;
     out.chartTop = chartTop(data.chart);
     return out;
