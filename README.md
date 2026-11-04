@@ -314,6 +314,9 @@ known level, and the HP/DPS figures are shown with a tilde.
 # --level / --players only override an old capture's auto values
 ```
 
+Older captures can live in `captures/old/`; `./dfo-dps probe --old` reads the
+newest there, and the default reads only the live folder.
+
 The reader prefers the gate state for the boss pool and fighters, and treats
 a chart that says **has fallen** (or a confirmed kill marker) as the kill even
 when the last gate HP sample lagged. A capture that starts mid-fight adds

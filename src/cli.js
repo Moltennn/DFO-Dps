@@ -103,6 +103,7 @@ Common options:
   --cap-aware                         enchant-plan/loadout: cap-aware setup; imprints: rank by boss DPS
   --encounter <id>                    loadout: breach, skyketch or abyss (default breach)
   --all-encounters                    loadout: one cap-aware section per content
+  --old                               probe: read the newest capture in captures/old
   --pair                              paired Pistolets (2 shots per cycle, off hand x0.8)
   --dual                              dual wield the left-hand weapon (off hand x0.8, -5 hit)
   --spam                              bow spam (BOW_FAST stacks to x0.2; default paced)
@@ -187,6 +188,7 @@ const optsSpec = {
   'cap-aware': { type: 'boolean', default: false },
   encounter: { type: 'string', default: 'breach' },
   'all-encounters': { type: 'boolean', default: false },
+  old: { type: 'boolean', default: false },
   pair: { type: 'boolean', default: false },
   dual: { type: 'boolean', default: false },
   spam: { type: 'boolean', default: false },
@@ -1046,7 +1048,8 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
   if (cmd === 'probe') {
     let file = parsed.positionals[1] ?? values.data;
     if (!file) {
-      const dir = path.join(os.homedir(), '.local/share/dfo-tools/probe-mod/captures');
+      const live = path.join(os.homedir(), '.local/share/dfo-tools/probe-mod/captures');
+      const dir = values.old ? path.join(live, 'old') : live;
       try {
         const latest = fs.readdirSync(dir).filter((f) => f.endsWith('.json'))
           .map((f) => {
@@ -1059,7 +1062,8 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
         if (latest) file = path.join(dir, latest.f);
       } catch { /* no probe folder yet */ }
       if (!file) {
-        console.error('probe: no capture path and no saved captures yet (arm the probe and finish a fight)');
+        const where = values.old ? path.join(live, 'old') : live;
+        console.error(`probe: no capture in ${where}${values.old ? '' : ' (try --old for captures/old)'}`);
         process.exit(2);
       }
     }

@@ -161,6 +161,8 @@ TTK model.
 
 ## Combat probe
 
+`probe` reads the newest live capture, or `--old` for `captures/old/`.
+
 `probe` reads a local Combat Probe capture (the mod is not in the mods repo;
 its source is in `~/.local/share/dfo-tools/probe-mod`). The probe starts on
 load, records each boss bar automatically, and writes the fight at the fall
