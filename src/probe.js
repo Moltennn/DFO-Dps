@@ -50,13 +50,16 @@ export function fightSummary(samples, { content = 'unknown', level = 45, players
   const last = samples.at(-1);
   const seconds = Math.max(1e-9, (last.t - first.t) / 1000);
   const boss = encounterById(content);
+  const gate = samples.map((s) => s.gate).filter(Boolean).at(-1) ?? null;
+  const gateMax = Number(gate?.max) > 0 ? Number(gate.max) : null;
+  const gatePlayers = Number(gate?.fighters) > 0 ? Number(gate.fighters) : null;
   const known = levels.filter((v) => Number.isFinite(v) && v >= 1 && v <= 60);
-  const count = Math.max(1, players, known.length);
+  const count = Math.max(1, gatePlayers ?? players, known.length);
   const sorted = known.slice().sort((a, b) => a - b);
   const fill = sorted.length ? sorted[Math.floor(sorted.length / 2)] : level;
   const lvList = [...known, ...Array(Math.max(0, count - known.length)).fill(fill)];
-  const maxHpEstimated = count > 1 && count > known.length;
-  const maxHp = boss ? lvList.reduce((a, l) => a + boss.shareX * bossRef(l) * (boss.hpX ?? 1), 0) : null;
+  const maxHpEstimated = !gateMax && count > 1 && count > known.length;
+  const maxHp = gateMax ?? (boss ? lvList.reduce((a, l) => a + boss.shareX * bossRef(l) * (boss.hpX ?? 1), 0) : null);
   const hpLost = Math.max(0, hpOf(first) - hpOf(last));
   const damage = maxHp != null ? (hpLost / 100) * maxHp : null;
   const dps = damage != null ? damage / seconds : null;
@@ -132,6 +135,7 @@ export function fightSummary(samples, { content = 'unknown', level = 45, players
     levels: known,
     levelFill: fill,
     maxHpEstimated,
+    gate: gate ? { max: gateMax, fighters: gatePlayers, phase: gate.phase ?? null } : null,
     maxHp,
     seconds,
     hpLost,

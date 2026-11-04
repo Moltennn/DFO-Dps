@@ -294,9 +294,11 @@ Probe) has **Pause/Resume**, optional **Download last / Download saved**, an
 optional download-copy toggle and a content-label override. It reads
 `.wb-boss-fill`, `.wb-boss-half`, the boss callout/move/marks/ward state, and
 the full fight-end chart (HTML plus every cell, so the top-10 `best`, `blows`,
-`falls` and `healed` columns are kept). It also snapshots the player's entity
-at fight start and end (level, stats, skills, path, online flag). It never
-changes a game value or sends anything off the machine.
+`falls` and `healed` columns are kept). A local hook on the client gate state
+adds the exact `hp`, `max` and `fighters`; if the anchor breaks, the probe
+falls back to the bar and the top-10 level estimate. It also snapshots the
+player's entity at fight start and end (level, stats, skills, path, online
+flag). It never changes a game value or sends anything off the machine.
 
 **Level** comes from `window.__playerEntity` (the Skill Tracker's skyhook
 keeps it set) or the boss bar's level text. **Group size** comes from the

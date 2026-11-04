@@ -98,3 +98,14 @@ test('a top-10 chart fills the remaining players at the median level', () => {
   assert.equal(f.maxHpEstimated, true);
   assert.equal(f.maxHp, 240 * 36 * 49);
 });
+
+test('the gate state makes the boss HP exact', () => {
+  const data = capture({ seconds: 60 });
+  for (const s of data.samples) s.gate = { max: 423360, fighters: 49, phase: 1 };
+  data.players = 49;
+  data.levels = Array.from({ length: 10 }, () => 31);
+  const f = summarizeProbe(data).fights[0];
+  assert.equal(f.maxHp, 423360);
+  assert.equal(f.maxHpEstimated, false);
+  assert.equal(f.players, 49);
+});
