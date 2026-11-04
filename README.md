@@ -298,8 +298,10 @@ machine.
 
 **Level** comes from `window.__playerEntity` (the Skill Tracker's skyhook
 keeps it set) or the boss bar's level text. **Group size** comes from the
-fight-end damage-chart rows, or the bar's "n on the deck" count. No manual
-level or player count is needed; the capture carries both.
+fight-end damage-chart rows, or the bar's "n on the deck" count. The bar's
+"42 in the court" or "49 challengers" is the area/challenger count, not the
+group; the chart rows are the fight. No manual level or player count is
+needed; the capture carries both.
 
 ```bash
 ./dfo-dps probe                         # the latest saved capture
