@@ -184,3 +184,29 @@ test('the player snapshot names the weapon and imprint', () => {
   assert.equal(f.offWeapon, 'Broadsword');
   assert.equal(f.imprint, 'warp-edge');
 });
+
+test('a phase bar jump or boss heal does not split one gate fight', () => {
+  const samples = [];
+  for (let i = 0; i <= 200; i++) {
+    const bar = i < 100 ? 100 - i * 0.4 : 60 - (i - 100) * 0.6;
+    const gateHp = 100000 - i * 400;
+    samples.push({
+      t: i * 100,
+      boss: { content: 'breach', name: 'Valkynaz Ruhn', sub: '', hp: i === 100 ? bar + 8 : bar, halves: [], tags: [] },
+      gate: { hp: i === 120 ? gateHp + 2825 : gateHp, max: 100000, fighters: 40, phase: 2 },
+    });
+  }
+  assert.equal(splitFights(samples).length, 1);
+});
+
+test('a boss heal is added to the landed total', () => {
+  const data = capture({ seconds: 86 });
+  data.players = 6;
+  data.levels = Array.from({ length: 6 }, () => 31);
+  for (const s of data.samples) s.gate = { max: 100000, hp: 40000, fighters: 6, phase: 3 };
+  data.samples[40].gate = { max: 100000, hp: 42825, fighters: 6, phase: 3 };
+  data.outcome = 'kill';
+  const f = summarizeProbe(data).fights[0];
+  assert.equal(f.bossHeal, 2825);
+  assert.equal(f.damage, 102825);
+});

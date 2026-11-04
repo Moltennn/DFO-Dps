@@ -22,6 +22,7 @@ export function bossContent(name = '', sub = '') {
   return null;
 }
 const hpOf = (s) => (s?.boss && isNum(s.boss.hp) ? Number(s.boss.hp) : null);
+const splitHp = (s) => (s?.gate && isNum(s.gate.hp) ? Number(s.gate.hp) : hpOf(s));
 
 /** Split samples at a gap, a name change or a health refill. */
 export function splitFights(samples = [], { gapMs = 5000, minSeconds = 1 } = {}) {
@@ -32,8 +33,11 @@ export function splitFights(samples = [], { gapMs = 5000, minSeconds = 1 } = {})
     const prev = cur.at(-1);
     if (prev) {
       const nameChange = (s.boss.name ?? '') !== (prev.boss.name ?? '');
-      const refill = hpOf(s) > hpOf(prev) + 5;
-      if (s.t - prev.t > gapMs || nameChange || refill) {
+      const shareGrow = !!(s.gate && prev.gate && Number(s.gate.fighters) > Number(prev.gate.fighters) && Number(s.gate.max) >= Number(prev.gate.max));
+      const restart = splitHp(prev) != null && splitHp(prev) <= 0.01 && splitHp(s) != null && splitHp(s) > 95;
+      const splitMax = Number(s.gate?.max) || 100;
+      const refill = splitHp(prev) != null && splitHp(s) != null && splitHp(s) > splitHp(prev) + splitMax * 0.05 && !shareGrow;
+      if (s.t - prev.t > gapMs || nameChange || restart || refill) {
         fights.push(cur);
         cur = [];
       }
@@ -67,8 +71,15 @@ export function fightSummary(samples, { content = 'unknown', level = 45, players
   const gateM0 = Number(firstGate?.max) > 0 ? Number(firstGate.max) : null;
   const gateH0 = Number.isFinite(Number(firstGate?.hp)) ? Number(firstGate.hp) : null;
   const midFight = gateM0 != null && gateH0 != null && gateH0 < gateM0 * 0.95;
+  let bossHeal = 0;
+  for (let i = 1; i < samples.length; i++) {
+    const a = samples[i - 1].gate;
+    const b = samples[i].gate;
+    if (a && b && Number(a.max) === Number(b.max) && Number(b.hp) > Number(a.hp)) bossHeal += Number(b.hp) - Number(a.hp);
+  }
   const barLost = hpOf(first) != null && hpOf(last) != null ? Math.max(0, hpOf(first) - hpOf(last)) : null;
-  const damage = kill && gateMax != null ? gateMax : gateMax != null && gateHp != null ? Math.max(0, gateMax - gateHp) : barLost != null && maxHp != null ? (barLost / 100) * maxHp : null;
+  const baseDamage = kill && gateMax != null ? gateMax : gateMax != null && gateHp != null ? Math.max(0, gateMax - gateHp) : barLost != null && maxHp != null ? (barLost / 100) * maxHp : null;
+  const damage = baseDamage != null ? baseDamage + bossHeal : null;
   const hpLost = kill ? 100 : gateMax != null && damage != null ? (damage / gateMax) * 100 : barLost;
   const dps = damage != null ? damage / seconds : null;
   const preJoinDamage = midFight ? Math.max(0, gateM0 - gateH0) : 0;
@@ -160,6 +171,7 @@ export function fightSummary(samples, { content = 'unknown', level = 45, players
     dps,
     dpsSinceJoin,
     damageSinceJoin,
+    bossHeal,
     midFight,
     preJoinDamage,
     joinedAtPct,
