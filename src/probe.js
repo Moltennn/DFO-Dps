@@ -148,6 +148,7 @@ export function fightSummary(samples, { content = 'unknown', level = 45, players
     curve,
     dpsCurve,
     chart: null,
+    chartTop: null,
   };
 }
 
@@ -163,6 +164,7 @@ export function summarizeProbe(data, { level, players } = {}) {
       ?? (data.content && data.content !== 'auto' ? data.content : (f[0].boss?.content ?? 'unknown'));
     const out = fightSummary(f, { content, level: lv, players: pl, levels });
     out.chart = data.chart ?? null;
+    out.chartTop = chartTop(data.chart);
     return out;
   });
   return { build: data.build ?? '', startedAt: data.startedAt ?? 0, endedAt: data.endedAt ?? 0, level: lv, players: pl || levels.length || 1, fights };
@@ -176,6 +178,38 @@ export function chartTotals(chart) {
     if (/wb-dmg-name/.test(row.cls)) names.push(row.text);
   }
   return { names, text: chart.text ?? '' };
+}
+
+/** The top-10 chart rows: damage, share, blows, best, crystals, falls, healed. */
+export function chartTop(chart) {
+  let rows = chart?.table;
+  if (!Array.isArray(rows) && Array.isArray(chart?.rows)) {
+    rows = [];
+    let cur = null;
+    for (const r of chart.rows) {
+      if (/wb-dmg-name/.test(r.cls)) {
+        cur = { name: r.text, level: '', nums: [] };
+        rows.push(cur);
+      } else if (/wb-dmg-lv/.test(r.cls) && cur) {
+        cur.level = r.text;
+      } else if (/wb-dmg-num/.test(r.cls) && cur) {
+        cur.nums.push(r.text);
+      }
+    }
+  }
+  if (!Array.isArray(rows)) return null;
+  const num = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, ''));
+  return rows.map((r) => ({
+    name: r.name,
+    level: Number((String(r.level ?? '').match(/\d+/) ?? [])[0]) || null,
+    damage: num(r.nums?.[0]),
+    share: r.nums?.[1] ?? '',
+    blows: num(r.nums?.[2]),
+    best: num(r.nums?.[3]),
+    crystals: num(r.nums?.[4]),
+    falls: num(r.nums?.[5]),
+    healed: num(r.nums?.[6]),
+  })).filter((r) => r.name);
 }
 
 export const probeConstants = (level) => purseOf(level);

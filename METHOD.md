@@ -167,7 +167,9 @@ load, records each boss bar automatically, and writes the fight at the fall
 to `~/.local/share/dfo-tools/probe-mod/captures/<user>-<level>-<activity>-<yyyy-mm-dd-hh-mm>.json`
 through a local sink, with no save dialog. It samples the boss bar every
 100 ms and records the content, the main fill, the `.wb-boss-half` split
-fills, the no-damage gaps and the fight-end chart. The level is
+fills, the no-damage gaps, the callout/move/marks/ward state, the full
+fight-end chart (HTML plus every cell) and the player's entity at start and
+end. The level is
 `window.__playerEntity.level` (kept set by the Skill Tracker's skyhook) or
 the bar's level text; the group size is the bar's "n in the court" / "n on
 the bridge" count, not the damage chart (the chart is a top-10 list). The

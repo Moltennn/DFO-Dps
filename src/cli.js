@@ -1089,6 +1089,11 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
           ['Warded time', f.wardedS > 0 ? `${fmt(f.wardedS)} s` : '-'],
           ['Sub-phases', f.subs.length ? f.subs.slice(0, 3).map((x) => `${x.name} ${fmt(x.seconds)}s`).join('; ') : '-'],
           ['Split samples', f.halves.length ? `${f.halves.length} samples with halves` : '-'],
+          ...(f.chartTop?.some((r) => r.best > 0 || r.blows > 0) ? [
+            ['Top-10 best blow', fmt(Math.max(...f.chartTop.map((r) => r.best || 0)))],
+            ['Top-10 blows', String(f.chartTop.reduce((a, r) => a + (r.blows || 0), 0))],
+            ['Top-10 falls / healed', `${f.chartTop.reduce((a, r) => a + (r.falls || 0), 0)} / ${fmt(f.chartTop.reduce((a, r) => a + (r.healed || 0), 0))}`],
+          ] : []),
         ], ['Metric', 'Value'], ['left', 'right']));
       }
     }
@@ -1109,7 +1114,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       const chart = chartTotals(f.chart);
       return [{
         title: `${f.content} - ${f.name || 'boss'} (${fmt(f.seconds)} s)`,
-        note: `HP-derived figures, not the fight-end chart. Largest 0.1 s step is the best cap probe; no-damage time is the known immunity (tuning forks, phase shields). A tilde means the chart listed only the top 10 and the remaining players are filled at the median known level.${chart?.names?.length ? ` Chart names: ${chart.names.join(', ')}.` : ''}`,
+        note: `HP-derived figures, not the fight-end chart. Largest 0.1 s step is the best cap probe; no-damage time is the known immunity (tuning forks, phase shields). A tilde means the chart listed only the top 10 and the remaining players are filled at the median known level. The top-10 best blow and blows are the chart's rows, not the whole group.${chart?.names?.length ? ` Chart names: ${chart.names.join(', ')}.` : ''}`,
         chart: hpCurve,
         table: `<div class="table"><table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>${[
           ['Boss health', f.maxHp != null ? `${f.maxHpEstimated ? '~' : ''}${fmt(f.maxHp)}` : '-'],
@@ -1122,6 +1127,11 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
           ['Warded time', f.wardedS > 0 ? `${fmt(f.wardedS)} s` : '-'],
           ['Sub-phases', f.subs.length ? f.subs.slice(0, 3).map((x) => `${x.name} ${fmt(x.seconds)}s`).join('; ') : '-'],
           ['Split samples', f.halves.length ? `${f.halves.length}` : '-'],
+          ...(f.chartTop?.some((r) => r.best > 0 || r.blows > 0) ? [
+            ['Top-10 best blow', fmt(Math.max(...f.chartTop.map((r) => r.best || 0)))],
+            ['Top-10 blows', String(f.chartTop.reduce((a, r) => a + (r.blows || 0), 0))],
+            ['Top-10 falls / healed', `${f.chartTop.reduce((a, r) => a + (r.falls || 0), 0)} / ${fmt(f.chartTop.reduce((a, r) => a + (r.healed || 0), 0))}`],
+          ] : []),
         ].map(([k, v]) => `<tr><td class="k">${k}</td><td>${v}</td></tr>`).join('')}</tbody></table></div>`,
       }, {
         title: `${f.content} - landed DPS over time`,

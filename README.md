@@ -292,9 +292,11 @@ dialog**. The filename is
 `moltenn-45-breach-2026-11-04-02-35.json`). The pane (ESC -> Mods -> Combat
 Probe) has **Pause/Resume**, optional **Download last / Download saved**, an
 optional download-copy toggle and a content-label override. It reads
-`.wb-boss-fill` and `.wb-boss-half`, records the fight-end chart as a
-cross-check, and never changes a game value or sends anything off the
-machine.
+`.wb-boss-fill`, `.wb-boss-half`, the boss callout/move/marks/ward state, and
+the full fight-end chart (HTML plus every cell, so the top-10 `best`, `blows`,
+`falls` and `healed` columns are kept). It also snapshots the player's entity
+at fight start and end (level, stats, skills, path, online flag). It never
+changes a game value or sends anything off the machine.
 
 **Level** comes from `window.__playerEntity` (the Skill Tracker's skyhook
 keeps it set) or the boss bar's level text. **Group size** comes from the
