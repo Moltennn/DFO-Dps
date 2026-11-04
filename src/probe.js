@@ -45,7 +45,7 @@ export function splitFights(samples = [], { gapMs = 5000, minSeconds = 1 } = {})
 }
 
 /** The capture's damage figures for one fight. */
-export function fightSummary(samples, { content = 'unknown', level = 45, players = 1, levels = [], gate = null, chartKill = false } = {}) {
+export function fightSummary(samples, { content = 'unknown', level = 45, players = 1, levels = [], gate = null, chartKill = false, outcome = null } = {}) {
   const first = samples[0];
   const last = samples.at(-1);
   const seconds = Math.max(1e-9, (last.t - first.t) / 1000);
@@ -62,11 +62,19 @@ export function fightSummary(samples, { content = 'unknown', level = 45, players
   const maxHpEstimated = !gateMax && count > 1 && count > known.length;
   const maxHp = gateMax ?? (boss ? lvList.reduce((a, l) => a + boss.shareX * bossRef(l) * (boss.hpX ?? 1), 0) : null);
   const lastHp = samples.map(hpOf).filter((v) => v != null).at(-1);
-  const kill = chartKill || (g ? !!(g.fell || Number(g.hp) <= 0) : lastHp != null && lastHp <= 0.01);
+  const kill = outcome === 'kill' || chartKill || (g ? !!(g.fell || Number(g.hp) <= 0) : lastHp != null && lastHp <= 0.01);
+  const firstGate = samples.map((s) => s.gate).filter(Boolean)[0] ?? null;
+  const gateM0 = Number(firstGate?.max) > 0 ? Number(firstGate.max) : null;
+  const gateH0 = Number.isFinite(Number(firstGate?.hp)) ? Number(firstGate.hp) : null;
+  const midFight = gateM0 != null && gateH0 != null && gateH0 < gateM0 * 0.995;
   const barLost = hpOf(first) != null && hpOf(last) != null ? Math.max(0, hpOf(first) - hpOf(last)) : null;
   const damage = kill && gateMax != null ? gateMax : gateMax != null && gateHp != null ? Math.max(0, gateMax - gateHp) : barLost != null && maxHp != null ? (barLost / 100) * maxHp : null;
   const hpLost = kill ? 100 : gateMax != null && damage != null ? (damage / gateMax) * 100 : barLost;
   const dps = damage != null ? damage / seconds : null;
+  const preJoinDamage = midFight ? Math.max(0, gateM0 - gateH0) : 0;
+  const damageSinceJoin = damage != null ? Math.max(0, damage - preJoinDamage) : null;
+  const dpsSinceJoin = damageSinceJoin != null ? damageSinceJoin / seconds : null;
+  const joinedAtPct = midFight ? (gateH0 / gateM0) * 100 : null;
 
   const five = samples.find((s) => s.t >= first.t + 5000) ?? last;
   const firstHp = samples.find((s) => hpOf(s) != null);
@@ -147,6 +155,11 @@ export function fightSummary(samples, { content = 'unknown', level = 45, players
     hpLost,
     damage,
     dps,
+    dpsSinceJoin,
+    damageSinceJoin,
+    midFight,
+    preJoinDamage,
+    joinedAtPct,
     burst5,
     maxStep,
     maxStepPct,
@@ -175,7 +188,7 @@ export function summarizeProbe(data, { level, players } = {}) {
     const content = bossContent(f[0].boss?.name, f[0].boss?.sub)
       ?? (data.content && data.content !== 'auto' ? data.content : (f[0].boss?.content ?? 'unknown'));
     const fg = data.gate ?? f.map((s) => s.gate).filter(Boolean).at(-1) ?? null;
-    const out = fightSummary(f, { content, level: lv, players: pl, levels, gate: fg, chartKill });
+    const out = fightSummary(f, { content, level: lv, players: pl, levels, gate: fg, chartKill, outcome: data.outcome });
     out.chart = data.chart ?? null;
     out.chartTop = chartTop(data.chart);
     return out;

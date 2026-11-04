@@ -1081,7 +1081,9 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
         console.log(table([
           ['Boss health', f.maxHp != null ? `${f.maxHpEstimated ? '~' : ''}${fmt(f.maxHp)}` : '-'],
           ['Landing damage', f.damage != null ? `${f.maxHpEstimated ? '~' : ''}${fmt(f.damage)}` : `${fmt(f.hpLost)}%`],
-          ['Landed DPS', f.dps != null ? `${f.maxHpEstimated ? '~' : ''}${fmt(f.dps)}` : '-'],
+          ['Landed DPS', f.dps != null ? `${f.maxHpEstimated ? '~' : ''}${fmt(f.midFight ? f.dpsSinceJoin : f.dps)}${f.midFight ? ' (since join)' : ''}` : '-'],
+          ['Damage since join', f.midFight ? fmt(f.damageSinceJoin) : '-'],
+          ['Joined at', f.midFight ? `${fmt(f.joinedAtPct)}%` : '-'],
           ['Burst 5s', f.burst5 != null ? `${f.maxHpEstimated ? '~' : ''}${fmt(f.burst5)}` : '-'],
           ['Levels', `${f.levels.length} known / ${f.players} players${f.maxHpEstimated ? `, fill ${f.levelFill}` : ''}`],
           ['Outcome', f.outcome],
@@ -1120,7 +1122,9 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
         table: `<div class="table"><table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>${[
           ['Boss health', f.maxHp != null ? `${f.maxHpEstimated ? '~' : ''}${fmt(f.maxHp)}` : '-'],
           ['Landing damage', f.damage != null ? `${f.maxHpEstimated ? '~' : ''}${fmt(f.damage)}` : `${fmt(f.hpLost)}%`],
-          ['Landed DPS', f.dps != null ? `${f.maxHpEstimated ? '~' : ''}${fmt(f.dps)}` : '-'],
+          ['Landed DPS', f.dps != null ? `${f.maxHpEstimated ? '~' : ''}${fmt(f.midFight ? f.dpsSinceJoin : f.dps)}${f.midFight ? ' (since join)' : ''}` : '-'],
+          ['Damage since join', f.midFight ? fmt(f.damageSinceJoin) : '-'],
+          ['Joined at', f.midFight ? `${fmt(f.joinedAtPct)}%` : '-'],
           ['Burst 5s', f.burst5 != null ? `${f.maxHpEstimated ? '~' : ''}${fmt(f.burst5)}` : '-'],
           ['Levels', `${f.levels.length} known / ${f.players} players${f.maxHpEstimated ? `, fill ${f.levelFill}` : ''}`],
           ['Outcome', f.outcome],

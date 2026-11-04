@@ -160,3 +160,18 @@ test('the flat chart rows give best and blows', () => {
   assert.equal(top[0].falls, 1);
   assert.equal(top[0].healed, 200);
 });
+
+test('a mid-fight join reports since-join damage and keeps the whole kill total', () => {
+  const data = capture({ seconds: 86 });
+  data.players = 6;
+  data.levels = Array.from({ length: 6 }, () => 31);
+  for (const s of data.samples) s.gate = { max: 45300, hp: 0, fighters: 6, phase: 3 };
+  data.samples[0].gate = { max: 27300, hp: 18535, fighters: 3, phase: 1 };
+  data.outcome = 'kill';
+  const f = summarizeProbe(data).fights[0];
+  assert.equal(f.midFight, true);
+  assert.equal(f.damage, 45300);
+  assert.equal(f.damageSinceJoin, 36535);
+  assert.ok(Math.abs(f.joinedAtPct - (18535 / 27300) * 100) < 1e-9);
+  assert.equal(f.outcome, 'kill');
+});

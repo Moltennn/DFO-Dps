@@ -315,8 +315,11 @@ known level, and the HP/DPS figures are shown with a tilde.
 ```
 
 The reader prefers the gate state for the boss pool and fighters, and treats
-a chart that says **has fallen** as the kill even when the last gate HP sample
-lagged. It reports the outcome, exact HP, fighters, top-10 `best`/`blows`,
+a chart that says **has fallen** (or a confirmed kill marker) as the kill even
+when the last gate HP sample lagged. A capture that starts mid-fight adds
+**joined at**, **pre-join damage**, **damage since join** and **since-join
+DPS**; its burst is after the join, and the purse starts empty on a mid-fight
+join, so that burst is not a fresh-fight burst. It reports the outcome, exact HP, fighters, top-10 `best`/`blows`,
 `falls` and `healed`, and the HP-derived DPS, burst, no-damage time, warded
 time and sub-phases. The chart's `dealt` is still not summed into the total;
 it counts phase-shield and add damage.
