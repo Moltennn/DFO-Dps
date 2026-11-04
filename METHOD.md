@@ -163,7 +163,7 @@ them.
 `probe` reads a local Combat Probe capture (the mod is not in the mods repo;
 its source is in `~/.local/share/dfo-tools/probe-mod`). The probe starts on
 load, records each boss bar automatically, and writes the fight at the fall
-to `~/.local/share/dfo-tools/logs/probes/<user>-<level>-<activity>-<yyyy-mm-dd-hh-mm>.json`
+to `~/.local/share/dfo-tools/probe-mod/captures/<user>-<level>-<activity>-<yyyy-mm-dd-hh-mm>.json`
 through a local sink, with no save dialog. It samples the boss bar every
 100 ms and records the content, the main fill, the `.wb-boss-half` split
 fills, the no-damage gaps and the fight-end chart. The level is

@@ -284,7 +284,7 @@ part of the mods repo: its source lives in
 
 It records automatically. The mod starts on load, opens a fight when the boss
 bar appears, and writes the capture at the fall to
-`~/.local/share/dfo-tools/logs/probes/` through a local sink: **no save
+`~/.local/share/dfo-tools/probe-mod/captures/` through a local sink: **no save
 dialog**. The filename is
 `<user>-<level>-<activity>-<yyyy-mm-dd-hh-mm>.json` (for example
 `moltenn-45-breach-2026-11-04-02-35.json`). The pane (ESC -> Mods -> Combat

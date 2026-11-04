@@ -1046,7 +1046,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
   if (cmd === 'probe') {
     let file = parsed.positionals[1] ?? values.data;
     if (!file) {
-      const dir = path.join(os.homedir(), '.local/share/dfo-tools/logs/probes');
+      const dir = path.join(os.homedir(), '.local/share/dfo-tools/probe-mod/captures');
       try {
         const latest = fs.readdirSync(dir).filter((f) => f.endsWith('.json'))
           .map((f) => ({ f, m: fs.statSync(path.join(dir, f)).mtimeMs }))
