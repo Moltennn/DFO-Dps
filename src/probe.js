@@ -45,14 +45,15 @@ export function splitFights(samples = [], { gapMs = 5000, minSeconds = 1 } = {})
 }
 
 /** The capture's damage figures for one fight. */
-export function fightSummary(samples, { content = 'unknown', level = 45, players = 1, levels = [] } = {}) {
+export function fightSummary(samples, { content = 'unknown', level = 45, players = 1, levels = [], gate = null, chartKill = false } = {}) {
   const first = samples[0];
   const last = samples.at(-1);
   const seconds = Math.max(1e-9, (last.t - first.t) / 1000);
   const boss = encounterById(content);
-  const gate = samples.map((s) => s.gate).filter(Boolean).at(-1) ?? null;
-  const gateMax = Number(gate?.max) > 0 ? Number(gate.max) : null;
-  const gatePlayers = Number(gate?.fighters) > 0 ? Number(gate.fighters) : null;
+  const g = gate ?? samples.map((s) => s.gate).filter(Boolean).at(-1) ?? null;
+  const gateMax = Number(g?.max) > 0 ? Number(g.max) : null;
+  const gatePlayers = Number(g?.fighters) > 0 ? Number(g.fighters) : null;
+  const gateHp = Number.isFinite(Number(g?.hp)) ? Number(g.hp) : null;
   const known = levels.filter((v) => Number.isFinite(v) && v >= 1 && v <= 60);
   const count = Math.max(1, gatePlayers ?? players, known.length);
   const sorted = known.slice().sort((a, b) => a - b);
@@ -60,12 +61,16 @@ export function fightSummary(samples, { content = 'unknown', level = 45, players
   const lvList = [...known, ...Array(Math.max(0, count - known.length)).fill(fill)];
   const maxHpEstimated = !gateMax && count > 1 && count > known.length;
   const maxHp = gateMax ?? (boss ? lvList.reduce((a, l) => a + boss.shareX * bossRef(l) * (boss.hpX ?? 1), 0) : null);
-  const hpLost = Math.max(0, hpOf(first) - hpOf(last));
-  const damage = maxHp != null ? (hpLost / 100) * maxHp : null;
+  const lastHp = samples.map(hpOf).filter((v) => v != null).at(-1);
+  const kill = chartKill || (g ? !!(g.fell || Number(g.hp) <= 0) : lastHp != null && lastHp <= 0.01);
+  const barLost = hpOf(first) != null && hpOf(last) != null ? Math.max(0, hpOf(first) - hpOf(last)) : null;
+  const damage = kill && gateMax != null ? gateMax : gateMax != null && gateHp != null ? Math.max(0, gateMax - gateHp) : barLost != null && maxHp != null ? (barLost / 100) * maxHp : null;
+  const hpLost = kill ? 100 : gateMax != null && damage != null ? (damage / gateMax) * 100 : barLost;
   const dps = damage != null ? damage / seconds : null;
 
   const five = samples.find((s) => s.t >= first.t + 5000) ?? last;
-  const burst5 = maxHp != null ? (Math.max(0, hpOf(first) - hpOf(five)) / 100) * maxHp : null;
+  const firstHp = samples.find((s) => hpOf(s) != null);
+  const burst5 = maxHp != null && firstHp && hpOf(five) != null ? (Math.max(0, hpOf(firstHp) - hpOf(five)) / 100) * maxHp : null;
 
   const steps = [];
   let sinceHit = 0;
@@ -128,14 +133,15 @@ export function fightSummary(samples, { content = 'unknown', level = 45, players
 
   return {
     content,
-    name: first.boss.name ?? '',
-    sub: first.boss.sub ?? '',
+    name: samples.find((s) => s.boss)?.boss?.name ?? '',
+    sub: samples.find((s) => s.boss)?.boss?.sub ?? '',
     level,
     players: lvList.length,
     levels: known,
     levelFill: fill,
     maxHpEstimated,
-    gate: gate ? { max: gateMax, fighters: gatePlayers, phase: gate.phase ?? null } : null,
+    gate: g ? { max: gateMax, hp: gateHp, fighters: gatePlayers, phase: g.phase ?? null } : null,
+    outcome: kill ? 'kill' : gateOutcome(g, samples),
     maxHp,
     seconds,
     hpLost,
@@ -163,10 +169,13 @@ export function summarizeProbe(data, { level, players } = {}) {
   const levels = Array.isArray(data.levels) ? data.levels.map(Number).filter((v) => Number.isFinite(v) && v >= 1 && v <= 60) : [];
   const pl = isNum(players) ? Number(players) : Number(data.players) || levels.length || 1;
   const samples = Array.isArray(data.samples) ? data.samples : [];
+  const chartText = `${data.chart?.sub ?? ''} ${data.chart?.title ?? ''} ${data.chart?.text ?? ''}`.toLowerCase();
+  const chartKill = /has fallen|fallen -/.test(chartText);
   const fights = splitFights(samples).map((f) => {
     const content = bossContent(f[0].boss?.name, f[0].boss?.sub)
       ?? (data.content && data.content !== 'auto' ? data.content : (f[0].boss?.content ?? 'unknown'));
-    const out = fightSummary(f, { content, level: lv, players: pl, levels });
+    const fg = data.gate ?? f.map((s) => s.gate).filter(Boolean).at(-1) ?? null;
+    const out = fightSummary(f, { content, level: lv, players: pl, levels, gate: fg, chartKill });
     out.chart = data.chart ?? null;
     out.chartTop = chartTop(data.chart);
     return out;
@@ -185,34 +194,52 @@ export function chartTotals(chart) {
 }
 
 /** The top-10 chart rows: damage, share, blows, best, crystals, falls, healed. */
+export function gateOutcome(gate, samples = []) {
+  if (gate) return gate.fell || Number(gate.hp) <= 0 ? 'kill' : 'ended';
+  const last = samples.map(hpOf).filter((v) => v != null).at(-1);
+  return last != null && last <= 0.01 ? 'kill' : 'ended';
+}
+
 export function chartTop(chart) {
+  const num = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, ''));
   let rows = chart?.table;
-  if (!Array.isArray(rows) && Array.isArray(chart?.rows)) {
-    rows = [];
+  if (!Array.isArray(rows) || !rows.some((r) => r.damage != null || r.best != null)) {
+    const flat = [];
     let cur = null;
-    for (const r of chart.rows) {
-      if (/wb-dmg-name/.test(r.cls)) {
-        cur = { name: r.text, level: '', nums: [] };
-        rows.push(cur);
-      } else if (/wb-dmg-lv/.test(r.cls) && cur) {
-        cur.level = r.text;
-      } else if (/wb-dmg-num/.test(r.cls) && cur) {
-        cur.nums.push(r.text);
+    for (const r of chart?.rows ?? []) {
+      if (/wb-dmg-row/.test(r.cls)) {
+        if (/wb-dmg-head/.test(r.cls)) { cur = null; continue; }
+        cur = {};
+        flat.push(cur);
+        continue;
       }
+      if (!cur) continue;
+      const cls = String(r.cls).split(/\s+/)[0];
+      if (['wb-dmg-rank', 'wb-dmg-name', 'wb-dmg-lv', 'wb-dmg-damage', 'wb-dmg-share', 'wb-dmg-blows', 'wb-dmg-best', 'wb-dmg-cx', 'wb-dmg-falls', 'wb-dmg-heal'].includes(cls)) cur[cls] = r.text;
     }
+    rows = flat.filter((r) => r['wb-dmg-name']).map((r) => ({
+      name: r['wb-dmg-name'],
+      level: r['wb-dmg-lv'],
+      damage: r['wb-dmg-damage'],
+      share: r['wb-dmg-share'],
+      blows: r['wb-dmg-blows'],
+      best: r['wb-dmg-best'],
+      crystals: r['wb-dmg-cx'],
+      falls: r['wb-dmg-falls'],
+      healed: r['wb-dmg-heal'],
+    }));
   }
   if (!Array.isArray(rows)) return null;
-  const num = (v) => Number(String(v ?? '').replace(/[^0-9.-]/g, ''));
   return rows.map((r) => ({
     name: r.name,
     level: Number((String(r.level ?? '').match(/\d+/) ?? [])[0]) || null,
-    damage: num(r.nums?.[0]),
-    share: r.nums?.[1] ?? '',
-    blows: num(r.nums?.[2]),
-    best: num(r.nums?.[3]),
-    crystals: num(r.nums?.[4]),
-    falls: num(r.nums?.[5]),
-    healed: num(r.nums?.[6]),
+    damage: num(r.damage),
+    share: r.share ?? '',
+    blows: num(r.blows),
+    best: num(r.best),
+    crystals: num(r.crystals ?? r.nums?.[4]),
+    falls: num(r.falls ?? r.nums?.[5]),
+    healed: num(r.healed ?? r.nums?.[6]),
   })).filter((r) => r.name);
 }
 

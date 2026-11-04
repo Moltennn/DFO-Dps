@@ -314,9 +314,12 @@ known level, and the HP/DPS figures are shown with a tilde.
 # --level / --players only override an old capture's auto values
 ```
 
-The reader uses the health bar, not the chart, for landed damage, burst and
-no-damage gaps. The chart is compared afterwards; it counts phase-shield and
-add damage, so it is not the ground truth.
+The reader prefers the gate state for the boss pool and fighters, and treats
+a chart that says **has fallen** as the kill even when the last gate HP sample
+lagged. It reports the outcome, exact HP, fighters, top-10 `best`/`blows`,
+`falls` and `healed`, and the HP-derived DPS, burst, no-damage time, warded
+time and sub-phases. The chart's `dealt` is still not summed into the total;
+it counts phase-shield and add damage.
 
 ## Bows, firearms, spells and enchantments
 

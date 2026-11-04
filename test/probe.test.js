@@ -109,3 +109,54 @@ test('the gate state makes the boss HP exact', () => {
   assert.equal(f.maxHpEstimated, false);
   assert.equal(f.players, 49);
 });
+
+test('the gate state also gives the exact landed total', () => {
+  const data = capture({ seconds: 86 });
+  for (const s of data.samples) s.gate = { max: 45300, hp: 1183, fighters: 6, phase: 3 };
+  data.players = 6;
+  data.levels = Array.from({ length: 6 }, () => 31);
+  const f = summarizeProbe(data).fights[0];
+  assert.equal(f.maxHp, 45300);
+  assert.equal(f.damage, 44117);
+  assert.equal(f.maxHpEstimated, false);
+  assert.equal(f.outcome, 'ended');
+});
+
+test('a chart that says fallen overrides stale gate hp and makes the damage the whole pool', () => {
+  const data = capture({ seconds: 86 });
+  data.players = 6;
+  data.levels = Array.from({ length: 6 }, () => 31);
+  for (const s of data.samples) s.gate = { max: 45300, hp: 1183, fighters: 6, phase: 3 };
+  data.chart = { sub: 'Valkynaz Ruhn has fallen - 6 challengers', rows: [] };
+  const f = summarizeProbe(data).fights[0];
+  assert.equal(f.damage, 45300);
+  assert.equal(f.outcome, 'kill');
+  assert.equal(f.maxHpEstimated, false);
+});
+
+test('the flat chart rows give best and blows', () => {
+  const data = capture({ seconds: 60 });
+  data.chart = {
+    sub: 'Valkynaz Ruhn has fallen - 2 challengers',
+    rows: [
+      { cls: 'wb-dmg-row wb-dmg-head', text: '#' },
+      { cls: 'wb-dmg-row', text: '1A' },
+      { cls: 'wb-dmg-rank', text: '1' },
+      { cls: 'wb-dmg-name', text: 'A' },
+      { cls: 'wb-dmg-lv', text: 'Lv 31' },
+      { cls: 'wb-dmg-damage wb-dmg-num', text: '10,000' },
+      { cls: 'wb-dmg-share', text: '50%' },
+      { cls: 'wb-dmg-blows', text: '120' },
+      { cls: 'wb-dmg-best', text: '516' },
+      { cls: 'wb-dmg-cx', text: '0' },
+      { cls: 'wb-dmg-falls', text: '1' },
+      { cls: 'wb-dmg-heal', text: '200' },
+    ],
+  };
+  const top = summarizeProbe(data).fights[0].chartTop;
+  assert.equal(top[0].name, 'A');
+  assert.equal(top[0].best, 516);
+  assert.equal(top[0].blows, 120);
+  assert.equal(top[0].falls, 1);
+  assert.equal(top[0].healed, 200);
+});
