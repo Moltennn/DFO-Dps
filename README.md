@@ -283,12 +283,16 @@ part of the mods repo: its source lives in
 `DFO-Mods/probe-mod`. The loader still discovers it like any other mod.
 
 It records automatically. The mod starts on load, opens a fight when the boss
-bar appears, and saves at the fall: a JSON in the browser's probe store and,
-by default, a download in `~/Downloads`. The pane (ESC -> Mods -> Combat
-Probe) has **Pause/Resume**, **Download last**, **Download saved**, an
-auto-download toggle and a content-label override. It reads
+bar appears, and writes the capture at the fall to
+`~/.local/share/dfo-tools/logs/probes/` through a local sink: **no save
+dialog**. The filename is
+`<user>-<level>-<activity>-<yyyy-mm-dd-hh-mm>.json` (for example
+`moltenn-45-breach-2026-11-04-02-35.json`). The pane (ESC -> Mods -> Combat
+Probe) has **Pause/Resume**, optional **Download last / Download saved**, an
+optional download-copy toggle and a content-label override. It reads
 `.wb-boss-fill` and `.wb-boss-half`, records the fight-end chart as a
-cross-check, and never changes a game value or sends anything.
+cross-check, and never changes a game value or sends anything off the
+machine.
 
 **Level** comes from `window.__playerEntity` (the Skill Tracker's skyhook
 keeps it set) or the boss bar's level text. **Group size** comes from the
@@ -296,9 +300,9 @@ fight-end damage-chart rows, or the bar's "n on the deck" count. No manual
 level or player count is needed; the capture carries both.
 
 ```bash
-./dfo-dps probe ~/Downloads/dfo-probe-breach-....json
-# --level / --players are optional overrides if a capture was taken before
-# the auto-detection existed
+./dfo-dps probe                         # the latest saved capture
+./dfo-dps probe moltenn-45-breach-....json
+# --level / --players only override an old capture's auto values
 ```
 
 The reader uses the health bar, not the chart, for landed damage, burst and

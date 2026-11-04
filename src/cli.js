@@ -9,6 +9,7 @@
  *   dfo-dps doctor
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { parseArgs } from 'node:util';
@@ -58,7 +59,7 @@ Usage:
   dfo-dps weapons [options]           HTML page: all weapons, max DPS and skill scaling
   dfo-dps firmament [options]         HTML page: star-tree plans for each build (cached)
   dfo-dps imprints [options]          HTML page: weapon imprints ranked by family
-  dfo-dps probe <capture.json>        read a Combat Probe capture: purse fit, burst, gaps, split
+  dfo-dps probe [capture.json]        read the latest Combat Probe capture (or a named one)
   dfo-dps enchant-plan [options]      per-piece enchant budget and priority plan
   dfo-dps loadout [options]           real DPS: tree + enchants + imprint per weapon type
   dfo-dps skills [options]            same page (alias)
@@ -1043,10 +1044,19 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
   }
 
   if (cmd === 'probe') {
-    const file = parsed.positionals[1] ?? values.data;
+    let file = parsed.positionals[1] ?? values.data;
     if (!file) {
-      console.error('probe: pass a Combat Probe capture path (dfo-dps probe capture.json)');
-      process.exit(2);
+      const dir = path.join(os.homedir(), '.local/share/dfo-tools/logs/probes');
+      try {
+        const latest = fs.readdirSync(dir).filter((f) => f.endsWith('.json'))
+          .map((f) => ({ f, m: fs.statSync(path.join(dir, f)).mtimeMs }))
+          .sort((a, b) => b.m - a.m)[0];
+        if (latest) file = path.join(dir, latest.f);
+      } catch { /* no probe folder yet */ }
+      if (!file) {
+        console.error('probe: no capture path and no saved captures yet (arm the probe and finish a fight)');
+        process.exit(2);
+      }
     }
     let data;
     try {

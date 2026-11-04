@@ -162,10 +162,11 @@ them.
 
 `probe` reads a local Combat Probe capture (the mod is not in the mods repo;
 its source is in `~/.local/share/dfo-tools/probe-mod`). The probe starts on
-load, records each boss bar automatically, and saves the fight at the fall to
-the browser's probe store and (by default) a download. It samples the boss
-bar every 100 ms and records the content, the main fill, the `.wb-boss-half`
-split fills, the no-damage gaps and the fight-end chart. The level is
+load, records each boss bar automatically, and writes the fight at the fall
+to `~/.local/share/dfo-tools/logs/probes/<user>-<level>-<activity>-<yyyy-mm-dd-hh-mm>.json`
+through a local sink, with no save dialog. It samples the boss bar every
+100 ms and records the content, the main fill, the `.wb-boss-half` split
+fills, the no-damage gaps and the fight-end chart. The level is
 `window.__playerEntity.level` (kept set by the Skill Tracker's skyhook) or
 the bar's level text; the group size is the damage chart's row count or the
 bar's deck count. Both are in the capture; the CLI `--level` and `--players`
