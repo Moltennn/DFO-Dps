@@ -273,6 +273,28 @@ Abyss's phase split are not calibrated yet; those sections are marked
 The table is tree + enchants + imprint, assumes a soul gem on every piece,
 and lists every weapon template separately in each hold it supports.
 
+## Combat probe
+
+The purse numbers above are the source's law; the Sky-ketch's immune windows
+and the Abyss's gold/silver split are not. A local, read-only probe records
+the boss bar at 10 Hz so those can be fitted rather than guessed. It is not
+part of the mods repo: its source lives in
+`~/.local/share/dfo-tools/probe-mod`, with an ignored symlink at
+`DFO-Mods/probe-mod`. The loader still discovers it like any other mod.
+
+In game: **ESC -> Mods -> Combat Probe**, pick the content label, **Start**,
+fight, **Stop**, **Download JSON**. It reads `.wb-boss-fill` and the
+`.wb-boss-half` split bars, records the fight-end chart as a cross-check, and
+never changes a game value or sends anything.
+
+```bash
+./dfo-dps probe ~/Downloads/dfo-probe-....json --level 45 --players 1
+```
+
+The reader uses the health bar, not the chart, for landed damage, burst and
+no-damage gaps. The chart is compared afterwards; it counts phase-shield and
+add damage, so it is not the ground truth.
+
 ## Bows, firearms, spells and enchantments
 
 The same model now covers the other damage lanes:

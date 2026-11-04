@@ -25,6 +25,7 @@ import { applyTree, realWeaponLoadouts } from './realBuild.js';
 import { ENCOUNTERS, ENCOUNTER_IDS, encounterById } from './encounters.js';
 import { enchantmentName as enchantmentNameOf } from './enchantData.js';
 import { analyzeSpell, resolveSpells, spellCost, spellRotation, standardSpells } from './spells.js';
+import { chartTotals, probeConstants, summarizeProbe } from './probe.js';
 import { ENCHANTMENT_TYPES, enchantDps, procsBeforeBreak, strikeEnchantments } from './enchants.js';
 import { perfectSockets } from './sockets.js';
 import {
@@ -57,6 +58,7 @@ Usage:
   dfo-dps weapons [options]           HTML page: all weapons, max DPS and skill scaling
   dfo-dps firmament [options]         HTML page: star-tree plans for each build (cached)
   dfo-dps imprints [options]          HTML page: weapon imprints ranked by family
+  dfo-dps probe <capture.json>        read a Combat Probe capture: purse fit, burst, gaps, split
   dfo-dps enchant-plan [options]      per-piece enchant budget and priority plan
   dfo-dps loadout [options]           real DPS: tree + enchants + imprint per weapon type
   dfo-dps skills [options]            same page (alias)
@@ -1037,6 +1039,82 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     fs.writeFileSync(out, html, 'utf8');
     if (!values.json) console.log(`imprints page written: ${out}`);
     if (values.json) console.log(JSON.stringify(rows.map((f) => ({ family: f.key, weapon: f.weapon, template: f.template, baseDps: f.base.cappedDps, rows: f.rows.map((r) => ({ id: r.id, record: r.name, power: r.power.name, weapon: r.weapon, baseDps: r.baseDps, conditionalDps: r.conditionalDps, uncappedDps: r.uncappedDps, delta: r.delta, uncappedDelta: r.uncappedDelta, triggerDelta: r.triggerDelta, trigger: r.trigger, hit: r.hit, effect: r.power.brief })) })), null, 2));
+    return;
+  }
+
+  if (cmd === 'probe') {
+    const file = parsed.positionals[1] ?? values.data;
+    if (!file) {
+      console.error('probe: pass a Combat Probe capture path (dfo-dps probe capture.json)');
+      process.exit(2);
+    }
+    let data;
+    try {
+      data = JSON.parse(fs.readFileSync(path.resolve(file), 'utf8'));
+    } catch (e) {
+      console.error(`probe: cannot read ${file}: ${e.message}`);
+      process.exit(2);
+    }
+    const summary = summarizeProbe(data, { level: values.level, players: values.players });
+    if (!values.json) {
+      console.log(`Combat Probe  |  ${summary.fights.length} fight${summary.fights.length === 1 ? '' : 's'}  |  level ${summary.level}, ${summary.players} player${summary.players === 1 ? '' : 's'}  |  build ${summary.build || '-'}`);
+      if (!summary.fights.length) console.log('No boss health samples found. Arm the probe before the pull and stop it after.');
+      for (const [i, f] of summary.fights.entries()) {
+        console.log(`\nFight ${i + 1}  |  ${f.content}  |  ${f.name || 'boss'}  |  ${fmt(f.seconds)} s`);
+        console.log(table([
+          ['Boss health', f.maxHp != null ? fmt(f.maxHp) : '-'],
+          ['Landing damage', f.damage != null ? fmt(f.damage) : `${fmt(f.hpLost)}%`],
+          ['Landed DPS', f.dps != null ? fmt(f.dps) : '-'],
+          ['Burst 5s', f.burst5 != null ? fmt(f.burst5) : '-'],
+          ['Largest 0.1s step', f.maxStep != null ? fmt(f.maxStep) : `${fmt(f.maxStepPct)}%`],
+          ['No-damage time', `${fmt(f.immunityS)} s (${pc(f.immunityShare)})`],
+          ['Split samples', f.halves.length ? `${f.halves.length} samples with halves` : '-'],
+        ], ['Metric', 'Value'], ['left', 'right']));
+      }
+    }
+    const out = path.resolve(values.out === 'dfo-dps-report.html' ? 'probe.html' : values.out);
+    const sections = summary.fights.flatMap((f, i) => {
+      const hpCurve = lineChart({
+        title: `${f.content} fight ${i + 1} - boss health`,
+        xLabel: 'Seconds',
+        yLabel: 'Boss HP %',
+        series: [{ name: 'HP', points: f.curve.map((p) => ({ x: p.t, y: p.hp })) }],
+      });
+      const dpsCurve = lineChart({
+        title: `${f.content} fight ${i + 1} - landed DPS`,
+        xLabel: 'Seconds',
+        yLabel: 'DPS',
+        series: [{ name: 'Landed DPS', points: f.dpsCurve }],
+      });
+      const chart = chartTotals(f.chart);
+      return [{
+        title: `${f.content} - ${f.name || 'boss'} (${fmt(f.seconds)} s)`,
+        note: `HP-derived figures, not the fight-end chart. Largest 0.1 s step is the best cap probe; no-damage time is the known immunity (tuning forks, phase shields).${chart?.names?.length ? ` Chart names: ${chart.names.join(', ')}.` : ''}`,
+        chart: hpCurve,
+        table: `<div class="table"><table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>${[
+          ['Boss health', f.maxHp != null ? fmt(f.maxHp) : '-'],
+          ['Landing damage', f.damage != null ? fmt(f.damage) : `${fmt(f.hpLost)}%`],
+          ['Landed DPS', f.dps != null ? fmt(f.dps) : '-'],
+          ['Burst 5s', f.burst5 != null ? fmt(f.burst5) : '-'],
+          ['Largest 0.1 s step', f.maxStep != null ? fmt(f.maxStep) : `${fmt(f.maxStepPct)}%`],
+          ['No-damage time', `${fmt(f.immunityS)} s (${pc(f.immunityShare)})`],
+          ['Split samples', f.halves.length ? `${f.halves.length}` : '-'],
+        ].map(([k, v]) => `<tr><td class="k">${k}</td><td>${v}</td></tr>`).join('')}</tbody></table></div>`,
+      }, {
+        title: `${f.content} - landed DPS over time`,
+        note: 'Per-sample health delta at 10 Hz; a gap is an immune window or a phase shield.',
+        chart: dpsCurve,
+        table: '',
+      }];
+    });
+    const html = multiGraphPage({
+      title: 'DFO Combat Probe',
+      subtitle: `Read-only boss-bar capture. Level ${summary.level}, ${summary.players} player${summary.players === 1 ? '' : 's'}. HP-derived figures; the fight-end chart is shown only as a cross-check.`,
+      sections: sections.length ? sections : [{ title: 'No fights', note: 'No boss health samples found.', chart: '', table: '' }],
+    });
+    fs.writeFileSync(out, html, 'utf8');
+    if (!values.json) console.log(`probe page written: ${out}`);
+    if (values.json) console.log(JSON.stringify(summary, null, 2));
     return;
   }
 

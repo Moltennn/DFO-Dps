@@ -158,6 +158,20 @@ and Abyss carry their known mechanics (immune tuning-fork windows, the
 gold/silver split) but are marked uncalibrated until the probe measures
 them.
 
+## Combat probe
+
+`probe` reads a local Combat Probe capture (the mod is not in the mods repo;
+its source is in `~/.local/share/dfo-tools/probe-mod`). The probe samples the
+boss bar every 100 ms and records the content label, the main fill, the
+`.wb-boss-half` split fills, the no-damage gaps and the fight-end chart.
+`src/probe.js` splits the samples into pulls, derives landed damage from the
+health bar and the content's share, and reports DPS, the first-five-second
+burst, the largest single sample step (a cap probe), the no-damage share (an
+immunity probe) and the split halves. A slow weapon's normal between-blow gap
+is estimated from the median time between damage samples and excluded from
+the immunity count. The fight-end chart is captured for audit only: `dealt`
+includes phase-shield and add damage, so it is not used for the fit.
+
 ## Ranged, spells and enchantments
 
 Gear sockets are modelled: a rare/legendary weapon has 1/2/3 sockets (short/one/two hands) and a perfect diamond is +12% damage; armour and jewellery take one stat/resist socket. Hand Wraps (template 563) carry damage/sockets/procs onto the fist blow. Dual wield averages the main and off-hand cards, the off hand at x0.8 damage and -5 hit. The skill chart is one line per weapon: raw 100 -> 200 is effective 100 -> 140, gear continues to 140 + cap.
