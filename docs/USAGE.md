@@ -305,6 +305,7 @@ const fight = simulateRelayFight(ch, {
 fight.claims; fight.accepted; fight.refused; fight.damageDealt; fight.overkill;
 fight.offered; fight.clipped; fight.refusedDamage;
 fight.saturated; fight.dryAt; fight.bucket; fight.ttk; fight.killDps;
+fight.time; fight.claimTime; fight.lastAttackAt; fight.termination; fight.censored; fight.censoredAt;
 ```
 
 - `claim({t, damage})` takes `t` in seconds (the source uses milliseconds). A claim is a landed, positive blow; a miss is not a claim and spends no token. The claim is the uncapped sampled
@@ -313,8 +314,13 @@ fight.saturated; fight.dryAt; fight.bucket; fight.ttk; fight.killDps;
   a claim at exactly its end is accepted. Phase-ward lifecycle is not scheduled.
 - The engine refuses an unarmed build (the Stage 3.2 schedule guard) and a build carrying a Many Endings echo power.
   Geometry, Sundered halves, Wrath, host/crystal claims, CWS/DoTs/Flow and wear are outside this stage.
+- `time` is the fight's elapsed time, independent of the claim clock: the killing claim on a kill, `maxSeconds` when
+  the horizon censors the fight, and the last simulated attack when `maxBlows` stops it earlier (a blow-budget stop is
+  not reported as the horizon). `claimTime` is the engine's last claim timestamp. `outputDps = damageDealt / time`
+  covers every trial (0 when no damage landed, null at zero elapsed); `killDps` remains conditional on a kill. On a
+  kill the relay deals exactly the pool, so `outputDps = killDps`; `overkill` is the killing claim's health clip.
 - `simulateRelayFights` reports the conditional TTK, `killProbability`, accepted/refused claims, damage, clipping,
-  saturation and remaining bucket state across seeded trials. `offered = dealt + clipped + refusedDamage`; a refused
+  saturation, elapsed time and termination counts across seeded trials. `offered = dealt + clipped + refusedDamage`; a refused
   claim's damage is not in `clipped` because the game never reached the purse.
 
 ## 13. Outputs and JSON

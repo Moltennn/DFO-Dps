@@ -174,3 +174,25 @@ test('9. a long stream is streaming: counters only, identical on replay', () => 
   assert.ok(Number.isFinite(a.bucket) && a.bucket >= 0 && a.bucket <= 750);
   assert.ok(a.tokens >= 0 && a.tokens < 4);
 });
+
+test('10. the engine clock is the claim timestamp; refused claims do not move the purse', () => {
+  const e = engine();
+  for (let i = 0; i < 4; i++) assert.equal(e.claim({ t: 0, damage: 100 }).accepted, true);
+  const noToken = e.claim({ t: 0.1, damage: 100 });
+  assert.equal(noToken.reason, 'noToken');
+  assert.equal(e.time, 0.1, 'the engine clock is the claim time');
+  assert.equal(e.bucket, 350, 'a no-token claim does not refill the purse');
+  assert.ok(near(e.tokens, 0.4), 'the token clock did advance');
+
+  const shielded = engine({ shieldUntil: 1 });
+  const before = shielded.claim({ t: 0.5, damage: 100 });
+  assert.equal(before.reason, 'shielded');
+  assert.equal(shielded.time, 0.5);
+  assert.equal(shielded.tokens, 4);
+  assert.equal(shielded.bucket, 750);
+  const invalid = shielded.claim({ t: 0.6, damage: 0 });
+  assert.equal(invalid.reason, 'invalid');
+  assert.equal(shielded.time, 0.6);
+  assert.equal(shielded.tokens, 4);
+  assert.equal(shielded.bucket, 750);
+});

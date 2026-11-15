@@ -6,6 +6,43 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage 3.3 closure audit - elapsed time and DPS (2026-11-16)
+
+**One semantic fix: fight elapsed time is no longer the claim engine's clock.** `simulateRelayFight` had reported
+`time` (and `outputDps = damageDealt / time`) from `createRelayClaimEngine().summary().time`, which is the timestamp of
+the last **positive landed claim**. A missed attack after it never advanced that clock, so a censored fight could
+report a shorter time and a higher DPS than it simulated. The engine is unchanged: its clock remains the claim
+timestamp, and the differential still checks every refused claim's bucket/token/health/clipped state against upstream.
+
+The fight clock is now independent:
+- a kill: the killing claim's time (`ttk`);
+- the horizon: `maxSeconds` (the fight really was observed to the horizon);
+- a `maxBlows` stop: the last simulated attack's time, checked before the horizon so a budget stop is not reported as
+  the horizon;
+- schedule exhaustion: the last attack.
+No-attack horizon fights still have elapsed `maxSeconds`; no-attack budget/schedule fights have 0.
+
+Concrete 2,000-pool, level-45, one-hand example, seed 13:
+- a trailing-miss horizon fight (`maxSeconds: 2`): before `time` 0.3661 s, `outputDps` 43.70; after `time` 2 s,
+  `outputDps` 8.00 (16 damage);
+- the same first two attacks stopped by `maxBlows: 2` with a 3,600 s horizon: before `time` 0.3661 s, `outputDps`
+  43.70; after `time` 1.2814 s (the second attack), `outputDps` 12.49.
+- a first-attack miss with `maxBlows: 1`: before `time` 0 and `outputDps` null; after `time` 0.3661 s, `outputDps` 0.
+- a kill is unchanged: `time = ttk`, and because the relay never deals past the pool, `outputDps = killDps`; the
+  killing claim's excess is `overkill` (`healthClip`), not dealt.
+
+`simulateRelayFights` now reports `time`, `claimTime`, `lastAttackAt` and `terminations`; `outputDps` covers every trial
+(including censored ones) at the elapsed clock, while `ttk`/`killDps` remain conditional on a kill. `censoredAt` and
+`termination` say why a fight stopped.
+
+Proof: the claim engine's 10 local tests now include its claim-timestamp clock and refused-claim purse state; the
+Stage 3.3 integration file adds a no-positive-claim blow-budget stop, a trailing-miss horizon, an early `maxBlows` stop
+and the killed/censored aggregation. The six-schedule upstream differential is unchanged and still matches `applyHit`.
+
+Full suite **528 tests, 528 pass**; vendor 289/122; parity **1855/1855**.
+
+---
+
 ## Stage 3.3 - streaming relay claim engine (2026-11-16)
 
 **No existing number moved.** `analyze`, `fight`, `fightRelay`, the objectives, `simulateAllowance` and the Stage 3.2

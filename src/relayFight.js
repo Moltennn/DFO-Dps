@@ -100,9 +100,17 @@ export function simulateRelayFight(ch, args = {}) {
 
   let attacks = 0;
   let claims = 0;
+  let lastAttackAt = 0;
+  let termination = 'schedule';
   let next = schedule.next();
-  while (!engine.killed && next && next.t <= maxSeconds && attacks < maxBlows) {
+  for (;;) {
+    // The blow budget is checked before the horizon: if both bind, the fight stopped at the last attack, not at a
+    // horizon it never reached.
+    if (attacks >= maxBlows) { termination = 'maxBlows'; break; }
+    if (!next) { termination = 'schedule'; break; }
+    if (next.t > maxSeconds) { termination = 'horizon'; break; }
     attacks += 1;
+    lastAttackAt = next.t;
     const hand = dual ? next.hand : 'main';
     const share = pool > 0 ? Math.max(0, Math.min(1, engine.hp / pool)) : 0;
     const index = healthSegment(bounds, share);
@@ -121,16 +129,26 @@ export function simulateRelayFight(ch, args = {}) {
         });
       }
     }
-    if (engine.killed) break;
+    if (engine.killed) { termination = 'kill'; break; }
     next = schedule.next();
   }
 
   const s = engine.summary();
+  // Fight elapsed time is independent of the claim clock: the claim engine only sees positive landed claims.
+  const time = s.killed ? s.killedAt
+    : termination === 'horizon' ? maxSeconds
+      : lastAttackAt;
+  const outputDps = time > 0 ? s.dealt / time : null;
   return {
     seed,
     kill: s.killed,
     ttk: s.killedAt,
-    time: s.time,
+    time,
+    claimTime: s.time,
+    lastAttackAt,
+    termination,
+    censored: !s.killed,
+    censoredAt: s.killed ? null : time,
     health: pool,
     remainingHealth: s.hp,
     overkill: s.healthClip,
@@ -156,7 +174,7 @@ export function simulateRelayFight(ch, args = {}) {
     tokens: s.tokens,
     tokenCapacity: s.tokenCapacity,
     remainingShare: s.remainingShare,
-    outputDps: s.acceptedDps,
+    outputDps,
     killDps: s.killDps,
     landedShare: s.landedShare,
     law: {
@@ -172,7 +190,9 @@ export function simulateRelayFight(ch, args = {}) {
 
 /**
  * Run `trials` independent relay fights. `ttk`/`killDps` are conditional on a kill; `killProbability` is the overall
- * share that kills inside the horizon. `damageDealt`, `overkill`, `clipped` and the bucket state cover every trial.
+ * share that kills inside the horizon. `time` is each fight's elapsed time (kill time, the horizon, or the last attack
+ * when a budget stops it earlier); `outputDps` is dealt / `time` over every trial, while `killDps` stays conditional on
+ * a kill. `damageDealt`, `overkill`, `clipped`, `time` and the bucket state cover every trial.
  */
 export function simulateRelayFights(ch, args = {}) {
   const trials = Math.max(1, Math.floor(num(args.trials, Array.isArray(args.seeds) ? args.seeds.length : 1000)));
@@ -192,6 +212,15 @@ export function simulateRelayFights(ch, args = {}) {
     ttkConditional: ttk,
     killProbability: wilsonInterval(kills.length, rows.length),
     horizonSeconds: num(args.maxSeconds, 3600),
+    time: summarize(rows.map((r) => r.time)),
+    claimTime: summarize(rows.map((r) => r.claimTime)),
+    lastAttackAt: summarize(rows.map((r) => r.lastAttackAt)),
+    terminations: {
+      kill: rows.filter((r) => r.termination === 'kill').length,
+      horizon: rows.filter((r) => r.termination === 'horizon').length,
+      maxBlows: rows.filter((r) => r.termination === 'maxBlows').length,
+      schedule: rows.filter((r) => r.termination === 'schedule').length,
+    },
     damageDealt: summarize(rows.map((r) => r.damageDealt)),
     offered: summarize(rows.map((r) => r.offered)),
     clipped: summarize(rows.map((r) => r.clipped)),
