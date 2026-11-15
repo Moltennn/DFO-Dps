@@ -8,7 +8,14 @@
     "dfo-dps": "bin/dfo-dps.js"
   },
   "scripts": {
-    "test": "node --test",
+    "test": "node --test test/*.test.js",
+    "test:differential": "node --test test/differential.test.js",
+    "test:golden": "node --test test/golden-upstream.test.js",
+    "test:invariants": "node --test test/invariants.test.js",
+    "test:vendor": "node --test test/vendor-manifest.test.js",
+    "vendor:verify": "node tools/vendor-upstream.mjs --verify",
+    "vendor:list": "node tools/vendor-upstream.mjs --list",
+    "vendor:parity": "node tools/vendor-parity.mjs",
     "report": "node bin/dfo-dps.js report"
   },
   "engines": {
