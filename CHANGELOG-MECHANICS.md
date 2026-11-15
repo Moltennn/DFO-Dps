@@ -6,6 +6,40 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage 3.2 closure audit - timing, thresholds and censoring (2026-11-16)
+
+**One output moved: a bow fight's first hit.** The Stage 3.2 schedule had used `cadence.tick`, the bow's *swing* frame
+(0.194 s for the test bow), as the first hit. The machine looses on `HIT_FRAME_BOW` of the classic 16 Hz draw clock:
+frame 5 with BowDrawback (0.3125 s) and frame 2 from the drawn idle (0.125 s) (`characters/weaponStates.js:242-250`,
+`machineStep` :551-580). Every later event is unchanged, so a fight's TTK shifts by exactly that first-hit offset. A
+200-fight, 2,000-pool bow example: mean TTK 2,068.000 s before; 2,067.931 s drawn / 2,068.119 s with BowDrawback after
+(-0.069 s / +0.119 s, +-0.003%); blows and damage dealt are unchanged. The gun's frame 1 of its 14 fps clock was
+already right (`characters/weaponStates.js:568-570`).
+
+**Timing is now proven independently.** The oracle is handed the schedule's event times, so it never proved timing -
+only damage and blow counts. `test/simulateFight.test.js` now derives every expected offset by stepping the upstream
+machine: a melee strike hits on frame 2 and ends on frame 5; a flurry starts on frame 1, hits one tick in and ends
+after four; a drawn bow hits on 2, a full draw on 5; a gun on 1. The dual exchange is the same machine clock plus the
+off hand's held burden. The offsets come from the machine and the tick is checked against upstream
+`swingFrameSeconds`; the expected event times are not read back from `dualSchedule`.
+
+**The 0.5/execute boundaries are tested at the exact share.** The fight oracle updates the body's health per blow, but
+an aggregate TTK can hide a one-blow boundary error. A new differential case compares the per-blow mean at shares
+0.51 / 0.50 / 0.49 (venom, doubled below half) and 0.26 / 0.25 / 0.24 (Sweet Mother's Kiss, below 25%) against
+upstream blows at that exact share, and asserts the below-threshold blow is larger.
+
+**Censoring is named.** `ttk` keeps its value but gains the explicit alias `ttkConditional`; `simulateFights` now also
+reports `killProbability` (Wilson interval), `horizonSeconds` and `damageMode`. `ttk`/`killDps` are conditional on a
+kill; with censored fights they are biased low relative to an unconditional TTK, and no Kaplan-Meier estimate is made.
+`outputDps`, damage dealt, remaining health and overkill cover every trial.
+
+**Two smaller fixes.** `oracleItem` now carries a Legendary power id (`legendary`), not only an imprint, so the
+execute threshold can be sampled upstream. `simulateFight` refuses a non-integer seed instead of silently using 0; the
+dual schedule's reported held burden now comes from the analysed live Strength (`probe.schedule.hold`) instead of the
+raw `ch.stats.strength` (timing was already correct).
+
+Tests: 10 local + 5 differential. Full suite **503 tests, 503 pass**; vendor 289/122; parity **1855/1855**.
+
 ---
 
 ## Stage 3.2 - blow-only stochastic fight simulation (2026-11-16)
@@ -19,7 +53,7 @@ ticks (`characters/weaponStates.js:226-250,409-470`). A fresh strike is a five-t
 within `FLURRY_WINDOW` is the other hand's, four ticks a blow, and the off hand holds its burden in whole ticks at its
 end (`combat/twoHands/handsLaw.js:127-151,253-283`, `combat/playerWeapon.js:775-830`). Axe/blunt mastery, venom and
 execute read the foe's trade at each blow as a threshold step at 0.5 (or the power's `below`)
-(`characters/weaponMastery.js:118-126`, `systems/loot/lootPowers.js:320,329`).
+(`systems/weaponMastery.js:118-126`, `systems/loot/lootPowers.js:320,329`).
 
 **What changed.** `simulateFight` draws one blow at a time from the Stage 3.1 **fight tier** - there is no second damage
 formula. A single melee starts at t=0 and lands at 2 ticks, then every `cadence.seconds`; a dual build opens with the

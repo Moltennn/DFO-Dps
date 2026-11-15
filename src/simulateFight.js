@@ -28,8 +28,10 @@ import { analyze, weaponPowers } from './model.js';
 import { blowFightTier, createBlowSampler } from './blowOutcomes.js';
 import { createRng } from './rng.js';
 import { healthThresholds } from './fight.js';
-import { DUAL, FLURRY_TICKS, offHandBurden } from './dualWield.js';
-import { HIT_FRAME_MELEE } from '../vendor/upstream/a3eb1605/src/characters/weaponStates.js';
+import { DUAL, FLURRY_TICKS } from './dualWield.js';
+import {
+  HIT_FRAME_MELEE, HIT_FRAME_BOW, BOW_DRAWN_HOLD_FRAME, CLASSIC_UPDATE_INTERVAL,
+} from '../vendor/upstream/a3eb1605/src/characters/weaponStates.js';
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
@@ -46,6 +48,9 @@ function normalizeScenario(args) {
 
 /** The first-hit frame of a flurry: the hit frame reached from FLURRY_FROM_FRAME. */
 const FLURRY_HIT_FRAME = HIT_FRAME_MELEE - DUAL.FLURRY_FROM_FRAME;
+/** The Thunderlock's shot lands on frame 1 (`characters/weaponStates.js:568-570`, the FIELD-GUN7 comment; the full
+ *  checkout's `combat/gun/gunFeel.js` says "hit on frame 1", but its vendored binding is an inert stub). */
+const GUN_HIT_FRAME = 1;
 
 /**
  * The attack schedule for one build, without sampling. The returned `next()` is a deterministic sequence of
@@ -60,15 +65,25 @@ export function createAttackSchedule(ch, args = {}) {
   // A `ch._dual` build is analysed as a pair even when the caller omits `dual`; the probe decides whether the pair is
   // a Pistolet pair (refused) or a melee exchange (supported).
   const probe = analyze(ch, { ...scenario, ...(wantsDual ? { dual: true } : {}), healthShare: 1, health });
-  const dual = wantsDual && !probe.pair;
+  // `analyze` refuses a pair it cannot exchange (a two-handed or gun off hand); the simulator follows the same card
+  // rather than alternating hands on a single-weapon analysis.
+  const dual = wantsDual && !!probe.offHand && !probe.pair;
   if (wantsDual && probe.pair) throw new Error('simulateFight: Pistolet pair is not supported in Stage 3.2');
   const cad = probe.cadence;
   if (!cad || !(cad.seconds > 0)) return null;
 
   if (!dual) {
     const ranged = !!probe.weapon?.ranged;
+    const gun = !!probe.weapon?.gun;
+    const bow = ranged && !gun;
     const tick = num(cad.tick, cad.seconds / 5);
-    const first = ranged ? tick : HIT_FRAME_MELEE * tick;
+    // A melee blow lands on HIT_FRAME_MELEE; a gun on GUN_HIT_FRAME of its own 14 fps clock; a bow looses on
+    // HIT_FRAME_BOW of the classic 16 Hz draw clock, from the drawn idle (BOW_DRAWN_HOLD_FRAME) unless BowDrawback is on.
+    const hitFrame = gun ? GUN_HIT_FRAME
+      : bow ? (scenario.bowDrawback ? HIT_FRAME_BOW : HIT_FRAME_BOW - BOW_DRAWN_HOLD_FRAME)
+        : HIT_FRAME_MELEE;
+    const clock = bow ? CLASSIC_UPDATE_INTERVAL : tick;
+    const first = hitFrame * clock;
     let i = 0;
     return {
       kind: 'single', hand: 'main', probe, target: probe.target, health,
@@ -76,9 +91,14 @@ export function createAttackSchedule(ch, args = {}) {
         schedule: 'single',
         interval: cad.seconds,
         firstHit: first,
-        hitFrame: ranged ? 1 : HIT_FRAME_MELEE,
+        hitFrame,
+        tick: clock,
         ranged,
-        note: ranged ? 'ranged first hit is one frame into the cycle' : 'first hit is the melee hit frame',
+        bow,
+        gun,
+        note: gun ? 'the shot lands on its own frame 1'
+          : bow ? 'the loose is HIT_FRAME_BOW of the classic draw clock'
+            : 'first hit is the melee hit frame',
       },
       next() {
         const t = first + i * cad.seconds;
@@ -93,8 +113,8 @@ export function createAttackSchedule(ch, args = {}) {
   if (!(mainTick > 0) || !(offTick > 0)) return null;
   const mainSeconds = num(probe.cadence.mainSeconds, FLURRY_TICKS * mainTick);
   const offSeconds = num(probe.cadence.offSeconds, FLURRY_TICKS * offTick);
-  const strength = ch.stats?.strength ?? 50;
-  const burden = offHandBurden(ch.offWeapon?.weight ?? 0, strength);
+  // the off hand's long-run held burden, in ticks, exactly as analyze's dual arm scheduled it
+  const offHandHoldTicks = num(probe.schedule?.hold, Math.max(0, offSeconds / offTick - FLURRY_TICKS));
   let start = 0;
   let hand = 'main';
   let first = true;
@@ -102,7 +122,7 @@ export function createAttackSchedule(ch, args = {}) {
     kind: 'dual', probe, target: probe.target, health,
     assumptions: {
       schedule: 'dual',
-      mainTick, offTick, mainSeconds, offSeconds, burden,
+      mainTick, offTick, mainSeconds, offSeconds, offHandHoldTicks,
       firstLead: 5 * mainTick,
       flurryLead: mainSeconds,
       firstHit: `fresh lead at ${HIT_FRAME_MELEE} ticks; flurry hit at ${FLURRY_HIT_FRAME} tick`,
@@ -137,7 +157,8 @@ export function healthSegment(bounds, share) {
   return bounds.length - 2;
 }
 
-/** One seeded battle. The result is one of the samples `simulateFights` summarises. */
+/** One seeded battle. The result is one of the samples `simulateFights` summarises. `seed` defaults to 0, so even an
+ *  unseeded call is deterministic (the path never touches `Math.random`). */
 export function simulateFight(ch, args = {}) {
   const scenario = normalizeScenario(args);
   if (scenario.pair || ch._pair) throw new Error('simulateFight: Pistolet pair is not supported in Stage 3.2');
@@ -145,6 +166,9 @@ export function simulateFight(ch, args = {}) {
   if (!schedule) return null;
   const pool = schedule.health;
   if (!(pool > 0)) return null;
+  if (scenario.seed !== undefined && !Number.isSafeInteger(scenario.seed)) {
+    throw new TypeError('simulateFight: seed must be a safe integer');
+  }
   const seed = Number.isSafeInteger(scenario.seed) ? scenario.seed : 0;
   const rng = createRng(seed);
   const blowStream = rng.stream('blow');
@@ -249,6 +273,16 @@ export function summarize(values, { p10 = 0.1, p90 = 0.9 } = {}) {
   };
 }
 
+/** Wilson score interval for a binomial share, the one small-sample interval that stays inside [0, 1]. */
+function wilson(kills, trials, z = 1.96) {
+  if (!(trials > 0)) return null;
+  const p = kills / trials;
+  const den = 1 + (z * z) / trials;
+  const mid = (p + (z * z) / (2 * trials)) / den;
+  const half = (z * Math.sqrt((p * (1 - p)) / trials + (z * z) / (4 * trials * trials))) / den;
+  return { p, lo: Math.min(p, Math.max(0, mid - half)), hi: Math.max(p, Math.min(1, mid + half)), n: trials };
+}
+
 /** Deterministic paired seeds: one named stream, independent of the blows. */
 export function pairedFightSeeds(count, seed = 0) {
   const n = Math.max(0, Math.floor(num(count, 0)));
@@ -258,9 +292,12 @@ export function pairedFightSeeds(count, seed = 0) {
 
 /**
  * Run `trials` independent fights. Pass `seeds` to reuse a fixed list (the paired form). Every result carries the
- * pool, the seed list, the number killed and the distributions of TTK, damage, overkill and blows. `ttk`/`killDps`
- * are summarised over kills only; `outputDps`, `damageDealt`, remaining and overkill over every trial, including a
- * censored one (a censored fight still has a valid damage rate over the time it ran).
+ * pool, the seed list, the number killed and the distributions of TTK, damage, overkill and blows. `ttk` (and its
+ * alias `ttkConditional`) and `killDps` are CONDITIONAL on a kill: with censored fights they are biased low relative
+ * to an unconditional time-to-kill. `killProbability` is the overall share of fights that kill inside
+ * `horizonSeconds`, with a Wilson interval. `outputDps`, `damageDealt`, remaining and overkill cover every trial,
+ * including a censored one (its `outputDps` is over the time it actually ran, not the full horizon; a trial that
+ * landed no blow has no rate and is left out of that summary, whose `n` says how many rows it has).
  */
 export function simulateFights(ch, args = {}) {
   const trials = Math.max(1, Math.floor(num(args.trials, Array.isArray(args.seeds) ? args.seeds.length : 1000)));
@@ -279,7 +316,13 @@ export function simulateFights(ch, args = {}) {
     health: pool,
     kills: kills.length,
     censored: rows.length - kills.length,
+    // `ttk`/`killDps` are CONDITIONAL on a kill; `killProbability` is the overall share of fights that kill inside the
+    // horizon. With censored fights, the conditional mean is biased low relative to an unconditional TTK.
     ttk,
+    ttkConditional: ttk,
+    killProbability: wilson(kills.length, rows.length),
+    horizonSeconds: num(args.maxSeconds, 3600),
+    damageMode: rows[0].damageMode,
     outputDps: output,
     killDps,
     damageDealt: summarize(rows.map((r) => r.damageDealt)),

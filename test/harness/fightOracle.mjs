@@ -92,4 +92,10 @@ export function upstreamFight(u, { desc, item, offItem = null, body, events, see
 }
 
 /** Upstream item fields for a local fixture item (a fresh object per event). */
-export const oracleItem = (item) => (item ? { ...upstreamWeapon(item), ...(item.rarity ? { rarity: item.rarity } : {}), ...(item.imprint ? { imprint: item.imprint } : {}), ...(item.enchantments ? { enchantments: item.enchantments.map((e) => ({ ...e })), isIdentified: true } : {}) } : null);
+export const oracleItem = (item) => (item ? {
+  ...upstreamWeapon(item),
+  ...(item.rarity ? { rarity: item.rarity } : {}),
+  ...(item.legendary ? { legendary: item.legendary } : {}),
+  ...(item.imprint ? { imprint: item.imprint } : {}),
+  ...(item.enchantments ? { enchantments: item.enchantments.map((e) => ({ ...e })), isIdentified: true } : {}),
+} : null);

@@ -143,8 +143,9 @@ Use `./dfo-dps --help` for every flag, or see
 - PvP/peer fights, incoming damage and player death.
 - The Stage 3.2 fight simulation does not model wear, CWS, DoTs, Flow, the
   relay bucket/ward or incoming damage, and it refuses a Pistolet pair rather
-  than approximating it. A bow or gun's first-hit frame is a declared
-  one-frame assumption.
+  than approximating it. A ranged first hit is the upstream machine's own
+  frame. Censored runs report a kill probability and a conditional TTK; no
+  Kaplan-Meier estimate is made.
 - Per-blow ward suppression and the full proc/DoT budget.
 - Elite Breach, and non-English boss-trait seeding.
 - Exact reproduction of a live client's frame timing or RNG sequence.

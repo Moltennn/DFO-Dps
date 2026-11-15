@@ -2,10 +2,11 @@
  * test/fightDifferential.test.js - Stage 3.2: seeded blow-only fights against upstream.
  *
  * The oracle (`test/harness/fightOracle.mjs`) receives an event list from the schedule under test and runs every hit
- * through upstream `calculateAttackDamage`; it never receives a local damage, outcome or distribution. The timing test
- * checks that schedule against upstream's own hit-frame, flurry and off-hand constants. Individual blow outcomes are
- * the Stage 3.1 joint-distribution test (`test/blowDifferential.test.js`); this file consumes that same fight tier and
- * compares the fight-level consequences, so the two layers share no outcome table.
+ * through upstream `calculateAttackDamage`; it never receives a local damage, outcome or distribution. The oracle is
+ * handed the schedule's event times, so it proves damage and blow counts, NOT timing: the local test derives the
+ * schedule's hit/end ticks by stepping the upstream machine. Individual blow outcomes are the Stage 3.1
+ * joint-distribution test (`test/blowDifferential.test.js`); this file consumes that same fight tier and compares the
+ * fight-level consequences, so the two layers share no outcome table.
  *
  * Distribution comparison is on integer blow counts (a two-sample Pearson chi-square over fixed 10-blow bins, plus a
  * bin-free two-sample Kolmogorov-Smirnov distance), and on TTK/damage means and quantiles. Thresholds are fixed here:
@@ -17,18 +18,16 @@ import assert from 'node:assert/strict';
 
 import { analyze, referenceFoe, weaponOf } from '../src/model.js';
 import { createAttackSchedule, simulateFights, summarize } from '../src/simulateFight.js';
+import { blowFightTier, tierMeans } from '../src/blowOutcomes.js';
 import { upstream, referenceFoe as upstreamReferenceFoe } from './harness/upstream.mjs';
 import { oracleEntity } from './harness/upstreamBodies.mjs';
 import { character, simCharacter, weapon } from './harness/fixtures.mjs';
 import { oracleItem, upstreamFight } from './harness/fightOracle.mjs';
+import { sampleJointBlow } from './harness/blowOracle.mjs';
 
 const BASIC = () => character({
   level: 30, raceId: 1, stats: { strength: 70, agility: 60, speed: 60, luck: 50 },
   skills: 0, skillOverride: { 29: 70, 34: 40, 19: 50 },
-});
-const AXE = () => character({
-  level: 30, raceId: 1, stats: { strength: 70, agility: 60, speed: 60, luck: 50 },
-  skills: 0, skillOverride: { 31: 90, 34: 40, 19: 50 },
 });
 const ECHO = () => character({
   level: 30, raceId: 1, stats: { strength: 70, agility: 60, speed: 60, luck: 50 },
@@ -178,16 +177,68 @@ test('2. dual-wield fight distribution and hand schedule match upstream', async 
   await compareScenario({ id: 'dual', desc: BASIC(), ch, item, offItem, pool: 12000, trials: 700, seed: 0x3202 });
 });
 
-test('3. a health-dependent axe fight rebuilds at half and matches upstream', async () => {
-  const item = weapon(127, { material: 9 });
-  const ch = simCharacter(AXE(), item);
-  await compareScenario({ id: 'axe half-health', desc: AXE(), ch, item, pool: 2000, trials: 800, seed: 0x3203 });
+test('3. a venom half-health fight rebuilds at half and matches upstream', async () => {
+  const item = { ...weapon(121, { material: 9 }), rarity: 'rare', imprint: 'tsaesci-fang' };
+  const ch = simCharacter(BASIC(), item);
+  await compareScenario({ id: 'venom half-health', desc: BASIC(), ch, item, pool: 2000, trials: 800, seed: 0x3203 });
   const local = simulateFights(ch, { target: referenceFoe(30, 'tough'), health: 2000, weapon: weaponOf(item), trials: 50, seed: 0x3203 });
-  assert.ok(local.rows.some((r) => r.segments.length > 1), 'the local fights cross the half-health segment');
+  const crossed = local.rows.filter((r) => r.segments.length > 1);
+  assert.ok(crossed.length > 0, 'the local fights cross the half-health segment');
+  const seg = crossed[0].segments;
+  const above = seg.find((x) => x.share > 0.5);
+  const below = seg.find((x) => x.share < 0.5);
+  assert.ok(above && below, `both segments present: ${JSON.stringify(seg)}`);
+  assert.ok(below.damage / below.blows > above.damage / above.blows, 'venom raises the below-half blow');
 });
 
 test('4. an ordinary-foe echo fight matches upstream', async () => {
   const item = { ...weapon(121, { material: 9 }), rarity: 'rare', imprint: 'warp-edge' };
   const ch = simCharacter(ECHO(), item);
   await compareScenario({ id: 'echo', desc: ECHO(), ch, item, pool: 12000, trials: 700, seed: 0x3204 });
+});
+
+
+/**
+ * The exact threshold boundary. The fight oracle's health is updated per blow, but an aggregate TTK over a pool can
+ * hide a one-blow boundary error. These cases step the target's own share to 0.51 / 0.50 / 0.49 (venom) and
+ * 0.26 / 0.25 / 0.24 (an execute power) and compare the per-blow mean with upstream's blows at that same share.
+ */
+test('5. health thresholds: the venom 0.5 and execute 0.25 boundaries match upstream at the exact share', async () => {
+  const u = await upstream();
+  const target = referenceFoe(30, 'tough');
+  const pool = 2000;
+  const draws = 40000;
+  const atShare = (desc, item, ch, share, seed) => {
+    const body = upstreamBodyAt(u, pool);
+    body.health = share * pool;
+    body.maxHealth = pool;
+    const sample = sampleJointBlow(u, { desc, item: oracleItem(item), body, hand: 'main', seed, draws });
+    const mean = sample.agg.sum / sample.draws;
+    const se = Math.sqrt(Math.max(0, sample.agg.sumSq / sample.draws - mean * mean) / sample.draws);
+    const tier = blowFightTier(ch, { target, health: pool, weapon: weaponOf(item), healthShare: share, hand: 'main' });
+    const expected = tierMeans(tier).perSwing;
+    const z = se > 0 ? (mean - expected) / se : 0;
+    return { expected, mean, se, z };
+  };
+
+  // venom's flat doubles below 0.5 (systems/loot/lootPowers.js:320) - a boundary every build can carry
+  const venomItem = { ...weapon(121, { material: 9 }), rarity: 'rare', imprint: 'tsaesci-fang' };
+  const venomCh = simCharacter(BASIC(), venomItem);
+  for (const [i, share] of [0.51, 0.5, 0.49].entries()) {
+    const r = atShare(BASIC(), venomItem, venomCh, share, 0x3210 + i * 37);
+    assert.ok(Math.abs(r.z) <= 3.5, `venom at share ${share}: local ${r.expected.toFixed(4)} vs upstream ${r.mean.toFixed(4)} (z ${r.z.toFixed(2)})`);
+  }
+  const venomAbove = tierMeans(blowFightTier(venomCh, { target, health: pool, weapon: weaponOf(venomItem), healthShare: 0.51, hand: 'main' })).perSwing;
+  const venomBelow = tierMeans(blowFightTier(venomCh, { target, health: pool, weapon: weaponOf(venomItem), healthShare: 0.49, hand: 'main' })).perSwing;
+  assert.ok(venomBelow > venomAbove, `venom must raise the below-half blow (${venomBelow} vs ${venomAbove})`);
+
+  const execItem = { ...weapon(121, { material: 9 }), rarity: 'legendary', legendary: 'night-mothers-embrace' };
+  const execCh = simCharacter(BASIC(), execItem);
+  for (const [i, share] of [0.26, 0.25, 0.24].entries()) {
+    const r = atShare(BASIC(), execItem, execCh, share, 0x3220 + i * 41);
+    assert.ok(Math.abs(r.z) <= 3.5, `execute at share ${share}: local ${r.expected.toFixed(4)} vs upstream ${r.mean.toFixed(4)} (z ${r.z.toFixed(2)})`);
+  }
+  const execAbove = tierMeans(blowFightTier(execCh, { target, health: pool, weapon: weaponOf(execItem), healthShare: 0.26, hand: 'main' })).perSwing;
+  const execBelow = tierMeans(blowFightTier(execCh, { target, health: pool, weapon: weaponOf(execItem), healthShare: 0.24, hand: 'main' })).perSwing;
+  assert.ok(execBelow > execAbove, `the execute power must raise the below-threshold blow (${execBelow} vs ${execAbove})`);
 });

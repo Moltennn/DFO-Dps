@@ -256,7 +256,7 @@ one.ttk; one.damageDealt; one.overkill; one.remainingHealth; one.blows;
 // a distribution: 2,000 independent fights from one seed stream
 const many = simulateFights(ch, { ...scenario, trials: 2000 });
 many.ttk.mean; many.ttk.median; many.ttk.p10; many.ttk.p90; many.ttk.ci95;
-many.kills; many.censored; many.damageDealt.mean; many.overkill.mean;
+many.kills; many.censored; many.killProbability; many.damageDealt.mean; many.overkill.mean;
 
 // two builds on the SAME seed list
 const seeds = pairedFightSeeds(2000, 7);
@@ -268,6 +268,14 @@ const paired = simulatePairedFights([{ id: 'a', ch: a }, { id: 'b', ch: b }], { 
 - `simulateFight` reports `killDps = health / ttk` and
   `outputDps = damageDealt / time`; a run that reaches `maxSeconds` (or
   `maxBlows`) with the pool alive is **censored** (`ttk: null`).
+- `simulateFights` returns `ttk`/`ttkConditional` and `killDps` **conditional
+  on a kill**, plus `killProbability` (a Wilson interval) and
+  `horizonSeconds`. With censoring, do not read the conditional TTK as an
+  unconditional one; the per-trial `rows` keep `kill`, `ttk` and `time`, so a
+  Kaplan-Meier fit can be made by the caller if needed.
+- A ranged first hit is the upstream machine's: a gun on frame 1 of its 14 fps
+  clock, a bow on frame 5 of the classic draw clock (2 when it starts drawn,
+  5 with BowDrawback). `simulateFight` reports the frame in `schedule`.
 - Axe/blunt mastery, venom and execute rebuild the blow table when the foe's
   health crosses 0.5 or an execute threshold.
 - Dual builds follow `dualSchedule`; a Pistolet pair throws instead of being
