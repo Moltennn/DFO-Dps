@@ -1,0 +1,800 @@
+# Mechanics changelog
+
+Every change to a calculation goes here: what the game does (with a source
+reference), what changed, which test proves it, and which outputs moved.
+
+Format: newest first. A change that only refactors code without moving a number
+does not belong here (use the commit message).
+
+---
+
+## Stage 2.9 - combat resolution fidelity and one damage calculation (2026-11-15)
+
+**F1 - the shield block is a per-blow outcome.** *Game:* `combat/pcaao.js:1784-1796` rolls one `dice100` block per blow;
+`:1815-1849` returns a whole number by branch; `:1850` (the off hand's share), `bossStrike` (`max(1, round)`) and the relay
+cap then act on it. *Changed:* `targetPartOutcomes` returns `[{ p, damage }]`; `analyze` runs share, trait and cap on each
+outcome (`resolveBlow`). *Proof:* `test/shieldOutcomes.test.js` (every value of every struck part vs upstream). *Moved:*
+per swing -2.55%/+1.09%/+2.60% -> -0.09%/+0.01%/+0.05%; a no-shield target is unchanged.
+
+**Long-bow pull.** *Game:* `combat/arrowFlight.js:501-510` `bowFastDamage(m, calculateAttackDamage(...))`, then the trait and the cap.
+*Changed:* the pull left `weaponBlow`; it is `bowFastDamage` (vendored) after the share. The displayed card is the pulled blow; the
+rolls stay the card's own (`damage.bow`). *Proof:* `test/longBow.test.js`. *Moved:* long bow, 5.9% condition -0.93% -> -0.01%; vs daedric
+-0.59% -> -0.02%; crit 100 +0.29% -> -0.03%. Short bow and melee: unchanged.
+
+**Martial stat bonus before the ceiling.** *Game:* `martialPowers.js:364-375` -> `_mods.stats`; `statMods.js:121-141` clamps after the
+sum. *Changed:* `stat()` feeds the bonus through `liveStat`; `combatStat` exported. *Proof:* `test/statCap.test.js`. *Moved:* a Shadowdancer
+at Agility 95 reads 100 (was 105), hit 0.8400 -> 0.8295 (upstream 0.8295); base <= 89 unchanged; base 100 +10 reads 100 (was 110).
+
+**Berserker's Frenzy reads the Berserker.** *Game:* `martialPowers.js:216-218`, `:274-276`; `healthShare = health/maxHealth`; strictly below 0.5.
+*Changed:* `attackerHealthShare` (default 1, `--self-health-share`); `healthShare` is the foe's. `test/theory.test.js` described a Berserker
+capture with the foe's `healthShare: 0.49`; its input is now `attackerHealthShare: 0.49`, its ~450 band assertions untouched. *Proof:* `test/berserker.test.js`.
+
+**F2 - pricing is the analysis.** *Game:* `lootPowers.js:286-347` (one `pct`, then `flat`, before the martial path, crit, defence), `enchantments.js:622-631`
++ `formulas.js:826-840` (+5 after the defence and share, whole 80% for the off hand, on a miss too). *Changed:* `analyze(...).with(edit)`;
+`cappedDpsWith` deleted; `powerDps` and the Potent Vs valuations call it. *Proof:* `test/pricing.test.js`, `test/crossSystem.test.js`.
+
+| Price (gate, level 45) | Before | After |
+|---|---|---|
+| Pistolet pair at no change | 547.37 (+9.5% vs analysis 499.89) | 499.89 |
+| Dual wield at no change | 1071.49 (+5.4% vs 1016.39) | 1016.39 |
+| Backstab (uptime 1) at no change | 857.19 (-3.9% vs 891.74) | 891.74 |
+| Potent Vs, Pistolet pair | +50.6 DPS | +3.8 |
+| Potent Vs, dual main hand | +58.2 | +1.8 |
+| Potent Vs, katana under a backstab | -32.1 | +0.2 |
+| Potent Vs, katana | +2.5 | +2.8 |
+| Serpent's Kiss (+8 flat), Short Blade 117 | +16.2 | +103.9 (the flat is in the blow: the crit multiplies it) |
+
+The max-profile headline (857.19 at the Breach, TTK 76.0) and the Stage 2.8 reference builds are unchanged. Imprint-percentage prices move by the per-blow
+floor (<1%): the tests that asserted `base.dps x (1 + pct)` to 1e-9 now assert the canonical relation and a 1% bound.
+
+**Vendor (same pin).** `systems/sigil/sigil.js` and `formats/magicDef.js` (+ `formats/save/saveTreeFile.js`) are vendored: their stubs had switched every
+martial path and every Strikes payload off in the oracle. 288 files + 122 stubs; parity 1852/1852.
+
+**Found, not fixed.** Potent Vs on a miss: the equipped-item enchant layer still adds `hit x 5` (`W-PROC-BUDGET`). `W-LOOT-CARRY`: percentage lines floor each blow, the game carries the fraction (+2.0% at 25%, level 30).
+Hand-built items accept elemental params upstream ignores (poison).
+
+Full suite **404 tests, 404 pass**; differential **46/46**; golden **14/14**; invariants **13/13**; vendor **10/10** (288/122); parity **1852/1852**.
+
+---
+
+## Stage 2.8 - target body fidelity and an independent oracle (2026-11-15)
+
+**What the game does.** A foe is minted by `characters/enemy/enemyEntity.js:160-233` `makeEnemyEntity` from
+`editAtMint(pcaaoMeanerMonstersRow(applyMeanerMonsters(row)))` (`:178`): a monster's level is its row's whatever
+the player's (`:212`), its armour the row's `armorValue x 5` on all seven parts (`:215`, `:232`), every skill
+`skillsLevel(level)` (`:111-114`, `:233`), its metal and affinity the row's (`:257`, `:277`); a class foe takes the
+player's level (`:202`, the City Watch knight Range(3, 7) more, `:207`) and starts at armour 100. Which row it is
+depends on the boot: the client runs `installEnemyExpansion()` at every load (full checkout `scenes/shared.js:1518`),
+Enemy Expansion, Meaner Monsters and PCAAO ship enabled (`systems/modSettings.js`) and are forced on online
+(`systems/online/onlineLane.js:367,457-461`). With DEX loaded, Meaner Monsters' row and the overhaul's edit stand
+aside (`systems/enemyExpansion/dexSwitches.js:28`) and DEX's classic lines, with MUDEX's after them, are the row
+(`systems/enemyExpansion/dexInstall.js:183-224`; `dexClassicRow`). Every relay boss is `world/gate/gateBoss.js:151-170`
+`bossStandIn(look)`: that mint at player level 1 with no career, then `minMetalToHit` 0, `BOSS_ARMOR` 60 on all
+parts, no wear - the Breach's mobile 31, the Sky-ketch Warden's and the Abyss Remnant's mobile 36 (full checkout
+`scenes/ketch/ketchFight.js:57,348`; `scenes/superDungeon/sdRemnant.js:97,529`).
+
+**Changed.**
+- Vendored `systems/enemyExpansion/dexInstall.js` and `world/gate/gateBoss.js` as roots (same pin; 286 files + 123
+  stubs; parity 1836/1836).
+- `src/target.js`: `UPSTREAM_BOOT` (the three switches' shipped defaults, read from the vendored `MOD_SETTINGS`);
+  `mintRow(m, { boot })` (the boot's row over `VANILLA_ENEMY_BASICS`); `enemyTarget` mints that body - a missing or
+  `null` level is the minted one, an invalid level (0, negative, fractional, NaN, text) is refused, a class foe
+  requires the player level, mobile 39 (no row level) is refused, a monster level other than the minted one is a
+  labelled override (`levelSource`); `standInTarget(mobile)`, the one relay body. The class foe's `minMetalToHit`
+  is now the row's 0 (was -1; no damage effect).
+- `src/model.js` `bossTarget({ mobileType })` is `standInTarget` plus the encounter's health, traits, cap and
+  shields; body fields beside a mobile are refused. `gateTarget` no longer states armour 12 / career / affinity /
+  metal / combat level; `GATE_BODY_LEVEL` is derived (21).
+- `src/encounters.js`: the Breach, Sky-ketch and Abyss rows carry only their look (`mobileType`); `armorValue` and
+  `minMetalToHit` are gone.
+- Tests: the oracle mints its own bodies in a worker-thread realm booted as the client boots
+  (`test/harness/upstreamBodies.mjs`); the harness's `bossStandIn` mirror and its hard-coded 60 are removed; ten
+  differential stages no longer copy the local target's level/skills/stats/armour/equipment/metal into the
+  upstream entity; `test/target.test.js:101-133` compares with upstream's mint instead of the raw row;
+  `W-DEX-LOADOUT` records the class-loadout gap the booted oracle exposed.
+
+| Check | Result |
+|---|---|
+| bodies | `test/targetBody.test.js`: 43 monster rows (42 bodies + the refused empty slot) bare and with a career, 19 class foes × 3 levels, the watchman's roll, all field for field against upstream's mint; the three bosses at 4 content levels against the booted `bossStandIn` |
+| mid-level | L20/skill 60/AGI 55 and L10/skill 40/AGI 45 (below the clamp: hit 0.78-0.80) × 3 bosses, 40,000 draws each, inside the 95% CI; a body 5 armour points off is outside it |
+| fails before | on the pre-2.8 constructors (a scratch copy) every new body test fails, as do four rewritten sampled stages (silver E2E career 18: 29.87 vs 27.50; condition/armour/traits: 3.37 vs 2.38; worn armour mobile 7: 13.91 vs 13.81 +/- 0.08; loadout mobile 7) |
+| golden | `mudex1.test.js:61-73` (bear, rat): vendored row, booted mint and `mintRow` agree |
+
+Representative outputs (katana, daedric; the build named; `analyze` per swing, capped DPS and allowance TTK):
+
+| Target | Build | Body before -> after | Hit | Capped DPS | TTK (s) |
+|---|---|---|---|---|---|
+| Sky-ketch, content 10 | L10, skill 40, AGI 45 | L10 AV0 skills 80 -> L16 AV60 skills 100 | 0.295 -> 0.795 | 4.73 -> 12.71 | 2323 -> 869 |
+| Sky-ketch, content 20 | L20, skill 60, AGI 55 | L20 AV0 -> L16 AV60 | 0.515 -> 0.970 | 8.24 -> 15.49 | 2222 -> 1186 |
+| Sky-ketch, content 45 | L45, skill 80, AGI 60 | L45 AV0 -> L16 AV60 | 0.825 -> 0.970 | 13.19 -> 15.49 | 2775 -> 2364 |
+| Abyss, content 20 | L20, skill 60, AGI 55 | L20 AV0 -> L16 AV60 | 0.515 -> 0.970 | 8.24 -> 15.49 | 729 -> 388 |
+| Breach, content 10 | L10, skill 40, AGI 45 | L10 skills 80 -> L21 skills 100 | 0.895 -> 0.795 | 15.02 -> 13.35 | 246 -> 274 |
+| Breach, content 20 / 45 | L20 / L45 builds | combat level 20 / 21 -> 21 | unchanged | unchanged | unchanged |
+| max profile, every boss and level | `maxCharacter(121)` | - | 0.970 | unchanged (857.19 at the Breach 45) | unchanged (76.0) |
+| `enemyTarget(31)` (no level) | L20, skill 60, AGI 55 | L0 skills 35 AV-50 -> L21 skills 100 AV-50 | 0.332 -> 0.031 | per swing 4.30 -> 0.40 | - |
+
+Full suite **378 tests, 378 pass**; differential **46/46**; golden **14/14**; vendor **286/123**; parity **1836/1836**.
+
+Remaining limits: the Iron Atronach's body level is MUDEX's 16, not the 21 the audit stated (the audit's
+"edited row" was Meaner Monsters', which stands aside beside Enemy Expansion). `gearEnemy` still rolls the stock
+equipment delegate (`W-DEX-LOADOUT`). Partial careers fill missing stats with 50 (upstream reads `undefined`).
+`MONSTER.BSA`/`CLASS*.CFG` careers are still supplied by the caller. The scene hosts that place a stand-in
+(`ketchFight.js`, `sdRemnant.js`) are not vendored; which look each content uses is read from them at the pin.
+
+## Stage 2.7 - classic Strength scaling fidelity (2026-11-14)
+
+**What the game does.** `combat/formulas.js:88-92` `damageModifier(strength)` is the stock
+`floor((strength - 50) / 5)`, but the live client installs PCAAO at boot
+(full-checkout `systems/worldTick.js:100`), and `installPcaao()` registers
+`formulaOverride('damageModifier')` returning `pcaaoDamageModifier` = `floor((STR - 50) / 10)`
+when `fixedStrengthDamageModifier` is on (`combat/pcaao.js:1873-1875`; the setting defaults true,
+`systems/modSettings.js:1269-1276`). The stock **weapon** arm (`formulas.js:470-495`) adds that one
+Strength term (no two-handed or bow double), then the material modifier, and clamps below 1; the stock
+**fist** arm (`:420-440`) adds the same one term and does **not** clamp before it returns, so a STR-0
+punch can be negative on the card. The overhaul's own core keeps `pcaaoDamageModifier` and doubles it
+for a two-handed weapon or bow; that path is untouched.
+
+**Changed.** `src/model.js` `damageModel`'s classic arm now calls `classicStrength(str, opts)`: the live
+`pcaaoDamageModifier` (/10) by default, or the raw `damageModifier` (/5) when
+`fixedStrengthDamageModifier:false`. The classic weapon path clamps below 1; the classic fist path does
+not (the stock quirk). The overhaul arm is unchanged. The classic racial term joins the swing/proficiency
+`damageModifier` in the same blow, as before. `W-CLASSIC-STRENGTH` is removed.
+
+| Check | Result |
+|---|---|
+| Strength terms | 27 exact cases (9 values × overhaul, classic-live, classic-stock) |
+| classic damage range | 2 modes × 7 strengths × 9 builds (long/blunt/bow/fists, Dark Elf/Wood Elf/Redguard/Nord races), exact `min`/`max` |
+| unit | `test/classicStrength.test.js`, 9 tests |
+
+Representative classic long blade, STR 80:
+
+| Case | Before | After |
+|---|---|---|
+| live classic (PCAAO installed) | 8-22 (`/5`) | 5-19 (`/10`) |
+| uninstalled stock (`fixedStrengthDamageModifier:false`) | 8-22 | 8-22 |
+| classic fists, STR 0, stock | 0-1 (clamped) | -4-1 (the stock fist arm does not clamp) |
+| classic two-handed/bow | +6 | +3 (no double; the overhaul still doubles) |
+
+Full suite **368 tests, 368 pass**; differential **46/46**; golden **13/13**; vendor **257/111**;
+parity **1567/1567**.
+
+Remaining limits: the vendored `systems/worldTick.js` is a stub, so the boot install is established from
+the full checkout at the pin plus the vendored `installPcaao` and the default setting, not from a vendored
+boot module. The classic core remains a legacy card: the overhaul's condition band, material requirement
+and crit-damage path are not part of the stock classic arm. The overhaul Strength path is unchanged.
+
+## Stage 2.6 - racial combat-modifier fidelity (2026-11-14)
+
+**What the game does.** `combat/pcaao.js:281-361` `pcaaoRacialModifiers(attacker, weapon, player)` switches
+on the DFU race id and the weapon's **skill**; every term is stat-driven, with integer division per term:
+
+| Race | Weapon skill | damageMod | toHitMod |
+|---|---|---|---|
+| Argonian | Short Blade | AGI/33 + SPD/33 | AGI/16 + SPD/33 + LUK/33 |
+| Dark Elf | Long Blade | AGI/25 + STR/25 | AGI/25 + SPD/33 + LUK/33 |
+| Dark Elf | Short Blade | AGI/50 + SPD/50 | AGI/33 + SPD/33 + LUK/33 |
+| Wood Elf | Short Blade | AGI/33 + SPD/50 | AGI/20 + SPD/33 + LUK/50 |
+| Wood Elf | Archery | STR/25 + AGI/25 | AGI/10 + SPD/25 + LUK/25 |
+| Khajiit | Short Blade | AGI/33 + SPD/50 | AGI/20 + SPD/33 + LUK/50 |
+| Nord | Axe | STR/16 + AGI/33 | STR/33 + AGI/33 + LUK/33 |
+| Nord | Blunt Weapon | STR/25 + END/25 | STR/25 + AGI/33 + LUK/33 |
+| Redguard | Long Blade | AGI/33 + STR/50 | AGI/10 + SPD/25 + LUK/25 |
+| Redguard | Blunt Weapon | STR/33 + END/33 | STR/20 + AGI/25 + LUK/33 |
+| Redguard | Axe | STR/16 + AGI/33 | STR/33 + AGI/33 + LUK/33 |
+| Redguard | Archery | STR/50 + AGI/50 | AGI/25 + SPD/33 + LUK/33 |
+| Khajiit | fists | STR/33 + END/33 + AGI/50 + SPD/50 | AGI/25 + SPD/50 + STR/50 + END/50 + LUK/50 |
+| Nord | fists | STR/33 + END/50 | 0 |
+
+Breton and High Elf have no arm. The damage term is added to the swing/proficiency term inside the weapon
+blow's `damageModifier` (before silver, Strength and the material modifier); the hit term joins the to-hit
+base. Both are per hand and per weapon. The classic stock `FormulaHelper.CalculateRacialModifiers`
+(`combat/formulas.js:292-306`) is a level-based else-if ladder: Dark Elf level/4 whatever the weapon; an
+archer is Wood Elf level/3, and a non-Wood-Elf archer (including a Redguard) gets **nothing**; a Redguard
+non-archer level/3. It applies only with a weapon, never to fists.
+
+**Changed.** `src/model.js` `overhaulRacial` now has every weapon arm, the Wood Elf archery luck divisor
+`/25` (was `/20`), and the Khajiit/Nord unarmed arms; `classicRacial` mirrors the stock else-if ladder
+(a Redguard archer now gets 0). `racialModifiers(ch, w, core)` is exported as a stage. The terms flow
+through `dmgMods`/`toHit` into backstab, critical, condition, target mitigation, traits, cap and allowance
+exactly as before. `W-RACIAL` is removed.
+
+| Check | Result |
+|---|---|
+| all arms | 144 exact overhaul cases (8 races × 3 stat blocks × 5 weapon skills + unarmed) against `pcaaoRacialModifiers` |
+| classic ladder | 48 exact cases against `formulas.racialModifiers` |
+| end-to-end | 5 builds (Wood Elf short/bow, Nord/Khajiit fists, Breton short) × 20,000 draws |
+| integration | Wood Elf short blade with backstab + 50% condition + armour/shield + stoneskin + cap 60, 20,000 draws |
+| off hand | 30,000 draws |
+
+Representative per swing (level 30, sample stats), no target cap:
+
+| Build | Before | After |
+|---|---|---|
+| Wood Elf short blade | 12.38 | 15.63 (+3 damage/+6 hit at the sample) |
+| Wood Elf bow | 22.79 | 28.25 (+5 damage/+12 hit) |
+| Nord fists | 4.47 | 5.63 (+3 damage) |
+| Khajiit fists | 4.47 | 7.89 (+6 damage/+6 hit) |
+| Breton short blade | 12.38 | 12.38 (unchanged) |
+| Classic Redguard archer | level/3 | 0 (the stock ladder's quirk) |
+
+Full suite **358 tests, 358 pass**; differential **45/45**; golden **13/13**; vendor **257/111**;
+parity **1567/1567**.
+
+Remaining limits: the local stat helper also carries the martial path passives, as it does throughout the
+model; race-specific weapon restrictions beyond the arms above are not modelled; classic Strength remains
+the separate `W-CLASSIC-STRENGTH` gap. `W-RACIAL` is removed.
+
+## Stage 2.5 - weapon-condition fidelity (2026-11-14)
+
+**What the game does.** `systems/item/itemTemplates.js:277-279` `conditionPercentage(item)` is
+`maxCondition > 0 ? Math.trunc(100 * currentCondition / maxCondition) : 100` - the **integer**
+percentage, not a float. `combat/pcaao.js:607-637` `pcaaoAlterDamageBasedOnWepCondition(damage,
+bluntWep, weapon, sharpEdge)` reads that integer and applies discrete bands (Mathf.Round half to even
+inside `r(m) = unityRound(F(damage * F(m)))`):
+
+| pct | blade | blunt |
+|---|---|---|
+| >= 92 | x1.3 (sharpEdge) / 1 | x1.1 (sharpEdge) / 1 |
+| >= 76 | x1.1 (sharpEdge) / 1 | 1 |
+| >= 61 | 1 | 1 |
+| >= 41 | x0.85 | x0.9 |
+| >= 16 | x0.7 | x0.8 |
+| >= 6 | x0.45 | x0.65 |
+| > 5 | 1 (unreachable for an integer) | 1 (unreachable) |
+| <= 5 | x0.25 | x0.5 |
+
+`sharpEdge` is `modules.equipmentDamageEnhanced`; the port's default is **off**, so 76%+ returns the
+damage unchanged and the edge bands are not used. The band is applied only to a player's **weapon**
+(`modules.conditionBasedEffectiveness && isPlayer(attacker) && weapon`), after the critical and the
+material requirement and before the target's hide/armour/shield, traits, cap and allowance
+(`:1800-1804`). Unarmed blows take none. Each hand's item carries its own condition; a bow is a weapon.
+`DamageEquipment` wears gear after the blow; that is a separate durability loop.
+
+**Changed.** `src/model.js` `weaponOf` now stores `conditionPercent` from the vendored
+`conditionPercentage` (and `conditionPct` as that integer / 100). `conditionMultiplier` reads the
+integer (a manually supplied float `conditionPct` falls back to `trunc`), applies the exact bands, and
+takes `sharpEdge` from `opts.equipmentDamageEnhanced`. `damageModel`'s condition stage already sat after
+crit/material in `finish`; it now uses the integer. The old float could land a 5.9% weapon in the
+unreachable `pct > 5` arm and return full damage.
+
+| Check | Result |
+|---|---|
+| every band and boundary | 608 exact cases (2 templates x 19 percentages x 2 sharpEdge x 8 damages) against `pcaaoAlterDamageBasedOnWepCondition` |
+| end-to-end | 5 weapons/materials x 200,000 draws |
+| off hand + bow | 2 x 30,000 draws |
+| armour/traits/cap | 20,000 draws through a cuirass/helm/tower shield, stoneskin and cap 60 |
+
+Representative 100-point blow at current 59/1000 (5.9%):
+
+| Case | Old | New |
+|---|---|---|
+| blade | 100 (full) | 25 (x0.25) |
+| blunt | 100 (full) | 50 (x0.5) |
+| blade at 60/1000 (6%) | 45 | 45 (unchanged) |
+| blade at 500/1000 (50%) | 85 | 85 (was already right) |
+| blade at 920/1000, sharpEdge off | 100 | 100 (no edge) |
+| blade at 920/1000, sharpEdge on | 100 (module not wired) | 130 |
+
+Full suite **343 tests, 343 pass**; differential **41/41**; golden **13/13**; vendor **257/111**;
+parity **1567/1567**.
+
+Remaining limits: **combat-time condition wear is not simulated** - `currentCondition` is the item's
+static input, so a long fight's later blows do not degrade; a proc's durability cost and the break/stop
+at 0 are likewise outside this stage. The `sharpEdge` on-state is supported and tested, but the port's
+default is off. `W-CONDITION` is removed.
+
+## Stage 2.4 - backstab hit-path fidelity (2026-11-14)
+
+**What the game does.** `scenes/hostCombat.js:327-332` `backstabChanceOf(player, isEnemyFacingAwayFromPlayer,
+foe)` returns **0** unless the foe's back is to the player (and `foe.revenant.edge.watchful` is not true);
+otherwise it tallies the Backstabbing use and returns `skillValue(player, Backstabbing)` - the live skill.
+`combat/pcaao.js:1706` adds that chance **flat** to `chanceToHitMod` (`pcaaoSuccessfulHit` then clamps
+3..97). On a landed weapon or fist blow, `pcaaoBackstabDamage` (`:469-479`) rolls once:
+`chance > 1 && dice100(chance, roll)` -> `damage * 3`, else `damage`; `dice100` is
+`floor(roll * 100) < chance`. The ×3 is taken at `:1724`/`:1768`, **after** the weapon/fist blow and its
+blow modifiers, and **before** `damage = Math.max(0, damage)` (`:1777`), the critical multiplier, the
+material requirement, the condition band, the target's hide/armour/shield, the host's traits, the per-hit
+cap and the relay allowance. Arrow flight (`combat/arrowFlight.js:501-510`) passes the same
+`backstabChanceOf(..., isBackFacing(...))`, so a bow can backstab. Both hands of a pair pass the same
+`backstabOf(foe)`; the off-hand share is laid after the target reduction (`blowShare`).
+
+**Changed.** `src/model.js` adds `backstabDamage` (the exact gate/roll), `damageModel`'s
+`backstabPlainRolls`/`backstabCritRolls` (the ×3 of every pre-finish blow, taken before crit/material/
+condition), `preFinishRolls` (the stage value), `hitModel`'s `backstabBonus` (the flat to-hit term) and an
+`analyze` outcome mixture. `backstabUptime` is now the **share of swings whose foe is back-facing**;
+`backstabChance` may supply the raw chance directly. The mixture is
+`(1-u) ordinary + u [(1-p) ordinary-behind + p x3-behind]`, with `p = min(1, skill/100)` and the
+behind branch's hit chance boosted by the raw skill; the hit card, DPS, capped DPS and the allowance's
+claim size all use the mixed result. A Watchful target (`target.watchful` or
+`target.revenant.edge.watchful`) is ordinary. The old `1 + 2 x uptime x chance` damage scale is gone, and
+**`W-BACKSTAB` is removed**.
+
+| Check | Result |
+|---|---|
+| ×3 gate and dice threshold | 288 exact values against `pcaaoBackstabDamage` |
+| chance, hit term and mixture | 6 skills (0, 1, 25, 50, 75, 100) × 4 caps (0, 40, 60, 80), 20,000 draws each |
+| off hand | 30,000 draws with the agility to-hit term and the off-hand share |
+| ranged | 30,000 draws with a short bow |
+| armour/traits/cap integration | 20,000 sampled blows through worn armour, a shield, stoneskin and the cap; `test/backstab.test.js` |
+
+Representative (skill 50, full behind uptime, level-30 long blade):
+
+| Case | Old (audit) | Upstream | New local |
+|---|---|---|---|
+| cap 60 | 58.05 capped/swing | 52.85 | 33.61 vs 33.69 sampled (our build) |
+| cap 80 | 73.62 | 65.56 | 35.09 vs 35.04 |
+| cap 40 | 38.80 | 37.98 | 27.85 vs 27.77 |
+| no cap, hit-clamped | 2× ordinary | 2× ordinary | 2× ordinary |
+| hit bonus, unclamped (skill 50 vs 0) | not modelled | 0.63 vs 0.13 | 0.63 vs 0.13 |
+
+Full suite **326 tests, 326 pass**; differential **37/37**; golden **13/13**; vendor **257/111**;
+parity **1567/1567**.
+
+Remaining limits: the simulator has no geometry, so `backstabUptime`/`backstabChance` are the caller's
+facing share/chance (the Watchful check is a target property); the ×1/×3 variance of a single blow is an
+expected mixture; the allowance uses the mixed capped per-swing claim, as its expected-value schedule
+already does. A monster attacking a player is outside this model; the classic core's other stock terms
+(its Strength/5 and its own crit/condition order) remain the separate `W-CLASSIC-STRENGTH`/legacy gap.
+
+## Stage 2.3 - enemy-type bonuses, phobias and silver (2026-11-14)
+
+**What the game does.** `combat/pcaao.js:491-522` `pcaaoBonusOrPenaltyByEnemyType` reads the career byte
+(`attackModifierFlags ?? career.attackModifierFlags`); the player's Willpower sets
+`will = int((WIL - 50) / 5)` and the target's level sets the two arms:
+`bonus = max(10 + will - int(targetLevel / 2), 0)` and `penalty = max(int(targetLevel / 2) - will, 0)`.
+The bonus is rolled by `rangeExclusive(bonus)` (0..n-1); a phobia subtracts the fixed penalty. The group is
+`enemyEntityGroup(target.careerIndex)` - not the affinity, and not the class flag - and
+`careerAttackModifier` (`combat/formulas.js:176-197`) decodes bonus-first. It is added once per blow after the
+`if (damage < 1) damage = 0` floor and **before** `weaponBlowMods` (weapon `:594-600`, fists `:552-556`).
+
+`combat/pcaao.js:549-590` then applies, on the weapon roll plus the swing/proficiency/racial modifiers and
+**before** Strength and the material modifier: a **Skeletal Warrior** (career 15) halves every weapon whose
+flags lack 0x10 and then doubles a silver one; a **silver** weapon (material 2) doubles careers
+9/18/19/23/28/14 (Werewolf, Ghost, Wraith, Vampire, Mummy, Wereboar). `silverDoubles`
+(`combat/formulas.js:462-470`) is the named-veto seam; no default veto is registered. Unarmed blows and a
+player target take neither.
+
+The Ranger's animal test is `systems/martialPowers.js:206-207` via `systems/loot/lootPowers.js:142-157`
+`foeGroup`: `affinity === 'Human'` first (a class foe is a man), then the career group. The previous local
+test (`target.group === 'animals' || target.affinity === 'animal'`) never matched the singular `'animal'`
+or the capitalised affinity, so the 20% never landed; `cutthroat`/`crusader` now use the same `foeGroup`.
+
+**Changed.** `src/target.js` adds `enemyTypeGroup`, `enemyTypeBonusRange`, `enemyTypeBonusValue`,
+`enemyTypeBonusValues`, `silverApplies`, `isSkeletalTarget`, `skeletalSilverDamage` and a `combatLevel`
+field (normally `level`; the gate's is the `bossStandIn` body level 21). `src/model.js` `damageModel` now
+applies the weapon-roll stage as `roll + damageModifiers`, then silver/skeletal, then Strength/material,
+the floor, then the enemy-type bonus distribution, then `weaponBlow` (mastery/slayer/elemental/martial/
+Firmament), then the existing crit/material-requirement/condition band. The bonus and silver are reflected
+in `damage.parts.enemyType` and `damage.parts.silver`, and the blow card now spans the bonus distribution.
+The classic core is unchanged. The gate's `level` stays the content level; `combatLevel` is 21.
+
+| Check | Result |
+|---|---|
+| enemy-type bonus/phobia | 13,824 exact values against `pcaaoBonusOrPenaltyByEnemyType` |
+| foe-group classification | every `ENEMY_BASICS` row against `foeGroup` |
+| silver/skeletal weapon blow | 1,200 exact roll×bonus multisets against `pcaaoWeaponAttackDamage` |
+| 0x10 weapon flag | exact multiset with and without the flag |
+| end-to-end, real foes + gate | 7 + 1 seeded samples (40,000/20,000 draws), all inside the 95% CI |
+
+Representative per swing (level 20, long blade, 100 Willpower), no target armour/cap:
+
+| Target | Local before 2.3 | Local after 2.3 |
+|---|---|---|
+| Undead 18, steel, no flags | 9.29 | 9.29 (unchanged) |
+| Undead 18, steel, Undead bonus | 9.29 | 12.91 (mean +3.62) |
+| Undead 18, silver, no flags | 9.29 | 21.19 |
+| Undead 18, silver, Undead bonus | 9.29 | 25.72 |
+| Skeletal 15, steel | 8.87 | 5.20 (halved) |
+| Skeletal 15, silver | 8.87 | 8.87 (halve, then double restores the roll) |
+| Humanoid 22, silver, Undead bonus | 3.25 | 3.25 (no match, no double) |
+| Gate (Daedra 31), steel, Daedra bonus | 11.02 | 15.29 (body level 21; 45 would give 0) |
+
+Full suite **307 tests, 307 pass**; differential **32/32**; golden **13/13**; vendor **257/111**;
+parity **1567/1567**.
+
+Remaining limits: the enemy-type term is the player arm only (a monster attacking a player, and a player
+target's Humanoid group, are outside the simulator); the bonus is enumerated as an expected distribution,
+so a single blow's variance is not reported; the classic core's own level-based enemy-type arm is not
+modelled; the silver rule is overhaul-only; the 0x10 flag exception is honoured but no port weapon mints it.
+No waiver was removed or added in this phase.
+
+## Stage 2.2 - worn armour and shield mitigation (2026-11-14)
+
+**What the game does.** A blow rolls the struck body part first (`combat/pcaao.js:1709`,
+`pcaaoStruckBodyPart`), then resolves the target's defence there:
+
+- the shield in the **left hand** (a shield template, not whatever the hand holds - the port's
+  sixth departure) rolls `pcaaoShieldBlockChanceCalculation` (`:1520-1570`) at a *strong* spot
+  (a part `SHIELD_PARTS` covers) or a *weak* one. If it succeeds,
+  `pcaaoCompareShieldToUnderArmor` (`:1574-1590`) keeps the block only when the shield's
+  average reduction over 100 is at least as good as the piece under it (bare skin reduces by
+  the natural resistance alone);
+- a blocking shield reads `SHIELD_UNARMED/BLUNT/EDGED_ROWS`; else the struck part's worn piece
+  reads `UNARMED/BLUNT/EDGED_ROWS` (`:1261-1335`, `:1349-1425`); else a **monster** takes its
+  career hide (`:1447-1471`) and any other target natural resistance alone;
+- every row is `unityRound(F(damage * F(F(min(F(base * cond), F(cap))) - natural)))`, with the
+  material id `itemArmorValue / 2` for a piece (a shield by its native material) and
+  `pcaaoAlterArmorReducBasedOnItemCondition` for the condition band. The mod's
+  `Mathf.Clamp(7,95)` and `(0,50)` on the block chance are computed and discarded, as upstream does.
+- the order is: strike → critical → material requirement → weapon condition → **natural
+  resistance and the shield roll → worn armour** → boss traits → per-hit cap → Breach allowance
+  (`:1740-1843`). Damage below 1 returns before the reduction (`:1806`).
+
+**Equipment construction.** `combat/enemyEquipment.js` is now vendored actual (previously a
+stub): `armorOfMaterial` is the game's ItemBuilder minter, `rollEnemyEquipment`/`enemyArmorValues`
+the loadout and its ArmorValues pass (each piece subtracts `materialValue x 5` on its part, a
+shield `shieldValue x 5` on its protected parts, the class 60 clamp, and the monster's
+`min(equipment, row armour x 5)` rule; the Feet bound is DFU's). `scenes/hostCombat.js`
+`equipEnemy` places the pieces in the equip table; that scene is not vendored, so the same
+seven-slot placement is reproduced in `equipArmour` and pinned by tests.
+
+**Changed.** `src/target.js` gains the target's equipment (`equip.slots`, built by `equipArmour`
+from `armorPiece`; `gearEnemy` rolls the game's own `equipmentVariantFor` + `assignEnemyStartingEquipment` loadout), `struckSlotItem`, `leftHandShield`, `armourMaterialId`,
+`armourConditionMultiplier`, `armourReduction`, `shieldReduction`, `shieldBlockChance`,
+`shieldBeatsUnderArmour`, `targetPartDamage` and `targetExpectedDamage`. `src/model.js`
+`analyze()` now resolves a geared overhaul target **per struck body part**, keeping the 20-entry
+body-part distribution through the target layer, the boss's traits and the per-hit cap; a
+gearless target keeps the previous path bit for bit. `src/maxprofile.js` `cappedDpsWith` uses the
+same expected target defence. Worn equipment is kept separate from the fixed hit-chance
+`armorValues` (the gate's 60 is untouched by worn gear). `notes.preWornArmor` is now false only
+when a worn piece is present.
+
+| Check | Result |
+|---|---|
+| armour material id / condition | exact against `pcaaoArmorMaterialIdentifier` / `pcaaoAlterArmorReducBasedOnItemCondition` (2,002 cases) |
+| armour + shield rows | exact against `pcaaoPercentageReductionCalculationWithWeapon/Unarmed` (49,280 cases × 2) |
+| block chance + under-armour compare | exact (240 + 3,024 cases) |
+| enemy ArmorValues from worn pieces | 20 seeded loadouts identical to `assignEnemyEquipment` |
+| end-to-end, class and monster with cuirass/helm/buckler | 2 × 20,000 draws; local means inside the 95% CI |
+| gate / reference gearless | unchanged (`wornArmour:false`; gate hide 95, fixed armour 60) |
+
+Representative per-swing (level 45, long blade, the same build): reference 'tough' 18.67 (unchanged);
+class 128 bare 18.67 -> 6.04 in a full daedric set + tower shield; monster 22 bare 13.27 -> 6.04;
+the gate bare 17.67 -> 6.04 when a caller equips it (its fixed 60 ArmorValues still governs the hit
+chance). The full suite is **285 tests, 285 pass**; differential **26/26**; golden **13/13**; vendor
+**257/111**; parity **1567/1567**.
+
+Remaining limits: a **player** target's own armour channels are not modelled (`entityEnchantArmorMod`/
+`entityArmorPoints`); spells, procs and DoTs never enter the physical block; armour/weapon wear over
+time is not simulated (condition is caller-supplied); the shield's per-blow block is an expected value,
+so a single blow's variance is not reported. Silver, enemy-type/phobia, backstab, condition corrections,
+powers, procs, wards, techniques and encounter calibration remain out of scope.
+
+## Stage 2.1.1 - target-model validation: gate identity, material order, spell tolerance (2026-11-14)
+
+**What the game does.** `world/gate/gateBoss.js:151-157` builds the gate stand-in with
+`makeEnemyEntity(look.mobile, ENEMY_BASICS[look.mobile], null, 1)`: mobile 31, career index 31,
+**career `null`**, then `minMetalToHit = 0`, `armor = armorValues = 60`, `spareGear = true`. The index
+selects the hide and enemy group; it does not load `ENEMY031.CFG`, so the target's career is null and its
+elemental tolerance is Normal. `combat/pcaao.js:1640-1700` evaluates the material requirement
+before the weapon roll's use: it sets `matReqDamMulti`, and after the critical it applies
+`unityRound(F(damage * F(matReqDamMulti)))` before the weapon-condition band, then the hide/natural stage
+and the host's traits/cap/allowance. `systems/spellcast.js` (now actually vendored) selects career
+tolerance by every effect flag the spell carries, folds the four tolerance bytes with precedence
+Resistant > Immune > LowTolerance > CriticalWeakness, adds the player's racial flags/biography/entity resist,
+checks `saving >= 100` for immunity, then adds `floor(live willpower / 10)`, subtracts pierce and clamps 5..95.
+
+**Gate identity.** The local `gateTarget` already had career index 31 and `career: null`; this phase confirms
+that is faithful to upstream and adds a direct comparison against `bossStandIn`. The gate's elemental
+tolerance stays **Normal**; it is not given a career from its index. No gate/identity correction was needed.
+
+**Material ordering.** The local `damageModel` already applies the material multiplier after the critical and
+before condition, then `analyze` applies the intrinsic hide/natural stage before traits/cap. This phase adds
+boundary tests (below/at/above the requirement, 0.4/0.6/0.8/0.9-cap values, soft vs hard, a half-to-even
+rounding case) and a 6,000-draw crit+condition comparison. No ordering correction was needed.
+
+**Spell tolerance.** `systems/spellcast.js` was a generated stub. It was added to the vendored subset via
+`tools/vendor-upstream.mjs` (now **256 vendored, 112 stubbed**); its only still-stubbed edge is `player/motor.js`
+for capsule/missile geometry, which `savingChance` does not read. `savingChanceOutcome` now carries the full
+effect-flag fold (Fire/Frost/Shock/Poison/Magic/Disease/Paralysis), player racial immunity/resistance and
+biography terms, entity resist, modifier, pierce, the 100 immunity gate and the 5..95 clamp. The differential
+suite compares it, `savingLands`, `careerTolerance` and `spellHasFlags` against the vendored module.
+
+| Check | Result |
+|---|---|
+| gate target vs `bossStandIn` | career index 31, mobile 31, career `null`, affinity Daedra, `minMetalToHit 0`, armour 60, Normal fire tolerance |
+| material 5 / material 2 | x0.4; exact/above requirement x1; hard refusal 0 |
+| material 9 / material 0 | x0.1 (the 0.9 penalty cap) |
+| material sample with critical + 50% condition | local 6,000-draw expectation inside upstream's 95% CI |
+| spell saving/career tolerance | 840 + 15 + 101 + 42 + 4 exact cases against vendored `spellcast.js` |
+
+Full suite **254 tests, 254 pass**; differential **20/20**; golden **13/13**; vendor **256/112**;
+parity **1477/1477**. No gate or material outputs changed; no waiver was removed or added in this phase.
+Remaining spell limits: `savingThrow`'s dice and `elementalResistanceChance` effects are not modelled, and
+non-element `effectFlags` are not derived from arbitrary spell effect records. These are outside Stage 2.1.1.
+The gate target's `level` remains the content level (45), not the fixed body level (21); no Stage 2.1 stage reads it.
+
+## Stage 2.1 - target model fidelity: hide, natural resistance, tolerance and metal (2026-11-14)
+
+**What the game does** (`vendor/upstream/a3eb1605/src/combat/pcaao.js`): after the blow's critical, material
+requirement and condition, a gearless monster takes its **career hide** through
+`pcaaoPercentageReductionCalculationForMonsters` (:1447-1471, called at :1815-1817), with the target's
+**natural damage resistance** from Endurance/Strength/Willpower (`pcaaoNaturalDamageResistance`, :1594-1605)
+subtracted inside that hide. A gearless class target takes the natural resistance alone through
+`pcaaoArmorDamageReductionWithWeapon` (:1349-1392). A weapon below the target's `minMetalToHit` takes
+`min(0.2 x (need - material), 0.9)` off (`pcaaoAttackDamage`, :1640-1700); the soft module is on by default,
+and the hard module refuses the blow whole. A weapon's `elemental` lines are floored after the target
+career's tolerance (`systems/loot/lootPowers.js:164-167, 286-294`); a spell/proc's career tolerance folds
+into its saving throw (`systems/spellcast.js:61-68, 130-190`; now vendored actual in Stage 2.1.1). The order is: blow → critical → material requirement → condition → target hide/natural →
+host boss traits → per-hit cap → relay allowance.
+
+**Changed:** new `src/target.js` (the target shape; `ENEMY_BASICS` identity; `careerTolerance`,
+`elementShare`; `naturalDamageResistance`; the ported hide table; `materialRequirementMultiplier`). `src/model.js`
+builds reference/boss/gate/encounter targets through explicit identity fields, applies the material multiplier
+in `damageModel`, applies the intrinsic hide/natural stage once after backstab and before boss traits/cap, and
+resolves each elemental affix line through the target's tolerance. `src/encounters.js` carries mobile types for
+the three contents. `src/spells.js` adds the career tolerance to `savingChanceOutcome` (and the 100 immunity
+gate). `src/maxprofile.js cappedDpsWith` re-resolves the target defence for imprint/enchant pricing. Waiver
+`W-BOSS-HIDE` removed.
+
+| Representative build (level 45, Breach) | per swing before | after | capped DPS before | after | TTK before | after |
+|---|---|---|---|---|---|---|
+| legal max Dai-katana | 807.3 | 766.9 (-5.0%) | 820.6 | 818.1 (-0.3%) | 76.0 s | 76.0 s |
+| raw 200, no gear, Dai-katana | 113.5 | 107.9 (-5.0%) | 160.2 | 152.2 (-5.0%) | 81.1 s | 84.8 s |
+| Warhammer 240/540 | 117.5 | 111.6 (-5.0%) | 146.0 | 138.7 (-5.0%) | 88.0 s | 92.1 s |
+| low fixture (level 30, raw 60) | 15.35 | 14.55 (-5.2%) | 14.8 | 14.1 (-5.0%) | 813.9 s | 857.6 s |
+| fire +10 affix on a level-45 blade | 27.233 | 25.882 | - | - | - | - |
+
+The 5% is the Daedra Lord's x0.95 hide. A saturated Breach build's capped DPS barely moves because its
+per-hit blows are still above the cap after the hide; a sub-allowance build's TTK moves by the same 5%.
+The reference foe (`careerIndex -1`, stats 50) has no hide and no natural resistance, so its outputs are
+unchanged. A material-2 weapon against a `minMetalToHit: 5` target now reads x0.4; a 6,000-draw comparison
+gave 7.63 local vs 7.62 upstream per swing (inside the 95% CI). A career with a fire resistance flag reads
+x0.5 on a fire affix and a raised saving throw; the gate stand-in has `career: null` (as `bossStandIn`), so
+its elemental tolerance stays Normal until a career is supplied.
+
+**Tests:** `test/target.test.js` (11 tests: reference baseline, enemy identity/mobile/class, hide/natural,
+career tolerance and saving, material requirement, exact-once ordering, cap/allowance, single/dual);
+`test/differential.test.js` adds `target intrinsic hide and natural resistance` (192 exact cases) and
+`target natural resistance from a career stat block` (4 exact cases). Existing C2/C5 tests now compose the
+target hide with the boss trait and prove one application. Full suite **248 tests, 248 pass**; differential
+**17/17**; golden **13/13**. C1–C5 remain intact.
+
+**Not in this stage:** worn armour/shield mitigation, shield blocking, silver, enemy-type bonus/phobia,
+backstab, condition wear, racial/classic, Legendary powers, proc/DoT budget, phase wards, spell-system
+reconstruction, techniques and encounter calibration. `spareGear:false` is only partially supported
+(natural resistance, not worn armour). The target's career data is not loaded from `MONSTER.BSA`; a caller
+supplies a career object when it has one. See the assumptions register M11/A12.
+
+## Stage 1.5 - C4: the reachable gear-profile ceiling (2026-11-14)
+
+**What the game does** (`vendor/upstream/a3eb1605/src/systems/loot/lootRarity.js` unless stated):
+`AFFIX_RANGES` gives a skill line's bands Magic [5,10], Rare [10,20], Legendary [20,30] (:486), and a weapon
+damage line Magic [5,12], Rare [10,25], Legendary [20,40] (:487). `AFFIX_COUNTS` gives Magic 1-2 lines and
+Rare 3-4 (:507). `kindLines` allows one line per kind's param on a piece, so a skill appears once per param
+(:679-682). `skillKin` names what a ROLLED line may carry: a weapon its own skill plus Critical
+Strike/Backstabbing/Dodging; armour the body's twelve; jewellery the mind's thirteen plus Hand-to-Hand and
+Critical Strike (:703-716, :784-788). `legendariesFor` picks the records a slot may be minted from
+(:1310-1314). A Legendary's record lines are fixed; `honeableLines` takes only a Magic/Rare line or an
+Exalted Legendary's extra, up to its band's top (:2243-2250). `exaltLegendary` adds ONE line of a kind the
+record does not carry, at the top half of the Legendary band (:1770-1790); its skill PARAM is drawn with
+`pick(kindParams(id, item))`, which is **not** kin-filtered (unlike `rollAffixes`' `pickSkill`, :818-826),
+so an Exalted armour or jewellery piece can gain +30 of any skill. `lootLevelGate.js` scales the CHANCE of
+Rare/Legendary drops by character level (Rare x0.15 to level 7, x1 at 12; Legendary x0.05 to level 9, x1 at
+15); it is not a point budget, and every rarity is fully available from level 15.
+
+**The illegal assumptions.** The old max profile put 30 points on all 8 own-skill lines and all 18 Critical
+Strike lines (240 + 540 = **780**) and a 40% damage line on the weapon. A piece cannot do that: a Legendary
+record's skill line is fixed (20-25), only the single Exalted extra reaches 30, and one piece cannot carry
+both 30s. A weapon's every record carries a skill line, so a weapon can never Exalt a skill and tops at 25;
+a Rare contributes 20 + 20 and a Magic at most two lines. The 40% damage line is a band top no record
+carries: a Rare rolls at most 25%, and the best Legendary record is warp-edge's fixed 38%.
+
+**Changed:** new `src/gearProfile.js` (slot options, the Pareto frontier, the point budget, `validatePlan`,
+the oracle-backed slot/record queries). `src/maxprofile.js` gains `buildMax` (explicit budget),
+`legalGear` (the frontier point that maximises uncapped/capped/allowance DPS, with the tied alternatives
+kept) and `legalFrontier`; `maxCharacter` uses it. The weapons page and the `theory` command default to the
+legal split, mark explicit `--gear-lb/--gear-cs` builds as hypothetical when they are off the frontier, and
+present the attainable frontier instead of a `lines x 30` table. `src/theory.js`'s cap notes now state the
+legal maxima. The `--gear-lines/--line-points` flags are obsolete and say so. Waiver `W-GEARCAP` removed.
+
+| Build (level 45, theory character, no Firmament) | old 240/540/40 uncapped | legal uncapped | gap | old capped | legal capped | TTK |
+|---|---|---|---|---|---|---|
+| Dagger 113 | 1135 | 901 (310/310/25) | -20.6% | 1135 | 901 | 75.6 s |
+| Wakizashi 117 | 1258 | 989 (310/310/25) | -21.4% | 1198 | 989 | 75.6 s |
+| Katana 121 | 1345 | 1036 (250/370/25) | -23.0% | 892 | 869 | 76.0 s |
+| Dai-katana 123 | 1472 | 1139 (250/370/25) | -22.6% | 821 | 821 | 76.0 s |
+| Warhammer 126 | 1343 | 1028 (220/400/25) | -23.5% | 644 | 514 | 76.3 s |
+| Battle Axe 127 | 775 | 607 (315/290/36) | -21.7% | 723 | 607 | 75.9 s |
+| Long Bow 129 | 1239 | 951 (250/370/25) | -23.3% | 776 | 773 | 75.8 s |
+| Hand Wraps 563 | 2990 | 1841 (360/360/25) | -38.4% | 1083 | 911 | 75.9 s |
+
+The blades reproduce the audit's ~22-28% gap (the audit's own estimate was not taken on faith: it falls out
+of the frontier). The Breach capped figure is nearly unchanged for the long blade (821) because the fight is
+allowance-bound (sustained 150/s, kill average 157.9, TTK 76.0 s - C1 intact); the lighter weapons lose more
+capped DPS. The legal single-skill maxima are 535 for both Long Blade and Critical Strike (a 25-point weapon
+record + 17 Exalted slots x 30), the highest combined total is 620 for a long blade, and 720 for fists
+(JEWEL_KIN lets a Rare jewellery carry both Hand-to-Hand and Critical Strike). A one-handed build with a
+shield is a distinct 19-slot scenario (`legalGear(t, { shield })`), kept separate from the 18-slot profile.
+
+**Tests:** `test/gearProfile.test.js` (13 tests: bands/counts/Exalted floor against the vendored constants;
+rolled vs Exalted kin; one line per kind; the 240/540/780 impossibility; per-skill and total budgets; the
+level gate; rejection of illegal plans; generated-profile completeness and optimality; uncapped/capped/
+allowance splits; the shield scenario; single/dual/fist builds; damage-model identity; C1). The new tests
+were run against the pre-fix profile (a copy with `evaluatedFrontier` returning the old 240/540/40): **4 of
+13 fail** - "a generated max profile is legal..." (first failure: `113: CS 540 is above the legal 530`),
+"scenario maxima are kept apart", "a shield is a distinct legal scenario", and "single-weapon, dual-wield
+and fist builds keep the legal budget". The other nine (the upstream-law and validator tests) pass because
+they test the new constraint model, not the old builder; they are the law the fix rests on.
+
+**Remaining assumptions:** the max profile is a theoretical ceiling requiring perfect rolls on all 18 pieces
+(rolled lines honed to their band top; a 1-in-10 Exalted roll wherever the chosen split uses a no-skill
+Legendary). Hones cost gold and shards but no point budget and have no level gate. The off-hand weapon's
+affixes are not folded into the dual-wield budget (the simulator's dual rows are a lower bound; C3's
+damage/tempo law is unchanged). The one-handed + shield max is exposed but not used by the weapons table;
+those rows remain a one-slot lower bound. No live capture was taken: this is the pinned snapshot's law.
+
+## Stage 1.4 - C3: dual wield, tempo not twice the damage (2026-11-14)
+
+**What the game does** (vendored `combat/twoHands/handsLaw.js`, `combat/playerWeapon.js`): a held pair alternates
+hands inside `FLURRY_WINDOW` (0.75 s); a flurry's blow starts `DUAL.FLURRY_FROM_FRAME` (1) frame into its five-frame
+swing - FOUR ticks at any frame rate - and an off-hand blow then holds `offHandHold` whole ticks at its end (its
+weapon's weight against Strength, `offHandBurden`). The lead blow is the ordinary blow; only the off hand takes
+`offHandToHit(agility)` on the to-hit channel and `OFF_HAND_BLOW` (x0.8 of the rolled damage; x0.8 weight for what a
+blow sets off, so its Cast When Strikes payloads fire on 0.8 of its blows). Upstream's own test measures a matched
+pair at 1.22-1.28x the swings and 1.06-1.11x the damage of one weapon.
+
+**Cause of the 1.799x:** the simulator doubled the attack rate (`aps = main.aps * 2`) and averaged the two hands'
+damage, which counts an off-hand blow as a full-speed main-hand blow. It also used a flat -5 to hit, a x0.8 share
+hard-coded in the loop, a x1.5 heft on the off weapon instead of the burden, and gave the off hand 100% of its procs.
+
+**Changed:** new `src/dualWield.js` (an adapter over the vendored law: `dualSchedule`, `swingsRatio`,
+`damageRatio`, and the off hand's terms) and the dual branch of `analyze()` rewritten around one exchange: `aps =
+2 / (4*mainTick + 4*offTick + hold*offTick)`, each hand's own tick, the off hand's Agility to-hit and x0.8 share, its
+procs at x0.8, and two time-ordered claim streams (one per hand) for the C1 allowance. Single-weapon and two-handed
+paths are untouched.
+
+| Build (level 45, geared) | single DPS | old pair | new pair | ratio before | ratio after |
+|---|---|---|---|---|---|
+| dagger pair | 271 | 487 | 305 | 1.799 | **1.124** |
+| longsword pair | 1119 | 2014 | 1234 | 1.800 | **1.103** |
+| katana pair | 1174 | 2113 | 1321 | 1.800 | **1.125** |
+
+At the Breach every blow is over the per-hit cap, so the pair's extra blows are worth their whole cap and its capped
+DPS sits near the swings ratio - 305/1016/1078 against 271/850/887 for one weapon - while the allowance still holds
+all of them to 150/s sustained (kill average 156.8-157.9, TTK 76.0-76.5 s; the opening burst is 254-263 against the
+single weapon's 250-277, the off hand's first blow arriving half an exchange later). At Agility 50 with a modest skill
+the pair/single ratio is 1.083, inside upstream's pinned 1.06-1.11 band.
+
+Waiver `W-DUAL` removed. `test/golden-upstream.test.js`'s dual case now asserts the schedule against the pinned ratios
+and the model against the exchange, and `test/sockets.test.js`'s dual case is titled for the Agility term.
+
+## Stage 1.3 - C5: the elemental affix counted once (2026-11-14)
+
+**What the game does** (`vendor/upstream/a3eb1605/src/systems/loot/lootPowers.js:286-347`): a weapon's
+`elemental` lines are summed as FLAT damage inside `lootBlow`, one of the registered weapon-blow modifiers:
+`flat += Math.floor(value x elementShare(target, element)); ... return out + flat`. It is added once, after
+loot's own slayer percentage and before whatever registries follow it; the blow then takes the martial/Firmament
+channels, backstab, the critical multiplier, weapon condition, the boss's traits (`bossStrikeAt`), the per-hit
+cap and the relay's allowance. `elementShare` reads the target's career tolerance, never a boss trait, and it is
+not a spell.
+
+**Cause of the double count:** the simulator added the affix in `weaponBlow` (correct) and again in
+`damageModel().one()` (`if (d > 0 && w?.elemental) d += w.elemental`). +10 read as +20 on every weapon blow;
+a hand-wrap fist blow was unaffected (it has no `w`), which hid the inconsistency.
+
+**Changed:** the second addition is gone; the remaining one is placed at the loot step in the gate host's
+registry order (mastery -> slayer -> flat -> martial -> theory -> Firmament). The harness oracle's module order
+was aligned to that host so an affixed blow is compared where the fight resolves it. One differential stage was
+replaced by a positive one (3 weapons x 3 affix levels x 2 swings against the card) and `test/elemental.test.js`
+added. `W-ELEMENTAL` removed.
+
+| Case (level 45 unless stated) | before | after |
+|---|---|---|
+| plain katana, `damage.avg` delta for a +10 fire affix | +20.0 | +10.0 |
+| critical blow, delta for +10 (crit x2.0) | +40.0 | +20.0 |
+| +3 / +6 / +10 affix levels, per-roll delta | +6 / +12 / +20 | +3 / +6 / +10 |
+| long bow +10 (pull x1.5) | +30 | +15 |
+| Breach per-swing delta for a blade +10 (no martial path) | +20 | +10 |
+| Breach per-swing delta for a blade +10 (Blademaster, +15% path) | +23 | +11.5 |
+| Breach per-swing delta for a blunt +10 (stoneskin) | +20 x0.5 = +10 | +10 x0.5 = +5 |
+| SAVE4 (level 30) +3 / +6 / +10 elemental affix marginal, Breach | +18.8 / +37.9 / +63.2 capped DPS | +9.4 / +18.8 / +31.4 capped DPS |
+
+the assumptions register A11 records the registry-order choice and A12 the `elementShare` bound.
+
+## Stage 1.2 - C2: relay-boss traits and resistance (2026-11-14)
+
+**What the game does** (vendored `systems/bossTraits.js`, driven by `test/bossTraits.test.js`):
+`relayBossTraits(name, mobile)` hashes the stand-in's name and mobile (`eliteHash` -> `eliteRng`) and picks
+one element proof out of `['flameproof','frostproof','venomproof','stormproof','spellproof']` and one weapon
+answer out of `['bladeturning','stoneskin','thorned']` (`:393-409`). `dungeonContext.js:4410` gives them to
+the stand-in. At `a3eb1605`: Ruhn = `spellproof + stoneskin`, Tonal Warden = `frostproof + stoneskin`, Brass
+Remnant = `spellproof + stoneskin`. The striker's machine then resolves each blow before its claim leaves:
+`bossStrike(entity, d, {kind, weapon, element})` (`:210-224`) multiplies a blade/arrow by 1/2 under
+bladeturning, a blunt blow, fist or Hand Wraps by 1/2 under stoneskin, a spell of the proved element by 1/4,
+then `Math.max(1, Math.round(d))` - ahead of the per-hit cap and the relay's allowance.
+
+**Changed:** new `src/bossTraits.js` (a thin adapter over the vendored law: `relayTraitsFor`,
+`resistBlow`). `gateTarget` and `encounterTarget` derive their traits from it instead of defaulting to none;
+`analyze()` resolves every blow through `bossStrike` per integer roll, before the cap and before the C1
+claim (so `perSwing`, `dps`, `cappedDps` and the allowance's `ceilingDps` are all resisted - the uncapped
+figure used to escape the traits entirely). Spells/procs/DoTs already read `bossTraits`; they now receive
+the real ones, through the client's `ELEMENT_TRAITS`/`RESIST_SHARE`. `cappedDpsWith` (imprint pricing)
+re-resolves through the same function. A weapon's `elemental` affix is untouched: upstream scales it by the
+target's career tolerance, not by a boss trait.
+
+| Build (level 45) | before | after | ratio |
+|---|---|---|---|
+| Breach, Dai-katana per swing | 1043.3 | 1043.3 | 1.000 |
+| Breach, Warhammer per swing | 1080.9 | 540.7 | 0.500 |
+| Breach, fists per swing | 851.2 | 425.8 | 0.500 |
+| Breach, long bow per swing | 473.6 | 473.6 | 1.000 |
+| Breach, Warhammer per-hit-capped DPS | 723.1 | 644.1 | 0.891 |
+| Breach, fists per-hit-capped DPS | 1083.3 | 792.6 | 0.732 |
+| Sky-ketch, Warhammer per swing | 1080.9 | 540.7 | 0.500 |
+| Breach, magic spell | 27.8 | 6.9 | 0.250 |
+| Breach, fire spell | 27.8 | 27.8 | 1.000 |
+| Sky-ketch, frost spell | 27.8 | 6.9 | 0.250 |
+| ordinary tough monster, per swing | 1138.2 | 1138.2 | 1.000 |
+
+Waiver `W-BOSS-TRAITS` removed (fixed). `test/theory.test.js`'s H2H band now asserts the band against a
+neutral body and the halved figure against the real Warden.
+
+## Stage 1.1 - C1: the Breach damage allowance (2026-11-14)
+
+**What the game does** (`vendor/upstream/a3eb1605/src/net/gate/gateBrain.js`, driven directly by
+`test/allowance.test.js`): a player's blow is a *claim*; `applyHit` (:1298) refuses it while the boss is
+shielded (no token spent), `spendBlow` (:3411) takes one of 4 tokens (refilling 4/s), and the relay accepts
+`min(claim, 12 x ref, bucket, health left)`. The bucket is 15 x ref deep (full on a fresh join, empty on a
+wounded one, `joinFight` :1213) and refills 3 x ref a second (`ref = 5 + level`). The excess is discarded.
+Each proc and DoT round is its own claim (`gateCourt.js:412` `blowQ`, `standInSpell.js:131-217`).
+
+**Changed:** `src/allowance.js` (new, the one implementation) is run by `analyze()` for any target that
+declares an allowance (`gateTarget`, `encounterTarget`) and by `simulatePurse` (now a thin wrapper).
+`analyze()` keeps `cappedDps` as the per-hit ceiling and reports `allowance` (`sustainedDps`, `burst5Dps`,
+`averageDps`, `ceilingDps`, ...); `ttk`/`totalTtk` now go through the relay, with the old figure kept as
+`ttkCapOnly`/`totalTtkCapOnly`. CLI/report/weapons/loadout pages label each metric. The relay's
+`gateBrain.js`/`gateMods.js` were added to the vendored subset (parity 1477/1477).
+
+| Build (level) | per-hit-capped DPS (old headline) | old TTK | sustained | burst 5 s | kill-avg | new TTK |
+|---|---|---|---|---|---|---|
+| geared Dai-katana (45) | 821 | 20.6 s | 150 | 260 | 157.9 | 76.0 s |
+| geared Katana 1H (45) | 892 | 19.5 s | 150 | 271 | 157.8 | 76.0 s |
+| mid-gear Dai-katana (45) | 358 | 39.5 s | 150 | 260 | 157.9 | 76.0 s |
+| weak katana (45) | 61 | 202.6 s | 61 | 57 | 59.3 | 202.5 s |
+| SAVE4 character (30) | 125 | 73.1 s | 105 | 118 | 110.5 | 76.0 s |
+
+The audit's "~80 s fastest kill" is `BOSS_TTK_S / BUCKET_RATE_X` without the opening bucket; the true floor is
+`(share - depth) / refill` = 75 s at level 45. Waiver `W-ALLOWANCE` removed (fixed); `W-PROC-BUDGET`
+narrowed to the ceiling figures. Not changed: C2-C5 and every per-hit calculation.
+
+## Stage 0 - verification foundation (2026-11-14)
+
+**No mechanics or calculation outputs were changed.** This stage adds the
+verification layer, the vendored oracle and the documentation; the existing
+engine is untouched.
+
+Added:
+
+- `vendor/upstream/a3eb1605/` - 253 upstream files (≈6 MB) + 113 documented
+  stubs, with `MANIFEST.json` hashes. Generated by `tools/vendor-upstream.mjs`.
+- `tools/vendor-parity.mjs` - proves the vendored subset answers exactly as the
+  full checkout: **1473/1473 checks identical** at `a3eb1605`.
+- `test/harness/*` - seeded PRNG, oracle loader, stage comparator, waiver table.
+- `test/differential.test.js` - 13 stage comparisons against the game.
+- `test/golden-upstream.test.js` - fixtures pivoted from upstream's own tests
+  (`combatStats`, `pcaao`, `twohands`, `bowbloom`, `powerceiling`).
+- `test/invariants.test.js` - bounds, boundaries and the audit's critical gaps.
+- `test/vendor-manifest.test.js` - hash/manifest integrity and load checks.
+- `test/harness.test.js` - the harness's own correctness, including an injected
+  2% drift that the comparator catches.
+- the project rules, `docs/SOURCES.md`, the verification notes,
+  the assumptions register, this file.
+
+Recorded as known and **not fixed** (each asserted as still broken):
+
+| Waiver | Effect today |
+|---|---|
+| ~~`W-BOSS-TRAITS`~~ | Relay-boss traits not applied - **fixed in Stage 1.2** (this waiver was removed). |
+| ~~`W-DUAL`~~ | Dual wield 1.80× one weapon - **fixed in Stage 1.4** (this waiver was removed). |
+| ~~`W-GEARCAP`~~ | Max profile assumed 30 points on 26 lines - **fixed in Stage 1.5** (the legal max is 535 per skill, 620 together). |
+| ~~`W-ELEMENTAL`~~ | `elemental` affix added twice - **fixed in Stage 1.3** (this waiver was removed). |
+| ~~`W-BOSS-HIDE`~~ | Target hide/natural resistance - **fixed in Stage 2.1** (this waiver was removed). |
+| ~~`W-BACKSTAB`~~ | Backstab was a scaled roll - **fixed in Stage 2.4** (this waiver was removed). |
+| ~~`W-CONDITION`~~ | Weapon condition bands read a float percentage - **fixed in Stage 2.5** (this waiver was removed). |
+| ~~`W-RACIAL`~~ | Racial weapon/fist arms missing - **fixed in Stage 2.6** (this waiver was removed). |
+| ~~`W-CLASSIC-STRENGTH`~~ | Classic Strength used /5; the live install uses /10 - **fixed in Stage 2.7** (this waiver was removed). |
+| `W-WARD`, `W-PROC-BUDGET` | Smaller per-hit discrepancies, detailed in `test/harness/waivers.mjs`. |
+
+Next stages (not started): fix the critical set (Stage 1), the hit-path fidelity
+items (Stage 2), the encounter layer (Stage 3).
