@@ -156,8 +156,9 @@ Use `./dfo-dps --help` for every flag, or see
 - The Stage 3.3/3.4 relay engine does not model geometry, Sundered halves,
   stun/profile hit multipliers, Wrath, host/crystal claims, phase-ward
   lifecycle, CWS or DoTs. A static Warded trait/ward pool is not modelled. A synthetic two-echo
-  build and an unarmed build are refused rather than approximated. Flow and
-  one Many Endings power are supported.
+  build, an unarmed build, and bow/gun builds (whose release/landing timing is
+  not modelled) are refused rather than approximated. Flow and one Many
+  Endings power are supported; an echo build requires a relay body up front.
 - Per-blow ward suppression and the full proc/DoT budget.
 - Elite Breach, and non-English boss-trait seeding.
 - Exact reproduction of a live client's frame timing or RNG sequence.

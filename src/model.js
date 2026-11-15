@@ -808,7 +808,7 @@ export function afterShare(shared, p, { weapon = null, offHand = false, traits =
   for (const { p: q, damage } of branches) {
     const shot = bowBlow(damage, bow); // the pull comes after the payloads, before the trait
     const v = shot > 0 && traits.length ? resistBlow(traits, shot, { kind: strikeKind, weapon }) : shot;
-    if (!(damage > 0) || !echoes.length) { out.push({ p: q, v, x: 0, echoMask: 0, echoHits: 0, echoEligible: false }); continue; }
+    if (!(damage > 0) || !echoes.length) { out.push({ p: q, v, x: 0, echoMask: 0, echoHits: 0, echoEligible: false, formulaPositive: damage > 0 }); continue; }
     // Many Endings (lootPowers.js:374-376, :444-454): the strike listener is told the blow's FINAL damage - the
     // formula's, so before the pull and the trait - and each power rolls `chance` per cent. A hit repeats it as
     // n = max(1, round(damage)): on a body the relay runs it is OWED (oweFoe) and taken into THIS blow's claim by the
@@ -821,10 +821,10 @@ export function afterShare(shared, p, { weapon = null, offHand = false, traits =
       let k = 0;
       echoes.forEach((c, i) => { const hit = (mask >> i) & 1; pr *= hit ? c / 100 : 1 - c / 100; k += hit; });
       if (!(pr > 0)) continue;
-      if (!k) { out.push({ p: pr, v, x: 0, echoMask: mask, echoHits: 0, echoEligible: true }); continue; }
+      if (!k) { out.push({ p: pr, v, x: 0, echoMask: mask, echoHits: 0, echoEligible: true, formulaPositive: true }); continue; }
       const owed = k * n;
-      if (relay) out.push({ p: pr, v: v + (traits.length ? resistBlow(traits, owed, { kind: 'melee', weapon }) : owed), x: 0, echoMask: mask, echoHits: k, echoEligible: true });
-      else out.push({ p: pr, v, x: owed, echoMask: mask, echoHits: k, echoEligible: true });
+      if (relay) out.push({ p: pr, v: v + (traits.length ? resistBlow(traits, owed, { kind: 'melee', weapon }) : owed), x: 0, echoMask: mask, echoHits: k, echoEligible: true, formulaPositive: true });
+      else out.push({ p: pr, v, x: owed, echoMask: mask, echoHits: k, echoEligible: true, formulaPositive: true });
     }
   }
   return out;

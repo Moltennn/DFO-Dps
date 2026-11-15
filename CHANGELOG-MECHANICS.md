@@ -6,6 +6,34 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage 3.4.1 - relay hardening and whole-compositor evidence (2026-11-16)
+
+**No melee numbers moved.** The existing Stage 3.4 melee path and the no-mechanic Stage 3.3 metrics are unchanged
+(the plain-build bit-identity test still passes).
+
+**What changed.**
+- **Bow and gun builds are refused** by `simulateRelayFight` until their release/landing timing and ward/Flow behaviour
+  are modelled. The arrow formula runs at landing (`scenes/dungeonContext.js:4853-4857`; `combat/arrowFlight.js:483-533`),
+  not at the release frame the local schedule uses; refusing is the only faithful behaviour here, not a silent
+  approximation.
+- **Many Endings requires `target.relayBody` up front**, whenever the build carries an echo power. The old mid-loop
+  `outcome.echoDamage` throw was RNG-dependent; it is gone. A non-relay target with an echo is refused before the first
+  attack.
+- **The Flow listener gate is named `formulaPositive`**: the pre-pull, pre-trait formula damage, not the post-trait
+  `blow > 0`. On melee the two agree because `bossStrike` never takes a positive damage below 1; the predicate is now
+  the source's semantics. The claim itself remains the host-rounded post-trait damage.
+- **Whole-compositor differential** `test/relayFightDifferential.test.js` (5): an upstream oracle drives
+  `calculateAttackDamage`/`lootStrike` with a seeded Flow clock, `takeOwed`, `bossStrikeAt`, host rounding and
+  `applyHit`, then feeds the same upstream outcomes to the local event seam. It compares per-event Flow before/after,
+  claim, got, bucket, tokens, health, echo and ward for both-hand expiry/refresh, Echo+Flow on different hands with
+  bladeturning, the exact shield boundary, Potent Vs misses and Flow on a relay-refused claim. The local tier's own
+  many-endings distribution is separately compared with 200,000 upstream draws in `test/relayEchoDifferential.test.js`.
+- `test/relayClaimFight.test.js` test 4 now covers the bow/gun and missing-relay-body refusals and one supported echo.
+
+Full suite **545 tests, 545 pass**; vendor 289/122; parity **1855/1855**.
+
+---
+
 ## Stage 3.4 - Many Endings and Flow in relay fights (2026-11-16)
 
 **What the game does.** Many Endings (`warp-edge`, `systems/loot/lootRarity.js:1219`) rolls one `_rand()*100 < 10` per

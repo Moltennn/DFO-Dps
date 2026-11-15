@@ -329,7 +329,7 @@ fight.time; fight.claimTime; fight.lastAttackAt; fight.termination; fight.censor
 
 Stage 3.4 adds the two loot mechanics to `simulateRelayFight`; the claim engine is unchanged.
 
-- **Flow** is global across hands. Stacks expire strictly at `flowUntil`, a whole positive-damage blow refreshes them for 6 s,
+- **Flow** is global across hands. Stacks expire strictly at `flowUntil`, a whole blow with pre-pull, pre-trait positive formula damage refreshes them for 6 s,
   and the cap is the power's `max` (5). The stack count is read before the blow and passed through
   `blowFightTier`'s `flowStacks` option, which applies it inside `lootBlow`'s percentage. A non-whole off-hand blow
   does not charge Flow; a warded attack neither charges nor claims. A Flow power only rides the hand whose weapon
@@ -337,14 +337,18 @@ Stage 3.4 adds the two loot mechanics to `simulateRelayFight`; the claim engine 
 - **Many Endings** is one echo roll per power on a blow whose final formula damage is positive, at the power's chance
   (10%). The echo is `max(1, round(damage))`, resisted separately from the original blow, and on a relay body it is
   included in the **same** claim (`outcome.blow`), not sent as a second claim. A synthetic two-echo build is refused.
-- Claims are sent when the formula damage is positive and `Math.round(blow) >= 1`; a Potent Vs miss is a 5-point
-  claim, while zero damage sends nothing. A warded attack (`t < shieldUntil`) is sampled and discarded; at exactly
+- Claims are sent when the host damage is positive and `Math.round(blow) >= 1`; a Potent Vs miss is a 5-point
+  claim, while zero damage sends nothing. The Flow/echo listener gate is the earlier pre-pull, pre-trait formula
+  damage (`formulaPositive`), not the rounded/post-trait blow. A warded attack (`t < shieldUntil`) is sampled and discarded; at exactly
   `shieldUntil` it is accepted.
 - `simulateRelayFight` returns `flow` (`stacks`, `held`, `until`, `max`, `seconds`), `flowBuilds`, `wardedAttacks`,
   `zeroDamage` and `roundedZero`; each trace claim carries `hit`, `whole`, `echoMask`, `echoHits`, `stacksBefore`,
   `stacksAfter`, `flowUntil` and `flowBuilt`.
 - The flow is deterministic (no RNG stream); the echo is part of the existing single `blow` sampler draw, so a build
   with neither mechanic keeps its Stage 3.3 draw sequence.
+- Bows and guns are refused until their release/landing timing and ward/Flow behaviour are modelled. A build with
+  Many Endings requires `target.relayBody` before the first attack; the check is not deferred to an RNG-dependent
+  event.
 
 ```js
 const r = simulateRelayFight(ch, {

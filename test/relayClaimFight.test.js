@@ -113,6 +113,21 @@ test('4. guards: fists are refused, one Many Endings is supported, a synthetic t
     () => simulateRelayFight(echoCh, { target, health: 2000, weapon: weaponOf(echoItem), imprints: [{ kind: 'echo', chance: 10 }] }),
     /more than one Many Endings/,
   );
+  // Many Endings requires a relay body before the first RNG draw
+  const noRelay = { ...gateTarget(45, { health: 2000 }), relayBody: undefined };
+  assert.throws(
+    () => simulateRelayFight(echoCh, { target: noRelay, health: 2000, weapon: weaponOf(echoItem) }),
+    /relay body is required for Many Endings/,
+  );
+  // bow and gun timing is not modelled yet: refuse, never approximate
+  for (const tpl of [130, 560]) {
+    const ranged = weapon(tpl, { material: 9 });
+    const rch = simCharacter(BASIC(), ranged);
+    assert.throws(
+      () => simulateRelayFight(rch, { target, health: 2000, weapon: weaponOf(ranged) }),
+      /bow and gun builds are not supported/,
+    );
+  }
   // a non-relay target is not a relay fight
   assert.equal(simulateRelayFight(build(), { target: { level: 1, maxHealth: 100 }, health: 100, weapon: weaponOf(sword()) }), null);
 });

@@ -64,6 +64,9 @@ export function simulateRelayFight(ch, args = {}) {
   const schedule = createAttackSchedule(ch, { ...scenario, health });
   if (!schedule) return null;
   const probe = schedule.probe;
+  if (probe.weapon?.ranged || schedule.assumptions?.ranged) {
+    throw new Error('simulateRelayFight: bow and gun builds are not supported until their release/landing timing and ward/Flow behaviour are modelled');
+  }
   const dual = schedule.kind === 'dual';
   const mainPowers = weaponPowers(probe.weapon, scenario);
   const offPowers = dual && probe.offHand?.weapon ? weaponPowers(probe.offHand.weapon) : [];
@@ -74,6 +77,9 @@ export function simulateRelayFight(ch, args = {}) {
   const offEchoes = echoChances(offPowers);
   if (mainEchoes.length > 1 || offEchoes.length > 1) {
     throw new Error('simulateRelayFight: more than one Many Endings power on a hand is not supported');
+  }
+  if ((mainEchoes.length + offEchoes.length) > 0 && !target?.relayBody) {
+    throw new Error('simulateRelayFight: a relay body is required for Many Endings (echo) support');
   }
   const mainFlow = mainPowers.find((p) => p?.kind === 'flow') ?? null;
   const offFlow = offPowers.find((p) => p?.kind === 'flow') ?? null;
@@ -100,6 +106,10 @@ export function simulateRelayFight(ch, args = {}) {
   const maxSeconds = num(scenario.maxSeconds, 3600);
   const maxBlows = Math.max(1, Math.floor(num(scenario.maxBlows, 1000000)));
   const trace = scenario.trace === true ? [] : null;
+  const traceAll = scenario.traceAll === true ? [] : null;
+  // TEST SEAM: `events` supplies pre-sampled attack outcomes (for the whole-compositor upstream differential). It skips
+  // the local tier sampler but runs the same Flow/claim/rounding/engine path.
+  const provided = Array.isArray(scenario.events) ? scenario.events : null;
 
   const cache = new Map();
   const distribution = (index, hand, stacks) => {
@@ -124,42 +134,92 @@ export function simulateRelayFight(ch, args = {}) {
   let flowBuilds = 0;
   let lastAttackAt = 0;
   let termination = 'schedule';
-  let next = schedule.next();
+  let eventIndex = 0;
+  let next = provided ? null : schedule.next();
   for (;;) {
     // The blow budget is checked before the horizon: if both bind, the fight stopped at the last attack, not at a
     // horizon it never reached.
     if (attacks >= maxBlows) { termination = 'maxBlows'; break; }
-    if (!next) { termination = 'schedule'; break; }
-    if (next.t > maxSeconds) { termination = 'horizon'; break; }
+    const event = provided ? provided[eventIndex] : null;
+    if (provided && !event) { termination = 'schedule'; break; }
+    if (!provided && !next) { termination = 'schedule'; break; }
+    const t = provided ? event.t : next.t;
+    if (t > maxSeconds) { termination = 'horizon'; break; }
     attacks += 1;
-    lastAttackAt = next.t;
-    const hand = dual ? next.hand : 'main';
+    lastAttackAt = t;
+    const hand = provided ? (event.hand ?? 'main') : (dual ? next.hand : 'main');
     const share = pool > 0 ? Math.max(0, Math.min(1, engine.hp / pool)) : 0;
     const index = healthSegment(bounds, share);
     // Flow is read BEFORE the blow, once per attack; a warded blow reads none for its (discarded) sample.
-    const stackedBefore = flow.stacksAt(next.t);
-    const dist = distribution(index, hand, stackedBefore);
-    const outcome = dist.sampler.sample(blowStream);
+    const stackedBefore = flow.stacksAt(t);
+    let outcome;
+    if (provided) {
+      outcome = event.outcome;
+      eventIndex += 1;
+    } else {
+      const dist = distribution(index, hand, stackedBefore);
+      outcome = dist.sampler.sample(blowStream);
+    }
     // The client's ward flag is the phase shield evaluated for this attack (gateCourt.target/body): no Flow, no echo,
     // no claim. The engine keeps its own shield clock too, but the compositor never sends a warded claim.
-    const warded = next.t < shieldUntil;
-    if (warded) { wardedAttacks += 1; if (engine.killed) { termination = 'kill'; break; } next = schedule.next(); continue; }
-    if (outcome.echoDamage > 0) {
-      throw new Error('simulateRelayFight: the target is not a relay body (echo is a separate hit)');
+    const warded = t < shieldUntil;
+    if (warded) {
+      wardedAttacks += 1;
+      if (traceAll) traceAll.push({
+        t, hand, segment: index, share, warded: true, raw: null, claim: null,
+        hit: outcome.hit, whole: outcome.whole, echoMask: outcome.echoMask, echoHits: outcome.echoHits,
+        stacksBefore: stackedBefore, stacksAfter: stackedBefore, flowUntil: flow.until, flowBuilt: false,
+        got: 0, accepted: false, reason: 'warded', bucket: engine.bucket, tokens: engine.tokens, hp: engine.hp,
+      });
+      if (engine.killed) { termination = 'kill'; break; }
+      if (!provided) next = schedule.next();
+      continue;
     }
     const raw = outcome.blow; // on a relay body this already carries the owed echo
-    if (!(raw > 0)) { zeroDamage += 1; if (engine.killed) { termination = 'kill'; break; } next = schedule.next(); continue; }
-    // The strike listener's Flow arm: only a whole blow refreshes; read was before the blow.
-    const flowResult = flow.hit(next.t, { whole: outcome.whole, eligible: flowByHand[hand] });
+    // The listener predicate is the PRE-PULL, PRE-TRAIT formula damage (`formulaPositive`), not the post-trait `blow`.
+    // On melee the two agree because boss resistance never takes a positive damage below 1; the name is the source's.
+    const eligible = outcome.formulaPositive === true;
+    // The strike listener's Flow arm: only a whole, eligible blow refreshes; the stack read was before the blow.
+    const flowResult = flow.hit(t, { whole: outcome.whole, eligible: eligible && flowByHand[hand] });
     if (flowResult.built) flowBuilds += 1;
+    if (!(raw > 0)) {
+      zeroDamage += 1;
+      if (traceAll) traceAll.push({
+        t, hand, segment: index, share, warded: false, raw, claim: null,
+        hit: outcome.hit, whole: outcome.whole, echoMask: outcome.echoMask, echoHits: outcome.echoHits,
+        stacksBefore: flowResult.before, stacksAfter: flowResult.after, flowUntil: flowResult.until, flowBuilt: flowResult.built,
+        got: 0, accepted: false, reason: 'zero', bucket: engine.bucket, tokens: engine.tokens, hp: engine.hp,
+      });
+      if (engine.killed) { termination = 'kill'; break; }
+      if (!provided) next = schedule.next();
+      continue;
+    }
     // The host's wire rounds the final number and sends nothing below 1 (gateCourt.hit). Flow and echo already ran.
     const claim = Math.round(raw);
-    if (!(claim >= 1)) { roundedZero += 1; if (engine.killed) { termination = 'kill'; break; } next = schedule.next(); continue; }
-    const result = engine.claim({ t: next.t, damage: claim });
+    if (!(claim >= 1)) {
+      roundedZero += 1;
+      if (traceAll) traceAll.push({
+        t, hand, segment: index, share, warded: false, raw, claim: null,
+        hit: outcome.hit, whole: outcome.whole, echoMask: outcome.echoMask, echoHits: outcome.echoHits,
+        stacksBefore: flowResult.before, stacksAfter: flowResult.after, flowUntil: flowResult.until, flowBuilt: flowResult.built,
+        got: 0, accepted: false, reason: 'rounded-zero', bucket: engine.bucket, tokens: engine.tokens, hp: engine.hp,
+      });
+      if (engine.killed) { termination = 'kill'; break; }
+      if (!provided) next = schedule.next();
+      continue;
+    }
+    const result = engine.claim({ t, damage: claim });
     claims += 1;
+    if (traceAll) traceAll.push({
+      t, hand, segment: index, share, warded: false, raw, claim,
+      hit: outcome.hit, whole: outcome.whole, echoMask: outcome.echoMask, echoHits: outcome.echoHits,
+      stacksBefore: flowResult.before, stacksAfter: flowResult.after, flowUntil: flowResult.until, flowBuilt: flowResult.built,
+      got: result.got, accepted: result.accepted, reason: result.reason,
+      bucket: result.bucketAfter, tokens: result.tokensAfter, hp: result.hpAfter,
+    });
     if (trace) {
       trace.push({
-        t: next.t, hand, segment: index, share, claim,
+        t, hand, segment: index, share, claim,
         hit: outcome.hit, whole: outcome.whole, echoMask: outcome.echoMask, echoHits: outcome.echoHits,
         stacksBefore: flowResult.before, stacksAfter: flowResult.after, flowUntil: flowResult.until,
         flowBuilt: flowResult.built,
@@ -170,7 +230,7 @@ export function simulateRelayFight(ch, args = {}) {
       });
     }
     if (engine.killed) { termination = 'kill'; break; }
-    next = schedule.next();
+    if (!provided) next = schedule.next();
   }
 
   const s = engine.summary();
@@ -229,6 +289,7 @@ export function simulateRelayFight(ch, args = {}) {
     schedule: schedule.assumptions,
     target,
     trace,
+    traceAll,
     with: (edit = {}) => simulateRelayFight(ch, { ...args, ...edit }),
   };
 }

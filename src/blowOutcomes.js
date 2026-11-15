@@ -250,6 +250,7 @@ function finish(outcome, o, cap) {
   return Object.assign(outcome, {
     blow, echoDamage, damage: blow + echoDamage, claim, cappedDamage: claim + echoDamage,
     echoMask: o.echoMask ?? 0, echoHits: o.echoHits ?? 0, echoEligible: o.echoEligible === true,
+    formulaPositive: o.formulaPositive === true,
   });
 }
 
@@ -285,7 +286,7 @@ export function mergeToFightTier(full) {
   const outcomes = [...groups.values()].map(({ first: o, sum }) => Object.freeze({
     p: sum.value,
     direction: o.direction, directionIndex: o.directionIndex, facing: o.facing, backstab: o.backstab,
-    crit: o.crit, hit: o.hit, whole: o.whole, echoMask: o.echoMask, echoHits: o.echoHits,
+    crit: o.crit, hit: o.hit, whole: o.whole, echoMask: o.echoMask, echoHits: o.echoHits, echoEligible: o.echoEligible === true, formulaPositive: o.formulaPositive === true,
     blow: o.blow, echoDamage: o.echoDamage, damage: o.damage, claim: o.claim, cappedDamage: o.cappedDamage,
   }));
   outcomes.sort((a, b) => a.directionIndex - b.directionIndex
