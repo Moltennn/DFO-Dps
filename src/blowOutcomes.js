@@ -223,12 +223,16 @@ export function blowOutcomes(ch, args = {}) {
   });
 
   const total = outcomes.reduce((s, o) => s + o.p, 0);
+  const flowPower = [...heldPowers, ...powerAdditions].find((p) => p?.kind === 'flow') ?? null;
   return {
     kind: 'full', exact: true, hand, cap,
     directions: swingKeys,
     outcomes, total,
     meta: {
       geared, relay, offHand, echoes: [...echoes], potentVs: strikes, bow: !!bow,
+      hand,
+      // the value the tier's loot percentage actually read; null when no Flow power rides this hand
+      flowStacks: flowPower ? num(simOpts.flowStacks, num(flowPower.max, 1)) : null,
       backstab: { behind, uptime: backUptime, chance: backProb, skill: backSkill },
     },
   };

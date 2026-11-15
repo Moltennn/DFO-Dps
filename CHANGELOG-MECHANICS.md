@@ -6,6 +6,29 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage 3.4.3 - tier-input evidence and echo verification (2026-11-16)
+
+**No supported melee numbers moved.** `relayClaim.js` is untouched and plain-build identity is unchanged.
+
+**What changed.**
+- `blowFightTier` metadata now carries `hand` and the `flowStacks` value the tier's loot percentage actually read
+  (`src/blowOutcomes.js` meta; `null` when no Flow power rides that hand). `relayFight` exposes `tierStacks`/`tierHand`
+  from `d.tier.meta`, not from the compositor's cached arguments. The real-sampler test now asserts the tier metadata;
+  forcing `flowStacks: 5` or `hand: 'main'` into the `blowFightTier` call makes it fail (mutation runs below).
+- The event-seam oracle now supplies the **pre-echo** host blow and the **resisted echo** separately. The local seam
+  composes them into the claim and derives the echo count by popcount of the upstream echo mask; the test asserts the
+  upstream host equals blow + echo, the claim is the rounded sum, and the local echo count equals the popcount of the
+  upstream mask. The production tier still carries the echo inside `outcome.blow`.
+- Echo distribution remains independently covered by `test/relayEchoDifferential.test.js` (200,000 actual upstream
+  draws). No event-by-event RNG equivalence between the production sampler and upstream is claimed.
+- **Mutation checks:** in a throwaway copy of this tree, forcing `flowStacks: 5` into the production
+  `blowFightTier` call made the real-sampler test **0 pass / 2 fail**; forcing `hand: 'main'` made it **1 pass / 1
+  fail**. Both are detected by the new metadata assertions.
+
+Full suite **551 tests, 551 pass**; vendor 289/122; parity **1855/1855**.
+
+---
+
 ## Stage 3.4.2 - ranged refusal, merge-key and compositor evidence (2026-11-16)
 
 **No supported melee numbers moved.** `src/relayClaim.js` is untouched and the plain-build path is unchanged where no
@@ -54,7 +77,7 @@ Full suite **551 tests, 551 pass**; vendor 289/122; parity **1855/1855**.
 - **Whole-compositor differential** `test/relayFightDifferential.test.js` (5): an upstream oracle drives
   `calculateAttackDamage`/`lootStrike` with a seeded Flow clock, `takeOwed`, `bossStrikeAt`, host rounding and
   `applyHit`, then feeds the same upstream outcomes to the local event seam. It compares per-event Flow before/after,
-  claim, got, bucket, tokens, health, echo and ward for both-hand expiry/refresh, Echo+Flow on different hands with
+  claim, got, bucket, tokens and health for both-hand expiry/refresh, Echo+Flow on different hands with
   bladeturning, the exact shield boundary, Potent Vs misses and Flow on a relay-refused claim. The local tier's own
   many-endings distribution is separately compared with 200,000 upstream draws in `test/relayEchoDifferential.test.js`.
 - `test/relayClaimFight.test.js` test 4 now covers the bow/gun and missing-relay-body refusals and one supported echo.

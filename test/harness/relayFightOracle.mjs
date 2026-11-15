@@ -76,10 +76,13 @@ export async function upstreamRelayEvents(u, {
       const whole = strikeInfo ? strikeInfo.blow !== false : true;
       let sent = 0;
       let got = 0;
+      let preEchoBlow = 0;
+      let echoDamage = 0;
       let hostBlow = 0;
       if (!warded && raw > 0) {
-        hostBlow = u.bossTraits.bossStrikeAt(body, raw, 'melee', w, null, false, null)
-          + (owed > 0 ? u.bossTraits.bossStrikeAt(body, owed, 'melee', w, null, false, null) : 0);
+        preEchoBlow = u.bossTraits.bossStrikeAt(body, raw, 'melee', w, null, false, null);
+        echoDamage = owed > 0 ? u.bossTraits.bossStrikeAt(body, owed, 'melee', w, null, false, null) : 0;
+        hostBlow = preEchoBlow + echoDamage;
         sent = Math.round(hostBlow);
         if (sent >= 1) got = G.applyHit(f, 'me', sent, G.HIT_KINDS.Melee, pose, now * 1000);
       }
@@ -88,11 +91,12 @@ export async function upstreamRelayEvents(u, {
         hit: notes ? !!notes.hit : false,
         echoHits: owed > 0 ? 1 : 0,
         flowBefore, flowAfter: flowStacks(now),
-        sent, hostBlow, got, accepted: got > 0,
+        sent, hostBlow, preEchoBlow, echoDamage, got, accepted: got > 0,
         bucket: p.bucket, tokens: p.rate, hp: f.hp, clipped: p.clipped,
         outcome: {
           hit: notes ? !!notes.hit : false, whole, formulaPositive: raw > 0,
-          blow: warded ? 0 : hostBlow,
+          blow: warded ? 0 : preEchoBlow,
+          echoDamage: warded ? 0 : echoDamage,
           echoMask: owed > 0 ? 1 : 0, echoHits: owed > 0 ? 1 : 0,
         },
       });

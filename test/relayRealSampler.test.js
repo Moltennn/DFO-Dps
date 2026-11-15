@@ -40,8 +40,8 @@ async function flowFromTrace(trace, desc, items) {
       now = row.t;
       const upItem = items[row.hand];
       if (!upItem) {
-        // no Flow power on this hand: the tier still saw the global stack and this hand
-        assert.equal(row.tierStacks, flowStacks(now));
+        // no Flow power on this hand: the tier reports no Flow input, whatever the global state is
+        assert.equal(row.tierStacks, null);
         assert.equal(row.tierHand, row.hand);
         assert.equal(row.stacksAfter, flowStacks(now));
         continue;
@@ -98,7 +98,8 @@ test('real sampler: Flow on one hand and Many Endings on the other', async () =>
   const echoes = r.trace.filter((x) => x.hand === 'main' && x.echoHits > 0).length;
   const p = 0.1;
   assert.ok(Math.abs(echoes - mainClaims * p) <= 4 * Math.sqrt(mainClaims * p * (1 - p)), `echoes ${echoes}/${mainClaims}`);
-  assert.ok(r.trace.every((x) => x.tierStacks === x.stacksBefore));
+  assert.ok(r.trace.filter((x) => x.hand === 'off').every((x) => x.tierStacks === x.stacksBefore));
+  assert.ok(r.trace.filter((x) => x.hand === 'main').every((x) => x.tierStacks === null));
   assert.ok(r.trace.every((x) => x.tierHand === x.hand));
   // the main hand carries no Flow power: its claims must not move the global Flow state
   await flowFromTrace(r.trace, BASIC(), { off: oracleItem(off) });

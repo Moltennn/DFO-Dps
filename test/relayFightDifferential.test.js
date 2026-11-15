@@ -33,6 +33,8 @@ const echoItem = () => ({ ...sword(), rarity: 'rare', imprint: 'warp-edge' });
 const pvItem = () => ({ ...sword(), enchantments: [{ type: 4, param: 1 }] });
 const near = (a, b) => Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(a), Math.abs(b));
 
+const popcount = (mask) => { let n = 0; for (let m = mask | 0; m; m >>>= 1) n += m & 1; return n; };
+
 async function compare({ desc, item, offItem = null, events, pool = 1e9, level = 45, seed = 1, fresh = true, shieldUntil = 0, traits = [] }) {
   const u = await upstream();
   const { body } = await upstreamBody({ kind: 'standIn', mobile: 31 });
@@ -64,8 +66,12 @@ async function compare({ desc, item, offItem = null, events, pool = 1e9, level =
     assert.ok(near(a.tokens, b.tokens), `${at}: tokens ${a.tokens} vs ${b.tokens}`);
     assert.ok(near(a.hp, b.hp), `${at}: hp ${a.hp} vs ${b.hp}`);
     assert.equal(a.accepted, b.accepted, `${at}: accepted`);
-    // echoHits is an upstream outcome input in this seam; its distribution is independently checked in
-    // test/relayEchoDifferential.test.js, so it is not asserted against itself here.
+    // The oracle separates the pre-echo and echo components; the local compositor must compose them into the claim.
+    assert.ok(near(b.hostBlow, b.outcome.blow + b.outcome.echoDamage), `${at}: upstream host = blow + echo`);
+    assert.equal(a.echoHits ?? 0, popcount(b.outcome.echoMask), `${at}: echo count from the upstream mask`);
+    if (b.outcome.echoDamage > 0) {
+      assert.ok(near(expectedClaim, Math.round(b.outcome.blow + b.outcome.echoDamage)), `${at}: echo in claim`);
+    }
   }
   return { local, up };
 }

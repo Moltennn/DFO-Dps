@@ -133,7 +133,7 @@ export function simulateRelayFight(ch, args = {}) {
       ...scenario, target, health, healthShare: mid, hand, flowStacks: stacks,
       ...(dual && !scenario.dual ? { dual: true } : {}),
     });
-    d = { tier, sampler: createBlowSampler(tier), mid, stacks, hand };
+    d = { tier, sampler: createBlowSampler(tier), mid };
     cache.set(key, d);
     return d;
   };
@@ -173,9 +173,16 @@ export function simulateRelayFight(ch, args = {}) {
     } else {
       const dist = distribution(index, hand, stackedBefore);
       outcome = dist.sampler.sample(blowStream);
-      tierStacks = dist.stacks;
-      tierHand = dist.hand;
+      tierStacks = dist.tier.meta.flowStacks;
+      tierHand = dist.tier.meta.hand;
     }
+    // Echo count is derived from the mask, not copied from a supplied count.
+    const popcount = (mask) => {
+      let n = 0;
+      for (let m = mask | 0; m; m >>>= 1) n += m & 1;
+      return n;
+    };
+    const echoHits = popcount(outcome.echoMask);
     // The client's ward flag is the phase shield evaluated for this attack (gateCourt.target/body): no Flow, no echo,
     // no claim. The engine keeps its own shield clock too, but the compositor never sends a warded claim.
     const warded = t < shieldUntil;
@@ -184,7 +191,7 @@ export function simulateRelayFight(ch, args = {}) {
       if (traceAll) traceAll.push({
         t, hand, segment: index, share, warded: true, raw: null, claim: null,
         tierStacks, tierHand,
-        hit: outcome.hit, whole: outcome.whole, echoMask: outcome.echoMask, echoHits: outcome.echoHits,
+        hit: outcome.hit, whole: outcome.whole, echoMask: outcome.echoMask, echoHits,
         stacksBefore: stackedBefore, stacksAfter: stackedBefore, flowUntil: flow.until, flowBuilt: false,
         got: 0, accepted: false, reason: 'warded', bucket: engine.bucket, tokens: engine.tokens, hp: engine.hp,
       });
@@ -192,7 +199,10 @@ export function simulateRelayFight(ch, args = {}) {
       if (!provided) next = schedule.next();
       continue;
     }
-    const raw = outcome.blow; // on a relay body this already carries the owed echo
+    // A relay tier's `blow` already carries the owed echo (echoDamage 0). The event seam receives the pre-echo and echo
+    // components separately from upstream, so the compositor composes them here; production is unchanged.
+    const echoDamage = provided ? Math.max(0, num(outcome.echoDamage, 0)) : 0;
+    const raw = outcome.blow + echoDamage;
     // The listener predicate is the PRE-PULL, PRE-TRAIT formula damage (`formulaPositive`), not the post-trait `blow`.
     // On melee the two agree because boss resistance never takes a positive damage below 1; the name is the source's.
     const eligible = outcome.formulaPositive === true;
@@ -204,7 +214,7 @@ export function simulateRelayFight(ch, args = {}) {
       if (traceAll) traceAll.push({
         t, hand, segment: index, share, warded: false, raw, claim: null,
         tierStacks, tierHand,
-        hit: outcome.hit, whole: outcome.whole, echoMask: outcome.echoMask, echoHits: outcome.echoHits,
+        hit: outcome.hit, whole: outcome.whole, echoMask: outcome.echoMask, echoHits,
         stacksBefore: flowResult.before, stacksAfter: flowResult.after, flowUntil: flowResult.until, flowBuilt: flowResult.built,
         got: 0, accepted: false, reason: 'zero', bucket: engine.bucket, tokens: engine.tokens, hp: engine.hp,
       });
@@ -219,7 +229,7 @@ export function simulateRelayFight(ch, args = {}) {
       if (traceAll) traceAll.push({
         t, hand, segment: index, share, warded: false, raw, claim: null,
         tierStacks, tierHand,
-        hit: outcome.hit, whole: outcome.whole, echoMask: outcome.echoMask, echoHits: outcome.echoHits,
+        hit: outcome.hit, whole: outcome.whole, echoMask: outcome.echoMask, echoHits,
         stacksBefore: flowResult.before, stacksAfter: flowResult.after, flowUntil: flowResult.until, flowBuilt: flowResult.built,
         got: 0, accepted: false, reason: 'rounded-zero', bucket: engine.bucket, tokens: engine.tokens, hp: engine.hp,
       });
@@ -232,7 +242,7 @@ export function simulateRelayFight(ch, args = {}) {
     if (traceAll) traceAll.push({
       t, hand, segment: index, share, warded: false, raw, claim,
       tierStacks, tierHand,
-      hit: outcome.hit, whole: outcome.whole, echoMask: outcome.echoMask, echoHits: outcome.echoHits,
+      hit: outcome.hit, whole: outcome.whole, echoMask: outcome.echoMask, echoHits,
       stacksBefore: flowResult.before, stacksAfter: flowResult.after, flowUntil: flowResult.until, flowBuilt: flowResult.built,
       got: result.got, accepted: result.accepted, reason: result.reason,
       bucket: result.bucketAfter, tokens: result.tokensAfter, hp: result.hpAfter,
@@ -241,7 +251,7 @@ export function simulateRelayFight(ch, args = {}) {
       trace.push({
         t, hand, segment: index, share, claim,
         tierStacks, tierHand,
-        hit: outcome.hit, whole: outcome.whole, echoMask: outcome.echoMask, echoHits: outcome.echoHits,
+        hit: outcome.hit, whole: outcome.whole, echoMask: outcome.echoMask, echoHits,
         stacksBefore: flowResult.before, stacksAfter: flowResult.after, flowUntil: flowResult.until,
         flowBuilt: flowResult.built,
         got: result.got, clipped: result.clipped, bucketClip: result.bucketClip,
