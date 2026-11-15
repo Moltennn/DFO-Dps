@@ -38,8 +38,10 @@ export const CONFIGS = [
     fields: { rarity: 'rare', imprint: 'warp-edge', enchantments: [PV] }, echoPower: 'warp-edge',
     target: 'relay', traits: ['bladeturning'], cap: 0, uptime: 0.5, seed: 0x3103, draws: 400000,
   },
+  // A hypothetical two-echo what-if: the game has only one echo power (`warp-edge`), so the oracle drives two
+  // lootStrike calls from one item to test the local multi-branch expansion; it is not a real upstream item.
   {
-    id: '4 same build, two echo powers', desc: STRONG(), template: 121,
+    id: '4 same build, two echo powers (what-if)', desc: STRONG(), template: 121,
     fields: { rarity: 'rare', imprint: 'warp-edge', enchantments: [PV] }, echoPower: 'warp-edge', echoCalls: 2,
     target: 'relay', traits: ['bladeturning'], cap: 24, uptime: 0.5, seed: 0x3104, draws: 400000,
   },
@@ -62,6 +64,13 @@ export const CONFIGS = [
     id: '10 echo on an ordinary foe (its own hit)', desc: BASIC(), template: 121, fields: { rarity: 'rare', imprint: 'warp-edge' },
     echoPower: 'warp-edge', target: 'worn', pieces: [], door: true, cap: 0, seed: 0x310b, draws: 300000,
   },
+  {
+    id: '11 gun (Thunderlock), neutral direction', desc: BASIC(), template: 560, gun: true,
+    target: 'reference', seed: 0x310c, draws: 200000,
+  },
+  {
+    id: '12 fists', desc: BASIC(), template: null, target: 'reference', seed: 0x310d, draws: 200000,
+  },
 ];
 
 /** The local target a scenario names. */
@@ -75,7 +84,7 @@ export function localTarget(cfg) {
 }
 
 /** The item as this project holds it. */
-export const localItem = (cfg) => ({ ...weapon(cfg.template, { material: 9 }), ...(cfg.fields ?? {}) });
+export const localItem = (cfg) => (cfg.template == null ? null : { ...weapon(cfg.template, { material: 9 }), ...(cfg.fields ?? {}) });
 
 /** The local build and the arguments for `blowOutcomes` / `analyze` (the hand named by the scenario). */
 export function localSide(cfg) {
@@ -88,7 +97,7 @@ export function localSide(cfg) {
     extra.dual = true;
   }
   const args = {
-    target: localTarget(cfg), core: 'overhaul', weapon: weaponOf(item), backstabUptime: cfg.uptime ?? 0, ...extra,
+    target: localTarget(cfg), core: 'overhaul', weapon: item ? weaponOf(item) : null, backstabUptime: cfg.uptime ?? 0, ...extra,
     ...(cfg.echoCalls === 2 ? { imprints: [{ kind: 'echo', chance: 10 }] } : {}),
   };
   return { ch, item, args, hand: cfg.hand ?? 'main' };

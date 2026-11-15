@@ -17,6 +17,8 @@ import assert from 'node:assert/strict';
 import { analyze, referenceFoe, weaponOf, SWING_DIRECTIONS } from '../src/model.js';
 import { blowOutcomes, mergeToFightTier, blowFightTier, tierMeans, createBlowSampler, TOLERANCE } from '../src/blowOutcomes.js';
 import { createRng } from '../src/rng.js';
+import { PCAAO_BODY_PARTS } from '../src/data.js';
+import { powerOf } from '../vendor/upstream/a3eb1605/src/systems/loot/lootRarity.js';
 import { character, simCharacter, weapon } from './harness/fixtures.mjs';
 import { CONFIGS, localSide, localTarget } from './harness/blowConfigs.mjs';
 import { compareCounts, jointKey } from './harness/blowOracle.mjs';
@@ -65,6 +67,68 @@ test('2. the distribution is the same pipeline as analyze(): its means equal the
   }
   const pair = blowFightTier(ch, { ...args, hand: 'off' });
   assert.ok(near(tierMeans(pair).cappedPerSwing, analyze(ch, { ...args, offHand: true }).cappedPerSwing, 1e-12), 'offHand: true');
+});
+
+test('3a. exact independent branch probabilities: direction, body part, whole, backstab and echo', () => {
+  // direction: the upstream six-strike table, exactly one sixth each
+  const dirDesc = character({ level: 30, raceId: 1, stats: { strength: 70, agility: 60, speed: 60, luck: 50 }, skills: 0, skillOverride: { 29: 70, 34: 40 } });
+  const dirItem = weapon(121, { material: 9 });
+  const dirCh = simCharacter(dirDesc, dirItem);
+  const dir = blowFightTier(dirCh, { target: referenceFoe(30, 'tough'), weapon: weaponOf(dirItem) });
+  assert.equal(dir.directions.length, 6);
+  for (let i = 0; i < 6; i++) assert.ok(near(dir.outcomes.filter((o) => o.directionIndex === i).reduce((s, o) => s + o.p, 0), 1 / 6, 1e-12));
+
+  // body part: the 20-slot upstream table's seven counts, exactly
+  const counts = new Array(7).fill(0);
+  for (const part of PCAAO_BODY_PARTS) counts[part]++;
+  const full = blowOutcomes(dirCh, { target: referenceFoe(30, 'tough'), weapon: weaponOf(dirItem) });
+  for (let part = 0; part < 7; part++) {
+    const p = full.outcomes.filter((o) => o.part === part).reduce((s, o) => s + o.p, 0);
+    assert.ok(near(p, counts[part] / PCAAO_BODY_PARTS.length, 1e-12), `part ${part}: ${p}`);
+  }
+
+  // off-hand whole: the upstream 80% weight, and the two branches sum to the landed/missed total
+  const off = blowFightTier(dirCh, { target: referenceFoe(30, 'tough'), weapon: weaponOf(dirItem), hand: 'off' });
+  assert.ok(near(off.outcomes.filter((o) => o.whole).reduce((s, o) => s + o.p, 0), 0.8, 1e-12));
+
+  // backstab: Backstabbing / 100 of the landed facing blows (the x3 is rolled on a hit only)
+  const stabDesc = character({ level: 30, raceId: 1, stats: { strength: 70, agility: 60, speed: 60, luck: 50 }, skills: 0, skillOverride: { 29: 70, 34: 40, 19: 50 } });
+  const stab = blowFightTier(simCharacter(stabDesc, dirItem), { target: referenceFoe(30, 'tough'), weapon: weaponOf(dirItem), backstabUptime: 0.5 });
+  const hitFacing = stab.outcomes.filter((o) => o.facing && o.hit).reduce((s, o) => s + o.p, 0);
+  const backstab = stab.outcomes.filter((o) => o.backstab).reduce((s, o) => s + o.p, 0);
+  assert.ok(near(backstab / hitFacing, 50 / 100, 1e-12), `backstab share ${backstab / hitFacing}`);
+
+  // echo: one and two powers, against the independent product of the upstream chances
+  const echoChance = powerOf('warp-edge').chance / 100;
+  for (const cfg of CONFIGS.filter((c) => c.echoPower)) {
+    const { ch, args } = localSide(cfg);
+    const cfgFull = blowOutcomes(ch, args);
+    const eligible = cfgFull.outcomes.filter((o) => o.echoEligible).reduce((s, o) => s + o.p, 0);
+    const masks = [0, 1, 2, 3].map((mask) => cfgFull.outcomes.filter((o) => o.echoEligible && o.echoMask === mask).reduce((s, o) => s + o.p, 0));
+    const n = cfg.echoCalls === 2 ? 2 : 1;
+    for (let mask = 0; mask < (1 << n); mask++) {
+      let expected = 1;
+      for (let k = 0; k < n; k++) expected *= (mask >> k) & 1 ? echoChance : 1 - echoChance;
+      assert.ok(near(masks[mask] / eligible, expected, 1e-12), `${cfg.id}: echo mask ${mask}: ${masks[mask] / eligible} vs ${expected}`);
+    }
+    if (n === 1) assert.equal(masks[2] + masks[3], 0, `${cfg.id}: one power cannot set bit 2`);
+  }
+});
+
+test('3b. every fight-tier field is either preserved or derivable from the merge key', () => {
+  for (const cfg of CONFIGS) {
+    const { ch, args, hand } = localSide(cfg);
+    const full = blowOutcomes(ch, { ...args, hand });
+    const fight = mergeToFightTier(full);
+    assert.ok(full.outcomes.every((o) => Number.isInteger(o.part) && 'roll' in o && 'preFinish' in o && 'card' in o), `${cfg.id}: the full tier keeps part and roll fields`);
+    for (const o of fight.outcomes) {
+      assert.ok(!('part' in o) && !('roll' in o) && !('preFinish' in o) && !('card' in o), `${cfg.id}: the fight tier marginalises part/roll detail`);
+      assert.equal(o.damage, o.blow + o.echoDamage, `${cfg.id}: damage derives`);
+      assert.equal(o.claim, fight.cap > 0 ? Math.min(o.blow, fight.cap) : o.blow, `${cfg.id}: claim derives`);
+      assert.equal(o.cappedDamage, o.claim + o.echoDamage, `${cfg.id}: capped derives`);
+      assert.equal(o.echoHits, [...Array(8)].filter((_, i) => (o.echoMask >> i) & 1).length, `${cfg.id}: echo hits derive from the mask`);
+    }
+  }
 });
 
 test('3. the merge keeps every distinction the fight needs: nothing is merged only because damage matches', () => {
@@ -163,10 +227,22 @@ test('5. the sampler: a documented CDF mapping with safe boundaries', () => {
   for (const bad of [1, 1.5, -0.1, NaN, Infinity]) assert.throws(() => sampler.outcomeAt(bad), RangeError, String(bad));
   // every outcome owns exactly the interval its probability names (boundaries included)
   let cum = 0;
-  for (const o of live) {
+  for (let i = 0; i < live.length; i++) {
+    const o = live[i];
     const mid = (cum + o.p / 2) / sampler.total;
     assert.equal(sampler.outcomeAt(Math.min(mid, 1 - 2 ** -53)), o, 'the middle of an outcome\'s interval maps to it');
     cum += o.p;
+    // exact CDF boundaries: [previous cumulative, this cumulative) belongs to this outcome; the boundary itself
+    // belongs to the next (half-open intervals, the documented mapping)
+    if (i + 1 < live.length) {
+      const boundary = cum / sampler.total;
+      // the table's internal CDF is accumulated with compensation; a boundary read from a naive sum differs by
+      // a few ulps, so step 1e-12 across it rather than demanding bitwise the same index
+      const above = Math.min(1 - 2 ** -53, boundary + 1e-12);
+      const below = Math.max(0, boundary - 1e-12);
+      assert.equal(sampler.outcomeAt(above), live[i + 1], 'just above the boundary is the next interval');
+      assert.equal(sampler.outcomeAt(below), o, 'just below the boundary stays here');
+    }
   }
   // a zero-probability outcome is never returned, and a table of one outcome always returns it
   const withZero = { ...fight, outcomes: [{ ...live[0], p: 0 }, ...live] };

@@ -70,7 +70,9 @@ class Sum {
 }
 
 /**
- * The full-tier distribution of ONE blow (one hand).
+ * The full-tier distribution of ONE blow (one hand). Every full outcome also carries `echoEligible`: whether the
+ * final formula damage was greater than zero, i.e. whether an echo could be rolled at all. It is a full-tier field
+ * because the fight tier already resolves the echo into `echoMask` / `echoDamage`.
  *
  * @param {object} ch   the build, as `analyze` reads it
  * @param {object} args the `analyze` scenario (target, core, weapon, traits, health, swing, backstabUptime, imprints,
@@ -247,7 +249,7 @@ function finish(outcome, o, cap) {
   const claim = cap > 0 ? Math.min(blow, cap) : blow;
   return Object.assign(outcome, {
     blow, echoDamage, damage: blow + echoDamage, claim, cappedDamage: claim + echoDamage,
-    echoMask: o.echoMask ?? 0, echoHits: o.echoHits ?? 0,
+    echoMask: o.echoMask ?? 0, echoHits: o.echoHits ?? 0, echoEligible: o.echoEligible === true,
   });
 }
 
@@ -260,6 +262,14 @@ const keyOf = (o) => [
  * The fight tier: the full tier merged on (direction, facing, backstab, critical, hit, whole, echo mask, blow, echo
  * hit). Body part, roll index and the card value are marginalised away; every other distinction survives, so two
  * outcomes with equal damage but different crit, direction, hit or whole stay apart. Sorted deterministically.
+ *
+ * Why the omitted fields are safe:
+ *   damage      = blow + echoDamage (both in the key)
+ *   claim       = min(blow, cap) (the tier's `cap` is fixed; the cap is not random)
+ *   cappedDamage= claim + echoDamage (both in the key and the tier cap)
+ *   echoHits    = popcount(echoMask) (one bit per echo power)
+ * Body part and roll index have already changed the blow through armour/shield/material/condition; no downstream
+ * Stage 3.1 mechanic reads either. The full tier keeps them for inspection and for a future stage that needs them.
  */
 export function mergeToFightTier(full) {
   const groups = new Map();

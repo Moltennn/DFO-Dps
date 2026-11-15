@@ -8,6 +8,18 @@ does not belong here (use the commit message).
 
 ---
 
+## Stage 3.1 audit follow-up - independent distribution checks (2026-11-16)
+
+Added a gun scenario, a fists scenario, exact upstream probability checks for the critical roll, direction/body-part
+tables and shield block, exact local branch checks for direction, body part, off-hand `whole`, backstab and one/two
+echo powers, and a derivation test for `damage` / `claim` / `cappedDamage` / `echoHits`. The full tier now records
+`echoEligible`; the fight tier still derives the resolved fields from its merge key. The two-echo case is a what-if:
+the game has one echo power, so the oracle drives two `lootStrike` calls and this is not a real item.
+
+Full suite **488 tests, 488 pass**; vendor 289/122; parity **1855/1855**.
+
+---
+
 ## Stage 3.1 - seeded RNG and the exact per-blow outcome distribution (2026-11-16)
 
 **No number moved.** `analyze`, `fight`, `fightRelay`, the objectives and every table are unchanged; this stage adds `src/rng.js` and
@@ -15,8 +27,8 @@ does not belong here (use the commit message).
 outcomes carry `echoMask` / `echoHits` (new fields; no existing reader uses them).
 
 What it adds: the full, fight and sampling tiers of one blow (the assumptions register M28), a seeded named-stream RNG, and the oracle
-harness `test/harness/blowOracle.mjs`. Verified: the distribution's means equal `analyze` to 1e-12 for all eleven scenarios; the joint
-distribution matches 300,000-500,000 upstream draws per scenario (chi-square z within +-1.3, max cell z 4.3 over up to 1,347 cells);
+harness `test/harness/blowOracle.mjs`. Verified: the distribution's means equal `analyze` to 1e-12 for all scenarios; the joint
+distribution matches 200,000-500,000 upstream draws per scenario (chi-square z within +-1.3, max cell z 4.3 over up to 1,347 cells);
 three negative controls are rejected (chi-square z 216-304). The first enumeration labelled a miss in the x3 branch `backstab`; a
 local test caught it (the x3 is rolled on a hit only) and it was fixed before the differential ran.
 

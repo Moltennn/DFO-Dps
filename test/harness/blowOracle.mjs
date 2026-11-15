@@ -38,7 +38,7 @@ export const jointKey = (o) => [
  *   door (true: an ordinary foe the host holds - the echo is its own hit)
  */
 export function sampleJointBlow(u, {
-  desc, item, body, hand = 'main', seed, draws, traits = [], cap = 0, uptime = 0, bow = false, echoPower = null, echoCalls = 1, door = false,
+  desc, item, body, hand = 'main', seed, draws, traits = [], cap = 0, uptime = 0, bow = false, gun = false, echoPower = null, echoCalls = 1, door = false,
 }) {
   const rng = generator(seed);
   const attacker = upstreamEntity(desc);
@@ -66,11 +66,12 @@ export function sampleJointBlow(u, {
   const skillsBefore = JSON.stringify(attacker.skills);
   try {
     for (let i = 0; i < draws; i++) {
-      const directionIndex = bow ? 0 : Math.floor(rng() * u.playerWeapon.CLICK_ATTACK_DIRECTIONS.length);
-      const strike = bow ? 'StrikeDown' : u.anims.DIRECTION_TO_STRIKE[u.playerWeapon.CLICK_ATTACK_DIRECTIONS[directionIndex]];
+      const forced = bow ? 'StrikeDown' : gun ? 'StrikeLeft' : null;
+      const directionIndex = forced ? 0 : Math.floor(rng() * u.playerWeapon.CLICK_ATTACK_DIRECTIONS.length);
+      const strike = forced ?? u.anims.DIRECTION_TO_STRIKE[u.playerWeapon.CLICK_ATTACK_DIRECTIONS[directionIndex]];
       const mods = u.playerWeapon.SWING_MODS[strike];
       const facing = uptime > 0 ? rng() < uptime : false;
-      const w = { ...item };
+      const w = item ? { ...item } : null;
       slots[slot] = w;
       const opts = {
         weapon: w, rolls: wrapped, damageMod: mods.damage, toHitMod: mods.toHit, backstabChance: facing ? backSkill : 0,

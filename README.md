@@ -198,8 +198,10 @@ npm run vendor:verify
 npm run vendor:parity -- --from <upstream-checkout>
 ```
 
-The current checkout has 482 tests. The vendored tree is hash-checked; vendor
-parity compares the vendored subset with the full pinned checkout.
+The suite covers the combat model, the per-blow distribution, the seeded RNG,
+the differential/golden/vendor checks and the Stage 3 distribution oracle. The
+vendored tree is hash-checked; vendor parity compares the vendored subset with
+the full pinned checkout.
 
 ## Documentation map
 

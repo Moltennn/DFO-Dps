@@ -22,18 +22,20 @@ import assert from 'node:assert/strict';
 
 import { weaponOf } from '../src/model.js';
 import { blowOutcomes, blowFightTier, mergeToFightTier, tierMeans } from '../src/blowOutcomes.js';
+import { targetPartOutcomes } from '../src/target.js';
 import { upstream, pcaaoModules, referenceFoe } from './harness/upstream.mjs';
+import { PCAAO_BODY_PARTS } from '../src/data.js';
 import { oracleEntity, upstreamBody, upstreamWear } from './harness/upstreamBodies.mjs';
-import { upstreamWeapon, weapon } from './harness/fixtures.mjs';
-import { CAREER, CONFIGS, CUIRASS_AND_TOWER, localItem, localSide } from './harness/blowConfigs.mjs';
+import { upstreamEntity, upstreamWeapon, weapon } from './harness/fixtures.mjs';
+import { CAREER, CONFIGS, CUIRASS_AND_TOWER, localItem, localSide, localTarget } from './harness/blowConfigs.mjs';
 import { compareCounts, jointKey, sampleCoreParts, sampleJointBlow } from './harness/blowOracle.mjs';
 
 const MARGINAL_Z = 4.5;
 
 /** The upstream item and body for a scenario - built from its inputs only. */
 async function oracleSide(u, cfg) {
-  const base = upstreamWeapon(weapon(cfg.template, { material: 9 }));
-  const item = { ...base, ...(cfg.fields ?? {}), ...(cfg.fields?.enchantments ? { isIdentified: true } : {}) };
+  const base = cfg.template == null ? null : upstreamWeapon(weapon(cfg.template, { material: 9 }));
+  const item = base ? { ...base, ...(cfg.fields ?? {}), ...(cfg.fields?.enchantments ? { isIdentified: true } : {}) } : null;
   let body;
   if (cfg.target === 'reference') body = referenceFoe(u, 30, 'tough');
   else if (cfg.target === 'relay') body = oracleEntity((await upstreamBody({ kind: 'standIn', mobile: 31 })).body);
@@ -81,7 +83,7 @@ for (const cfg of CONFIGS) {
     const { item, body } = await oracleSide(u, cfg);
     const sample = sampleJointBlow(u, {
       desc: cfg.desc, item, body, hand: cfg.hand ?? 'main', seed: cfg.seed, draws: cfg.draws, traits: cfg.traits ?? [],
-      cap: cfg.cap ?? 0, uptime: cfg.uptime ?? 0, bow: !!cfg.bow, echoPower: cfg.echoPower ?? null, echoCalls: cfg.echoCalls ?? 1,
+      cap: cfg.cap ?? 0, uptime: cfg.uptime ?? 0, bow: !!cfg.bow, gun: !!cfg.gun, echoPower: cfg.echoPower ?? null, echoCalls: cfg.echoCalls ?? 1,
       door: !!cfg.door,
     });
     assert.deepEqual(sample.drift, { body: false, skills: false }, 'sampling wore nothing and trained nothing');
@@ -104,6 +106,58 @@ for (const cfg of CONFIGS) {
     assert.equal(cfg.cap > 0 && cfg.template !== 130 ? m.cappedPerSwing < m.perSwing : true, true);
   });
 }
+
+test('exact upstream probabilities: the critical roll and the direction/body-part branches', async () => {
+  const u = await upstream();
+  // the critical roll is a Dice100 over the exact integer chance; enumerate all 100 outcomes of upstream's own function
+  for (const cfg of [CONFIGS[0], CONFIGS[1], CONFIGS[4], CONFIGS[7], CONFIGS[10]]) {
+    const attacker = upstreamEntity(cfg.desc);
+    let crit = 0;
+    for (let k = 0; k < 100; k++) if (u.pcaao.pcaaoCriticalStrike(attacker, () => k / 100)) crit++;
+    const { ch, args, hand } = localSide(cfg);
+    const local = tierMeans(blowFightTier(ch, { ...args, hand })).crit;
+    assert.ok(Math.abs(local - crit / 100) <= 1e-12, `${cfg.id}: critical ${local} vs upstream ${crit / 100}`);
+  }
+  // the direction table is exactly uniform over the six strikes, and the body-part table exactly its seven counts
+  const dir = localSide(CONFIGS[0]);
+  const full = blowOutcomes(dir.ch, dir.args);
+  const counts = new Map();
+  for (const part of PCAAO_BODY_PARTS) counts.set(part, (counts.get(part) ?? 0) + 1);
+  for (let part = 0; part < 7; part++) {
+    const p = full.outcomes.filter((o) => o.part === part).reduce((s, o) => s + o.p, 0);
+    assert.ok(Math.abs(p - (counts.get(part) ?? 0) / PCAAO_BODY_PARTS.length) <= 1e-12, `body part ${part}`);
+  }
+  const dirs = new Map();
+  for (const o of full.outcomes) dirs.set(o.directionIndex, (dirs.get(o.directionIndex) ?? 0) + o.p);
+  assert.equal(dirs.size, 6);
+  for (const [i, p] of dirs) assert.ok(Math.abs(p - 1 / 6) <= 1e-12, `direction ${i}`);
+});
+
+test('exact shield-block probability: upstream\'s 100-face block roll against the local part outcome', async () => {
+  const u = await upstream();
+  const modules = pcaaoModules(u);
+  for (const idx of [8, 9]) {
+    const cfg = CONFIGS[idx];
+    const { item, body } = await oracleSide(u, cfg);
+    const local = localTarget(cfg);
+    const w = weaponOf(localItem(cfg));
+    const shield = body.equip?.slots?.[u.equip.EQUIP_SLOTS.LeftHand];
+    assert.ok(shield, `${cfg.id}: the oracle body wears its shield`);
+    const parts = u.armorMaterials.SHIELD_PARTS.get(shield.templateIndex) ?? [];
+    const natural = u.pcaao.pcaaoNaturalDamageResistance(body);
+    for (let part = 0; part < 7; part++) {
+      const strong = parts.includes(part);
+      let block = 0;
+      for (let k = 0; k < 100; k++) if (u.pcaao.pcaaoShieldBlockChanceCalculation(body, strong, shield, () => k / 100)) block++;
+      const beats = u.pcaao.pcaaoCompareShieldToUnderArmor(body, part, natural, modules);
+      const upstream = beats ? block / 100 : 0;
+      const outs = targetPartOutcomes(local, 100, part, { weapon: w });
+      const localP = outs.length === 1 ? (upstream === 0 || upstream === 1 ? upstream : NaN) : outs[0].p;
+      if (Number.isNaN(localP)) continue; // a 100% single-outcome block has no probability to read separately
+      assert.ok(Math.abs(localP - upstream) <= 1e-12, `${cfg.id}: part ${part} block ${localP} vs upstream ${upstream}`);
+    }
+  }
+});
 
 test('negative controls: the comparison rejects the pre-Stage-2.13 neutral direction and a missing Strikes payload', async () => {
   const entry = SAMPLES.get(CONFIGS[1].id);
