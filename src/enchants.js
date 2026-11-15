@@ -113,9 +113,10 @@ export function strikeEnchantments(item, ch, target, {
 
 /** Expected enchant damage per landed blow and per second. */
 export function enchantDps(item, ch, target, {
-  hit = 1, aps = 1, level = ch?.level ?? 1, potencyPct = 0, pierce = 0, cap = 0,
+  hit = 1, aps = 1, level = ch?.level ?? 1, potencyPct = 0, pierce = 0, cap = 0, standard,
 } = {}) {
-  const s = strikeEnchantments(item, ch, target, { level, potencyPct, pierce });
+  // `standard` lets a caller (a test, or a snapshot of the spellbook) supply SPELLS.STD instead of ARENA2.
+  const s = strikeEnchantments(item, ch, target, { level, potencyPct, pierce, ...(standard ? { standard } : {}) });
   // Each Cast When Strikes spell is its own hit, so each gets its own per-hit cap.
   const capOne = (v) => (cap > 0 ? Math.min(v, cap) : v);
   const procDamage = s.procs.reduce((a, p) => a + capOne(p.damage), 0);

@@ -1,18 +1,19 @@
 /* The weapons page's max character, shared by the imprint and enchant planners. */
 import { SKILLS, WEAPONS } from './data.js';
-import { analyze, expectedCapped, gateTarget, referenceFoe } from './model.js';
+import { analyze, gateTarget, referenceFoe } from './model.js';
 import { perfectSockets } from './sockets.js';
-import {
-  DAMAGE_AFFIX_MAX, GEAR_CS_LINES, GEAR_H2H_LINES, GEAR_LB_LINES, GEAR_LINE_MAX,
-  THEORY_LEVEL, theoryCharacter, theoryFists,
-} from './theory.js';
+import { legalTotals, validatePlan, slotsFor } from './gearProfile.js';
+import { THEORY_LEVEL, theoryCharacter, theoryFists } from './theory.js';
 
 const PROF_OF = Object.freeze({ ShortBlade: 1, LongBlade: 2, HandToHand: 4, Axe: 8, BluntWeapon: 16, Archery: 32 });
-const MAX_WEAPON_GEAR = GEAR_LB_LINES * GEAR_LINE_MAX;
-const MAX_CRIT_GEAR = GEAR_CS_LINES * GEAR_LINE_MAX;
-const MAX_H2H_GEAR = GEAR_H2H_LINES * GEAR_LINE_MAX;
+const SKILL_OF_FAMILY = Object.freeze({ ShortBlade: SKILLS.ShortBlade, LongBlade: SKILLS.LongBlade, HandToHand: SKILLS.HandToHand, Axe: SKILLS.Axe, BluntWeapon: SKILLS.BluntWeapon, Archery: SKILLS.Archery });
 
-export function maxCharacter(template, { firmament = false, vampire = false, race = 'darkelf' } = {}) {
+/**
+ * THE MAX CHARACTER BUILT WITH EXPLICIT GEAR (the raw builder; `maxCharacter` picks the legal budget).
+ * `gearSkill` points sit on the weapon's own skill, `gearCrit` on Critical Strike, `damagePct` is the
+ * weapon's damage line.
+ */
+export function buildMax(template, { gearSkill = 0, gearCrit = 0, damagePct = 0, firmament = false, vampire = false, race = 'darkelf' } = {}) {
   const t = Number(template);
   const w = WEAPONS[t];
   if (!w) throw new Error(`unknown weapon template ${template}`);
@@ -20,7 +21,7 @@ export function maxCharacter(template, { firmament = false, vampire = false, rac
   if (w.skill === 'HandToHand') {
     const starSkills = firmament ? { [SKILLS.HandToHand]: 15, [SKILLS.CriticalStrike]: 15, [SKILLS.Backstabbing]: 15 } : {};
     const ch = theoryFists({
-      race, rawH2H: 200, gearH2H: MAX_H2H_GEAR, gearCrit: MAX_CRIT_GEAR,
+      race, rawH2H: 200, gearH2H: gearSkill, gearCrit,
       starStats, starSkills, starDamage: firmament ? 30 : 0, vampire, wraps: true,
     });
     ch.martialPath = 'blademaster';
@@ -29,7 +30,7 @@ export function maxCharacter(template, { firmament = false, vampire = false, rac
   const skillId = SKILLS[w.skill];
   const starSkills = firmament ? { [skillId]: 15, [SKILLS.CriticalStrike]: 15, [SKILLS.Backstabbing]: 15 } : {};
   const ch = theoryCharacter({
-    blade: t, race, gearLB: 0, gearCS: 0, damagePct: DAMAGE_AFFIX_MAX,
+    blade: t, race, gearLB: 0, gearCS: 0, damagePct,
     vampire, starStats, starSkills, starDamage: firmament ? 30 : 0, sockets: perfectSockets(t),
   });
   ch.career = { ...(ch.career ?? {}), weaponArmorShieldsBitfield: (PROF_OF[w.skill] ?? 0) << 16 };
@@ -37,13 +38,92 @@ export function maxCharacter(template, { firmament = false, vampire = false, rac
   ch.masteredSkills = [skillId, SKILLS.CriticalStrike, SKILLS.Backstabbing];
   ch._mods.skills = {
     ...(ch._mods.skills ?? {}),
-    [skillId]: MAX_WEAPON_GEAR + (firmament ? 15 : 0),
-    [SKILLS.CriticalStrike]: MAX_CRIT_GEAR + (firmament ? 15 : 0),
+    [skillId]: gearSkill + (firmament ? 15 : 0),
+    [SKILLS.CriticalStrike]: gearCrit + (firmament ? 15 : 0),
   };
   ch.martialPath = 'blademaster';
   ch._pair = t === 562;
   return ch;
 }
+
+const _frontiers = new Map();
+
+/**
+ * Every legal frontier point of a build, evaluated against the uncapped target and the level-45 Breach.
+ * Cached per slot set: the frontier is small and the search is deterministic.
+ */
+function evaluatedFrontier(template, { shield = null } = {}) {
+  const t = Number(template);
+  const w = WEAPONS[t];
+  if (!w) throw new Error(`unknown weapon template ${template}`);
+  const key = `${t}:${shield ?? ''}`;
+  if (_frontiers.has(key)) return _frontiers.get(key);
+  const skill = SKILL_OF_FAMILY[w.skill] ?? SKILLS.HandToHand;
+  const points = legalTotals({ weaponTemplate: t, skill, shield });
+  const target = referenceFoe(THEORY_LEVEL, 'tough');
+  const gate = gateTarget(THEORY_LEVEL);
+  const evaluated = points.map((p) => {
+    const ch = buildMax(t, { gearSkill: p.lb, gearCrit: p.cs, damagePct: p.dmg });
+    const r = analyze(ch, { target, core: 'overhaul', rri: true, healthShare: 1, passiveOn: true, stacks: 5 });
+    const g = analyze(ch, { target: gate, core: 'overhaul', rri: true, health: gate.maxHealth, healthShare: 1, passiveOn: true, stacks: 5 });
+    return {
+      ...p,
+      dps: r.dps,
+      cappedDps: g.cappedDps,
+      allowanceDps: g.allowance?.averageDps ?? g.cappedDps,
+    };
+  });
+  const out = { skill, evaluated };
+  _frontiers.set(key, out);
+  return out;
+}
+
+const METRICS = Object.freeze({ uncapped: 'dps', capped: 'cappedDps', allowance: 'allowanceDps' });
+
+/**
+ * The gear a max profile may actually wear, from the game's own allocation rules (gearProfile.js): the
+ * (weapon skill, Critical Strike, damage) point on the legal frontier that gives the most DPS for
+ * `metric`:
+ *
+ *   'uncapped'  the flat target's DPS (the default; the weapons page's headline ceiling)
+ *   'capped'    the per-hit-capped ceiling at the level-45 Breach
+ *   'allowance' the Breach's relay allowance, kill-average DPS
+ *
+ * `alternatives` holds every other point that ties the chosen one, so a caller never loses a tie the
+ * rules leave open. `violations` re-checks the plan, so an illegal assumption cannot creep back in
+ * silently.
+ */
+export function legalGear(template, { shield = null, metric = 'uncapped' } = {}) {
+  const field = METRICS[metric];
+  if (!field) throw new Error(`unknown metric "${metric}"`);
+  const { skill, evaluated } = evaluatedFrontier(template, { shield });
+  const max = Math.max(...evaluated.map((p) => p[field]));
+  const ties = evaluated.filter((p) => Math.abs(p[field] - max) <= 1e-9);
+  const best = ties[0];
+  return Object.freeze({
+    ...best,
+    skill,
+    metric,
+    metricField: field,
+    alternatives: Object.freeze(ties.slice(1)),
+    violations: Object.freeze(validatePlan(best.plan)),
+  });
+}
+
+/** Every legal frontier point, evaluated (for callers that present the whole frontier). */
+export function legalFrontier(template, opts) {
+  return evaluatedFrontier(template, opts).evaluated;
+}
+
+/** The max character: the legal gear budget, then the usual ceiling identity. */
+export function maxCharacter(template, { firmament = false, vampire = false, race = 'darkelf' } = {}) {
+  const g = legalGear(template);
+  return buildMax(Number(template), { gearSkill: g.lb, gearCrit: g.cs, damagePct: g.dmg, firmament, vampire, race });
+}
+
+/** Exposed for tests: the legal plan behind a profile. */
+export const legalGearPlan = (template, opts) => legalGear(template, opts).plan;
+export { slotsFor, validatePlan };
 
 export function maxRun(ch, { target = referenceFoe(THEORY_LEVEL, 'tough'), gate = false } = {}) {
   const t = gate ? gateTarget(THEORY_LEVEL) : target;
@@ -55,18 +135,3 @@ export function maxRun(ch, { target = referenceFoe(THEORY_LEVEL, 'tough'), gate 
   });
 }
 
-/** Capped DPS when the blow is multiplied and/or a flat amount is added per hit. */
-export function cappedDpsWith(base, { mult = 1, flat = 0 } = {}) {
-  const c = base.hit.crit.chance;
-  const cap = base.cap;
-  const d = base.damage;
-  const plainAvg = d.avg * mult + flat;
-  const critAvg = d.critAvg * mult + flat;
-  const ePlain = cap > 0
-    ? expectedCapped(Math.round(d.min * mult + flat), Math.round(d.max * mult + flat), cap)
-    : plainAvg;
-  const eCrit = cap > 0
-    ? expectedCapped(Math.round(d.critMin * mult + flat), Math.round(d.critMax * mult + flat), cap)
-    : critAvg;
-  return ((1 - c) * base.hit.hitPlain * ePlain + c * base.hit.hitCrit * eCrit) * base.cadence.aps;
-}

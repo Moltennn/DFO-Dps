@@ -68,7 +68,7 @@ function targetTable(ch, scenario, players = 1, blowX = 1) {
   const hp = scenario.health || 5000;
   const b = analyze(ch, { ...scenario, target: bossTarget({ level: ch.level, armorValue: 0, health: hp, traits: scenario.traits }), health: hp });
   rows.push({ id: 'boss', r: b });
-  const g = analyze(ch, { ...scenario, target: gateTarget(ch.level, { players, blowX }), health: gateHealth(ch.level) * Math.max(1, Math.floor(players)), traits: [] });
+  const g = analyze(ch, { ...scenario, target: gateTarget(ch.level, { players, blowX }), health: gateHealth(ch.level) * Math.max(1, Math.floor(players)), traits: null });
   rows.push({ id: 'gate', r: g });
   return rows.map(({ id, r }) => {
     const label = id === 'boss' ? `Boss${scenario.traits.length ? ` (${scenario.traits.join(', ')})` : ''}` : id === 'gate' ? 'Gate - Ruhn' : id[0].toUpperCase() + id.slice(1);
@@ -88,14 +88,14 @@ function traitTable(ch, scenario) {
 
 function theoryTable(ch, scenario, players = 1, blowX = 1) {
   const pools = [
-    { label: 'Gate - Ruhn', t: gateTarget(ch.level, { players, blowX }), traits: [] },
+    { label: 'Gate - Ruhn', t: gateTarget(ch.level, { players, blowX }), traits: null },
     { label: 'Curbing 1,000', t: bossTarget({ level: ch.level, health: 1000, traits: ['curbing'] }), traits: ['curbing'] },
     { label: 'Curbing 2,000', t: bossTarget({ level: ch.level, health: 2000, traits: ['curbing'] }), traits: ['curbing'] },
     { label: 'Curbing 5,000', t: bossTarget({ level: ch.level, health: 5000, traits: ['curbing'] }), traits: ['curbing'] },
     { label: 'Curbing 10,000', t: bossTarget({ level: ch.level, health: 10000, traits: ['curbing'] }), traits: ['curbing'] },
   ];
   const rows = pools.map(({ label, t, traits }) => {
-    const sc = { ...scenario, target: t, health: t.maxHealth, traits };
+    const sc = { ...scenario, target: t, health: t.maxHealth, traits: traits ?? t.bossTraits ?? [] };
     const a = analyze(ch, sc);
     const perHit = a.perSwing / Math.max(1e-9, a.hit.hit);
     const best = rankWeapons(ch, sc, { top: 1 })[0];
@@ -142,10 +142,12 @@ function capTable(ch, scenario) {
 export function buildReport(ch, {
   target, core = 'overhaul', traits = [], health = 0, swing = 'StrikeLeft',
   passiveOn = true, stacks = 5, rhythm = false, unaware = false, firstBlow = false,
-  healthShare = 1, backstabUptime = 0, players = 1, blowX = 1, rri = true, pair = false, bowSpam = false, potencyPct = 0, pierce = 0, weapon = null,
+  healthShare = 1, attackerHealthShare = 1, backstabUptime = 0, players = 1, blowX = 1, rri = true, pair = false, bowSpam = false, potencyPct = 0, pierce = 0, weapon = null,
 } = {}) {
   const baseCh = weapon?.item ? { ...ch, weapon: weapon.item } : ch;
-  const scenario = { target, core, traits, health, swing, passiveOn, stacks, rhythm, unaware, firstBlow, healthShare, backstabUptime, rri, pair, bowSpam, potencyPct, pierce };
+  // No override means the target's own traits (a relay boss's), the same rule analyze() uses.
+  const traitList = traits ?? target?.bossTraits ?? [];
+  const scenario = { target, core, traits: traitList, health, swing, passiveOn, stacks, rhythm, unaware, firstBlow, healthShare, attackerHealthShare, backstabUptime, rri, pair, bowSpam, potencyPct, pierce };
   const r = analyze(baseCh, scenario);
   const w = r.weapon;
   const rs = marginals(baseCh, r, scenario);
@@ -206,7 +208,9 @@ export function buildReport(ch, {
 
   <div class="grid">
     ${card('DPS', n1(r.dps), `${n1(r.perSwing)} per swing x ${n2(r.cadence.aps)}/s`, 'brass')}
-    ${card('Capped DPS', n1(r.cappedDps), r.cap ? capLine : 'no cap', r.cap ? 'bad' : 'good')}
+    ${card('Per-hit-capped DPS', n1(r.cappedDps), r.cap ? `${capLine} - a ceiling` : 'no cap', r.cap ? 'bad' : 'good')}
+    ${r.allowance ? card('Sustained DPS', n1(r.allowance.sustainedDps), `relay allowance refill ${n1(r.allowance.law.rate)}/s${r.allowance.saturated ? ' (the limit)' : ''}`, 'good') : ''}
+    ${r.allowance ? card('Opening burst', n1(r.allowance.burst5Dps), `first 5 s, ${n1(r.allowance.law.depth)} bucket`, 'brass') : ''}
     ${r.enchantDps > 0 ? card('Enchant DPS', n1(r.enchantDps), `${n1(r.enchantPerSwing)} per landed hit`, 'brass') : ''}
     ${r.enchantDps > 0 ? card('Total DPS', n1(r.totalDps), 'weapon + enchant procs', 'good') : ''}
     ${card('Hit chance', pct(r.hit.hit), `${pct(r.hit.crit.chance)} critical`, '')}

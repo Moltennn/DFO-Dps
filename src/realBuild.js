@@ -137,6 +137,8 @@ export function realTemplate(template, family, { mode = 'uncapped', vampire = fa
     ttk: purse?.ttk ?? enchRun.ttk,
     burst5: purse?.burst5 ?? null,
     sustainedDps: purse?.sustainedDps ?? null,
+    averageDps: purse?.averageDps ?? null,
+    ceilingDps: purse?.ceilingDps ?? null,
     landedShare: purse?.landedShare ?? null,
     calibrated: purse?.calibrated ?? true,
     imprint: imprint?.name ?? null, imprintPower: imprint?.power?.name ?? null,

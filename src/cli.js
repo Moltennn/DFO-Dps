@@ -30,10 +30,11 @@ import { chartTotals, probeConstants, summarizeProbe } from './probe.js';
 import { ENCHANTMENT_TYPES, enchantDps, procsBeforeBreak, strikeEnchantments } from './enchants.js';
 import { perfectSockets } from './sockets.js';
 import {
-  DAMAGE_AFFIX_MAX, DEFAULT_BLADE, GEAR_CS_LINES, GEAR_H2H_LINES, GEAR_LB_LINES, GEAR_LINE_MAX, GEAR_MASTERY_POINTS,
-  GEAR_SKILL_LINES, LONG_BLADES,
+  DEFAULT_BLADE, GEAR_MASTERY_POINTS, LONG_BLADES,
   THEORY_CAPS, THEORY_LEVEL, theoryBlade, theoryCharacter, theoryFists,
 } from './theory.js';
+import { legalFrontier, legalGear } from './maxprofile.js';
+import { AFFIX_DAMAGE_TOP, maxPointTotal, maxSingleSkill } from './gearProfile.js';
 import {
   analyze, bossTarget, currentWeaponRow, gateTarget, marginals, rankAffixes, rankWeapons, referenceFoe,
   syntheticWeapon, weaponOf,
@@ -108,6 +109,7 @@ Common options:
   --dual                              dual wield the left-hand weapon (off hand x0.8, -5 hit)
   --spam                              bow spam (BOW_FAST stacks to x0.2; default paced)
   --health-share <0..1>               foe's health share for Axe/Blunt mastery (default: 1)
+  --self-health-share <0..1>          YOUR health share, for Berserker's Frenzy (default: 1; it fires below 0.5)
   --no-crit-damage                    overhaul crit adds hit only
   --no-passive                        switch the path passive off
   --bare                              strip gear affixes/enchants/legendaries (theorycraft baseline)
@@ -121,9 +123,9 @@ Common options:
   --theory                            use the level-45 theory character (caster for spell/spells)
   --race <name>                       theory race (darkelf, redguard, nord, ...)
   --blade <template>                  theory long blade (default 123, Dai-katana)
-  --gear-lines <n>                    theory gear skill lines (default 26: 8 LB + 18 crit)
-  --line-points <n>                   points per skill line (default 30, legendary max)
-  --gear-lb <n> --gear-cs <n>         theory gear points on Long Blade / Critical Strike
+  --gear-lines <n>                    OBSOLETE: a line is not a budget; use --gear-lb/--gear-cs in points
+  --line-points <n>                   OBSOLETE: points per line; use --gear-lb/--gear-cs
+  --gear-lb <n> --gear-cs <n>         theory gear points on weapon skill / Critical Strike (default: the legal max)
   --vampire                           add the vampire +30 Critical Strike
   --firmament                         apply the +15 channel ceiling to STR/AGI/SPEED/LUCK and LB/CS/Backstab
   --star-stat <name=n,...>            Firmament attribute points (max +15 each)
@@ -167,6 +169,7 @@ const optsSpec = {
   unaware: { type: 'boolean', default: false },
   'first-blow': { type: 'boolean', default: false },
   'health-share': { type: 'string' },
+  'self-health-share': { type: 'string' },
   bare: { type: 'boolean', default: false },
   'base-stats': { type: 'string' },
   'no-effects': { type: 'boolean', default: false },
@@ -261,14 +264,15 @@ function loadCharacter(values) {
       if (Number.isFinite(mat)) material = mat;
     }
     const { starStats, starSkills } = starOptions(values);
+    const legal = legalGear(blade);
     let ch = theoryCharacter({
       level: n(values.level, THEORY_LEVEL),
       race: values.race ?? 'darkelf',
       blade,
       material,
-      gearLB: n(values['gear-lb'], GEAR_LB_LINES * GEAR_LINE_MAX),
-      gearCS: n(values['gear-cs'], GEAR_CS_LINES * GEAR_LINE_MAX),
-      damagePct: n(values['damage-pct'], DAMAGE_AFFIX_MAX),
+      gearLB: n(values['gear-lb'], legal.lb),
+      gearCS: n(values['gear-cs'], legal.cs),
+      damagePct: n(values['damage-pct'], legal.dmg),
       vampire: values.vampire,
       starStats,
       starSkills,
@@ -348,14 +352,14 @@ function targetOf(ch, values, traits) {
     ? 'gate'
     : String(values.target ?? 'armoured').toLowerCase();
   if (target === 'gate' || target === 'breach' || target === 'ruhn') {
-    return gateTarget(level, { health: n(values.health, gateHealth(level)), traits, players: n(values.players, 1), blowX: n(values['blow-x'], 1) });
+    return gateTarget(level, { health: n(values.health, gateHealth(level)), traits: traits.length ? traits : undefined, players: n(values.players, 1), blowX: n(values['blow-x'], 1) });
   }
   if (target === 'boss') {
     return bossTarget({
       level,
       armorValue: n(values.armor, 0),
       health: n(values.health, 5000),
-      traits,
+      traits: traits.length ? traits : [],
     });
   }
   return referenceFoe(level, target);
@@ -373,7 +377,8 @@ function scenarioOf(ch, values, traits, target) {
     target,
     core: values.core === 'classic' ? 'classic' : 'overhaul',
     rri: !values['no-rri'],
-    traits,
+    // `--traits` overrides; with none the target's own traits (a relay boss's) apply.
+    traits: traits.length ? traits : null,
     health: target.isBoss ? target.maxHealth : n(values.health, 0),
     swing: values.swing,
     critDamage: !values['no-crit-damage'],
@@ -383,6 +388,7 @@ function scenarioOf(ch, values, traits, target) {
     unaware: values.unaware,
     firstBlow: values['first-blow'],
     healthShare: n(values['health-share'], 1),
+    attackerHealthShare: n(values['self-health-share'], 1),
     backstabUptime: values.behind ? 1 : n(values.backstab, 0),
     firmamentDamagePct: ch.firmamentDamagePct ?? 0,
     pair: values.pair,
@@ -447,6 +453,17 @@ function printScale(rows, values) {
   console.log(table(rows.map((r) => [r.label, r.value, fmt(r.dps), fmt(r.cappedDps), fmt(r.perSwing), r.ttk ? `${fmt(r.ttk)} s` : '-']), ['Channel', 'Value', 'DPS', 'Capped', 'Per swing', 'TTK'], ['left', 'right', 'right', 'right', 'right', 'right']));
 }
 
+/** The relay's verdict, one named row per metric (allowance.js). */
+function allowanceRows(a) {
+  const ref = a.law;
+  return [
+    ['Sustained DPS', fmt(a.sustainedDps), `the allowance's refill ${fmt(ref.rate)}/s${a.saturated ? ' - this build exceeds it, so it is the limit' : ' - this build is below it'}`],
+    ['Opening burst', fmt(a.burst5Dps), `first 5 s: the ${fmt(ref.depth)} bucket plus refill${a.dryAt != null ? `; spent after ${fmt(a.dryAt)} s` : '; never spent'}`],
+    ['Kill-average DPS', a.averageDps ? fmt(a.averageDps) : '-', `${fmt(a.share)} HP share over the whole fight, shields included`],
+    ['Allowance kept', pc(a.landedShare), 'of the claims that won a blow token, the part the relay accepted'],
+  ];
+}
+
 function printBuild(ch, r, targetPreset, values) {
   const w = r.weapon;
   const traits = r.traits;
@@ -461,9 +478,10 @@ function printBuild(ch, r, targetPreset, values) {
     ...(r.backstab?.chance > 0 ? [['Backstab hit', `${r.backstab.min}-${r.backstab.max}`, `crit ${r.backstab.critMin}-${r.backstab.critMax}`]] : []),
     ['Expected / swing', fmt(r.perSwing), 'hit chance and criticals included'],
     ['Swing time', `${fmt2(r.cadence.seconds)} s`, `${fmt2(r.cadence.aps)} swings/s`],
-    ['DPS', fmt(r.dps), r.cap ? `capped ${fmt(r.cappedDps)} (${pc(r.capLoss)} lost)` : 'no per-hit cap'],
+    ['DPS', fmt(r.dps), r.cap ? `per-hit-capped ${fmt(r.cappedDps)} (${pc(r.capLoss)} lost) - a ceiling${r.allowance ? ', not what the boss accepts' : ''}` : 'no per-hit cap'],
     ...(r.enchantDps > 0 ? [['Enchant procs', fmt(r.enchantDps), `${fmt(r.enchantPerSwing)} per landed hit${r.procsBeforeBreak ? `; ${r.procsBeforeBreak} procs before break` : ''}`], ['Total DPS', fmt(r.totalDps), 'weapon + enchant procs']] : []),
-    ['Time to kill', (r.totalTtk ?? r.ttk) ? `${fmt(r.totalTtk ?? r.ttk)} s` : '-', r.health ? `${r.health.toLocaleString()} HP${r.ward ? ` + ${r.ward} ward` : ''}${r.shields ? ` + ${r.shields}s shields` : ''}${r.enchantDps > 0 ? ' (weapon + procs)' : ''}` : 'no boss health'],
+    ...(r.allowance ? allowanceRows(r.allowance) : []),
+    ['Time to kill', (r.totalTtk ?? r.ttk) ? `${fmt(r.totalTtk ?? r.ttk)} s` : '-', r.health ? `${r.health.toLocaleString()} HP${r.ward ? ` + ${r.ward} ward` : ''}${r.shields ? ` + ${r.shields}s shields` : ''}${r.enchantDps > 0 ? ' (weapon + procs)' : ''}${r.allowance ? ' - through the relay allowance' : ''}` : 'no boss health'],
   ], ['Metric', 'Value', 'Notes']));
   if (r.cap) console.log(`\n${r.capSource === 'hit cap' ? 'Per-hit hit cap' : 'Curbing cap'}: ${r.cap} per hit${r.capSource === 'curbing' ? ` (5% of ${r.health.toLocaleString()} HP)` : ''}.`);
   if (r.target?.phaseShields) console.log(`Phase shields: ${r.target.phaseShields} x ${r.target.shieldSeconds}s (${r.shields}s added to TTK).`);
@@ -778,7 +796,7 @@ export async function main(argv = process.argv.slice(2)) {
         const e = ENCOUNTERS[id];
         const list = byDps(capRows.get(id));
         console.log(`\nReal loadouts  |  ${e.name}  |  soul gem +${SOUL_GEM_POINTS}${e.calibrated ? '' : '  |  uncalibrated mechanics'}`);
-        console.log(table(list.map((r) => [`${r.category} · ${r.family}`, r.weapon, r.imprint ?? '-', fmt(r.totalDps), fmt(r.burst5), fmt(r.sustainedDps), fmt(r.ttk), pc(r.landedShare)]), ['Family', 'Weapon', 'Imprint', 'Total DPS', 'Burst 5s', 'Avg DPS', 'TTK', 'Kept'], ['left', 'left', 'left', 'right', 'right', 'right', 'right', 'right']));
+        console.log(table(list.map((r) => [`${r.category} · ${r.family}`, r.weapon, r.imprint ?? '-', fmt(r.totalDps), fmt(r.burst5), fmt(r.sustainedDps), fmt(r.averageDps), fmt(r.ttk), pc(r.landedShare)]), ['Family', 'Weapon', 'Imprint', 'Per-hit-capped DPS', 'Burst 5s', 'Sustained DPS', 'Kill-avg DPS', 'TTK', 'Kept'], ['left', 'left', 'left', 'right', 'right', 'right', 'right', 'right']));
       }
     }
     const shared = uncappedRows.find((r) => r.category === '1H')?.enchPlan
@@ -822,12 +840,12 @@ export async function main(argv = process.argv.slice(2)) {
         labels: ttkList.map((r) => `${r.category} ${r.weapon}`),
         series: [{ name: 'TTK', values: ttkList.map((r) => r.ttk ?? 0) }],
       });
-      const body = list.map((r) => `<tr><td class="k">${r.category} · ${r.family}</td><td>${r.weapon}</td><td>${r.imprint ?? '-'}</td><td>${fmt(r.totalDps)}</td><td>${fmt(r.burst5)}</td><td>${fmt(r.sustainedDps)}</td><td>${fmt(r.ttk)}</td><td>${pc(r.landedShare)}</td></tr>`).join('');
+      const body = list.map((r) => `<tr><td class="k">${r.category} · ${r.family}</td><td>${r.weapon}</td><td>${r.imprint ?? '-'}</td><td>${fmt(r.totalDps)}</td><td>${fmt(r.burst5)}</td><td>${fmt(r.sustainedDps)}</td><td>${fmt(r.averageDps)}</td><td>${fmt(r.ttk)}</td><td>${pc(r.landedShare)}</td></tr>`).join('');
       sections.push({
         title: `${e.name} - all weapons and hold configurations${e.calibrated ? '' : ' (uncalibrated mechanics)'}`,
-        note: `${e.note} Total DPS is the per-hit-cap ceiling; Burst 5s, Avg DPS and TTK apply the boss purse (750 depth, 150/s, 600 per blow, four blows/s at level 45). Purse kept is the share of that ceiling which lands after the purse. The imprint is chosen on the per-hit ceiling; under the purse Many Endings is not credited, because its extra blow is capped and spends the same four-blow budget.${e.calibrated ? '' : ' The purse is known; the encounter immunity/split timing is not yet measured, so TTK is a purse-only baseline.'}`,
+        note: `${e.note} Per-hit-capped DPS is a ceiling, not what the boss takes; Burst 5s (damage in the first five seconds), Sustained DPS (the refill rate once the opening allowance is spent), Kill-avg DPS (health over TTK) and TTK apply the relay's per-player allowance (750 depth, 150/s, 600 per blow, four blows/s at level 45). Purse kept is the share of that ceiling which lands after the purse. The imprint is chosen on the per-hit ceiling; under the purse Many Endings is not credited, because its extra blow is capped and spends the same four-blow budget.${e.calibrated ? '' : ' The purse is known; the encounter immunity/split timing is not yet measured, so TTK is a purse-only baseline.'}`,
         chart,
-        table: `<div class="table"><table><thead><tr><th>Family</th><th>Weapon</th><th>Imprint</th><th>Total DPS</th><th>Burst 5s</th><th>Avg DPS</th><th>TTK</th><th>Purse kept</th></tr></thead><tbody>${body}</tbody></table></div>`,
+        table: `<div class="table"><table><thead><tr><th>Family</th><th>Weapon</th><th>Imprint</th><th>Per-hit-capped DPS</th><th>Burst 5s</th><th>Sustained DPS</th><th>Kill-avg DPS</th><th>TTK</th><th>Allowance kept</th></tr></thead><tbody>${body}</tbody></table></div>`,
       });
       sections.push({
         title: `${e.name} - time to kill`,
@@ -844,7 +862,7 @@ export async function main(argv = process.argv.slice(2)) {
       title: 'Imprint ratings',
       note: 'Top three eligible imprints per family. Boss is the breach purse; Uncapped has no cap. Monster-type damage imprints are shown for reference but are not used in the loadouts.',
       chart: '',
-      table: `<div class="table"><table><thead><tr><th>Family</th><th>Imprint</th><th>Weapon</th><th>Boss DPS</th><th>Uncapped DPS</th></tr></thead><tbody>${imprintRows.map((r) => `<tr><td class="k">${r.family}</td><td>${r.power}</td><td>${r.weapon}</td><td>${fmt(r.boss)}</td><td>${fmt(r.uncapped)}</td></tr>`).join('')}</tbody></table></div>`,
+      table: `<div class="table"><table><thead><tr><th>Family</th><th>Imprint</th><th>Weapon</th><th>Per-hit-capped DPS</th><th>Uncapped DPS</th></tr></thead><tbody>${imprintRows.map((r) => `<tr><td class="k">${r.family}</td><td>${r.power}</td><td>${r.weapon}</td><td>${fmt(r.boss)}</td><td>${fmt(r.uncapped)}</td></tr>`).join('')}</tbody></table></div>`,
     });
     sections.push({
       title: 'Firmament plans used',
@@ -924,7 +942,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       const sections = results.map((r) => ({
         title: `${r.label} per weapon type`,
         note: r.key === 'uncapped'
-          ? 'Theoretical maximum: no per-hit cap, weapon skill and Critical Strike on every piece. Every melee family uses the same shape; only the weapon-skill name changes.'
+          ? 'Theoretical maximum: no per-hit cap, the legal gear frontier for the weapon (weapon skill / Critical Strike / damage across the 18 slots). Every melee family uses the same shape; only the weapon-skill name changes.'
           : 'Current Breach: 600 per-hit cap. Skill lines are bought only where their capped marginal DPS is positive.',
         chart: '',
         table: summaryHtml(r.summary, r.key) + canonicalHtml(r.melee),
@@ -1011,7 +1029,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     if (!values.json) {
       console.log('Weapon imprints');
       for (const f of rows) {
-        console.log(`\n${f.name} - ${f.weapon} (${fmt(f.base.cappedDps)} boss DPS)`);
+        console.log(`\n${f.name} - ${f.weapon} (${fmt(f.base.cappedDps)} per-hit-capped DPS; the Breach allowance is not applied to imprint rankings)`);
         console.log(table(f.rows.map((r) => [r.power.name, r.name, r.weapon, r.hit, fmt(r.baseDps), fmt(r.delta), fmt(r.uncappedDps), fmt(r.uncappedDelta), fmt(r.conditionalDps), fmt(r.triggerDelta), r.trigger, r.power.brief]), ['Imprint', 'Of', 'On', 'Hit', 'Boss DPS', 'Boss gain', 'Uncapped DPS', 'Uncapped gain', 'Trigger DPS', 'Trigger gain', 'Trigger', 'Effect'], ['left', 'left', 'left', 'left', 'right', 'right', 'right', 'right', 'right', 'right', 'left', 'left']));
       }
     }
@@ -1031,7 +1049,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
         title: `${f.name} - ${f.weapon}`,
         note: `Every Weapon Legendary's power may sit on any weapon of its group; only Chain Lightning (a shot) and Earthshaker (a melee blow) narrow it. Each row reads the power on this family's best weapon. Boss is the level-${THEORY_LEVEL} Breach (Daedra, 600 per-hit cap); Uncapped is the same weapon with no cap. Trigger applies the condition only where it can occur at the Breach; otherwise it is marked. The imprint is the Legendary power only; the Rare's own affixes are separate.`,
         chart,
-        table: `<div class="table"><table><thead><tr><th>Imprint</th><th>On</th><th>Hit</th><th>Boss DPS</th><th>Boss gain</th><th>Uncapped DPS</th><th>Uncapped gain</th><th>Trigger</th></tr></thead><tbody>${body}</tbody></table></div>`,
+        table: `<div class="table"><table><thead><tr><th>Imprint</th><th>On</th><th>Hit</th><th>Per-hit-capped DPS</th><th>Per-hit-capped gain</th><th>Uncapped DPS</th><th>Uncapped gain</th><th>Trigger</th></tr></thead><tbody>${body}</tbody></table></div>`,
       };
     });
     const html = multiGraphPage({
@@ -1227,9 +1245,6 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     const firmCharts = !!values.firmament;
     const fixedRace = values.race ? String(values.race).toLowerCase() : null;
     const vampire = !!values.vampire;
-    const maxWeaponGear = GEAR_LB_LINES * GEAR_LINE_MAX; // 240
-    const maxCritGear = GEAR_CS_LINES * GEAR_LINE_MAX; // 540
-    const maxH2HGear = GEAR_H2H_LINES * GEAR_LINE_MAX; // 510
     const PROF_OF = Object.freeze({ ShortBlade: 1, LongBlade: 2, HandToHand: 4, Axe: 8, BluntWeapon: 16, Archery: 32 });
     const MELEE = Object.keys(WEAPONS).map(Number).filter((t) => WEAPONS[t]?.skill && !WEAPONS[t].ammo);
     const familyOf = (t) => WEAPONS[t]?.skill ?? 'HandToHand';
@@ -1241,13 +1256,14 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     const shareFor = () => 1;
 
     const makeMax = (t, {
-      race = 'darkelf', firmament = false, raw = 200, gear = null, critGear = maxCritGear, martial = martialFor(t),
+      race = 'darkelf', firmament = false, raw = 200, gear = null, critGear = null, damagePct = null, martial = martialFor(t),
     } = {}) => {
+      const legal = legalGear(familyOf(t) === 'HandToHand' && t == null ? 563 : t);
       if (familyOf(t) === 'HandToHand') {
         const starStats = firmament ? { strength: 15, agility: 15, speed: 15, luck: 15 } : {};
         const starSkills = firmament ? { [SKILLS.HandToHand]: 15, [SKILLS.CriticalStrike]: 15, [SKILLS.Backstabbing]: 15 } : {};
         const ch = theoryFists({
-          race, rawH2H: raw, gearH2H: gear ?? maxH2HGear, gearCrit: critGear,
+          race, rawH2H: raw, gearH2H: gear ?? legal.lb, gearCrit: critGear ?? legal.cs,
           starStats, starSkills, starDamage: firmament ? 30 : 0, vampire, wraps: true,
         });
         ch.martialPath = martial;
@@ -1259,7 +1275,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       const starStats = firmament ? { strength: 15, agility: 15, speed: 15, luck: 15 } : {};
       const starSkills = firmament ? { [skillId]: 15, [SKILLS.CriticalStrike]: 15, [SKILLS.Backstabbing]: 15 } : {};
       const ch = theoryCharacter({
-        blade: t, race, gearLB: 0, gearCS: 0, damagePct: DAMAGE_AFFIX_MAX,
+        blade: t, race, gearLB: 0, gearCS: 0, damagePct: damagePct ?? legal.dmg,
         vampire, starStats, starSkills, starDamage: firmament ? 30 : 0, sockets: perfectSockets(t),
       });
       ch.career = { ...(ch.career ?? {}), weaponArmorShieldsBitfield: (PROF_OF[tpl.skill] ?? 0) << 16 };
@@ -1267,8 +1283,8 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       ch.masteredSkills = [skillId, SKILLS.CriticalStrike, SKILLS.Backstabbing];
       ch._mods.skills = {
         ...(ch._mods.skills ?? {}),
-        [skillId]: (gear ?? maxWeaponGear) + (firmament ? 15 : 0),
-        [SKILLS.CriticalStrike]: critGear + (firmament ? 15 : 0),
+        [skillId]: (gear ?? legal.lb) + (firmament ? 15 : 0),
+        [SKILLS.CriticalStrike]: (critGear ?? legal.cs) + (firmament ? 15 : 0),
       };
       ch.martialPath = martial;
       ch._pair = t === 562;
@@ -1294,8 +1310,8 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       const g = gateRun(treeCh);
       return {
         template: t, name: nameOf(t), skill: familyOf(t), twoHanded: familyOf(t) === 'HandToHand' ? false : WEAPONS[t].twoHanded,
-        path: martialFor(t), race, maxDps: r.dps, gateDps: g.cappedDps,
-        gateTtk: g.ttk, perSwing: r.perSwing, aps: r.cadence.aps,
+        path: martialFor(t), race, maxDps: r.dps, gateDps: g.allowance?.averageDps ?? g.cappedDps, gateCeiling: g.cappedDps,
+        gateTtk: g.ttk, gateBurst: g.allowance?.burst5Dps ?? null, perSwing: r.perSwing, aps: r.cadence.aps,
       };
     }).sort((a, b) => b.maxDps - a.maxDps);
 
@@ -1308,7 +1324,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       const g = gateRun(treeCh);
       rows.push({
         template: t, name: `Dual ${nameOf(t)}`, skill: familyOf(t), twoHanded: false, dual: true,
-        path: martialFor(t), race, maxDps: r.dps, gateDps: g.cappedDps, gateTtk: g.ttk,
+        path: martialFor(t), race, maxDps: r.dps, gateDps: g.allowance?.averageDps ?? g.cappedDps, gateCeiling: g.cappedDps, gateTtk: g.ttk, gateBurst: g.allowance?.burst5Dps ?? null,
         perSwing: r.perSwing, aps: r.cadence.aps,
       });
     }
@@ -1328,7 +1344,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     const SKILL_LABELS = { ShortBlade: 'Short Blade', LongBlade: 'Long Blade', Axe: 'Axe', BluntWeapon: 'Blunt Weapon', Archery: 'Archery', HandToHand: 'Hand-to-Hand' };
 
     const cell = (v) => (Number.isFinite(v) ? fmt(v) : '-');
-    const maxTable = `<table><thead><tr><th>Weapon</th><th>Type</th><th>Hands</th><th>Path</th><th>Firmament DPS</th><th>Boss DPS</th><th>Boss TTK</th></tr></thead><tbody>${displayRows.map((r) => `<tr><td class="k">${r.name}</td><td>${SKILL_LABELS[r.skill] ?? r.skill}</td><td>${r.dual ? 'Dual' : r.skill === 'HandToHand' ? 'Fists' : r.twoHanded ? '2H' : '1H'}</td><td>${r.path}</td><td>${cell(r.maxDps)}</td><td>${cell(r.gateDps)}</td><td>${r.gateTtk ? `${cell(r.gateTtk)} s` : '-'}</td></tr>`).join('')}</tbody></table>`;
+    const maxTable = `<table><thead><tr><th>Weapon</th><th>Type</th><th>Hands</th><th>Path</th><th>Uncapped DPS</th><th>Per-hit-capped</th><th>Boss kill-avg DPS</th><th>Boss burst 5s</th><th>Boss TTK</th></tr></thead><tbody>${displayRows.map((r) => `<tr><td class="k">${r.name}</td><td>${SKILL_LABELS[r.skill] ?? r.skill}</td><td>${r.dual ? 'Dual' : r.skill === 'HandToHand' ? 'Fists' : r.twoHanded ? '2H' : '1H'}</td><td>${r.path}</td><td>${cell(r.maxDps)}</td><td>${cell(r.gateCeiling)}</td><td>${cell(r.gateDps)}</td><td>${cell(r.gateBurst)}</td><td>${r.gateTtk ? `${cell(r.gateTtk)} s` : '-'}</td></tr>`).join('')}</tbody></table>`;
     const top = displayRows.slice().sort((a, b) => b.maxDps - a.maxDps)[0];
     const gateTop = rows.slice().sort((a, b) => b.gateDps - a.gateDps)[0];
     const scope = values.categories ? 'best of every type' : 'absolute uncapped ceiling';
@@ -1336,9 +1352,9 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     const bossRows = displayRows.slice().sort((a, b) => b.gateDps - a.gateDps);
     const uncappedRows = displayRows.slice().sort((a, b) => b.maxDps - a.maxDps);
     const bossBar = barChart({
-      title: 'Boss DPS by weapon - level-45 Breach',
+      title: 'Breach kill-average DPS by weapon - level-45, through the relay allowance',
       labels: bossRows.map((r) => r.name),
-      series: [{ name: 'Boss', values: bossRows.map((r) => r.gateDps) }],
+      series: [{ name: 'Kill-average', values: bossRows.map((r) => r.gateDps) }],
     });
     const uncappedBar = barChart({
       title: 'Uncapped DPS by weapon - no per-hit cap',
@@ -1346,7 +1362,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       series: [{ name: 'Firmament', values: uncappedRows.map((r) => r.maxDps) }],
     });
     const bossTop = bossRows[0];
-    const bossNote = `<b>${bossTop.name}</b> leads this list at <b>${cell(bossTop.gateDps)} capped DPS</b>${bossTop.gateTtk ? ` (${cell(bossTop.gateTtk)} s TTK)` : ''}. The full pool's Breach winner is <b>${gateTop.name}</b> at <b>${cell(gateTop.gateDps)} capped DPS</b>. This is the real Firmament tree at the level-45 Breach: ${gate.maxHealth.toLocaleString()} HP and a ${gate.hitCap} per-hit cap.`;
+    const bossNote = `<b>${bossTop.name}</b> leads this list at <b>${cell(bossTop.gateDps)} kill-average DPS</b> through the relay's per-player allowance${bossTop.gateTtk ? ` (${cell(bossTop.gateTtk)} s TTK)` : ''}. The full pool's Breach winner is <b>${gateTop.name}</b> at <b>${cell(gateTop.gateDps)}</b>. This is the real Firmament tree at the level-45 Breach: ${gate.maxHealth.toLocaleString()} HP, a ${gate.hitCap} per-hit cap and a ${3 * (5 + level)} a second allowance refill; the per-hit-capped column is the ceiling before that allowance.`;
     const uncappedNote = `<b>${top.name}</b> is the ${scope} at <b>${cell(top.maxDps)} DPS</b> (${top.path}, Dunmer), using the real Firmament tree and no per-hit cap. Enchants and imprints are on the loadout page, not this table. Full health and Blademaster only: Berserker's below-half upkeep is not assumed. All rows are Dunmer; DPS cells are averages.${values.categories ? ' One row per weapon type per slot, including the Hand Wraps fist row; the table is sorted by uncapped DPS.' : ''}`;
 
     const families = [
@@ -1359,9 +1375,13 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     ];
     const rawVals = [100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200];
     const familySections = families.map((f) => {
-      const gearMax = f.key === 'HandToHand' ? maxH2HGear : maxWeaponGear;
+      const chartTemplate = f.key === 'HandToHand' ? 563 : (f.templates.find((t) => t != null) ?? 123);
+      const gearMax = maxSingleSkill({ weaponTemplate: chartTemplate });
+      const culprit = legalGear(chartTemplate);
       const rangedNote = f.key === 'Archery' ? ' Bows use the paced BOW_FAST window; the Pistolet is a pair.' : '';
-      const gearVals = f.key === 'HandToHand' ? [0, 60, 120, 180, 240, 300, 360, 420, 480, 510] : [0, 30, 60, 90, 120, 150, 180, 210, 240];
+      const gearVals = [];
+      for (let v = 30; v < gearMax; v += 30) gearVals.push(v);
+      gearVals.push(gearMax);
       const skillSeries = f.templates.map((t) => {
         const race = bestRace(t, { firmament: firmCharts });
         const points = [];
@@ -1374,7 +1394,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
         }
         return { name: nameOf(t), points };
       });
-      const note = `One line per weapon: raw training 100 -> 200 is effective 100 -> 140; gear lines continue from effective 140 to ${140 + gearMax}. Max gear, Dunmer, career expertise, best path, 40% damage affix, sockets, no per-hit cap. The table uses the real Firmament tree; these curves are the flat skill-scaling view.${f.key === 'Axe' || f.key === 'HandToHand' ? ' Blademaster, full health; no Berserker below-half assumption.' : ''}${firmCharts ? ' Firmament channels on.' : ''}${rangedNote}`;
+      const note = `One line per weapon: raw training 100 -> 200 is effective 100 -> 140; gear lines continue from effective 140 to ${140 + gearMax} (the legal single-skill maximum: every other slot carries the build's legal share). Max legal gear, Dunmer, career expertise, best path, ${culprit.dmg}% damage line, sockets, no per-hit cap. The table uses the real Firmament tree; these curves are the flat skill-scaling view.${f.key === 'Axe' || f.key === 'HandToHand' ? ' Blademaster, full health; no Berserker below-half assumption.' : ''}${firmCharts ? ' Firmament channels on.' : ''}${rangedNote}`;
       return {
         title: f.title,
         note,
@@ -1383,28 +1403,35 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     });
 
     const topPerFamily = families.map((f) => rows.find((r) => familyOf(r.template) === f.key && !r.dual)).filter(Boolean);
-    const csVals = [0, 60, 120, 180, 240, 300, 360, 420, 480, 540];
-    const csSeries = topPerFamily.map((row) => ({
-      name: row.name,
-      points: csVals.map((v) => ({ x: v, y: maxRun(makeMax(row.template, { race: row.race, firmament: firmCharts, critGear: v }), shareFor(row.template)).dps })),
-    }));
+    const csMaxFor = (t) => maxSingleSkill({ weaponTemplate: t, skill: SKILLS.CriticalStrike });
+    const csSeries = topPerFamily.map((row) => {
+      const top = csMaxFor(row.template);
+      const csVals = [];
+      for (let v = 0; v < top; v += 60) csVals.push(v);
+      csVals.push(top);
+      return {
+        name: row.name,
+        points: csVals.map((v) => ({ x: v, y: maxRun(makeMax(row.template, { race: row.race, firmament: firmCharts, critGear: v }), shareFor(row.template)).dps })),
+      };
+    });
+    const csCap = Math.max(...topPerFamily.map((row) => csMaxFor(row.template)));
     const csSection = {
       title: 'Critical Strike scales every weapon',
-      note: 'The best weapon of each family, raw 200 and max weapon gear, with Critical Strike gear from 0 to 540. Critical Strike is the shared multiplier: chance caps at 100%, then every point adds 0.01 to the multiplier.',
-      chart: lineChart({ title: 'Critical Strike gear 0 -> 540', xLabel: 'Critical Strike gear points', yLabel: 'DPS', series: csSeries }),
+      note: `The best weapon of each family, raw 200 and its legal weapon-skill share, with Critical Strike gear from 0 to ${csCap} (the legal single-skill maximum). Critical Strike is the shared multiplier: chance caps at 100%, then every point adds 0.01 to the multiplier.`,
+      chart: lineChart({ title: `Critical Strike gear 0 -> ${csCap}`, xLabel: 'Critical Strike gear points', yLabel: 'DPS', series: csSeries }),
     };
 
-    const subtitle = `Level ${level} | real Firmament tree | Dunmer | career expertise | Blademaster, no Berserker | 40% damage affix | target: level-${level} tough, no per-hit cap | boss: ${gate.maxHealth.toLocaleString()} HP, ${gate.hitCap} per-hit cap${vampire ? ' | vampire +30 CS' : ''}`;
+    const subtitle = `Level ${level} | real Firmament tree | Dunmer | career expertise | Blademaster, no Berserker | legal gear profile (weapon skill / Critical Strike / damage per weapon) | target: level-${level} tough, no per-hit cap | boss: ${gate.maxHealth.toLocaleString()} HP, ${gate.hitCap} per-hit cap${vampire ? ' | vampire +30 CS' : ''}`;
     const html = multiGraphPage({
       title: 'DFO weapon ceiling and skill scaling',
       subtitle,
       sections: values.categories
         ? [
-            { title: 'Boss DPS - level-45 Breach', note: bossNote, chart: bossBar },
+            { title: 'Breach DPS through the relay allowance - level-45', note: bossNote, chart: bossBar },
             { title: 'Uncapped DPS', note: uncappedNote, chart: uncappedBar, table: maxTable },
           ]
         : [
-            { title: 'Boss DPS - level-45 Breach', note: bossNote, chart: bossBar },
+            { title: 'Breach DPS through the relay allowance - level-45', note: bossNote, chart: bossBar },
             { title: 'Uncapped DPS', note: uncappedNote, chart: uncappedBar, table: maxTable },
             ...familySections,
             csSection,
@@ -1422,9 +1449,17 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     const level = n(values.level, THEORY_LEVEL);
     const blade = ch.weapon?.templateIndex ?? DEFAULT_BLADE;
     const material = ch.weapon?.material ?? 9;
-    const lines = Math.min(GEAR_SKILL_LINES, Math.max(0, n(values['gear-lines'], GEAR_SKILL_LINES)));
-    const linePts = Math.max(1, n(values['line-points'], GEAR_LINE_MAX));
-    const damage = values['damage-pct'] != null ? n(values['damage-pct'], 0) : DAMAGE_AFFIX_MAX;
+    const legal = legalGear(blade);
+    const lbCap = maxSingleSkill({ weaponTemplate: blade });
+    const csCap = maxSingleSkill({ weaponTemplate: blade, skill: SKILLS.CriticalStrike });
+    const damage = values['damage-pct'] != null ? n(values['damage-pct'], 0) : legal.dmg;
+    if (values['gear-lines'] != null || values['line-points'] != null) {
+      console.error('note: --gear-lines / --line-points are obsolete; a line is not a budget. Use --gear-lb / --gear-cs in points (the legal maximum is shown below).');
+    }
+    if (damage > 38) {
+      console.error(`WARNING: ${damage}% damage is above every Legendary record's fixed line (the best record carries 38%); this is a hypothetical build.`);
+    }
+    const explicitGear = values['gear-lb'] != null || values['gear-cs'] != null;
     const { starStats: baseStarStats, starSkills: baseStarSkills } = starOptions(values);
     const starDamage = values['star-damage'] != null ? n(values['star-damage'], 0) : (values.firmament ? 30 : 0);
     const baseOpts = { level, race: values.race ?? 'darkelf', blade, material, vampire: values.vampire, starDamage, sockets: perfectSockets(blade), martialPath: 'blademaster' };
@@ -1438,23 +1473,17 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     const run = (c, extra = {}) => analyze(c, sc(c, extra));
     const behind = (c) => run(c, { backstabUptime: 1 });
 
-    // The best split of a fixed line budget between Long Blade and Critical Strike.
-    const budgetRows = [];
-    for (let total = 0; total <= lines; total++) {
-      let row = null;
-      for (let lb = Math.max(0, total - GEAR_CS_LINES); lb <= Math.min(total, GEAR_LB_LINES); lb++) {
-        const cs = total - lb;
-        const c = make({ rawBlade: 200, rawCrit: 200, gearLB: lb * linePts, gearCS: cs * linePts, damagePct: damage });
-        const r = run(c);
-        const candidate = { lines: total, lb, cs, lbPts: lb * linePts, csPts: cs * linePts, dps: r.dps, cappedDps: r.cappedDps, perSwing: r.perSwing, ttk: r.ttk, ch: c, r };
-        if (!row || candidate.cappedDps > row.cappedDps || (candidate.cappedDps === row.cappedDps && candidate.dps > row.dps)) row = candidate;
-      }
-      budgetRows.push(row);
-    }
-    const best = budgetRows[budgetRows.length - 1];
-    const explicitGear = values['gear-lb'] != null || values['gear-cs'] != null;
-    const maxLb = explicitGear ? n(values['gear-lb'], 0) : best.lbPts;
-    const maxCs = explicitGear ? n(values['gear-cs'], 0) : best.csPts;
+    // The legal frontier: every attainable (weapon skill, Critical Strike, damage) split of the 18 slots,
+    // re-run at THIS target (the frontier's own DPS numbers are the reference target's).
+    const frontierRows = legalFrontier(blade).map((p) => {
+      const c = make({ rawBlade: 200, rawCrit: 200, gearLB: p.lb, gearCS: p.cs, damagePct: p.dmg });
+      const r = run(c);
+      return { lb: p.lb, cs: p.cs, dmg: p.dmg, total: p.lb + p.cs, dps: r.dps, cappedDps: r.cappedDps, perSwing: r.perSwing, ttk: r.ttk, ch: c, r };
+    }).sort((a, b) => a.lb - b.lb);
+    const maxLb = explicitGear ? n(values['gear-lb'], 0) : legal.lb;
+    const maxCs = explicitGear ? n(values['gear-cs'], 0) : legal.cs;
+    const keyOf = (x) => `${x.lb}/${x.cs}/${x.dmg}`;
+    const onFrontier = frontierRows.find((x) => x.lb === maxLb && x.cs === maxCs);
     const maxCh = make({ rawBlade: 200, rawCrit: 200, gearLB: maxLb, gearCS: maxCs, damagePct: damage });
     const maxR = run(maxCh);
     const maxBehind = behind(maxCh);
@@ -1462,8 +1491,8 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     const stages = [
       { label: 'Naked skills', raw: 100, gearLB: 0, gearCS: 0, damage: 0, vampire: false, sockets: [] },
       { label: 'Mastered skills', raw: 200, gearLB: 0, gearCS: 0, damage: 0, vampire: false, sockets: [] },
-      { label: 'Perfect skill lines', raw: 200, gearLB: maxLb, gearCS: maxCs, damage: 0, vampire: false },
-      { label: 'Perfect weapon line', raw: 200, gearLB: maxLb, gearCS: maxCs, damage, vampire: false },
+      { label: 'Legal gear (no damage line)', raw: 200, gearLB: maxLb, gearCS: maxCs, damage: 0, vampire: false },
+      { label: 'Legal gear + damage line', raw: 200, gearLB: maxLb, gearCS: maxCs, damage, vampire: false },
       { label: 'Vampire', raw: 200, gearLB: maxLb, gearCS: maxCs, damage, vampire: true },
     ].map((s) => {
       const c = make({ rawBlade: s.raw, rawCrit: s.raw, rawBackstab: s.raw, gearLB: s.gearLB, gearCS: s.gearCS, damagePct: s.damage, vampire: s.vampire, ...(s.sockets !== undefined ? { sockets: s.sockets } : {}) });
@@ -1512,8 +1541,9 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     addSkill('Raw Long Blade', 'raw', 29, [100, 125, 150, 175, 200]);
     addSkill('Raw Critical Strike', 'raw', 34, [100, 125, 150, 175, 200]);
     addSkill('Raw Backstabbing (behind)', 'raw', 19, [100, 125, 150, 175, 200], { backstabUptime: 1 });
-    addSkill('Gear Long Blade (CS fixed)', 'gear', 29, [0, 200, 400, 600, GEAR_MASTERY_POINTS, 800]);
-    addSkill('Gear Critical Strike (LB fixed)', 'gear', 34, [0, 200, 400, 600, 800]);
+    addSkill('Gear Long Blade (legal to 535)', 'gear', 29, [0, 200, 400, 535]);
+    addSkill('Gear Long Blade (formula cap, hypothetical)', 'gear', 29, [GEAR_MASTERY_POINTS]);
+    addSkill('Gear Critical Strike (legal to 535)', 'gear', 34, [0, 200, 400, 535]);
 
     const bladeRows = LONG_BLADES.map((idx) => {
       const c = theoryBlade(maxCh, idx, material);
@@ -1524,6 +1554,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
 
     const r = maxR;
     const p = r.damage.parts;
+    const frontierMaxTotal = maxPointTotal({ weaponTemplate: blade });
     if (!values.json) {
     console.log(`Level ${level} theory long blade  |  ${RACE_NAMES[maxCh.raceId] ?? maxCh.race}  |  Daedric ${WEAPONS[blade].name}`);
     const targetName = values.theory && values.target === 'armoured' ? 'gate' : values.target;
@@ -1532,9 +1563,20 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     console.log(table([
       ['Attributes', STAT_KEYS.map((k) => `${k} ${liveStat(maxCh, k)}`).filter((x, i) => ['strength', 'agility', 'speed', 'luck'].includes(STAT_KEYS[i])).join(', '), 'live values; Firmament lifts the 100 ceiling, gear stat affixes do not'],
       ['Raw skills', `Long Blade raw ${maxCh.skills[29]}, mod +${maxCh._mods?.skills?.[29] ?? 0}, sheet ${maxCh.skills[29] + (maxCh._mods?.skills?.[29] ?? 0)}, formula ${skillValue(maxCh, 29)}; Critical Strike raw ${maxCh.skills[34]}, mod +${maxCh._mods?.skills?.[34] ?? 0}, sheet ${maxCh.skills[34] + (maxCh._mods?.skills?.[34] ?? 0)}, formula ${skillValue(maxCh, 34)}`, 'the sheet prints raw + mods; the formula reads effectiveSkill(raw) + mods'],
-      ['Gear skill lines', `${lines} x ${linePts} points`, explicitGear ? `explicit ${maxLb} Long Blade / ${maxCs} Critical Strike` : `${best.lb} Long Blade / ${best.cs} Critical Strike is the best split`],
+      ['Gear', `weapon skill ${maxLb} / Critical Strike ${maxCs} / damage ${damage}%`,
+        explicitGear
+          ? (maxLb > lbCap || maxCs > csCap
+            ? `ILLEGAL: ${maxLb > lbCap ? `weapon skill ${maxLb} is above ${lbCap}` : `Critical Strike ${maxCs} is above ${csCap}`}; shown as a hypothetical build`
+            : onFrontier
+              ? (damage > onFrontier.dmg
+                ? `ILLEGAL: damage ${damage}% is above the ${onFrontier.dmg}% attainable at ${onFrontier.lb} / ${onFrontier.cs}; shown as a hypothetical build`
+                : damage === onFrontier.dmg
+                  ? `explicit legal frontier point (${onFrontier.lb} / ${onFrontier.cs} / damage ${onFrontier.dmg}%)`
+                  : `UNVERIFIED: ${damage}% is below the ${onFrontier.dmg}% the frontier plan carries at ${onFrontier.lb} / ${onFrontier.cs}; a lower damage line is not checked here`)
+              : 'HYPOTHETICAL: attainable but not a DPS frontier point (a lower split is dominated)')
+          : `legal maximum for ${WEAPONS[blade].name}: ${legal.lb} / ${legal.cs} / damage ${legal.dmg}% (the best uncapped split)`],
       ['Weapon', `Daedric ${WEAPONS[blade].name}`, `RRI ${r.weapon.min}-${r.weapon.max}, weight ${r.weapon.twoHanded ? '2H' : '1H'}`],
-      ['Damage affix', `${damage}%`, `legendary maximum ${DAMAGE_AFFIX_MAX}%`],
+      ['Damage affix', `${damage}%`, `a weapon's damage line: a Rare tops at ${AFFIX_DAMAGE_TOP.rare}%, a Legendary record's is fixed (the best in the game is 38%)`],
       ['Sockets', `${perfectSockets(blade).length} x perfect diamond`, `+${12 * perfectSockets(blade).length}% damage; a two-hander has 3, a one-hander 2, a short blade 1`],
       ['Firmament blow', `${starDamage}%`, 'general weapon-blow channel, cap +30% (+50% with conditions)'],
       ['Mastery / gear', `${fmt(p.mastery)}%`, `raw climb + gear channel`],
@@ -1552,6 +1594,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
 
     console.log('\nSkill and gear scaling');
     console.log(table(skillRows.map((x) => [x.label, x.value, fmt(x.dps), fmt(x.cappedDps), fmt(x.behind), fmt(x.perSwing), x.ttk ? `${fmt(x.ttk)} s` : '-']), ['Channel', 'Value', 'DPS', 'Capped', 'Behind', 'Per swing', 'TTK'], ['left', 'right', 'right', 'right', 'right', 'right', 'right']));
+    console.log(`The "formula cap" row is hypothetical: the legal single-skill maximum is 535 points (the weapon record + 17 Exalted slots); the 320% mastery cap would need ${GEAR_MASTERY_POINTS} points.`);
 
     // Firmament: the star tree's channels, 0..+15. The tree's stat gain also lifts the live
     // ceiling; its skill gain sits on top of effectiveSkill(raw).
@@ -1588,18 +1631,39 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       ['Capped', ...firmDmgCells.map((r) => fmt(r.cappedDps))],
     ], ['', ...firmDmgValues.map((v) => `+${v}% DPS`), ...firmDmgValues.map((v) => `+${v}% cap`)], ['left', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right']));
 
-    console.log(`\nGear line budget (${linePts} points per line; best feasible split)`);
-    console.log(table(budgetRows.map((x) => [x.lines, `${x.lb} / ${x.cs}`, x.lbPts, x.csPts, fmt(x.dps), fmt(x.cappedDps), fmt(x.perSwing), x.ttk ? `${fmt(x.ttk)} s` : '-']), ['Lines', 'LB / CS', 'LB points', 'CS points', 'DPS', 'Capped', 'Per swing', 'TTK'], ['right', 'left', 'right', 'right', 'right', 'right', 'right', 'right']));
+    const totalRow = frontierRows.find((x) => x.total === frontierMaxTotal);
+    const keep = new Set([keyOf(legal), keyOf(frontierRows[0]), keyOf(frontierRows[frontierRows.length - 1])]);
+    if (totalRow) keep.add(keyOf(totalRow));
+    const step = Math.max(1, Math.ceil(frontierRows.length / 16));
+    const shown = frontierRows.filter((x, i) => i % step === 0 || keep.has(keyOf(x)));
+
+    console.log(`\nLegal gear frontier (${frontierRows.length} attainable splits of the 18 worn slots)`);
+    console.log(`Single-skill maximum: weapon skill ${lbCap}, Critical Strike ${csCap}; highest combined total ${frontierMaxTotal}.`);
+    if (explicitGear && (maxLb > lbCap || maxCs > csCap)) {
+      console.log(`WARNING: ILLEGAL allocation. ${maxLb > lbCap ? `Weapon skill ${maxLb} is above the legal single-skill maximum ${lbCap}` : ''}${maxLb > lbCap && maxCs > csCap ? '; ' : ''}${maxCs > csCap ? `Critical Strike ${maxCs} is above ${csCap}` : ''}. The build is shown for comparison only; the rows below are what the slots can reach.`);
+    } else if (explicitGear && onFrontier && damage > onFrontier.dmg) {
+      console.log(`WARNING: ILLEGAL damage line. At ${onFrontier.lb} weapon skill / ${onFrontier.cs} Critical Strike the best attainable damage line is ${onFrontier.dmg}%, not ${damage}%. The build is shown for comparison only.`);
+    } else if (explicitGear && onFrontier && damage !== onFrontier.dmg) {
+      console.log(`NOTE: the frontier plan at ${onFrontier.lb} / ${onFrontier.cs} carries a ${onFrontier.dmg}% damage line; ${damage}% is lower, and this tool does not verify a different damage roll at the same split.`);
+    } else if (explicitGear && !onFrontier) {
+      console.log(`WARNING: ${maxLb} weapon skill / ${maxCs} Critical Strike is attainable but not on the DPS frontier (a lower split dominates it). The rows below are the trade-offs.`);
+    } else if (explicitGear) {
+      console.log(`Explicit frontier point: ${onFrontier.lb} weapon skill / ${onFrontier.cs} Critical Strike / damage ${onFrontier.dmg}%.`);
+    } else {
+      console.log(`Default max: ${legal.lb} weapon skill / ${legal.cs} Critical Strike / damage ${legal.dmg}% (${legal.metric}; ties: ${legal.alternatives.length}).`);
+    }
+    console.log(table(shown.map((x) => [x.lb, x.cs, x.total, `${x.dmg}%`, fmt(x.dps), fmt(x.cappedDps), fmt(x.perSwing), x.ttk ? `${fmt(x.ttk)} s` : '-']), ['Weapon skill', 'Critical Strike', 'Points', 'Damage', 'DPS', 'Capped', 'Per swing', 'TTK'], ['right', 'right', 'right', 'right', 'right', 'right', 'right', 'right']));
 
     console.log('\nLong blades at the ceiling');
     console.log(table(bladeRows.map((x) => [x.name, x.twoHanded ? '2H' : '1H', fmt(x.dps), fmt(x.cappedDps), fmt(x.perSwing), fmt2(x.aps), fmt(x.damage), pc(x.capLoss), x.ttk ? `${fmt(x.ttk)} s` : '-']), ['Blade', 'Hands', 'DPS', 'Capped', 'Per swing', 'APS', 'Avg hit', 'Cap loss', 'TTK'], ['left', 'left', 'right', 'right', 'right', 'right', 'right', 'right', 'right']));
-    console.log('The table holds the two-handed 8/18 line budget. A one-handed blade plus a shield adds one armour-group Long Blade line and one Critical Strike line, so the 1H rows are a lower bound.');
+    console.log('The table holds the legal 18-slot budget (weapon + seven body pieces + ten jewellery pieces). A one-handed blade plus a shield has one more armour-group slot, so a shield build reaches one Exalted skill line further; the 1H rows are a lower bound.');
     console.log(`Best at this target: ${bladeRows[0].name} (${fmt(bladeRows[0].cappedDps)} capped DPS, ${fmt(bladeRows[0].dps)} uncapped).`);
 
     console.log(`\n${targetName[0].toUpperCase()}${targetName.slice(1)} result`);
     console.log(table([
       ['Uncapped DPS', fmt(r.dps)],
-      ['Capped DPS', fmt(r.cappedDps)],
+      ['Per-hit-capped DPS (ceiling)', fmt(r.cappedDps)],
+      ...(r.allowance ? allowanceRows(r.allowance).slice(0, 3) : []),
       ['Per-hit range', `${r.damage.min}-${r.damage.max} (crit ${r.damage.critMin}-${r.damage.critMax})`],
       ['Cap loss', pc(r.capLoss)],
       ['Time to kill', `${fmt(r.ttk)} s`],
@@ -1607,19 +1671,25 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       ['Phase shields', `${r.target.phaseShields} x ${r.target.shieldSeconds}s (${r.shields}s)`],
     ], ['Metric', 'Value']));
     if (r.cap && r.hit.crit.chance >= 1 && r.damage.critMin >= r.cap) {
-      console.log('At 100% critical chance every blow is a critical, and the critical minimum is already over the per-hit cap: the 40% damage affix adds 0 capped DPS. Speed is the only attribute that still buys capped DPS here; Strength helps only through the RRI swing law.\nAgainst an uncapped boss the same build is ' + fmt(r.dps) + ' DPS.');
+      console.log(`At 100% critical chance every blow is a critical, and the critical minimum is already over the per-hit cap: the ${damage}% damage line adds 0 capped DPS. Speed is the only attribute that still buys capped DPS here; Strength helps only through the RRI swing law.\nAgainst an uncapped boss the same build is ${fmt(r.dps)} DPS.`);
     }
     }
 
     if (values.json) {
       console.log(JSON.stringify({
-        character: { level, race: RACE_NAMES[maxCh.raceId] ?? maxCh.race, blade: WEAPONS[blade].name, material, lines, linePts, maxLb, maxCs, damage },
+        character: {
+          level, race: RACE_NAMES[maxCh.raceId] ?? maxCh.race, blade: WEAPONS[blade].name, material,
+          slots: 18, maxLb, maxCs, damage,
+          legal: { lb: legal.lb, cs: legal.cs, dmg: legal.dmg, metric: legal.metric, ties: legal.alternatives.length, violations: legal.violations },
+          singleSkill: { weapon: lbCap, critical: csCap },
+          frontierPoints: frontierRows.length, frontierMaxTotal,
+        },
         result: { dps: r.dps, dpsMin: r.dpsMin, dpsMax: r.dpsMax, cappedDps: r.cappedDps, cappedDpsMin: r.cappedDpsMin, cappedDpsMax: r.cappedDpsMax, perSwing: r.perSwing, aps: r.cadence.aps, ttk: r.ttk, cap: r.cap, capLoss: r.capLoss, hit: r.hit.hit, critChance: r.hit.crit.chance, critMult: r.hit.crit.damageMult, damage: { min: r.damage.min, max: r.damage.max, critMin: r.damage.critMin, critMax: r.damage.critMax }, terms: p },
         stages: stages.map(({ ch: _c, r: _r, ...rest }) => rest),
         caps: THEORY_CAPS,
         stats: statScaled,
         skills: skillRows,
-        splits: budgetRows.map(({ ch: _c, r: _r, ...rest }) => rest),
+        splits: frontierRows.map(({ ch: _c, r: _r, ...rest }) => rest),
         blades: bladeRows,
       }, null, 2));
     }
@@ -1832,7 +1902,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     const html = buildReport(ch, {
       target, core: scenario.core, traits, health: scenario.health, swing: scenario.swing,
       passiveOn: scenario.passiveOn, stacks: scenario.stacks, rhythm: scenario.rhythm,
-      unaware: scenario.unaware, firstBlow: scenario.firstBlow, healthShare: scenario.healthShare,
+      unaware: scenario.unaware, firstBlow: scenario.firstBlow, healthShare: scenario.healthShare, attackerHealthShare: scenario.attackerHealthShare,
       backstabUptime: scenario.backstabUptime, players: n(values.players, 1), blowX: n(values['blow-x'], 1),
       rri: !values['no-rri'], pair: values.pair, bowSpam: values.spam, potencyPct: n(values.potency, 0), pierce: n(values.pierce, 0), weapon: scenario.weapon,
     });

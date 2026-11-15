@@ -11,7 +11,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { SKILLS } from './data.js';
-import { effectiveSkill, skillValue, arena2Dir } from './save.js';
+import { effectiveSkill, liveStat, skillValue, arena2Dir } from './save.js';
+import { RESIST_SHARE, elementTraitOf } from './bossTraits.js';
+import { EFFECT_FLAGS, careerTolerance, ELEMENT_FLAG_BY_INDEX } from './target.js';
+import { raceById, raceByKey } from '../vendor/upstream/a3eb1605/src/systems/races.js';
 
 export const SPELL_RECORD_SIZE = 0x59;
 /** One magic round is one classic minute: 5 real seconds (worldTick.js). */
@@ -243,15 +246,85 @@ export function spellRounds(e, level = 1) {
   return e.durationBase + e.durationMod * Math.max(1, Math.floor(level / per));
 }
 
-/** The target's saving chance in per cent (spellcast.js savingChance,
- *  without the biography/race terms a reference foe does not carry). */
-const ELEMENT_RESIST = Object.freeze({ 0: 'fire', 1: 'frost', 2: 'poison', 3: 'shock', 4: 'magic' });
-export function savingChance(target, { pierce = 0, element = 4 } = {}) {
-  let saving = 50 + trunc((target?.stats?.willpower ?? 50) / 10);
+/** FormulaHelper.SpellHasFlags, verbatim (systems/spellcast.js:70-86): the DiseaseOrPoison clause
+ *  ANDs the check flags with the spell's own flags before masking Disease|Poison, and the last
+ *  clause is element-independent. */
+export function spellHasFlags(element, checkFlags, spellEffectFlags) {
+  return (
+    (element === 0 && (checkFlags & EFFECT_FLAGS.Fire) !== 0) ||
+    (element === 1 && (checkFlags & EFFECT_FLAGS.Frost) !== 0) ||
+    (element === 2 && (checkFlags & spellEffectFlags & (EFFECT_FLAGS.Disease | EFFECT_FLAGS.Poison)) !== 0) ||
+    (element === 3 && (checkFlags & EFFECT_FLAGS.Shock) !== 0) ||
+    (element === 4 && (checkFlags & EFFECT_FLAGS.Magic) !== 0) ||
+    ((spellEffectFlags & EFFECT_FLAGS.Paralysis) !== 0 && (checkFlags & EFFECT_FLAGS.Paralysis) !== 0)
+  );
+}
+
+/** PlayerEntity.GetLiveRaceTemplate's stand-in (systems/spellcast.js:88-92). */
+const raceTemplateOf = (target) => target?.raceTemplate ?? raceById(target?.raceId) ?? raceByKey(target?.race) ?? null;
+
+/** The target's saving chance and immunity (systems/spellcast.js:130-190, full checkout at
+ *  a3eb1605; the vendored `systems/spellcast.js` is now a real vendored module). The element's
+ *  effect flags fold career/racial tolerance before the 100 immunity gate; Willpower and pierce
+ *  follow it. `effectFlags` defaults to the element's own flag. */
+const RESIST_BY_FLAG = Object.freeze([
+  [EFFECT_FLAGS.Fire, 'fire'], [EFFECT_FLAGS.Frost, 'frost'], [EFFECT_FLAGS.Shock, 'shock'],
+  [EFFECT_FLAGS.Poison, 'poison'], [EFFECT_FLAGS.Magic, 'magic'],
+]);
+export function savingChanceOutcome(target, { pierce = 0, element = 4, effectFlags = null, modifier = 0 } = {}) {
+  let saving = 50;
+  const flags = Number.isFinite(effectFlags) ? effectFlags : (ELEMENT_FLAG_BY_INDEX[element] ?? ELEMENT_FLAG_BY_INDEX[4]);
+  const player = !!target?.isPlayer;
+  let biography = 0;
+  if (player) {
+    const rt = raceTemplateOf(target) ?? {};
+    // The player's racial flags: immunity ASSIGNS 100 (the full source), the others add/subtract.
+    if (spellHasFlags(element, rt.resistanceFlags ?? 0, flags)) saving += 30;
+    if (spellHasFlags(element, rt.immunityFlags ?? 0, flags)) saving = 100;
+    if (spellHasFlags(element, rt.lowToleranceFlags ?? 0, flags)) saving -= 25;
+    if (spellHasFlags(element, rt.criticalWeaknessFlags ?? 0, flags)) saving -= 50;
+  }
+  // DFCareer.GetTolerance over every flag the spell carries (systems/spellcast.js:144-172).
+  const tolerance = { Immune: false, CriticalWeakness: false, LowTolerance: false, Resistant: false };
+  const fold = (flag) => {
+    if (!(flags & flag)) return;
+    const t = careerTolerance(target?.career ?? {}, flag);
+    if (t !== 'Normal') tolerance[t] = true;
+  };
+  fold(EFFECT_FLAGS.Paralysis);
+  fold(EFFECT_FLAGS.Magic);
+  if (flags & EFFECT_FLAGS.Magic) {
+    if (player) biography += Number(target?.biographyResistMagicMod) || 0;
+  }
+  fold(EFFECT_FLAGS.Poison);
+  if (flags & EFFECT_FLAGS.Poison) {
+    if (player) biography += Number(target?.biographyResistPoisonMod) || 0;
+  }
+  fold(EFFECT_FLAGS.Fire);
+  fold(EFFECT_FLAGS.Frost);
+  fold(EFFECT_FLAGS.Shock);
+  fold(EFFECT_FLAGS.Disease);
+  if (flags & EFFECT_FLAGS.Disease) {
+    if (player) biography += Number(target?.biographyResistDiseaseMod) || 0;
+  }
+  if (tolerance.Immune) saving += 50;
+  if (tolerance.CriticalWeakness) saving -= 50;
+  if (tolerance.LowTolerance) saving -= 25;
+  if (tolerance.Resistant) saving += 25;
+  saving += biography + (Number(modifier) || 0);
   const resist = target?._mods?.resist ?? {};
-  saving += resist[ELEMENT_RESIST[element]] ?? 0;
-  saving -= Math.max(0, pierce);
-  return clamp(saving, 5, 95);
+  for (const [flag, name] of RESIST_BY_FLAG) {
+    if (flags & flag) saving += Number(resist[name]) || 0;
+  }
+  if (saving >= 100) return { chance: 100, immune: true };
+  saving += trunc(Math.max(0, liveStat(target ?? { stats: { willpower: 50 } }, 'willpower')) / 10);
+  saving -= Math.max(0, Number(pierce) || 0);
+  return { chance: clamp(saving, 5, 95), immune: false };
+}
+
+/** Backwards-compatible number form (the immune flag is available through savingChanceOutcome). */
+export function savingChance(target, opts = {}) {
+  return savingChanceOutcome(target, opts).chance;
 }
 
 /** What a saving chance of `saving` lets land on average, per cent. */
@@ -263,7 +336,8 @@ export function savingLands(saving) {
   return sum / 100;
 }
 
-const ELEMENT_TRAIT = Object.freeze({ 0: 'flameproof', 1: 'frostproof', 2: 'venomproof', 3: 'stormproof', 4: 'spellproof' });
+// The element -> proof mapping is the client's own list (systems/bossTraits.js ELEMENT_TRAITS:
+// fire, frost, poison, shock, magic), read through bossTraits.js - never a second copy.
 const DAMAGE_HEALTH = new Set(['4,0', '1,0', '11,8']);
 
 /** The average health damage of one spell at one target. */
@@ -277,13 +351,14 @@ export function spellDamage(spell, ch, target, {
   if (!spell) return { damage: 0, effects: [], school: SKILLS.Destruction, saving: 0 };
   const traits = target?.bossTraits ?? [];
   const element = spell.element ?? 4;
-  const trait = ELEMENT_TRAIT[element];
-  const resistMult = trait && traits.includes(trait) ? 0.25 : 1;
+  const trait = elementTraitOf(element);
+  const resistMult = trait && traits.includes(trait) ? RESIST_SHARE : 1;
   const school = effectSchool(spell.effects?.[0] ?? { type: 4, subType: 0 });
   const climb = effectiveSkill(ch?.skills?.[school] ?? 0);
   const schoolMult = online && climb > 100 ? 1 + (climb - 100) * 0.01 : 1;
   const powerMult = schoolMult * Math.max(0.5, 1 + Math.min(50, potencyPct) / 100) * resistMult;
-  const saving = savingLands(savingChance(target, { pierce, element }));
+  const savingOutcome = savingChanceOutcome(target, { pierce, element, effectFlags: spell?.effectFlags ?? null });
+  const saving = savingOutcome.immune ? 0 : savingLands(savingOutcome.chance);
   let instant = 0;
   let dotPerTick = 0;
   let dotRounds = 0;

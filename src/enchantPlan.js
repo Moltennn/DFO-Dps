@@ -9,7 +9,7 @@
  */
 import { SKILLS, WEAPONS } from './data.js';
 import { THEORY_LEVEL } from './theory.js';
-import { cappedDpsWith, maxCharacter, maxRun } from './maxprofile.js';
+import { maxCharacter, maxRun } from './maxprofile.js';
 import { IMPRINT_FAMILIES, imprintsFor, powerDps } from './imprints.js';
 import { gateTarget, referenceFoe } from './model.js';
 import { enchantDps, ENCHANTMENT_TYPES } from './enchants.js';
@@ -108,6 +108,9 @@ function skillGain(ch, base, id, extra = {}, target) {
   return Math.max(0, maxRun(next, { target }).cappedDps - maxRun(now, { target }).cappedDps);
 }
 
+/** Potent Vs' worth: the card re-run with the +5 on the blow where the game adds it (analyze's `with`). */
+const potentVsGain = (base) => base.with({ potentVs: 5 }).cappedDps - base.cappedDps;
+
 /** The weapon's strike candidates, priced by their actual capped spell DPS. */
 function weaponCandidates(ch, base, group, target) {
   const out = [];
@@ -120,7 +123,7 @@ function weaponCandidates(ch, base, group, target) {
     if (raw.dps > 0) out.push({ type: 'CastWhenStrikes', param, cost, value: raw.dps, label: enchantmentParamName('CastWhenStrikes', param) });
   }
   const pv = group == null || group === 'none' ? null : GROUP_PARAM[String(group).toLowerCase()] ?? 2;
-  const pvValue = pv == null ? 0 : Math.max(0, cappedDpsWith(base, { flat: 5 }) - base.cappedDps);
+  const pvValue = pv == null ? 0 : Math.max(0, potentVsGain(base));
   if (pv != null && pvValue > 0) out.push({ type: 'PotentVs', param: pv, cost: enchantmentCost('PotentVs', pv), value: pvValue, label: `${enchantmentName('PotentVs')}: ${enchantmentParamName('PotentVs', pv)}` });
   for (const id of skillIdsFor(ch._template)) {
     const value = skillGain(ch, base, id, {}, target);
@@ -273,7 +276,7 @@ export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, s
   }));
   const pvParam = group == null || group === 'none' ? null : GROUP_PARAM[String(group).toLowerCase()] ?? 2;
   if (pvParam != null && !weaponRatings.some((r) => r.type === 'PotentVs')) {
-    const pvValue = Math.max(0, cappedDpsWith(base, { flat: 5 }) - base.cappedDps);
+    const pvValue = Math.max(0, potentVsGain(base));
     const pvCost = enchantmentCost('PotentVs', pvParam);
     weaponRatings.push({ type: 'PotentVs', param: pvParam, label: `${enchantmentName('PotentVs')}: ${enchantmentParamName('PotentVs', pvParam)}`, cost: pvCost, value: pvValue, benefit: `${Math.round(pvValue)} DPS`, chosen: chosenCount('PotentVs', pvParam), rate: pvCost > 0 ? pvValue / pvCost : 0 });
   }

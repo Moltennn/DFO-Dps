@@ -14,7 +14,7 @@
 import { WEAPONS } from './data.js';
 import { THEORY_LEVEL } from './theory.js';
 import { gateTarget } from './model.js';
-import { cappedDpsWith, maxCharacter, maxRun } from './maxprofile.js';
+import { maxCharacter, maxRun } from './maxprofile.js';
 
 /** Weapon Legendaries that can supply an imprint, with their power. */
 export const WEAPON_IMPRINTS = Object.freeze([
@@ -78,8 +78,6 @@ export const imprintsFor = (template) => {
  * run applies only what is unconditional.
  */
 export function powerDps(power, base, conditional = false, { capped = false } = {}) {
-  const hit = base.hit?.hit ?? 1;
-  const aps = base.cadence?.aps ?? 1;
   let mult = 0;
   let flat = 0;
   switch (power.kind) {
@@ -99,8 +97,12 @@ export function powerDps(power, base, conditional = false, { capped = false } = 
     case 'conduit': case 'siphon': case 'surge': break;
     default: break;
   }
-  if (capped) return cappedDpsWith(base, { mult: 1 + mult, flat });
-  return base.dps * (1 + mult) + flat * hit * aps;
+  // The power is priced by re-running the SAME card with it on the weapon (analyze's `with`): its percentage
+  // and flat enter lootBlow's step, so the crit, the condition, the defence, a pair's or a dual build's
+  // hands, a backstab, the trait, the cap all treat it as they treat a real line. (Stage 2.9, F2: the
+  // helper this replaced re-derived the card from the main hand's rolls and disagreed with it.)
+  const priced = mult || flat ? base.with({ loot: { pct: mult * 100, flat } }) : base;
+  return capped ? priced.cappedDps : priced.dps;
 }
 
 /** Powers whose condition cannot occur at the level-45 gate (a Daedra, one foe). */

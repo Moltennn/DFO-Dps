@@ -10,7 +10,8 @@
  *
  * The character is deliberately at the live ceiling, not at a community
  * benchmark: attributes 100, a mastered Long Blade and Critical Strike at
- * raw 200, a Daedric Dai-katana, and a chosen number of gear skill lines.
+ * raw 200, a Daedric Dai-katana, and the legal gear frontier chosen by
+ * `maxprofile.js` (a slot count is not a point budget).
  *
  * `starStats` / `starSkills` are the FIRMAMENT's channels. The tree caps an
  * attribute or combat skill channel at +15; an attribute gain also lifts the
@@ -39,26 +40,34 @@ export const DEFAULT_BLADE = 123;
 
 /** A legendary skill line's maximum (lootRarity.js AFFIX_RANGES.skill.legendary). */
 export const GEAR_LINE_MAX = 30;
-/** A legendary damage affix's maximum on a weapon. */
+/** The Legendary damage band's top (lootRarity.js AFFIX_RANGES.damage.legendary). No record carries
+ *  it; the best record's fixed line is warp-edge's 38%. */
 export const DAMAGE_AFFIX_MAX = 40;
 /** weaponMastery.js: gear skill stops adding at 320%, which is 727.27 points. */
 export const GEAR_MASTERY_CAP = 320;
 export const GEAR_MASTERY_POINTS = Math.ceil(GEAR_MASTERY_CAP / 0.44);
 
 /**
- * The practical line caps, from lootRarity.js:
- *   - Long Blade can only be rolled by the weapon (its own skill) and the
- *     seven armour pieces (BODY_KIN). Jewellery's JEWEL_KIN has Critical
- *     Strike but not Long Blade, and clothing rolls the street skills.
- *   - Critical Strike can be rolled by the weapon (STRIKE_KIN), all seven
+ * The practical ROLLED-line slot counts, from lootRarity.js:
+ *   - Long Blade can be ROLLED by the weapon (its own skill) and the seven
+ *     armour pieces (BODY_KIN). Jewellery's JEWEL_KIN has Critical Strike
+ *     but not Long Blade.
+ *   - Critical Strike can be ROLLED by the weapon (STRIKE_KIN), all seven
  *     armour pieces and all ten jewellery slots (JEWEL_KIN).
  * A rare item has at most four lines and a kind's params may not repeat, so
  * one Long Blade line and one Critical Strike line per item is the ceiling.
+ *
+ * These are slot counts, NOT a point budget. The legal budget is the frontier
+ * in `gearProfile.js`: a Legendary record's skill line is fixed, only the
+ * Exalted extra reaches 30, and that extra may be any skill (its param draw
+ * is not kin-filtered upstream). `legalGear` in `maxprofile.js` picks the
+ * attainable split.
  */
 export const GEAR_LB_LINES = 8;
 export const GEAR_CS_LINES = 18;
 export const GEAR_SKILL_LINES = GEAR_LB_LINES + GEAR_CS_LINES;
-/** Hand-to-Hand rolls on armour (BODY_KIN) and jewellery (JEWEL_KIN), never on a weapon. */
+/** Hand-to-Hand rolls on the seven armour pieces and the ten jewellery pieces (BODY_KIN / JEWEL_KIN);
+ *  the Hand Wraps are the weapon's own line. 17 non-weapon slots, a slot count rather than a budget. */
 export const GEAR_H2H_LINES = 17;
 
 /** The character. `gearLB` / `gearCS` are gear skill points on Long Blade and Critical Strike. */
@@ -275,27 +284,27 @@ export const THEORY_CAPS = Object.freeze([
   },
   {
     channel: 'Gear Long Blade',
-    cap: `${GEAR_LB_LINES} lines = 240 points (+105.6%)`,
+    cap: '535 points (+235.4%)',
     formula: 'min(320, gearSkill x 0.44); formula cap at 728 points',
-    note: `The formula tops out at +320%, but only the weapon and seven armour pieces can roll Long Blade, so 8 legendary lines (240 points, +105.6%) is the practical ceiling. Critical Strike is the only channel that can use a larger budget.`,
+    note: 'The weapon carries a fixed record line (25 at most), and each of the 17 non-weapon slots can carry ONE Exalted line of any skill at 25-30. A Legendary record with no skill line can be Exalted; a Rare can roll Long Blade only on the weapon and armour. The single-skill ceiling is 25 + 17 x 30 = 535, not the old 8 x 30 = 240.',
   },
   {
     channel: 'Gear Critical Strike',
-    cap: `${GEAR_CS_LINES} lines = 540 points`,
+    cap: '535 points',
     formula: 'chance = trunc(skill / 2); mult = trunc(skill / 5) x 0.05 + 1',
-    note: 'The weapon, seven armour pieces and ten jewellery slots can roll it. Chance reaches 100% at 199 skill; every point past that adds 0.01 to the multiplier, so all 18 lines keep paying.',
+    note: 'The weapon, seven armour pieces and ten jewellery slots can all carry Critical Strike. The weapon record tops at 25 and the other 17 slots can each Exalt one line at 30, so the ceiling is 535. Chance reaches 100% at 199 skill; every point past that adds 0.01 to the multiplier.',
   },
   {
     channel: 'Gear skill lines',
-    cap: `${GEAR_SKILL_LINES} lines = 780 points`,
-    formula: '8 Long Blade + 18 Critical Strike',
-    note: '18 combat pieces x up to four affixes = 72 lines of room; the per-skill parameter rule is what binds, not the affix count. This is the whole damage-affix budget for these two skills.',
+    cap: '620 points together (long blade)',
+    formula: 'one line per kind per piece; one Exalted line per piece',
+    note: '18 worn slots x up to four affixes is 72 lines of room, but the per-skill parameter rule and the single Exalted line are what bind: one piece cannot carry both 30s. A long blade tops at 620 combined (all ten jewellery Exalted Long Blade, the weapon and armour Rare). A Hand-to-Hand build can reach 720 because JEWEL_KIN lets a Rare jewellery roll both Hand-to-Hand and Critical Strike.',
   },
   {
     channel: 'Weapon damage affix',
-    cap: `${DAMAGE_AFFIX_MAX}%`,
-    formula: 'AFFIX_RANGES.damage.legendary = 20..40',
-    note: 'Only a weapon can roll it, so 40% is the whole affix channel. It multiplies the weapon roll before mastery and criticals.',
+    cap: '38%',
+    formula: 'a Rare rolls 10..25; a Legendary record is fixed',
+    note: 'Only a weapon can carry it. A Rare\'s rolled line tops at 25%; a Legendary record\'s damage line is fixed, and the best record is warp-edge at 38% (the 40% band top is not on any record).',
   },
   {
     channel: 'Firmament blow',

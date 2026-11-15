@@ -43,13 +43,21 @@ test('strength terms: classic /5, overhaul /10', () => {
   assert.equal(pcaaoDamageModifier(75), 2);
 });
 
-test('classic longsword, STR 80: 8-22 before the foe', () => {
+test('classic longsword, STR 80: /10 live, /5 when the overhaul is uninstalled', () => {
   const ch = characterFromSave(testSave(), { online: false });
-  const r = analyze(ch, { target: referenceFoe(5, 'soft'), core: 'classic', critDamage: false });
-  assert.equal(r.damage.min, 8);   // 2 + floor((80-50)/5)
-  assert.equal(r.damage.max, 22);  // 16 + 6
-  assert.equal(r.damage.parts.matMod, 0); // steel
-  assert.equal(r.damage.parts.strMod, 6);
+  // The live game installs PCAAO, whose damageModifier override is /10 even for the stock core.
+  const live = analyze(ch, { target: referenceFoe(5, 'soft'), core: 'classic', critDamage: false });
+  assert.equal(live.damage.min, 2 + 3);   // 2 + floor((80-50)/10)
+  assert.equal(live.damage.max, 16 + 3);
+  assert.equal(live.damage.parts.matMod, 0); // steel
+  assert.equal(live.damage.parts.strMod, 3);
+  // The golden stock fixture uninstalls PCAAO and pins DFU's own /5.
+  const stock = analyze(ch, {
+    target: referenceFoe(5, 'soft'), core: 'classic', critDamage: false, fixedStrengthDamageModifier: false,
+  });
+  assert.equal(stock.damage.min, 8);   // 2 + floor((80-50)/5)
+  assert.equal(stock.damage.max, 22);
+  assert.equal(stock.damage.parts.strMod, 6);
 });
 
 test('overhaul longsword: strength is /10; two-handed doubles it', () => {

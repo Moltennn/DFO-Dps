@@ -8,7 +8,11 @@
  *   tokens  4 blows a second (four in hand, four a second back)
  *
  * The reference is `5 + level` (net/gate/gateBrain.js dpsRef). The breach,
- * the Sky-ketch and the Abyss all use that body; what changes per content is
+ * the Sky-ketch and the Abyss all use that body; their BODY is the game's one
+ * relay stand-in (world/gate/gateBoss.js bossStandIn) for the content's look -
+ * Valkynaz Ruhn's Daedra Lord (31) at the Breach, the Iron Atronach (36) for the
+ * Sky-ketch Warden (scenes/ketch/ketchFight.js:57, :348) and the Abyss Remnant
+ * (scenes/superDungeon/sdRemnant.js:97, :529). What changes per content is
  * the share a player brings, the phase shields, and the encounter mechanics
  * (the ketch's immune windows, the Abyss's clock puzzle and gold/silver split).
  *
@@ -16,23 +20,18 @@
  * and are marked `calibrated: false` until the probe measures the windows.
  */
 import { bossTarget } from './model.js';
+import { ALLOWANCE, BREACH_PHASES, allowanceLaw, allowanceSpec, refOf } from './allowance.js';
+import { relayTraitsFor } from './bossTraits.js';
 
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
-export const BOSS_REF_MAX = 60;
-export const bossRef = (level) => 5 + clamp(Math.floor(Number(level) || 1), 1, BOSS_REF_MAX);
-export const PURSE = Object.freeze({ depthX: 15, rateX: 3, hitCapX: 12, hitHz: 4 });
+export const BOSS_REF_MAX = ALLOWANCE.refMax;
+export const bossRef = refOf;
+export const PURSE = Object.freeze({ depthX: ALLOWANCE.depthX, rateX: ALLOWANCE.rateX, hitCapX: ALLOWANCE.hitCapX, hitHz: ALLOWANCE.hitHz });
 
 /** Ref per player at a level: share, purse depth, refill and cap. */
 export function purseOf(level) {
-  const ref = bossRef(level);
-  return {
-    ref,
-    depth: PURSE.depthX * ref,
-    rate: PURSE.rateX * ref,
-    cap: PURSE.hitCapX * ref,
-    hitHz: PURSE.hitHz,
-  };
+  const { ref, depth, rate, cap, hitHz } = allowanceLaw(level);
+  return { ref, depth, rate, cap, hitHz };
 }
 
 /**
@@ -49,11 +48,8 @@ export const ENCOUNTERS = Object.freeze({
     shareX: 240,
     hpX: 1,
     group: 'daedra',
-    armorValue: 12,
-    phases: Object.freeze([
-      Object.freeze({ at: 0.66, shieldS: 3 }),
-      Object.freeze({ at: 0.33, shieldS: 3 }),
-    ]),
+    mobileType: 31,
+    phases: BREACH_PHASES,
     immunity: null,
     split: null,
     calibrated: true,
@@ -65,7 +61,7 @@ export const ENCOUNTERS = Object.freeze({
     shareX: 600,
     hpX: 1,
     group: null,
-    armorValue: 0,
+    mobileType: 36,
     phases: null,
     immunity: Object.freeze({
       share: 0.178,
@@ -82,7 +78,7 @@ export const ENCOUNTERS = Object.freeze({
     shareX: 240,
     hpX: 1,
     group: null,
-    armorValue: 0,
+    mobileType: 36,
     phases: null,
     immunity: null,
     split: Object.freeze({
@@ -100,19 +96,28 @@ export const encounterById = (id) => ENCOUNTERS[String(id ?? '').toLowerCase()] 
 export const DEFAULT_ENCOUNTER = 'breach';
 
 /** The boss target for one player of an encounter, with the purse's cap. */
-export function encounterTarget(id, level, { players = 1, traits = [] } = {}) {
+export function encounterTarget(id, level, { players = 1, traits = null } = {}) {
   const e = encounterById(id) ?? ENCOUNTERS[DEFAULT_ENCOUNTER];
   const { ref, cap } = purseOf(level);
   const shields = e.phases?.length ?? 0;
   const shieldSeconds = e.phases?.reduce((a, p) => a + (Number(p.shieldS) || 0), 0) ?? 0;
-  return bossTarget({
+  // The body is the game's relay stand-in for the content's look (model.js bossTarget -> target.js
+  // standInTarget: world/gate/gateBoss.js bossStandIn) - its level, skills, armour and metal are the
+  // game's, the same constructor for every content; only the mobile differs.
+  const t = bossTarget({
     level,
-    armorValue: e.armorValue,
     group: e.group,
+    mobileType: e.mobileType,
+    spareGear: true,
     health: e.shareX * ref * (e.hpX ?? 1) * Math.max(1, Math.floor(players)),
-    traits,
+    // The boss's own traits from the game's selector (systems/bossTraits.js relayBossTraits), keyed by the
+    // encounter's identity; an explicit list overrides for experiments.
+    traits: traits ?? relayTraitsFor(e.id) ?? [],
     hitCap: cap,
     phaseShields: shields,
     shieldSeconds: shieldSeconds / Math.max(1, shields),
   });
+  // The relay's per-player allowance applies to every content that spends the gate's hand and purse.
+  t.allowance = allowanceSpec(level, { players, phases: e.phases ?? [], openingS: e.openingS, immunityShare: e.immunity?.share });
+  return t;
 }

@@ -24,10 +24,16 @@ test('imprint eligibility is the Weapons group, then the power\'s own fit', () =
 test('a power is priced both unconditionally and under its trigger', () => {
   const base = maxRun(maxCharacter(123));
   const flow = { kind: 'flow', pct: 6, max: 5 };
-  assert.ok(Math.abs(powerDps(flow, base, false) / base.dps - 1.30) < 1e-9);
+  // Stage 2.9: a power is the same card re-run with its percentage in lootBlow's step (analyze's `with`). The share
+  // is floored per blow (shareOf) and the crit, condition and defence round whole numbers after it, so the
+  // result is within a point of damage per blow of the linear figure - not the exactly linear one the pre-2.9
+  // shortcut gave.
+  const within = (priced, linear) => Math.abs(priced / linear - 1) < 0.01;
+  assert.equal(powerDps(flow, base, false), base.with({ loot: { pct: 30, flat: 0 } }).dps);
+  assert.ok(within(powerDps(flow, base, false), base.dps * 1.30), `${powerDps(flow, base, false) / base.dps}`);
   const bane = { kind: 'bane', pct: 50 };
   assert.equal(powerDps(bane, base, false), base.dps);
-  assert.ok(Math.abs(powerDps(bane, base, true) / base.dps - 1.50) < 1e-9);
+  assert.ok(within(powerDps(bane, base, true), base.dps * 1.50), `${powerDps(bane, base, true) / base.dps}`);
 });
 
 test('the long-blade ranking keeps every weapon power, read on a long blade', () => {
@@ -44,7 +50,8 @@ test('the long-blade ranking keeps every weapon power, read on a long blade', ()
 test('Silent Death is a double only away from the gate, where its trigger can occur', () => {
   const base = maxRun(maxCharacter(117));
   const silent = { kind: 'unaware', pct: 100 };
-  assert.ok(Math.abs(powerDps(silent, base, true) / base.dps - 2) < 1e-9);
+  assert.equal(powerDps(silent, base, true), base.with({ loot: { pct: 100, flat: 0 } }).dps);
+  assert.ok(Math.abs(powerDps(silent, base, true) / base.dps - 2) < 0.02, `${powerDps(silent, base, true) / base.dps}`); // +100% is exact before the crit, condition and defence round it
   const r = rankFamily(family('ShortBlade'));
   const row = r.rows.find((x) => x.power.name === 'Silent Death');
   assert.equal(row.conditionalDps, row.baseDps);
@@ -54,7 +61,10 @@ test('Silent Death is a double only away from the gate, where its trigger can oc
 test('the boss ranking reflects the gate cap, not the uncapped ceiling', () => {
   const r = rankFamily(family('LongBlade'));
   const flow = r.rows.find((x) => x.power.name === 'Way of the Sword');
-  assert.equal(flow.delta, 0);
+  // The legal profile is no longer saturated far above the cap, but the cap still absorbs most of the
+  // power's +6%/stack (30% at five stacks): the uncapped gain is far larger than the capped one.
+  assert.ok(flow.delta >= 0);
+  assert.ok(flow.uncappedDelta > flow.delta * 5, `capped ${flow.delta} vs uncapped ${flow.uncappedDelta}`);
   assert.ok(flow.uncappedDps > flow.baseDps);
 });
 
@@ -94,7 +104,9 @@ test('Many Endings is a separate hit, so it survives the main hit\'s cap', () =>
 
 test('moon adds both night and animal shares, and chain/quake are other-target only', () => {
   const base = maxRun(maxCharacter(123));
-  assert.ok(Math.abs(powerDps({ kind: 'moon', pct: 35, beast: 35 }, base, true) / base.dps - 1.7) < 1e-9);
+  const moon = powerDps({ kind: 'moon', pct: 35, beast: 35 }, base, true);
+  assert.equal(moon, base.with({ loot: { pct: 70, flat: 0 } }).dps);
+  assert.ok(Math.abs(moon / (base.dps * 1.7) - 1) < 0.01, `${moon / base.dps}`);
   assert.equal(powerDps({ kind: 'chain', share: 50 }, base, true), base.dps);
   assert.equal(powerDps({ kind: 'quake', share: 25 }, base, true), base.dps);
 });

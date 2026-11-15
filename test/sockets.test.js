@@ -31,7 +31,7 @@ test('Hand Wraps carry damage and sockets onto the fist blow', () => {
   assert.ok(b.damage.avg > a.damage.avg);
 });
 
-test('dual wield adds the off hand at x0.8 and -5 hit', () => {
+test('dual wield strikes with the off hand at x0.8 and the Agility to-hit term', () => {
   const ch = theoryCharacter({ blade: 121, gearLB: 240, gearCS: 540, damagePct: 40, sockets: perfectSockets(121) });
   ch.offWeapon = { ...ch.weapon, equipSlot: 21 };
   const target = referenceFoe(45, 'tough');

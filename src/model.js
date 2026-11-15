@@ -13,8 +13,8 @@
  * See NOTICE for the source and its MIT / Daggerfall Unity attribution.
  */
 import {
-  BOSS_TRAITS, CURB_SHARE, MARTIAL_PATHS, MATERIALS, PCAAO_BODY_PARTS,
-  RACES, SKILLS, STRUCK_BODY_PARTS, SWINGS, SWING_HANDLING,
+  BOSS_TRAITS, CURB_SHARE, MARTIAL_PATHS, MATERIALS,
+  RACES, SKILLS, SWINGS, SWING_HANDLING,
   SWING_BASE_FRAME, SWING_FRAME_MAX, SWING_FRAME_MIN, SWING_HEFT_FREE_KG,
   SWING_HEFT_MAX, SWING_HEFT_PER_KG, SWING_MODS, SWING_SHORT_BLADE,
   SWING_TEMPO_AT_0, SWING_TEMPO_AT_100, SWING_TWO_HANDED,
@@ -22,8 +22,20 @@ import {
   GATE_SHIELDS, GATE_SHIELD_S, gateHealth, gateHitCap, RRI_WEAPON_DAMAGE, RRI_SPEED_REDUCTION_FACTOR,
   BOW_DRAW_LOOSE_S, GUN_FPS, PISTOLET_FPS, PISTOLET_RELOAD_S, THUNDERLOCK_FRAMES, PISTOLET_FRAMES, thunderlockReloadSeconds,
 } from './data.js';
+import { allowanceSpec, claimStreams, runAllowance } from './allowance.js';
+import { relayTraitsFor, resistBlow } from './bossTraits.js';
+import { BOW_FAST, bowFastDamage } from '../vendor/upstream/a3eb1605/src/combat/bowBloom.js';
+import { foeGroup } from '../vendor/upstream/a3eb1605/src/systems/loot/lootPowers.js';
+import { conditionPercentage } from '../vendor/upstream/a3eb1605/src/systems/item/itemTemplates.js';
+import { OFF_HAND_BLOW, dualSchedule, offHandBurden, offHandDamage, offHandToHit } from './dualWield.js';
 import { enchantDps, procsBeforeBreak } from './enchants.js';
 import { socketAffixes } from './sockets.js';
+import {
+  bodyPartWeights, elementShare, enemyTypeBonusRange, enemyTypeBonusValues,
+  hasWornEquipment, intrinsicDamage, isSkeletalTarget, leftHandShield, makeTarget,
+  materialRequirementMultiplier, naturalDamageResistance, silverApplies, skeletalSilverDamage,
+  standInTarget, targetExpectedDamage, targetGroupOf, targetPartOutcomes,
+} from './target.js';
 import {
   effectiveSkill, liveStat, masterCappedSkill, PROFICIENCY_FLAG, skillModOf,
   skillValue, WEAPON_SKILL,
@@ -72,11 +84,19 @@ export function weaponOf(item, { rri = false } = {}) {
     bowWithin: t.bowWithin ?? 1,
     material: num(item.material, 0),
     materialName: MATERIALS[num(item.material, 0)] ?? 'Iron',
+    flags: num(item.flags, 0),
     damagePct: affixes.filter((a) => a?.id === 'damage').reduce((s, a) => s + num(a.value), 0),
     slayer: affixes.filter((a) => a?.id === 'slayer').reduce((s, a) => s + num(a.value), 0),
     slayerByGroup: Object.fromEntries(affixes.filter((a) => a?.id === 'slayer').map((a) => [String(a.param), num(a.value)])),
     elemental: affixes.filter((a) => a?.id === 'elemental').reduce((s, a) => s + num(a.value), 0),
-    conditionPct: item.maxCondition > 0 ? clamp(num(item.currentCondition, item.maxCondition) / item.maxCondition, 0, 1) : 1,
+    elementalByElement: Object.fromEntries(
+      affixes
+        .filter((a) => a?.id === 'elemental' && a.param != null)
+        .map((a) => [String(a.param).toLowerCase(), num(a.value)]),
+    ),
+    // systems/item/itemTemplates.js:277-279: the integer the condition band reads.
+    conditionPercent: conditionPercentage(item),
+    conditionPct: conditionPercentage(item) / 100,
     bonusDamage: num(item.__bonusDamage, 0),
   };
 }
@@ -103,6 +123,14 @@ export const weaponToHit = (w) => (WEAPON_MATERIAL_MODIFIER[w.material] ?? 0) * 
 
 export function damageModifier(str) {
   return floor((str - 50) / 5);
+}
+/** The stock/classic core's Strength term with the LIVE game's install: PCAAO registers
+ *  `formulaOverride('damageModifier')` for `fixedStrengthDamageModifier` (default true), so the stock
+ *  weapon/fist path reads `pcaaoDamageModifier`'s /10 too. `fixedStrengthDamageModifier:false` is the
+ *  uninstalled DFU /5, kept for the golden stock fixture. The overhaul always uses /10 (and doubles it
+ *  for a two-handed weapon or bow); this helper is only for the classic arm. */
+function classicStrength(str, opts = {}) {
+  return opts.fixedStrengthDamageModifier === false ? damageModifier(str) : pcaaoDamageModifier(str);
 }
 export function pcaaoDamageModifier(str) {
   return floor((str - 50) / 10);
@@ -169,20 +197,38 @@ function overhaulProficiency(ch, w, opts = {}) {
   return out;
 }
 
-/** classic FormulaHelper.CalculateRacialModifiers. */
+/** classic FormulaHelper.CalculateRacialModifiers (combat/formulas.js:292-306), including the
+ *  else-if ladder: a Redguard ARCHER takes the archery arm, fails the Wood Elf test and gets
+ *  NOTHING (the stock's own quirk); a Dark Elf takes the Dark Elf arm whatever the weapon. */
 function classicRacial(ch, w, opts = {}) {
   if (!w) return { damage: 0, toHit: 0 };
-  if (ch.raceId === RACES.DarkElf) return { damage: trunc(ch.level / 4), toHit: trunc(ch.level / 4) };
-  if (ch.raceId === RACES.WoodElf && w.skillId === SKILLS.Archery) return { damage: trunc(ch.level / 3), toHit: trunc(ch.level / 3) };
-  if (ch.raceId === RACES.Redguard) return { damage: trunc(ch.level / 3), toHit: trunc(ch.level / 3) };
+  const level = ch.level;
+  if (ch.raceId === RACES.DarkElf) return { damage: trunc(level / 4), toHit: trunc(level / 4) };
+  if (w.skillId === SKILLS.Archery) {
+    return ch.raceId === RACES.WoodElf
+      ? { damage: trunc(level / 3), toHit: trunc(level / 3) }
+      : { damage: 0, toHit: 0 };
+  }
+  if (ch.raceId === RACES.Redguard) return { damage: trunc(level / 3), toHit: trunc(level / 3) };
   return { damage: 0, toHit: 0 };
 }
 
-/** pcaao.js pcaaoRacialModifiers, the weapon arms that matter for melee. */
+/** pcaao.js:281-361 pcaaoRacialModifiers, every arm of the switch and the two unarmed arms.
+ *  A weapon reads its own skill; the fists read Khajiit/Nord only. `S` is the live stat the
+ *  overhaul reads (the local stat helper also carries the path passives, as elsewhere). */
 function overhaulRacial(ch, w, opts = {}) {
   const out = { damage: 0, toHit: 0 };
-  if (!w) return out;
   const S = (k) => stat(ch, k, opts);
+  if (!w) {
+    if (ch.raceId === RACES.Khajiit) {
+      out.damage = trunc(S('strength') / 33) + trunc(S('endurance') / 33) + trunc(S('agility') / 50) + trunc(S('speed') / 50);
+      out.toHit = trunc(S('agility') / 25) + trunc(S('speed') / 50) + trunc(S('strength') / 50)
+        + trunc(S('endurance') / 50) + trunc(S('luck') / 50);
+    } else if (ch.raceId === RACES.Nord) {
+      out.damage = trunc(S('strength') / 33) + trunc(S('endurance') / 50);
+    }
+    return out;
+  }
   const ws = w.skillId;
   switch (ch.raceId) {
     case RACES.Argonian:
@@ -201,9 +247,12 @@ function overhaulRacial(ch, w, opts = {}) {
       }
       break;
     case RACES.WoodElf:
-      if (ws === SKILLS.Archery) {
+      if (ws === SKILLS.ShortBlade) {
+        out.damage = trunc(S('agility') / 33) + trunc(S('speed') / 50);
+        out.toHit = trunc(S('agility') / 20) + trunc(S('speed') / 33) + trunc(S('luck') / 50);
+      } else if (ws === SKILLS.Archery) {
         out.damage = trunc(S('strength') / 25) + trunc(S('agility') / 25);
-        out.toHit = trunc(S('agility') / 10) + trunc(S('speed') / 25) + trunc(S('luck') / 20);
+        out.toHit = trunc(S('agility') / 10) + trunc(S('speed') / 25) + trunc(S('luck') / 25);
       }
       break;
     case RACES.Khajiit:
@@ -225,15 +274,15 @@ function overhaulRacial(ch, w, opts = {}) {
       if (ws === SKILLS.LongBlade) {
         out.damage = trunc(S('agility') / 33) + trunc(S('strength') / 50);
         out.toHit = trunc(S('agility') / 10) + trunc(S('speed') / 25) + trunc(S('luck') / 25);
-      } else if (ws === SKILLS.Archery) {
-        out.damage = trunc(S('strength') / 50) + trunc(S('agility') / 50);
-        out.toHit = trunc(S('agility') / 25) + trunc(S('speed') / 33) + trunc(S('luck') / 33);
       } else if (ws === SKILLS.BluntWeapon) {
         out.damage = trunc(S('strength') / 33) + trunc(S('endurance') / 33);
         out.toHit = trunc(S('strength') / 20) + trunc(S('agility') / 25) + trunc(S('luck') / 33);
       } else if (ws === SKILLS.Axe) {
         out.damage = trunc(S('strength') / 16) + trunc(S('agility') / 33);
         out.toHit = trunc(S('strength') / 33) + trunc(S('agility') / 33) + trunc(S('luck') / 33);
+      } else if (ws === SKILLS.Archery) {
+        out.damage = trunc(S('strength') / 50) + trunc(S('agility') / 50);
+        out.toHit = trunc(S('agility') / 25) + trunc(S('speed') / 33) + trunc(S('luck') / 33);
       }
       break;
     default:
@@ -249,6 +298,11 @@ function racial(ch, w, core, opts = {}) {
   return core === 'classic' ? classicRacial(ch, w, opts) : overhaulRacial(ch, w, opts);
 }
 
+/** The racial damage/hit terms as a stage (the differential oracle compares these directly). */
+export function racialModifiers(ch, w, core = 'overhaul', opts = {}) {
+  return racial(ch, w, core, opts);
+}
+
 /** systems/martialPowers.js martialFold: stats the path adds to its owner. */
 function passiveStat(ch, name, opts) {
   const path = ch.martialPath;
@@ -260,8 +314,18 @@ function passiveStat(ch, name, opts) {
 function stat(ch, name, opts = {}) {
   // The live value already holds the 100 ceiling plus whatever lifts it (the
   // Firmament's statMax, the Mace of Molag Bal). Do not clamp it back to 100.
-  return Math.max(0, liveStat(ch, name) + passiveStat(ch, name, opts));
+  //
+  // The path's bonus is one more entry in `_mods.stats`, and upstream clamps AFTER summing every entry:
+  // martialFold (systems/martialPowers.js:364-375) puts it in `_mods.stats`, and liveStat
+  // (systems/statMods.js:121-141) returns min(max(base + mod, 0), 100 + statMax). So a base of 95 with
+  // Light Step reads 100, not 105 - adding it to the already-clamped value (the pre-2.9 order) read 105.
+  const bonus = passiveStat(ch, name, opts);
+  if (!bonus) return Math.max(0, liveStat(ch, name));
+  const mods = ch._mods ?? {};
+  return Math.max(0, liveStat({ ...ch, _mods: { ...mods, stats: { ...mods.stats, [name]: (mods.stats?.[name] ?? 0) + bonus } } }, name));
 }
+/** The combat read of a stat (the path's passive included), for the differential tests. */
+export const combatStat = (ch, name, opts = {}) => stat(ch, name, opts);
 function skill(ch, id, opts = {}) {
   return skillValue(ch, id) + (opts.passiveOn !== false && ch.martialPath === 'shadowdancer' && id === SKILLS.Dodging ? 15 : 0);
 }
@@ -293,7 +357,7 @@ export function martialPace(ch, opts = {}) {
   if (!path || opts.passiveOn === false) return 0;
   if (path === 'warblade' && opts.rhythm) return 15;
   if (path === 'bladedancer' && opts.cyclone) return 20;
-  if (path === 'berserker' && num(opts.healthShare, 1) < 0.5) return 10;
+  if (path === 'berserker' && selfShare(opts) < N_FRENZY.below) return N_FRENZY.pace;
   return 0;
 }
 
@@ -308,7 +372,7 @@ export function masteryPace(ch, w, opts = {}) {
 /** The swing cadence, in seconds per swing (a fresh main-hand strike). */
 export function cadence(ch, w, opts = {}) {
   const speed = stat(ch, 'speed', opts);
-  const weight = w ? w.weight * (opts.offHand ? 1.5 : 1) : 0;
+  const weight = w ? w.weight : 0;
   if (!w) {
     const tick = swingFrameSeconds(speed, { heft: 1, handling: swingHandling(null) });
     return { seconds: 5 * tick, tick, aps: 1 / (5 * tick), speed, heft: 1, handling: swingHandling(null), pace: 0 };
@@ -410,13 +474,6 @@ function critModel(ch, core, opts = {}) {
   };
 }
 
-function bodyWeights(core) {
-  const table = core === 'overhaul' ? PCAAO_BODY_PARTS : STRUCK_BODY_PARTS;
-  const w = new Array(7).fill(0);
-  for (const p of table) w[p]++;
-  return w.map((n) => n / table.length);
-}
-
 /** The hit half: combat/combatStats.js hitModel. */
 export function hitModel(ch, w, target, swingKey, core, opts = {}) {
   const swing = SWING_MODS[swingKey] ?? { damage: 0, toHit: 0 };
@@ -437,7 +494,7 @@ export function hitModel(ch, w, target, swingKey, core, opts = {}) {
       - unityRound(fround((stat(target, 'luck') - 50) / 10))
       - trunc(targetDodge / 2)
       + (target.isClass ? -50 : 0)
-      + (opts.offHand ? -5 : 0);
+      + (opts.offHand ? offHandToHit(stat(ch, 'agility', opts)) : 0);
   } else {
     base = skill(ch, w?.skillId ?? SKILLS.HandToHand, opts) + swing.toHit + prof.toHit + race.toHit;
     if (w) base += (WEAPON_MATERIAL_MODIFIER[w.material] ?? 0) * 10;
@@ -447,42 +504,61 @@ export function hitModel(ch, w, target, swingKey, core, opts = {}) {
       - floor(targetDodge / 4)
       + (target.isPlayer ? 0 : (target.isClass ? -50 : -10));
   }
-  const weights = bodyWeights(core);
+  const weights = bodyPartWeights(core);
   let plain = 0;
   let critHit = 0;
   let armourAvg = 0;
+  const backstabBonus = num(opts.backstabBonus, 0);
+  const partPlain = new Array(7).fill(0);
+  const partCrit = new Array(7).fill(0);
   weights.forEach((weight, part) => {
     const armour = core === 'overhaul'
       ? (target.isClass ? 60 : (target.armorValues?.[part] ?? 0))
       : (target.armorValues?.[part] ?? 0);
+    const hitPlainPart = clamp(base + armour + other + backstabBonus, 3, 97);
+    const hitCritPart = clamp(base + armour + other + crit.hitBonus + backstabBonus, 3, 97);
+    partPlain[part] = hitPlainPart / 100;
+    partCrit[part] = hitCritPart / 100;
     armourAvg += weight * armour;
-    plain += (weight * clamp(base + armour + other, 3, 97)) / 100;
-    critHit += (weight * clamp(base + armour + other + crit.hitBonus, 3, 97)) / 100;
+    plain += (weight * hitPlainPart) / 100;
+    critHit += (weight * hitCritPart) / 100;
   });
   return {
     hit: (1 - crit.chance) * plain + crit.chance * critHit,
     hitPlain: plain,
     hitCrit: critHit,
+    // The same chance per body part, for a target whose damage also resolves per part: the
+    // struck part is rolled once, so hit chance and worn armour are correlated through it.
+    byPart: { plain: partPlain, crit: partCrit },
     crit,
-    terms: { base, armour: armourAvg, other, dodge: core === 'overhaul' ? trunc(targetDodge / 2) : floor(targetDodge / 4) },
+    terms: { base, armour: armourAvg, other, backstab: backstabBonus, dodge: core === 'overhaul' ? trunc(targetDodge / 2) : floor(targetDodge / 4) },
     prof,
     racial: race,
   };
 }
 
+const N_FRENZY = Object.freeze({ below: 0.5, pct: 20, pace: 10 }); // systems/martialPaths.js:71 N.frenzy
+/**
+ * The ATTACKER's share of its own health, 0..1 (`opts.attackerHealthShare`, default 1: the full health
+ * the assumptions register M5 assumes). Berserker's Frenzy reads this, never the foe's: martialPowers.js:217
+ * (`share(attacker) < N.frenzy.below`) and :276 (`share(e)`, the entity whose pace it is), where
+ * combat/healthShare.js:36-48 `healthShare` is that body's `health / maxHealth`. `opts.healthShare` stays
+ * the FOE's share (Axe, Blunt Weapon masteries read the struck foe: weaponMastery.js:16-18).
+ */
+const selfShare = (opts) => num(opts.attackerHealthShare, 1);
+
 /** systems/martialPowers.js martialBlowPct. */
 export function martialBlowPct(ch, target, opts = {}) {
   const path = ch.martialPath;
   if (!path || opts.passiveOn === false) return 0;
-  const share = num(opts.healthShare, 1);
   switch (path) {
     case 'blademaster': return 3 * clamp(num(opts.stacks, 5), 0, 5);
     case 'warblade': return opts.rally ? 15 : 0;
-    case 'ranger': return (target.group === 'animals' || target.affinity === 'animal') ? 20 : 0;
+    case 'ranger': return foeGroup(target) === 'animal' ? 20 : 0;
     case 'cutthroat': return opts.unaware ? 25 : 0;
     case 'assassin': return opts.firstBlow ? 30 : 0;
-    case 'berserker': return share < 0.5 ? 20 : 0;
-    case 'crusader': return (target.group === 'undead' || target.group === 'daedra') ? 20 : 0;
+    case 'berserker': return selfShare(opts) < N_FRENZY.below ? N_FRENZY.pct : 0;
+    case 'crusader': return (foeGroup(target) === 'undead' || foeGroup(target) === 'daedra') ? 20 : 0;
     default: return 0;
   }
 }
@@ -511,15 +587,18 @@ function applyPct(damage, pct) {
 }
 
 
-/** pcaao.js pcaaoAlterDamageBasedOnWepCondition, at 100% condition a no-op. */
-function conditionMultiplier(w, powerful = false) {
+/** pcaao.js:607-637 pcaaoAlterDamageBasedOnWepCondition, on the INTEGER percentage
+ *  (`conditionPercentage`, :277-279) - a float 5.9% belongs to the 5% band, not the >5%
+ *  full-damage arm. `sharpEdge` is the mod's `equipmentDamageEnhanced`; the port defaults off. */
+export function conditionMultiplier(w, sharpEdge = false) {
   if (!w) return 1;
-  const pct = w.conditionPct * 100;
+  const pct = w.conditionPercent ?? Math.trunc(w.conditionPct * 100);
   const blunt = w.skillId === SKILLS.BluntWeapon;
-  if (pct >= 76 && !powerful) return 1; // no edge bonus without the wear module
+  if (pct >= 76 && !sharpEdge) return 1; // no edge bonus without the wear module
   if (blunt) {
     if (pct >= 92) return 1.1;
-    if (pct >= 76 || pct >= 61) return 1;
+    if (pct >= 76) return 1;
+    if (pct >= 61) return 1;
     if (pct >= 41) return 0.9;
     if (pct >= 16) return 0.8;
     if (pct >= 6) return 0.65;
@@ -536,24 +615,114 @@ function conditionMultiplier(w, powerful = false) {
   return 0.25;
 }
 
-/** The blow's damage after the registered blow modifiers (martial, mastery, slayer, gear). */
+/**
+ * The blow's damage after the registered blow modifiers.
+ *
+ * Order follows the registries: mastery, then the loot step (its slayer percentage and then the
+ * elemental flat, systems/loot/lootPowers.js:286-347), then the martial path and the Firmament's
+ * blow channel. The elemental flat is added ONCE, at the loot step, exactly as `lootBlow` does;
+ * upstream's registry order depends on which scene loaded first (the gate's dungeon host registers
+ * mastery before loot), so mastery does not scale the flat and martial/Firmament do
+ * (the assumptions register A11).
+ */
 export function weaponBlow(ch, w, damage, target, opts = {}) {
   let d = damage;
   const lines = w ?? opts.wraps ?? null;
   const mastery = masteryPct(ch, w, target, opts);
   if (mastery > 0) d = applyPct(d, mastery);
+  // lootBlow (systems/loot/lootPowers.js:286-347) sums EVERY percentage - the weapon's slayer lines, and any
+  // power (bane, unaware, flow, moon, ...) - into one `pct` and takes it of the blow ONCE (`shareOf`), then
+  // adds the flat (elemental lines, venom). `opts.loot` is a power the weapon does not carry yet - a what-if
+  // from the pricing code - entering exactly there, so it composes with the slayer line, the crit, the
+  // condition, the armour and the cap as a real line would (Stage 2.9, F2).
+  const what = opts.loot ?? null;
+  const slayer = (lines?.slayerByGroup?.[String(target?.group ?? '')] ?? 0) + num(what?.pct, 0);
+  if (slayer > 0) d = applyPct(d, slayer);
+  const elementalMap = lines?.elementalByElement ?? null;
+  let elemental = 0;
+  if (elementalMap && Object.keys(elementalMap).length) {
+    // systems/loot/lootPowers.js:286-294: each line is floored after its target's career tolerance.
+    for (const [element, value] of Object.entries(elementalMap)) elemental += Math.floor(num(value) * elementShare(target, element));
+  } else {
+    elemental = Math.floor(num(lines?.elemental, 0)); // a hand-built weapon descriptor with only the total
+  }
+  elemental += num(what?.flat, 0); // venom's flat rides the same `flat` (lootPowers.js:346 `out + flat`)
+  if (elemental > 0) d += elemental;
   const martial = martialBlowPct(ch, target, opts);
   if (martial > 0) d = applyPct(d, martial);
-  const slayer = lines?.slayerByGroup?.[String(target?.group ?? '')] ?? 0;
-  if (slayer > 0) d = applyPct(d, slayer);
-  if (lines?.elemental) d += lines.elemental;
   const theory = num(opts.damagePct, 0);
   if (theory) d = applyPct(d, theory);
   const firm = num(opts.firmamentDamagePct, 0);
   if (firm) d = applyPct(d, firm);
-  const bow = num(opts.bowPull, 1);
-  if (bow !== 1) d = Math.max(1, Math.round(d * bow));
+  // The long bow's pull is NOT part of the blow: bowFastDamage acts on the finished
+  // calculateAttackDamage (combat/arrowFlight.js:501-510), after the crit, the material, the condition,
+  // the armour and the off hand's share, and before the boss trait and the cap. See `bowBlow`.
   return d;
+}
+
+/** The shaft's own multiplier as bowFastDamage reads it (combat/bowBloom.js:73-79): the bow kind's `pull`
+ *  and the fast-shot stacks `fast` (0..BOW_FAST.most; `spam` holds the stacks at their most, x0.2). */
+export function bowOf(w, opts = {}) {
+  return w?.ranged && !w?.gun ? { pull: w.bowPull ?? 1, fast: opts.bowSpam ? BOW_FAST.most : 0 } : null;
+}
+/** bowFastDamage over a landed blow `d` (the vendored function itself). */
+export const bowBlow = (d, bow) => (bow ? bowFastDamage(bow, d) : d);
+
+/** pcaao.js:469-479 pcaaoBackstabDamage: a landed blow rolls once; above Backstabbing 1 a
+ *  `dice100(chance)` succeeds for `floor(roll*100) < chance`, and the result is ×3. */
+export function backstabDamage(damage, chance, roll01 = 0) {
+  return chance > 1 && floor(roll01 * 100) < chance ? damage * 3 : damage;
+}
+
+/**
+ * One card roll `d` landing on body part `part`, as the whole-number outcomes the game can produce
+ * (`[{ p, v }]`), in pcaaoAttackDamage's order after the card: the shield's block roll and the worn piece
+ * or hide (pcaao.js:1784-1849) -> the off hand's share (:1850) -> the boss trait (`bossStrike`, before the
+ * cap) . The relay cap is the caller's. Nothing here averages across outcomes.
+ */
+export function resolveBlow(d, part, ctx = {}) {
+  const { target, weapon = null, offHand = false } = ctx;
+  return targetPartOutcomes(target, d, part, { weapon }).flatMap(({ p, damage }) => (
+    afterShare(offHand ? offHandDamage(damage) : damage, p, ctx)
+  ));
+}
+
+/**
+ * What the host does to a defended, shared blow, as outcomes: Potent Vs' flat (formulas.js:830-840 `(attacker.isPlayer
+ * || damage > 0) && whole`, payload enchantments.js:1068 `damageOut += 5`), a shaft's pull (arrowFlight.js:501-510),
+ * the boss trait. The payload runs for a PLAYER whatever the blow did, so a swing that MISSED (`shared` 0) returns the
+ * five too - upstream's own calculateAttackDamage answers 5 for every miss with the enchantment on (sampled in
+ * test/pricing.test.js), and the hosts (combat/playerWeapon.js:1260-1277) take its answer as the blow. An off-hand blow
+ * is `whole` only OFF_HAND_BLOW.blowWeight (0.8) of the time, so it is two outcomes. The relay cap is the caller's.
+ */
+function afterShare(shared, p, { weapon = null, offHand = false, traits = [], strikeKind = 'melee', bow = null, potentVs = 0 } = {}) {
+  const heard = potentVs ? (offHand ? OFF_HAND_BLOW.blowWeight : 1) : 0;
+  const branches = heard > 0 && heard < 1
+    ? [{ p: p * heard, damage: shared + potentVs }, { p: p * (1 - heard), damage: shared }]
+    : [{ p, damage: heard >= 1 ? shared + potentVs : shared }];
+  return branches.map(({ p: q, damage }) => {
+    const shot = bowBlow(damage, bow); // the pull comes after the payloads, before the trait
+    const v = shot > 0 && traits.length ? resistBlow(traits, shot, { kind: strikeKind, weapon }) : shot;
+    return { p: q, v };
+  });
+}
+
+/**
+ * The distribution of the damage a landed, non-critical blow of the card's rolls does to one body part:
+ * `Map(value -> probability)`, after the shield, the off hand's share, the boss traits and the per-hit cap.
+ * The differential tests compare it value by value with upstream's sampled blows.
+ */
+export function blowDistribution(rolls, part, { target, weapon = null, offHand = false, traits = [], cap = 0, bowSpam = false, potentVs = 0 } = {}) {
+  const strikeKind = weapon?.ranged ? 'arrow' : 'melee';
+  const bow = bowOf(weapon, { bowSpam });
+  const out = new Map();
+  for (const d of rolls) {
+    for (const { p, v } of resolveBlow(d, part, { target, weapon, offHand, traits, strikeKind, bow, potentVs })) {
+      const value = cap > 0 ? Math.min(v, cap) : v;
+      out.set(value, (out.get(value) ?? 0) + p / rolls.length);
+    }
+  }
+  return out;
 }
 
 /** The damage half: combat/combatStats.js damageModel. */
@@ -563,6 +732,7 @@ export function damageModel(ch, w, target, swingKey, core, opts = {}) {
   const race = racial(ch, w, core, opts);
   const crit = critModel(ch, core, opts);
   const str = stat(ch, 'strength', opts);
+  const matReq = num(opts.matReqMulti, 1);
   const dmgMods = swing.damage + prof.damage + race.damage;
   let rolls;
   let strMod;
@@ -574,7 +744,7 @@ export function damageModel(ch, w, target, swingKey, core, opts = {}) {
     rolls = [];
     const wrapsPct = opts.wraps?.damagePct ?? 0;
     for (let r = lo; r <= hi; r++) rolls.push(wrapsPct ? trunc(r * (1 + wrapsPct / 100)) : r);
-    strMod = core === 'overhaul' ? pcaaoDamageModifier(str) : damageModifier(str);
+    strMod = core === 'overhaul' ? pcaaoDamageModifier(str) : classicStrength(str, opts);
   } else {
     const lo = w.min;
     const hi = w.max;
@@ -584,44 +754,126 @@ export function damageModel(ch, w, target, swingKey, core, opts = {}) {
       rolls.push(rolled + w.bonusDamage);
     }
     matMod = WEAPON_MATERIAL_MODIFIER[w.material] ?? 0;
-    strMod = core === 'overhaul' ? pcaaoDamageModifier(str) * (w.twoHanded ? 2 : 1) : damageModifier(str);
+    strMod = core === 'overhaul' ? pcaaoDamageModifier(str) * (w.twoHanded ? 2 : 1) : classicStrength(str, opts);
   }
   const one = (roll) => {
-    let d = roll + dmgMods + strMod + matMod;
-    if (d < 1) d = 0;
-    if (d > 0) d = weaponBlow(ch, w, d, target, opts);
-    if (d > 0 && w?.elemental) d += w.elemental;
-    if (d > 0 && opts.offHand) d = Math.max(1, Math.round(d * 0.8));
-    return d;
+    // pcaao.js:555-590: silver/skeletal act on the weapon roll plus the swing/proficiency/racial
+    // modifiers, BEFORE Strength and the material modifier. The enemy-type bonus (:511-522) is a
+    // flat integer added after Strength/material and the floor, and BEFORE the blow modifiers.
+    let base = roll + dmgMods;
+    if (core === 'overhaul') base = skeletalSilverDamage(base, target, w);
+    base += strMod + matMod;
+    // The stock WEAPON arm clamps below 1; the stock FIST arm does not (a STR-0 punch can be
+    // negative on the card). The overhaul clamps both at the same point.
+    if (base < 1 && (core === 'overhaul' || !!w)) base = 0;
+    const bonuses = core === 'overhaul' ? enemyTypeBonusValues(ch, target) : [0];
+    return bonuses.map((bonus) => {
+      let d = base >= 1 ? base + bonus : base;
+      if (d > 0) d = weaponBlow(ch, w, d, target, opts); // the elemental flat is added there, once
+      return d;
+    });
   };
   const finish = (d, critical) => {
     if (core !== 'overhaul') return d;
     d = Math.max(0, d);
     if (critical && crit.damageMult !== 1) d = unityRound(fround(d * crit.damageMult));
+    // pcaao.js:1745-1755: the soft/hard material requirement is applied after the critical
+    // multiplier and before the weapon-condition band.
+    if (matReq !== 1) d = unityRound(fround(d * fround(matReq)));
     if (d >= 1 && w) {
-      const mult = conditionMultiplier(w, false);
+      const mult = conditionMultiplier(w, opts.equipmentDamageEnhanced === true);
       if (mult !== 1) d = unityRound(fround(d * mult));
     }
     return d;
   };
-  const plain = rolls.map((r) => finish(one(r), false));
-  const crits = rolls.map((r) => finish(one(r), true));
+  const values = [];
+  for (const r of rolls) for (const d of one(r)) values.push(d);
+  const plain = values.map((d) => finish(d, false));
+  const crits = values.map((d) => finish(d, true));
+  // pcaao.js:471-479, 1724/1768: a landed blow rolls once for the ×3 and the triple is taken
+  // BEFORE the critical multiplier, the material requirement and the condition band.
+  const backstabPlain = values.map((d) => finish(d * 3, false));
+  const backstabCrits = values.map((d) => finish(d * 3, true));
   return {
     min: Math.min(...plain), max: Math.max(...plain), avg: mean(plain),
     critMin: Math.min(...crits), critMax: Math.max(...crits), critAvg: mean(crits),
+    // The integer blows themselves, so a later stage (a boss's resistance, a per-hit cap) can be
+    // applied to each one instead of to the mean.
+    plainRolls: plain, critRolls: crits,
+    // The blow before the critical/material/condition band, for an exact stage comparison.
+    preFinishRolls: values,
+    backstabPlainRolls: backstabPlain, backstabCritRolls: backstabCrits,
     parts: {
       roll: [Math.min(...rolls), Math.max(...rolls)],
       matMod, strMod, prof: prof.damage, racial: race.damage, twoHanded: !!w?.twoHanded,
+      dmgMods, swingDamage: swing.damage,
+      enemyType: core === 'overhaul'
+        ? enemyTypeBonusRange(ch, target)
+        : { group: null, decoded: 0, bonus: 0, penalty: 0, will: 0, targetLevel: target?.combatLevel ?? target?.level ?? 1 },
+      silver: {
+        material: w?.material ?? null,
+        careerIndex: target?.careerIndex ?? null,
+        skeletal: isSkeletalTarget(target),
+        doubled: core === 'overhaul' && silverApplies(target, w),
+      },
+      matReq,
       mastery: masteryPct(ch, w, target, opts), martial: martialBlowPct(ch, target, opts), slayer: w?.slayer ?? 0,
     },
     crit,
   };
 }
 
-/** The full card for one weapon and one target. */
-export function analyze(ch, {
+/**
+ * The encounter's verdict on a build, for a target that declares a relay
+ * allowance (gateTarget / encounterTarget): the claims it offers run through
+ * the relay's law over time (allowance.js). Returns null for any other target,
+ * so ordinary foes and curbing bosses are untouched.
+ *
+ *   ttk       the weapon's blows alone; totalTtk adds Cast When Strikes procs and
+ *             their damage-over-time rounds, each its own claim.
+ *   ttkCapOnly / totalTtkCapOnly (set by the caller) keep the old ceiling figure -
+ *             health / per-hit-capped DPS, which ignores the allowance.
+ */
+function allowancePatch(tgt, health, { cappedPerSwing, hit, aps, procs, cap, streamsOf = null }) {
+  const spec = tgt?.allowance;
+  if (!spec || !(health > 0)) return null;
+  const share = health / spec.players;
+  const run = (withProcs) => runAllowance({
+    level: spec.level, share, spec,
+    streams: streamsOf ? streamsOf(withProcs) : claimStreams({ cappedPerSwing, hit, aps, procs, cap, withProcs }),
+  });
+  const weapon = run(false);
+  if (!weapon) return null;
+  const hasProcs = streamsOf ? true : procs?.some((p) => (p?.damage ?? 0) > 0 || (p?.dotTick ?? 0) > 0);
+  const total = hasProcs ? run(true) : weapon;
+  return {
+    allowance: { ...total, weaponOnly: { ttk: weapon.ttk, sustainedDps: weapon.sustainedDps, ceilingDps: weapon.ceilingDps, burst5Dps: weapon.burst5Dps, averageDps: weapon.averageDps } },
+    ttk: weapon.ttk,
+    totalTtk: total.ttk,
+  };
+}
+
+/**
+ * The full card for one weapon and one target.
+ *
+ * Every result carries `with(edit)`: the SAME card re-run on the same inputs with one hypothetical change,
+ * which is how pricing (src/imprints.js, src/enchantPlan.js) evaluates an imprint or an enchant. There is no
+ * second damage calculation: the change enters the one blow at its upstream position.
+ *   edit.loot     { pct, flat }  a loot power the weapon does not carry (lootBlow: the slayer-style
+ *                                percentage and the flat, before the martial path, the crit, the defence)
+ *   edit.potentVs n              Potent Vs' flat on a landed blow (formulas.js tail, after the defence and
+ *                                the off hand's share, before the pull, the trait and the cap)
+ * or any other analyze option. In a dual build the edit rides the main-hand item; a pair is one item.
+ */
+export function analyze(ch, args = {}) {
+  const r = analyzeCard(ch, args);
+  Object.defineProperty(r, 'with', { value: (edit = {}) => analyze(ch, { ...args, ...edit }), enumerable: false });
+  return r;
+}
+
+function analyzeCard(ch, {
   weapon, target, core = 'overhaul', swing = 'StrikeLeft', critDamage = true,
-  traits = [], health = null, passiveOn = true, ...opts
+  traits = null, health = null, passiveOn = true, ...opts
 } = {}) {
   let w = weapon === undefined ? weaponOf(ch.weapon, { rri: !!opts.rri }) : weapon;
   if (w && opts.rri) {
@@ -630,45 +882,82 @@ export function analyze(ch, {
   }
   const t = target ?? { ...referenceFoe(ch.level, 'tough') };
   const tgt = { ...t, group: t.group ?? null, affinity: t.affinity ?? null };
+  // A relay boss carries its traits on the entity (systems/bossTraits.js bossStrike reads
+  // `entity.bossTraits`); an explicit `traits` argument is an override for trait experiments.
+  const traitList = traits ?? t.bossTraits ?? [];
   const wraps = !w && ch.wraps ? weaponOf(ch.wraps, { rri: !!opts.rri }) : null;
   if (opts.dual && ch.offWeapon && !w?.twoHanded && !w?.gun && !WEAPONS[ch.offWeapon.templateIndex]?.twoHanded) {
     const offWeapon = weaponOf(ch.offWeapon, { rri: !!opts.rri });
-    const base = { ...opts, dual: false, target: t, traits, health, core, swing, critDamage };
-    const main = analyze(ch, { ...base, weapon: w, offHand: false });
-    const off = analyze({ ...ch, weapon: ch.offWeapon }, { ...base, weapon: offWeapon, offHand: true });
+    const base = { ...opts, dual: false, target: t, traits: traitList, health, core, swing, critDamage };
+    const main = analyzeCard(ch, { ...base, weapon: w, offHand: false });
+    // the what-if (a loot power, Potent Vs) is an item the MAIN hand carries; the off-hand weapon is its own item
+    const off = analyzeCard({ ...ch, weapon: ch.offWeapon }, { ...base, weapon: offWeapon, offHand: true, loot: null, potentVs: 0 });
+
+    // THE EXCHANGE (dualWield.js, handsLaw.js): lead, off, lead, off - four ticks a blow once the flurry is
+    // running, plus the off hand's burden held in whole ticks at its blows' end. One weapon alone is five
+    // ticks a blow, so a pair makes 2 blows per (8 + burden) ticks, not two blows per five.
+    const strength = stat(ch, 'strength', opts);
+    const burden = offHandBurden(offWeapon.weight, strength);
+    const schedule = dualSchedule({ mainTick: main.cadence.tick, offTick: off.cadence.tick, burden });
+    const aps = schedule.swingsPerSecond;
     const perSwing = (main.perSwing + off.perSwing) / 2;
     const perSwingMin = (main.perSwingMin + off.perSwingMin) / 2;
     const perSwingMax = (main.perSwingMax + off.perSwingMax) / 2;
     const cappedPerSwing = (main.cappedPerSwing + off.cappedPerSwing) / 2;
     const cappedPerSwingMin = (main.cappedPerSwingMin + off.cappedPerSwingMin) / 2;
     const cappedPerSwingMax = (main.cappedPerSwingMax + off.cappedPerSwingMax) / 2;
-    const aps = main.cadence.aps * 2;
     const dps = perSwing * aps;
     const dpsMin = perSwingMin * aps;
     const dpsMax = perSwingMax * aps;
     const cappedDps = cappedPerSwing * aps;
     const cappedDpsMin = cappedPerSwingMin * aps;
     const cappedDpsMax = cappedPerSwingMax * aps;
-    const enchantPerSwing = (main.enchantPerSwing + off.enchantPerSwing) / 2;
-    const enchantDpsValue = enchantPerSwing * aps;
-    const enchantDpsMin = (main.enchantDpsMin + off.enchantDpsMin) / 2 * 2;
-    const enchantDpsMax = (main.enchantDpsMax + off.enchantDpsMax) / 2 * 2;
+
+    // A blow's own procs fire from that hand's weapon. The off hand's payloads ride a blow of
+    // OFF_HAND_BLOW.blowWeight (0.8) of a blow (playerWeapon.js:1257, formulas.js:830), so its expected
+    // proc damage is 0.8 of a landed blow's; a DoT round is priced the same way.
+    const offWeight = OFF_HAND_BLOW.blowWeight;
+    const enchOf = (r) => ({ perBlow: r.enchantPerSwing, dot: r.enchantDps - r.enchantPerSwing * r.cadence.aps });
+    const em = enchOf(main), eo = enchOf(off);
+    const enchantPerSwing = (em.perBlow + eo.perBlow * offWeight) / 2;
+    const enchantDpsValue = (em.perBlow + eo.perBlow * offWeight) * (aps / 2) + em.dot + eo.dot * offWeight;
+    const enchantDpsMin = ((main.enchantDpsMin / main.cadence.aps) + (off.enchantDpsMin / off.cadence.aps) * offWeight) * (aps / 2);
+    const enchantDpsMax = ((main.enchantDpsMax / main.cadence.aps) + (off.enchantDpsMax / off.cadence.aps) * offWeight) * (aps / 2);
     const totalDps = cappedDps + enchantDpsValue;
     const totalDpsMin = cappedDpsMin + enchantDpsMin;
     const totalDpsMax = cappedDpsMax + enchantDpsMax;
     const bossHealth = main.health ?? 0;
     const ttk = bossHealth > 0 && cappedDps > 0 ? (bossHealth + main.ward) / cappedDps + main.shields : null;
     const totalTtk = bossHealth > 0 && (cappedDps + enchantDpsValue) > 0 ? (bossHealth + main.ward) / (cappedDps + enchantDpsValue) + main.shields : null;
+
+    // C1: two claims a period, one from each hand, each with its own capped blow and its own hit chance.
+    const streamsOf = (withProcs) => {
+      const out = [];
+      // The main hand opens the exchange (its first claim at its own swing), the off hand answers one lead
+      // blow later; claimStreams() already waits one hit-adjusted interval before the first blow.
+      for (const [hand, start, weight] of [[main, 0, 1], [off, schedule.mainSeconds, offWeight]]) {
+        const procs = withProcs
+          ? (hand.enchantProcs ?? []).map((p) => ({ ...p, damage: (p.damage ?? 0) * weight, dotTick: (p.dotTick ?? 0) * weight }))
+          : [];
+        for (const st of claimStreams({ cappedPerSwing: hand.cappedPerSwing, hit: hand.hit.hit, aps: aps / 2, procs, cap: hand.cap })) {
+          out.push({ ...st, start: (st.start ?? 0) + start });
+        }
+      }
+      return out;
+    };
+    const gate = allowancePatch(main.target, bossHealth, { cappedPerSwing, hit: main.hit.hit, aps, procs: main.enchantProcs, cap: main.cap, streamsOf });
     return {
-      ...main, dual: true, perSwing, perSwingMin, perSwingMax, cappedPerSwing, cappedPerSwingMin, cappedPerSwingMax, dps, dpsMin, dpsMax, cappedDps, cappedDpsMin, cappedDpsMax, enchantPerSwing, enchantDps: enchantDpsValue, enchantDpsMin, enchantDpsMax,
-      totalDps, totalDpsMin, totalDpsMax, ttk, totalTtk, capLoss: dps > 0 ? 1 - cappedDps / dps : 0,
-      cadence: { ...main.cadence, seconds: main.cadence.seconds / 2, aps, dual: true },
+      ...main, dual: true, offHand: off, schedule,
+      perSwing, perSwingMin, perSwingMax, cappedPerSwing, cappedPerSwingMin, cappedPerSwingMax, dps, dpsMin, dpsMax, cappedDps, cappedDpsMin, cappedDpsMax,
+      enchantPerSwing, enchantDps: enchantDpsValue, enchantDpsMin, enchantDpsMax,
+      totalDps, totalDpsMin, totalDpsMax, ttk: gate?.ttk ?? ttk, totalTtk: gate?.totalTtk ?? totalTtk, ttkCapOnly: ttk, totalTtkCapOnly: totalTtk, allowance: gate?.allowance ?? null, capLoss: dps > 0 ? 1 - cappedDps / dps : 0,
+      cadence: { ...main.cadence, seconds: schedule.period / 2, aps, dual: true, period: schedule.period, mainSeconds: schedule.mainSeconds, offSeconds: schedule.offSeconds },
     };
   }
   if (opts.pair && w?.templateIndex === 562) {
-    const base = { ...opts, core, target: t, traits, health, swing, critDamage, weapon: w };
-    const main = analyze(ch, { ...base, pair: false, offHand: false });
-    const off = analyze(ch, { ...base, pair: false, offHand: true });
+    const base = { ...opts, core, target: t, traits: traitList, health, swing, critDamage, weapon: w };
+    const main = analyzeCard(ch, { ...base, pair: false, offHand: false });
+    const off = analyzeCard(ch, { ...base, pair: false, offHand: true });
     const perSwing = (main.perSwing + off.perSwing) / 2;
     const perSwingMin = (main.perSwingMin + off.perSwingMin) / 2;
     const perSwingMax = (main.perSwingMax + off.perSwingMax) / 2;
@@ -692,6 +981,7 @@ export function analyze(ch, {
     const bossHealth = main.health ?? 0;
     const ttk = bossHealth > 0 && cappedDps > 0 ? (bossHealth + main.ward) / cappedDps + main.shields : null;
     const totalTtk = bossHealth > 0 && (cappedDps + enchantDpsValue) > 0 ? (bossHealth + main.ward) / (cappedDps + enchantDpsValue) + main.shields : null;
+    const gate = allowancePatch(main.target, bossHealth, { cappedPerSwing, hit: main.hit.hit, aps, procs: main.enchantProcs, cap: main.cap });
     return {
       ...main,
       pair: true,
@@ -703,51 +993,196 @@ export function analyze(ch, {
       enchantDps: enchantDpsValue,
       enchantDpsMin, enchantDpsMax,
       totalDps, totalDpsMin, totalDpsMax,
-      totalTtk,
+      totalTtk: gate?.totalTtk ?? totalTtk,
       cadence: { ...main.cadence, seconds: main.cadence.seconds / 2, aps, pair: true },
-      ttk,
+      ttk: gate?.ttk ?? ttk,
+      ttkCapOnly: ttk, totalTtkCapOnly: totalTtk, allowance: gate?.allowance ?? null,
       capLoss: dps > 0 ? 1 - cappedDps / dps : 0,
     };
   }
-  const bowPull = w?.ranged && !w?.gun ? (opts.bowSpam ? 0.2 * (w?.bowPull ?? 1) : (w?.bowPull ?? 1)) : 1;
-  const simOpts = { ...opts, passiveOn, critDamage, healthShare: opts.healthShare ?? t.healthShare ?? 1, firmamentDamagePct: opts.firmamentDamagePct ?? ch.firmamentDamagePct ?? 0, bowPull, wraps };
+  // pcaao.js:1640-1700: the material requirement is a damage multiplier inside the weapon blow,
+  // after the critical and before the condition band. `softMaterialRequirements` is upstream's
+  // default true; false is its whole-blow refusal.
+  const matReqMulti = materialRequirementMultiplier(tgt, w, { soft: opts.softMaterialRequirements !== false });
+  const simOpts = { ...opts, passiveOn, critDamage, healthShare: opts.healthShare ?? t.healthShare ?? 1, firmamentDamagePct: opts.firmamentDamagePct ?? ch.firmamentDamagePct ?? 0, wraps, matReqMulti };
   const hit = hitModel(ch, w, tgt, swing, core, simOpts);
   const dmg = damageModel(ch, w, tgt, swing, core, simOpts);
-  const c = hit.crit.chance;
-  const backSkill = skill(ch, 19, simOpts);
-  const backChance = clamp(backSkill, 0, 100) / 100;
+  // The off hand's share is applied after the target's intrinsic defenses in the hit path; keep the
+  // returned `damage` card in the hand's post-share terms for display/API compatibility.
+  const shaft = bowOf(w, opts);
+  const cardDmg = opts.offHand
+    ? (() => {
+        const plain = dmg.plainRolls.map((d) => offHandDamage(d));
+        const crits = dmg.critRolls.map((d) => offHandDamage(d));
+        return {
+          ...dmg,
+          min: Math.min(...plain), max: Math.max(...plain), avg: mean(plain),
+          critMin: Math.min(...crits), critMax: Math.max(...crits), critAvg: mean(crits),
+          plainRolls: plain, critRolls: crits,
+        };
+      })()
+    : dmg;
+  // A shaft's displayed card is the pulled blow (bowFastDamage); the rolls stay the card's own, since the hit
+  // path applies the pull after the defence.
+  const displayDmg = shaft
+    ? (() => {
+        const plain = cardDmg.plainRolls.map((d) => bowBlow(d, shaft));
+        const crits = cardDmg.critRolls.map((d) => bowBlow(d, shaft));
+        return {
+          ...cardDmg,
+          min: Math.min(...plain), max: Math.max(...plain), avg: mean(plain),
+          critMin: Math.min(...crits), critMax: Math.max(...crits), critAvg: mean(crits),
+          bow: shaft,
+        };
+      })()
+    : cardDmg;
+  // pcaao.js:1706-1724 / 1764-1768: the host's backstab chance is the live Backstabbing skill when
+  // the foe's back was to the player (and the foe is no Watchful revenant); it is added FLAT to the
+  // to-hit roll, and a landed blow rolls once for the ×3 (only above skill 1). `backstabUptime` is
+  // the share of swings the foe's back is to the player; a caller can hand the raw chance directly.
+  const backOverride = opts.backstabChance;
+  const watchful = tgt?.watchful === true || tgt?.revenant?.edge?.watchful === true;
+  const backSkill = watchful ? 0 : (backOverride != null ? num(backOverride, 0) : skill(ch, 19, simOpts));
   const backUptime = clamp(num(opts.backstabUptime, 0), 0, 1);
-  const backMult = 1 + 2 * backUptime * backChance;
-  const perSwing = ((1 - c) * hit.hitPlain * dmg.avg + c * hit.hitCrit * dmg.critAvg) * backMult;
-  const perSwingMin = ((1 - c) * hit.hitPlain * dmg.min + c * hit.hitCrit * dmg.critMin) * backMult;
-  const perSwingMax = ((1 - c) * hit.hitPlain * dmg.max + c * hit.hitCrit * dmg.critMax) * backMult;
+  const backProb = backSkill > 1 ? clamp(backSkill, 0, 100) / 100 : 0;
+  const behind = backUptime > 0 && backSkill !== 0;
+  const hitBehind = behind
+    ? hitModel(ch, w, tgt, swing, core, { ...simOpts, backstabBonus: backSkill })
+    : hit;
   const cad = w?.ranged ? rangedCadence(ch, w, simOpts) : cadence(ch, w, simOpts);
 
-  const resist = weaponResistFactor(w, traits);
-  const dmin = Math.max(0, Math.round(dmg.min * resist * backMult));
-  const dmax = Math.max(0, Math.round(dmg.max * resist * backMult));
-  const cmin = Math.max(0, Math.round(dmg.critMin * resist * backMult));
-  const cmax = Math.max(0, Math.round(dmg.critMax * resist * backMult));
+  const resist = weaponResistFactor(w, traitList);
   const bossHealth = num(health, 0);
-  const curbCap = traits.includes('curbing') && bossHealth > 0
+  const curbCap = traitList.includes('curbing') && bossHealth > 0
     ? Math.max(1, Math.round(bossHealth * CURB_SHARE)) : 0;
   const hardCap = num(t.hitCap, 0);
   const caps = [curbCap, hardCap].filter((n) => n > 0);
   const cap = caps.length ? Math.min(...caps) : 0;
   const capSource = cap === 0 ? null : (hardCap > 0 && (!curbCap || hardCap <= curbCap) ? 'hit cap' : 'curbing');
-  const ePlain = cap > 0
-    ? (dmax <= cap ? dmg.avg * resist * backMult : expectedCapped(dmin, dmax, cap))
-    : dmg.avg * resist * backMult;
-  const eCrit = cap > 0
-    ? (cmax <= cap ? dmg.critAvg * resist * backMult : expectedCapped(cmin, cmax, cap))
-    : dmg.critAvg * resist * backMult;
-  const cappedPerSwing = (1 - c) * hit.hitPlain * ePlain + c * hit.hitCrit * eCrit;
-  const ePlainMin = cap > 0 ? Math.min(dmg.min * resist * backMult, cap) : dmg.min * resist * backMult;
-  const ePlainMax = cap > 0 ? Math.min(dmg.max * resist * backMult, cap) : dmg.max * resist * backMult;
-  const eCritMin = cap > 0 ? Math.min(dmg.critMin * resist * backMult, cap) : dmg.critMin * resist * backMult;
-  const eCritMax = cap > 0 ? Math.min(dmg.critMax * resist * backMult, cap) : dmg.critMax * resist * backMult;
-  const cappedPerSwingMin = (1 - c) * hit.hitPlain * ePlainMin + c * hit.hitCrit * eCritMin;
-  const cappedPerSwingMax = (1 - c) * hit.hitPlain * ePlainMax + c * hit.hitCrit * eCritMax;
+
+  // pcaao.js:1815-1843: the target's defence resolves AFTER the weapon's condition and BEFORE
+  // the host's boss traits, per-hit cap and relay allowance. A struck body part is rolled per
+  // blow, so with worn gear each part's outcome is its own; the 20-entry distribution is kept
+  // through the target's layer, the boss's traits and the cap.
+  const geared = core === 'overhaul' && hasWornEquipment(tgt);
+  const weights = bodyPartWeights(core);
+  const defended = (d) => (geared ? targetExpectedDamage(tgt, d, { weapon: w }) : intrinsicDamage(tgt, d, { weapon: w }));
+  const targetDefense = {
+    careerIndex: tgt.careerIndex ?? -1,
+    mobileType: tgt.mobileType ?? null,
+    natural: naturalDamageResistance(tgt),
+    material: matReqMulti,
+    hideAt100: !tgt.isClass ? intrinsicDamage(tgt, 100, { weapon: w }) : 100,
+    wornArmour: geared,
+    shield: leftHandShield(tgt)?.templateIndex ?? null,
+    combatLevel: tgt.combatLevel ?? tgt.level ?? 1,
+  };
+
+  // A boss's traits resolve the blow BEFORE the per-hit cap and the relay's allowance
+  // (dungeonContext.js:4544 bossStrikeAt -> landOnBoss -> gateBrain.js applyHit), one blow at a time:
+  // `Math.max(1, Math.round(d))` for a resisted blow, unchanged otherwise.
+  const strikeKind = w?.ranged ? 'arrow' : 'melee';
+  const struck = (d) => (d > 0 && traitList.length ? resistBlow(traitList, d, { kind: strikeKind, weapon: w }) : d);
+  const capped = (v) => (cap > 0 ? Math.min(v, cap) : v);
+  const hand = (d) => (opts.offHand ? offHandDamage(d) : d);
+  const bow = bowOf(w, opts);
+  const computeBranch = (h, plainRolls, critRolls) => {
+    if (geared) {
+      // Per part, every card roll resolves into the whole-number outcomes the game can produce
+      // (the shield's block or its miss), each already through the off hand's share and the boss
+      // trait; the cap and the means are taken over those outcomes (Stage 2.9, F1).
+      const parts = [];
+      const ctx = { target: tgt, weapon: w, offHand: !!opts.offHand, traits: traitList, strikeKind, bow: bowOf(w, opts), potentVs: num(opts.potentVs, 0) };
+      for (let part = 0; part < 7; part++) {
+        const weight = weights[part] ?? 0;
+        if (!weight) continue;
+        parts.push({
+          part,
+          weight,
+          plain: plainRolls.map((d) => resolveBlow(d, part, ctx)),
+          crit: critRolls.map((d) => resolveBlow(d, part, ctx)),
+        });
+      }
+      // `fn` reduces one roll's outcome list to a number; `across` combines the rolls.
+      const meanOf = (outs, f) => outs.reduce((sum, o) => sum + o.p * f(o.v), 0);
+      const agg = (across, one) => parts.reduce(
+        (sum, p) => sum + p.weight * ((1 - h.crit.chance) * h.byPart.plain[p.part] * across(p.plain.map((o) => one(o)))
+          + h.crit.chance * h.byPart.crit[p.part] * across(p.crit.map((o) => one(o)))),
+        0,
+      );
+      // A swing that missed returns 0 - or Potent Vs' five (afterShare) - so with that enchantment a miss is an
+      // outcome too, weighted by the part's chance to miss.
+      const missOuts = ctx.potentVs ? afterShare(0, 1, ctx) : null;
+      const missOf = (f, reduce) => (missOuts ? parts.reduce(
+        (sum, p) => sum + p.weight * (1 - ((1 - h.crit.chance) * h.byPart.plain[p.part] + h.crit.chance * h.byPart.crit[p.part])) * reduce(missOuts, f),
+        0,
+      ) : 0);
+      const sumOver = (outs, f) => outs.reduce((x, o) => x + o.p * f(o.v), 0);
+      const lowOver = (outs, f) => Math.min(...outs.map((o) => f(o.v)));
+      const highOver = (outs, f) => Math.max(...outs.map((o) => f(o.v)));
+      const expect = (f) => agg(mean, (outs) => meanOf(outs, f)) + missOf(f, sumOver);
+      const lowest = (f) => agg((a) => Math.min(...a), (outs) => Math.min(...outs.map((o) => f(o.v)))) + missOf(f, lowOver);
+      const highest = (f) => agg((a) => Math.max(...a), (outs) => Math.max(...outs.map((o) => f(o.v)))) + missOf(f, highOver);
+      const same = (v) => v;
+      return {
+        perSwing: expect(same),
+        perSwingMin: lowest(same),
+        perSwingMax: highest(same),
+        cappedPerSwing: expect(capped),
+        cappedPerSwingMin: lowest(capped),
+        cappedPerSwingMax: highest(capped),
+      };
+    }
+    // A bare target (no worn piece): one defended number per roll, then the same host steps as outcomes.
+    const ctx = { weapon: w, offHand: !!opts.offHand, traits: traitList, strikeKind, bow, potentVs: num(opts.potentVs, 0) };
+    const each = (rolls) => rolls.map((d) => afterShare(hand(defended(d)), 1, ctx));
+    const plain = each(plainRolls);
+    const crits = each(critRolls);
+    const over = (rows, f, across) => across(rows.map((outs) => f(outs)));
+    const e = (g) => (outs) => outs.reduce((sum, o) => sum + o.p * g(o.v), 0);
+    const lo = (g) => (outs) => Math.min(...outs.map((o) => g(o.v)));
+    const hi = (g) => (outs) => Math.max(...outs.map((o) => g(o.v)));
+    const idv = (v) => v;
+    // With Potent Vs a swing that missed is the five (afterShare), weighted by the chance to miss.
+    const missOuts = ctx.potentVs ? afterShare(0, 1, ctx) : null;
+    const missP = 1 - ((1 - h.crit.chance) * h.hitPlain + h.crit.chance * h.hitCrit);
+    const miss = (fOne) => (missOuts ? missP * fOne(missOuts) : 0);
+    const mix = (fOne, across) => (1 - h.crit.chance) * h.hitPlain * over(plain, fOne, across) + h.crit.chance * h.hitCrit * over(crits, fOne, across) + miss(fOne);
+    return {
+      perSwing: mix(e(idv), mean),
+      perSwingMin: mix(lo(idv), (a) => Math.min(...a)),
+      perSwingMax: mix(hi(idv), (a) => Math.max(...a)),
+      cappedPerSwing: mix(e(capped), mean),
+      cappedPerSwingMin: mix(lo(capped), (a) => Math.min(...a)),
+      cappedPerSwingMax: mix(hi(capped), (a) => Math.max(...a)),
+    };
+  };
+  // Three outcomes: an ordinary swing (the foe not back-facing), and a back-facing swing that is
+  // either ordinary or a ×3 backstab. Each is its own mixture so the cap and the body-part
+  // distribution see the ×3 blow as a separate claim, never as a scaled average.
+  const ordinary = computeBranch(hit, dmg.plainRolls, dmg.critRolls);
+  const behindOrdinary = behind ? computeBranch(hitBehind, dmg.plainRolls, dmg.critRolls) : ordinary;
+  const behindBackstab = behind ? computeBranch(hitBehind, dmg.backstabPlainRolls, dmg.backstabCritRolls) : ordinary;
+  const blend = (key) => (1 - backUptime) * ordinary[key]
+    + backUptime * ((1 - backProb) * behindOrdinary[key] + backProb * behindBackstab[key]);
+  const perSwing = blend('perSwing');
+  const perSwingMin = blend('perSwingMin');
+  const perSwingMax = blend('perSwingMax');
+  const cappedPerSwing = blend('cappedPerSwing');
+  const cappedPerSwingMin = blend('cappedPerSwingMin');
+  const cappedPerSwingMax = blend('cappedPerSwingMax');
+  // The hit card and the allowance read the same mixture's hit chance.
+  const hitOut = {
+    ...hit,
+    hit: (1 - backUptime) * hit.hit + backUptime * hitBehind.hit,
+    hitPlain: (1 - backUptime) * hit.hitPlain + backUptime * hitBehind.hitPlain,
+    hitCrit: (1 - backUptime) * hit.hitCrit + backUptime * hitBehind.hitCrit,
+    byPart: {
+      plain: hit.byPart.plain.map((v, i) => (1 - backUptime) * v + backUptime * hitBehind.byPart.plain[i]),
+      crit: hit.byPart.crit.map((v, i) => (1 - backUptime) * v + backUptime * hitBehind.byPart.crit[i]),
+    },
+    terms: { ...hit.terms, backstab: backUptime * backSkill },
+  };
 
   const dps = perSwing * cad.aps;
   const dpsMin = perSwingMin * cad.aps;
@@ -755,7 +1190,7 @@ export function analyze(ch, {
   const cappedDps = cappedPerSwing * cad.aps;
   const cappedDpsMin = cappedPerSwingMin * cad.aps;
   const cappedDpsMax = cappedPerSwingMax * cad.aps;
-  const ench = opts.enchants === false ? null : enchantDps(w?.item ?? ch.wraps ?? ch.weapon, ch, tgt, { hit: hit.hit, aps: cad.aps, level: ch.level, potencyPct: opts.potencyPct, pierce: opts.pierce, cap });
+  const ench = opts.enchants === false ? null : enchantDps(w?.item ?? ch.wraps ?? ch.weapon, ch, tgt, { hit: hitOut.hit, aps: cad.aps, level: ch.level, potencyPct: opts.potencyPct, pierce: opts.pierce, cap, standard: opts.standard });
   const enchantPerSwing = ench?.perSwing ?? 0;
   const enchantDpsValue = ench?.dps ?? 0;
   const enchantDpsMin = ench?.dpsMin ?? 0;
@@ -763,23 +1198,39 @@ export function analyze(ch, {
   const totalDps = cappedDps + enchantDpsValue;
   const totalDpsMin = cappedDpsMin + enchantDpsMin;
   const totalDpsMax = cappedDpsMax + enchantDpsMax;
-  const ward = traits.includes('warded') && bossHealth > 0 ? Math.max(1, Math.round(bossHealth * WARD_SHARE)) : 0;
+  const ward = traitList.includes('warded') && bossHealth > 0 ? Math.max(1, Math.round(bossHealth * WARD_SHARE)) : 0;
   const shields = Math.max(0, num(t.phaseShields, 0)) * Math.max(0, num(t.shieldSeconds, 0));
   const ttk = bossHealth > 0 && cappedDps > 0 ? (bossHealth + ward) / cappedDps + shields : null;
   const totalTtk = bossHealth > 0 && (cappedDps + enchantDpsValue) > 0 ? (bossHealth + ward) / (cappedDps + enchantDpsValue) + shields : null;
-  const wrath = traits.includes('wrathful');
+  const wrath = traitList.includes('wrathful');
+  const gate = allowancePatch(tgt, bossHealth, { cappedPerSwing, hit: hitOut.hit, aps: cad.aps, procs: ench?.procs, cap });
   return {
-    core, weapon: w, target: tgt, swing, hit, damage: dmg, cadence: cad,
+    core, weapon: w, target: tgt, swing, hit: hitOut, damage: displayDmg, cadence: cad,
     perSwing, perSwingMin, perSwingMax, dps, dpsMin, dpsMax,
     cappedPerSwing, cappedPerSwingMin, cappedPerSwingMax, cappedDps, cappedDpsMin, cappedDpsMax, cap, capSource, capLoss: dps > 0 ? 1 - cappedDps / dps : 0,
-    enchantPerSwing, enchantDps: enchantDpsValue, enchantDpsMin, enchantDpsMax, totalDps, totalDpsMin, totalDpsMax, totalTtk, enchantProcs: ench?.procs ?? [], procsBeforeBreak: procsBeforeBreak(w?.item ?? ch.wraps ?? ch.weapon),
-    resist, health: bossHealth || null, ward, shields, ttk, wrath, wrathAt: WRATH_AFTER_S,
-    backstab: { skill: backSkill, chance: backChance, multiplier: 3, uptime: backUptime, expectedMult: backMult, min: Math.round(dmg.min * resist * 3), max: Math.round(dmg.max * resist * 3), critMin: Math.round(dmg.critMin * resist * 3), critMax: Math.round(dmg.critMax * resist * 3) },
-    traits, healthShare: simOpts.healthShare,
+    enchantPerSwing, enchantDps: enchantDpsValue, enchantDpsMin, enchantDpsMax, totalDps, totalDpsMin, totalDpsMax, totalTtk: gate?.totalTtk ?? totalTtk, enchantProcs: ench?.procs ?? [], procsBeforeBreak: procsBeforeBreak(w?.item ?? ch.wraps ?? ch.weapon),
+    resist, health: bossHealth || null, ward, shields, ttk: gate?.ttk ?? ttk, ttkCapOnly: ttk, totalTtkCapOnly: totalTtk, allowance: gate?.allowance ?? null, wrath, wrathAt: WRATH_AFTER_S,
+    targetDefense,
+    backstab: {
+      skill: backSkill,
+      chance: backProb,
+      probability: backProb,
+      toHit: backSkill,
+      multiplier: 3,
+      uptime: backUptime,
+      expectedMult: 1 + 2 * backUptime * backProb,
+      watchful,
+      min: struck(bowBlow(defended(Math.min(...dmg.backstabPlainRolls)), bow)),
+      max: struck(bowBlow(defended(Math.max(...dmg.backstabPlainRolls)), bow)),
+      critMin: struck(bowBlow(defended(Math.min(...dmg.backstabCritRolls)), bow)),
+      critMax: struck(bowBlow(defended(Math.max(...dmg.backstabCritRolls)), bow)),
+    },
+    traits: traitList, healthShare: simOpts.healthShare,
     notes: {
-      preArmor: true,
+      preWornArmor: !geared,
+      targetIntrinsic: true,
       condition: w ? w.conditionPct : 1,
-      softMaterial: false,
+      softMaterial: matReqMulti < 1,
     },
   };
 }
@@ -791,41 +1242,102 @@ export function referenceFoe(level, preset = 'tough') {
     : preset;
   const isClass = !!def?.isClass;
   const armor = isClass ? 60 : (num(def?.armorValue, 0) * 5);
-  return {
-    isPlayer: false, isClass, level: num(level, 1), careerIndex: -1,
+  return makeTarget({
+    isClass,
+    level: num(level, 1),
+    careerIndex: -1,
     stats: { strength: 50, intelligence: 50, willpower: 50, agility: 50, endurance: 50, personality: 50, speed: 50, luck: 50 },
     skills: Object.fromEntries(Array.from({ length: 35 }, (_, i) => [i, Math.min(100, num(level, 1) * 5 + 30)])),
-    health: 100, maxHealth: 100,
+    health: 100,
+    maxHealth: 100,
     armorValues: new Array(7).fill(armor),
     career: null,
     group: def?.group ?? null,
     affinity: def?.affinity ?? null,
     healthShare: num(def?.healthShare, 1),
-  };
+  });
 }
 
-/** A boss target: level, armour class, health, traits. */
-export function bossTarget({ level = 30, armorValue = 0, isClass = false, health = 5000, traits = [], group = null, hitCap = 0, phaseShields = 0, shieldSeconds = 0 } = {}) {
-  const t = referenceFoe(level, { isClass, armorValue });
+/** The encounter's half of a boss: its health, traits, cap and shields, over a body. `level` is the
+ *  content level (the allowance and the hit cap read it); the body's own level stays `combatLevel`. */
+function bossFields(t, { level, health, traits, group, hitCap, phaseShields, shieldSeconds, spareGear }) {
+  t.level = num(level, 1);
   t.health = health;
   t.maxHealth = health;
   t.isBoss = true;
   t.bossTraits = [...traits];
-  t.group = group;
+  if (group != null) t.group = group;
   t.healthShare = 1;
   t.hitCap = hitCap;
   t.phaseShields = phaseShields;
   t.shieldSeconds = shieldSeconds;
+  t.spareGear = spareGear;
   return t;
 }
 
+/**
+ * A boss target: the encounter's health, traits, cap and shields over a body.
+ *
+ * With a `mobileType` the body is the game's relay stand-in for that mobile (`standInTarget`,
+ * world/gate/gateBoss.js bossStandIn): its level, skills, armour, metal, career index and affinity are
+ * the game's, so none of them may be set beside it. Without one it is a generic card body
+ * (`referenceFoe` at `level`, with the armour class and identity fields given), for what-if bosses.
+ */
+export function bossTarget({
+  level = 30, armorValue = null, isClass = null, health = 5000, traits = [], group = null,
+  hitCap = 0, phaseShields = 0, shieldSeconds = 0,
+  mobileType = null, careerIndex = null, career = null, affinity = null,
+  minMetalToHit = null, spareGear = true,
+} = {}) {
+  const content = { level, health, traits, group, hitCap, phaseShields, shieldSeconds, spareGear };
+  if (mobileType != null) {
+    const set = Object.entries({ armorValue, isClass, careerIndex, career, affinity, minMetalToHit })
+      .filter(([, v]) => v != null).map(([k]) => k);
+    if (set.length) {
+      throw new Error(`bossTarget: mobile ${mobileType}'s body is the game's stand-in (standInTarget); ${set.join(', ')} cannot be set beside it`);
+    }
+    return bossFields(standInTarget(mobileType), content);
+  }
+  const cls = !!isClass;
+  const t = referenceFoe(level, { isClass: cls, armorValue: armorValue ?? 0 });
+  const ci = careerIndex ?? -1;
+  const aff = affinity ?? (cls ? 'Human' : null);
+  if (career) {
+    for (const k of ['strength', 'intelligence', 'willpower', 'agility', 'endurance', 'personality', 'speed', 'luck']) {
+      if (Number.isFinite(Number(career[k]))) t.stats[k] = Number(career[k]);
+    }
+  }
+  t.mobileType = null;
+  t.careerIndex = ci;
+  t.career = career;
+  t.affinity = aff;
+  t.minMetalToHit = minMetalToHit ?? -1;
+  t.group = targetGroupOf({ careerIndex: ci, affinity: aff, isClass: cls });
+  return bossFields(t, content);
+}
+
+/** The Breach stand-in's body level, as the game mints it: world/gate/gateBoss.js:152 makes
+ *  `makeEnemyEntity(31, ENEMY_BASICS[31], null, 1)`, and under the shipped boot the Daedra Lord's
+ *  MUDEX row stands at 21 (`standInTarget`, the assumptions register A15). The enemy-type bonus reads
+ *  `target.level` upstream; the content `level` stays the allowance/hit-cap level. */
+export const GATE_BODY_LEVEL = standInTarget(31).level;
+
 /** The real gate boss (Valkynaz Ruhn): a plate-armour monster, the solo pool for this level, the server hit cap and the two phase shields. */
-export function gateTarget(level, { health = gateHealth(level), traits = [], hitCap = null, players = 1, blowX = 1 } = {}) {
-  return bossTarget({
-    level, armorValue: 12, health: health * Math.max(1, Math.floor(players)), traits, // 12 x5 = 60, the gate's flat plate armour
+export function gateTarget(level, { health = gateHealth(level), traits = null, hitCap = null, players = 1, blowX = 1 } = {}) {
+  const t = bossTarget({
+    level, health: health * Math.max(1, Math.floor(players)),
+    // The Warden's traits come from the game's own selector (relayBossTraits on the name and mobile),
+    // not from a list here: relayTraitsFor('breach') = ['spellproof', 'stoneskin'] at a3eb1605.
+    traits: traits ?? relayTraitsFor('breach') ?? [],
+    // The body is the game's stand-in for mobile 31 (standInTarget: world/gate/gateBoss.js:151-161) -
+    // its career index, affinity, level, skills, BOSS_ARMOR and minMetalToHit 0 are the game's.
+    mobileType: 31, spareGear: true,
     group: 'daedra', // Valkynaz Ruhn is a Daedra Lord (gateBoss.js WBX7), not a humanoid
     hitCap: hitCap ?? Math.round(gateHitCap(level) * Math.max(1, num(blowX, 1))), phaseShields: GATE_SHIELDS, shieldSeconds: GATE_SHIELD_S,
   });
+  // The relay's per-player allowance (allowance.js): the Breach takes a claim only as far as the player's bucket allows.
+  t.allowance = allowanceSpec(level, { players });
+  return t;
 }
 
 /** The marginal DPS of a +N change, against the same target. */
