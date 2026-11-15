@@ -308,12 +308,14 @@ fight.saturated; fight.dryAt; fight.bucket; fight.ttk; fight.killDps;
 fight.time; fight.claimTime; fight.lastAttackAt; fight.termination; fight.censored; fight.censoredAt;
 ```
 
-- `claim({t, damage})` takes `t` in seconds (the source uses milliseconds). A claim is a landed, positive blow; a miss is not a claim and spends no token. The claim is the uncapped sampled
-  blow: the relay's `12 x ref` cap is the first cap it meets.
+- `claim({t, damage})` takes `t` in seconds (the source uses milliseconds). A claim is a positive formula blow; a
+  zero-damage miss is not a claim and spends no token. The claim is the uncapped sampled blow: the relay's
+  `12 x ref` cap is the first cap it meets. Stage 3.4 adds the Potent Vs-miss, Flow and Many Endings cases in §13.
 - `fresh: false` models a join to a wounded boss (empty damage bucket). `shieldUntil` is a fixed window in seconds;
   a claim at exactly its end is accepted. Phase-ward lifecycle is not scheduled.
-- The engine refuses an unarmed build (the Stage 3.2 schedule guard) and a build carrying a Many Endings echo power.
-  Geometry, Sundered halves, Wrath, host/crystal claims, CWS/DoTs/Flow and wear are outside this stage.
+- The engine refuses an unarmed build (the Stage 3.2 schedule guard). Flow and one Many Endings power are added in
+  §13; a synthetic two-echo build is refused. Geometry, Sundered halves, Wrath, host/crystal claims, CWS/DoTs, ward
+  lifecycle and wear are outside this stage.
 - `time` is the fight's elapsed time, independent of the claim clock: the killing claim on a kill, `maxSeconds` when
   the horizon censors the fight, and the last simulated attack when `maxBlows` stops it earlier (a blow-budget stop is
   not reported as the horizon). `claimTime` is the engine's last claim timestamp. `outputDps = damageDealt / time`
@@ -323,7 +325,35 @@ fight.time; fight.claimTime; fight.lastAttackAt; fight.termination; fight.censor
   saturation, elapsed time and termination counts across seeded trials. `offered = dealt + clipped + refusedDamage`; a refused
   claim's damage is not in `clipped` because the game never reached the purse.
 
-## 13. Outputs and JSON
+## 13. Flow and Many Endings in relay fights (library)
+
+Stage 3.4 adds the two loot mechanics to `simulateRelayFight`; the claim engine is unchanged.
+
+- **Flow** is global across hands. Stacks expire strictly at `flowUntil`, a whole positive-damage blow refreshes them for 6 s,
+  and the cap is the power's `max` (5). The stack count is read before the blow and passed through
+  `blowFightTier`'s `flowStacks` option, which applies it inside `lootBlow`'s percentage. A non-whole off-hand blow
+  does not charge Flow; a warded attack neither charges nor claims. A Flow power only rides the hand whose weapon
+  carries it.
+- **Many Endings** is one echo roll per power on a blow whose final formula damage is positive, at the power's chance
+  (10%). The echo is `max(1, round(damage))`, resisted separately from the original blow, and on a relay body it is
+  included in the **same** claim (`outcome.blow`), not sent as a second claim. A synthetic two-echo build is refused.
+- Claims are sent when the formula damage is positive and `Math.round(blow) >= 1`; a Potent Vs miss is a 5-point
+  claim, while zero damage sends nothing. A warded attack (`t < shieldUntil`) is sampled and discarded; at exactly
+  `shieldUntil` it is accepted.
+- `simulateRelayFight` returns `flow` (`stacks`, `held`, `until`, `max`, `seconds`), `flowBuilds`, `wardedAttacks`,
+  `zeroDamage` and `roundedZero`; each trace claim carries `hit`, `whole`, `echoMask`, `echoHits`, `stacksBefore`,
+  `stacksAfter`, `flowUntil` and `flowBuilt`.
+- The flow is deterministic (no RNG stream); the echo is part of the existing single `blow` sampler draw, so a build
+  with neither mechanic keeps its Stage 3.3 draw sequence.
+
+```js
+const r = simulateRelayFight(ch, {
+  target: gateTarget(45, { health: 2000 }), health: 2000, weapon, seed: 7, trace: true,
+});
+r.flow; r.flowBuilds; r.trace[0].stacksBefore; r.trace[0].echoHits;
+```
+
+## 14. Outputs and JSON
 
 HTML pages default to the current directory:
 
@@ -343,7 +373,7 @@ HTML pages default to the current directory:
 Use `--out <file>` to override. Many table commands accept `--json`; use
 `--help` for the exact command.
 
-## 14. First-run troubleshooting
+## 15. First-run troubleshooting
 
 - **No saves found**: set `DAGGER_USER_DATA` or pass `--save` explicitly;
   `doctor` prints the path it used.

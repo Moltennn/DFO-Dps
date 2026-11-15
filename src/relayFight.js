@@ -2,22 +2,27 @@
  * dfo-dps - seeded relay fights (Stage 3.3): Stage 3.2's blow schedule feeding the streaming claim engine.
  *
  * A relay fight is the SAME attack schedule and the SAME Stage 3.1 fight-tier draw as `simulateFight`; what changes is
- * where the blow goes. A landed, positive blow is a claim on the relay (`createRelayClaimEngine`), which applies the
- * token hand, the per-claim cap and the damage bucket. A miss is not a claim (upstream `applyHit` is refused for
- * `d <= 0` before a token is spent), so a missed swing consumes no token; the attack still occupies its scheduled
- * time. The claim is the UNCAPPED sampled blow (`outcome.damage`): the relay's own `HIT_CAP_X x ref` is the first cap
- * the blow meets, never a second (pre-capped) one.
+ * where the blow goes. A blow whose final formula damage is positive is a claim on the relay
+ * (`createRelayClaimEngine`), which applies the token hand, the per-claim cap and the damage bucket; a zero-damage miss
+ * is not a claim and spends no token, while a Potent Vs miss is a 5-point claim (upstream `formulas.js:873-878` gates on
+ * damage, not on the hit flag). The claim is the host-rounded (`Math.round`) UNCAPPED sampled blow (`outcome.blow`): on
+ * a relay body it already carries the owed Many Endings echo, and the relay's own `HIT_CAP_X x ref` is the first cap the
+ * blow meets. A blow rounded under 1 sends nothing (`gateCourt.hit`).
+ *
+ * Flow (Stage 3.4) is global, read BEFORE the blow, passed through `blowFightTier`'s existing `flowStacks` option and
+ * charged after the strike listener on a whole, positive, non-warded blow. Many Endings uses the existing fight-tier echo
+ * branch; a synthetic two-echo build is refused. A warded attack (`t < shieldUntil`) is sampled but sends no claim and
+ * builds neither Flow nor echo; at exactly `shieldUntil` it is accepted.
  *
  * Health-dependent terms are rebuilt exactly as in Stage 3.2: the player's remaining share selects the fight-tier
  * segment, and a new table is built at 0.5 or an execute threshold. The engine's `hp` is the player's share of the
  * boss, so a refused claim does not move the tier.
  *
- * Excluded by this stage (the assumptions register M30): Many Endings/echo claims (a build carrying one is refused rather
- * than letting the tier's echo ride into the claim), CWS, DoTs, Flow, phase-ward lifecycle, geometry, the Sundered
+ * Excluded by this stage (the assumptions register M30/M31): CWS, DoTs, wear, phase-ward lifecycle, geometry, the Sundered
  * halves, stun/profile hit multipliers, Wrath, host/crystal hits and the multi-body `spendBlow` sequence. A build with
  * fists is refused by the Stage 3.2 schedule (the unarmed StrikeLeft frame list is not in the analytical cadence).
  */
-import { weaponPowers } from './model.js';
+import { echoChances, weaponPowers } from './model.js';
 import { blowFightTier, createBlowSampler } from './blowOutcomes.js';
 import { createRng } from './rng.js';
 import { healthThresholds } from './fight.js';
@@ -25,6 +30,7 @@ import {
   createAttackSchedule, healthSegment, pairedFightSeeds, summarize, wilsonInterval,
 } from './simulateFight.js';
 import { createRelayClaimEngine } from './relayClaim.js';
+import { createFlowState } from './flowState.js';
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 
@@ -59,24 +65,36 @@ export function simulateRelayFight(ch, args = {}) {
   if (!schedule) return null;
   const probe = schedule.probe;
   const dual = schedule.kind === 'dual';
-  const powers = [
-    ...weaponPowers(probe.weapon, scenario),
-    ...(dual && probe.offHand?.weapon ? weaponPowers(probe.offHand.weapon, scenario) : []),
-  ];
-  if (powers.some((p) => p?.kind === 'echo')) {
-    throw new Error('simulateRelayFight: Many Endings (echo) claims are not supported in Stage 3.3');
+  const mainPowers = weaponPowers(probe.weapon, scenario);
+  const offPowers = dual && probe.offHand?.weapon ? weaponPowers(probe.offHand.weapon) : [];
+  const powers = [...mainPowers, ...offPowers];
+  // One Many Endings power is real (`warp-edge`). The local two-echo what-if is synthetic; refuse it rather than
+  // pretending the game rolls two. A power on each hand is two real weapons, not two rolls on one blow.
+  const mainEchoes = echoChances(mainPowers);
+  const offEchoes = echoChances(offPowers);
+  if (mainEchoes.length > 1 || offEchoes.length > 1) {
+    throw new Error('simulateRelayFight: more than one Many Endings power on a hand is not supported');
   }
+  const mainFlow = mainPowers.find((p) => p?.kind === 'flow') ?? null;
+  const offFlow = offPowers.find((p) => p?.kind === 'flow') ?? null;
+  const flowPower = mainFlow ?? offFlow;
+  const flow = createFlowState({
+    max: flowPower ? (flowPower.max ?? 5) : 0,
+    seconds: flowPower ? (flowPower.seconds ?? 6) : 0,
+  });
+  const flowByHand = { main: !!mainFlow, off: !!offFlow };
   if (scenario.seed !== undefined && !Number.isSafeInteger(scenario.seed)) {
     throw new TypeError('simulateRelayFight: seed must be a safe integer');
   }
   const seed = Number.isSafeInteger(scenario.seed) ? scenario.seed : 0;
   const rng = createRng(seed);
   const blowStream = rng.stream('blow');
+  const shieldUntil = num(scenario.shieldUntil, 0);
   const engine = createRelayClaimEngine({
     level: spec.level,
     share: pool,
     fresh: scenario.fresh !== false,
-    shieldUntil: num(scenario.shieldUntil, 0),
+    shieldUntil,
   });
   const bounds = healthThresholds(powers);
   const maxSeconds = num(scenario.maxSeconds, 3600);
@@ -84,13 +102,13 @@ export function simulateRelayFight(ch, args = {}) {
   const trace = scenario.trace === true ? [] : null;
 
   const cache = new Map();
-  const distribution = (index, hand) => {
-    const key = `${index}|${hand}`;
+  const distribution = (index, hand, stacks) => {
+    const key = `${index}|${hand}|${stacks}`;
     let d = cache.get(key);
     if (d) return d;
     const mid = (bounds[index] + bounds[index + 1]) / 2;
     const tier = blowFightTier(ch, {
-      ...scenario, target, health, healthShare: mid, hand,
+      ...scenario, target, health, healthShare: mid, hand, flowStacks: stacks,
       ...(dual && !scenario.dual ? { dual: true } : {}),
     });
     d = { tier, sampler: createBlowSampler(tier), mid };
@@ -100,6 +118,10 @@ export function simulateRelayFight(ch, args = {}) {
 
   let attacks = 0;
   let claims = 0;
+  let wardedAttacks = 0;
+  let zeroDamage = 0;
+  let roundedZero = 0;
+  let flowBuilds = 0;
   let lastAttackAt = 0;
   let termination = 'schedule';
   let next = schedule.next();
@@ -114,20 +136,38 @@ export function simulateRelayFight(ch, args = {}) {
     const hand = dual ? next.hand : 'main';
     const share = pool > 0 ? Math.max(0, Math.min(1, engine.hp / pool)) : 0;
     const index = healthSegment(bounds, share);
-    const dist = distribution(index, hand);
+    // Flow is read BEFORE the blow, once per attack; a warded blow reads none for its (discarded) sample.
+    const stackedBefore = flow.stacksAt(next.t);
+    const dist = distribution(index, hand, stackedBefore);
     const outcome = dist.sampler.sample(blowStream);
-    if (outcome.hit && outcome.damage > 0) {
-      const result = engine.claim({ t: next.t, damage: outcome.damage });
-      claims += 1;
-      if (trace) {
-        trace.push({
-          t: next.t, hand, segment: index, share, claim: outcome.damage,
-          got: result.got, clipped: result.clipped, bucketClip: result.bucketClip,
-          capClip: result.capClip, healthClip: result.healthClip,
-          accepted: result.accepted, reason: result.reason,
-          bucket: result.bucketAfter, tokens: result.tokensAfter, hp: result.hpAfter,
-        });
-      }
+    // The client's ward flag is the phase shield evaluated for this attack (gateCourt.target/body): no Flow, no echo,
+    // no claim. The engine keeps its own shield clock too, but the compositor never sends a warded claim.
+    const warded = next.t < shieldUntil;
+    if (warded) { wardedAttacks += 1; if (engine.killed) { termination = 'kill'; break; } next = schedule.next(); continue; }
+    if (outcome.echoDamage > 0) {
+      throw new Error('simulateRelayFight: the target is not a relay body (echo is a separate hit)');
+    }
+    const raw = outcome.blow; // on a relay body this already carries the owed echo
+    if (!(raw > 0)) { zeroDamage += 1; if (engine.killed) { termination = 'kill'; break; } next = schedule.next(); continue; }
+    // The strike listener's Flow arm: only a whole blow refreshes; read was before the blow.
+    const flowResult = flow.hit(next.t, { whole: outcome.whole, eligible: flowByHand[hand] });
+    if (flowResult.built) flowBuilds += 1;
+    // The host's wire rounds the final number and sends nothing below 1 (gateCourt.hit). Flow and echo already ran.
+    const claim = Math.round(raw);
+    if (!(claim >= 1)) { roundedZero += 1; if (engine.killed) { termination = 'kill'; break; } next = schedule.next(); continue; }
+    const result = engine.claim({ t: next.t, damage: claim });
+    claims += 1;
+    if (trace) {
+      trace.push({
+        t: next.t, hand, segment: index, share, claim,
+        hit: outcome.hit, whole: outcome.whole, echoMask: outcome.echoMask, echoHits: outcome.echoHits,
+        stacksBefore: flowResult.before, stacksAfter: flowResult.after, flowUntil: flowResult.until,
+        flowBuilt: flowResult.built,
+        got: result.got, clipped: result.clipped, bucketClip: result.bucketClip,
+        capClip: result.capClip, healthClip: result.healthClip,
+        accepted: result.accepted, reason: result.reason,
+        bucket: result.bucketAfter, tokens: result.tokensAfter, hp: result.hpAfter,
+      });
     }
     if (engine.killed) { termination = 'kill'; break; }
     next = schedule.next();
@@ -161,6 +201,11 @@ export function simulateRelayFight(ch, args = {}) {
     healthClip: s.healthClip,
     claims: s.claims,
     attacks,
+    wardedAttacks,
+    zeroDamage,
+    roundedZero,
+    flowBuilds,
+    flow: flow.state(time),
     accepted: s.accepted,
     refused: s.refused,
     invalid: s.invalid,
@@ -229,6 +274,11 @@ export function simulateRelayFights(ch, args = {}) {
     accepted: summarize(rows.map((r) => r.accepted)),
     refused: summarize(rows.map((r) => r.refused)),
     claims: summarize(rows.map((r) => r.claims)),
+    wardedAttacks: summarize(rows.map((r) => r.wardedAttacks)),
+    zeroDamage: summarize(rows.map((r) => r.zeroDamage)),
+    roundedZero: summarize(rows.map((r) => r.roundedZero)),
+    flowBuilds: summarize(rows.map((r) => r.flowBuilds)),
+    flowStacks: summarize(rows.map((r) => r.flow.stacks)),
     bucket: summarize(rows.map((r) => r.bucket)),
     tokens: summarize(rows.map((r) => r.tokens)),
     saturated: rows.filter((r) => r.saturated).length,

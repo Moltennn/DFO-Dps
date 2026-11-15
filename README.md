@@ -120,6 +120,9 @@ Use `./dfo-dps --help` for every flag, or see
   `src/relayFight.js`): the four-token hand, the damage purse, the per-claim
   cap, clipped/refused claims, saturation, remaining bucket state and seeded
   relay fights. Also a library API.
+- The Stage 3.4 relay mechanics (`src/flowState.js`, `src/relayFight.js`):
+  Flow's global strict clock and whole-blow charges, and one Many Endings
+  echo included in the original claim. A synthetic two-echo build is refused.
 
 **Supported with important approximations**
 
@@ -150,10 +153,11 @@ Use `./dfo-dps --help` for every flag, or see
   than approximating it. A ranged first hit is the upstream machine's own
   frame. Censored runs report a kill probability and a conditional TTK; no
   Kaplan-Meier estimate is made.
-- The Stage 3.3 relay engine does not model geometry, Sundered halves,
+- The Stage 3.3/3.4 relay engine does not model geometry, Sundered halves,
   stun/profile hit multipliers, Wrath, host/crystal claims, phase-ward
-  lifecycle, CWS/DoTs/Flow or Many Endings; a build carrying an echo power
-  and an unarmed build are refused rather than approximated.
+  lifecycle, CWS or DoTs. A static Warded trait/ward pool is not modelled. A synthetic two-echo
+  build and an unarmed build are refused rather than approximated. Flow and
+  one Many Endings power are supported.
 - Per-blow ward suppression and the full proc/DoT budget.
 - Elite Breach, and non-English boss-trait seeding.
 - Exact reproduction of a live client's frame timing or RNG sequence.
@@ -231,7 +235,7 @@ subset with the full pinned checkout.
 - [`docs/SOURCES.md`](docs/SOURCES.md) — the upstream pin and provenance.
 - the stage record — stochastic-engine design
   and the source audit behind `src/rng.js`, `src/blowOutcomes.js`,
-  `src/simulateFight.js`, `src/relayClaim.js` and `src/relayFight.js`.
+  `src/simulateFight.js`, `src/relayClaim.js`, `src/relayFight.js` and `src/flowState.js`.
 - the documentation index — the full documentation index, including
   the engineering stage audits.
 

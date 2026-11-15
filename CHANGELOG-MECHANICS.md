@@ -6,6 +6,43 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage 3.4 - Many Endings and Flow in relay fights (2026-11-16)
+
+**What the game does.** Many Endings (`warp-edge`, `systems/loot/lootRarity.js:1219`) rolls one `_rand()*100 < 10` per
+blow whose final formula damage is positive (`systems/loot/lootPowers.js:374`) and repeats it as
+`max(1, round(damage))` (`:444-454`), resisted separately as a melee swing and, on a relay body, summed into the SAME
+claim (`scenes/dungeonContext.js:4528-4532`). Flow (`anseis-edge`, `lootRarity.js:1205`) is global state: `flowStacks`
+is strict (`now < flowUntil`, `lootPowers.js:274`), a whole positive-damage blow sets `flow = min(5, stacks+1)` and refreshes
+6 s (`:383-387`), and the percentage is applied inside `lootBlow`'s shared percentage (`:316-318`). The host sends a
+claim on positive formula damage, not on the hit flag (a Potent Vs miss is 5), rounds it (`Math.round`) and drops
+anything under 1 (`scenes/gate/gateCourt.js:1159-1171`). A warded attack (`t < shieldUntil`) sends nothing and builds
+neither Flow nor echo (`gateCourt.js:1152`, `lootPowers.js:354`); a relay token/purse refusal happens after the listener,
+so Flow still charges.
+
+**What changed.** `src/flowState.js` is the global Flow clock; `src/relayFight.js` reads it before each attack, passes
+it through the existing `blowFightTier` `flowStacks` option (no second formula), charges only on a whole, positive,
+non-warded blow, and keeps the strict expiry/cap. One Many Endings power is now supported; the existing fight-tier echo
+branch supplies the mask and the echo is already inside `outcome.blow` for a relay body, so it goes out in one claim.
+A synthetic two-echo build is still refused. The claim gate is now `damage > 0` and `Math.round >= 1`, not `outcome.hit`;
+zero damage still sends nothing. The ward gate is the client's phase shield (`t < shieldUntil`), not the `target.warded`
+trait or a ward lifecycle.
+
+**Outputs that moved.**
+- A Flow build previously used the tier default (`flowStacks = max = 5`) on every blow. It now starts at 0. At a
+  200-point pool, level 45, seed 1: 9 claims / 8.604 s before; 10 claims / 9.519 s after. At a 2,000-point pool the
+  first claims fall from 23 to 18 but the kill still takes 91 claims / 87.32 s.
+- A Many Endings build was refused in Stage 3.3. It is supported now. At a 2,000-point pool, seed 1: 104 claims,
+  TTK 99.219 s, 2,000 damage.
+- A Potent Vs miss was skipped. With 20 attacks at level 45, seed 1: 19 claims / 439 damage before; 20 claims / 444
+  after.
+- A build with neither mechanic is byte-identical to Stage 3.3 (test 15, recorded from `9f23c47`).
+
+Tests: `test/flowDifferential.test.js` (1) exact stack state vs `lootStrike`; `test/relayEchoDifferential.test.js` (3)
+joint echo cells, separate resistance and the Potent Vs miss; `test/flowState.test.js` (2); the Stage 3.4 integration
+cases in `test/relayClaimFight.test.js` (15). Full suite **540 tests, 540 pass**; vendor 289/122; parity **1855/1855**.
+
+---
+
 ## Stage 3.3 closure audit - elapsed time and DPS (2026-11-16)
 
 **One semantic fix: fight elapsed time is no longer the claim engine's clock.** `simulateRelayFight` had reported
