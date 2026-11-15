@@ -54,9 +54,9 @@ swing = (5 + hold) * tick
 
 `theory` is the live ceiling. Attributes are 100 (the `liveStat` clamp), Long Blade, Critical Strike and Backstabbing are mastered at raw 200 (`effectiveSkill` = 140), the weapon is a Daedric Dai-katana, online rules are on, and RRI weapon balance is on. It uses no community assumptions and no legacy strength model.
 
-A gear skill line is modelled at the legendary maximum of 30 points (`AFFIX_RANGES.skill.legendary`). The practical line ceiling comes from `lootRarity.js`: Long Blade's own skill is only in the weapon and the body-skill pool, so the weapon plus seven armour pieces give **8 lines (240 points, +105.6% mastery)**; jewellery's `JEWEL_KIN` has Critical Strike but not Long Blade, so Critical Strike reaches **18 lines (540 points)** across the weapon, armour and ten jewellery slots. The mastery formula caps at +320% (728 points), but 8 Long Blade lines cannot reach it; Critical Strike has no formula cap and is the channel that keeps paying after chance reaches 100%. The weapon's damage affix is capped at 40% (`AFFIX_RANGES.damage.legendary`). The command searches every feasible split of the line budget and prices each stage from naked to fully geared against the level-45 Breach boss.
+A gear skill line is modelled at the legendary maximum of 30 points (`AFFIX_RANGES.skill.legendary`). The practical ceiling is the **legal gear frontier** (`src/gearProfile.js`): Long Blade and Critical Strike line counts, skill kin, bands, the one-Exalted-line law and the item slots bound it. The long-blade ceiling is **535 points per skill / 620 together**, not 780; reaching it needs perfect rolls on 18 pieces. The weapon damage line is part of the legal frontier too; the current default Dai-katana profile uses **25%**, not a blanket 40% band top. `theory --json` prints the profile it used (`character.legal`, `maxLb`, `maxCs`, `damage`). `--gear-lb` and `--gear-cs` take points; `--gear-lines` and `--line-points` are obsolete.
 
-The level-45 Breach is `240 x 50 = 12,000 HP` with a `12 x 50 = 600` per-hit cap and two 3s shields. The fully geared long blade is about **1,198 uncapped DPS**, but the cap binds almost every blow: **~821 capped DPS** and **~20.6 s TTK**. The marginal value of another skill line is therefore near zero at the Breach, which is the practical answer to "how far can it be pushed".
+The level-45 Breach is `240 x 50 = 12,000 HP` with a `12 x 50 = 600` per-hit cap. The current default `theory` run reports roughly **1066.6 uncapped DPS**, **815.4 capped DPS** and a **76.0 s relay TTK**; the exact figures move with the blade, race, stars and target flags. The cap still binds most blows, which is why another skill line buys little at the Breach.
 
 ### The Firmament's channels
 
@@ -66,7 +66,7 @@ The `theory` command prices each star channel from +0 to +15. At the ceiling, St
 
 ## Weapon-ceiling page
 
-`weapons` renders the same model as a standalone HTML page. The first chart is boss (level-45 Breach) DPS; the second is uncapped DPS. DPS values are averages; each bar is the average. `--categories` condenses the table to the best of each weapon type (Long Blade, Short Blade, Axe, Blunt Weapon, Archery, Hand-to-Hand) in the 1H, 2H and dual slots, sorted by DPS. The table uses the real Firmament tree (`applyTree`), not the old flat `+Firmament` ceiling; the loadout page adds enchants and imprints. It ranks every weapon template (melee, bows and the port's firearms) at a max profile (attributes 100, raw weapon skill and Critical Strike 200 mastered, weapon skill gear 240, Critical Strike gear 540, a Legendary damage affix, the weapon's career expertise, Dunmer (the default; `--race` overrides), and the best martial path for the family) and shows raw 100 -> 200 and gear 0 -> 240 curves per family. Every family uses Blademaster at full health; Berserker's below-half upkeep is not assumed. Blunt keeps its own at-or-above-half mastery. The Hand-to-Hand row is the Hand Wraps ceiling (damage/sockets/procs); bare fists without wrap lines are the ~450 band the community tests saw. The practical H2H gear cap is 17 lines (510 points: seven armour pieces and ten jewellery slots, never a weapon). The 40% affix is `AFFIX_RANGES.damage.legendary[1]`; it is a weapon roll, separate from Firmament and enchant channels.
+`weapons` renders the same model as a standalone HTML page. The first chart is boss (level-45 Breach) DPS; the second is uncapped DPS. DPS values are averages. `--categories` condenses the table to the best of each weapon type (Long Blade, Short Blade, Axe, Blunt Weapon, Archery, Hand-to-Hand) in the 1H, 2H and dual slots, sorted by DPS. The table uses the real Firmament tree (`applyTree`), not a flat `+Firmament` ceiling; the loadout page adds enchants and imprints. It ranks every weapon template (melee, bows and the port's firearms) at the legal max profile: attributes 100, raw weapon skill and Critical Strike 200 mastered, the legal frontier's gear points and damage line, the weapon's career expertise, Dunmer (the default; `--race` overrides), and the best martial path for the family. It shows raw 100 -> 200 and the legal gear curves per family. Every family uses Blademaster at full health; Berserker's below-half upkeep is not assumed. Blunt keeps its own at-or-above-half mastery. The Hand-to-Hand row is the Hand Wraps ceiling (damage/sockets/procs); bare fists without wrap lines are the lower band the community tests saw. The legal H2H gear cap is 17 lines (seven armour pieces and ten jewellery slots, never a weapon). The damage line is a weapon roll, separate from Firmament and enchant channels.
 
 ## Imprints and the item maker
 
@@ -81,12 +81,15 @@ Breach (Valkynaz Ruhn is a Daedra; 600 per-hit cap); **uncapped** is the same
 weapon with no cap. The **trigger** column applies the condition only where
 it can occur at the Breach; conditions that cannot (undeath, dragons,
 unawareness, night, a second foe) are marked. Utility powers (spell cost,
-magicka on a kill, spell damage) show 0 melee DPS. **Many Endings** is a
-separate strike and gets its own cap; Cast When Strikes spells are separate
-hits; chain/quake hit other targets separately. Flow, Serpent's Kiss,
-Potent Vs, bane, sanctified, moon, rage and the other same-hit modifiers
-share the main hit's cap. The imprint table prints each power's `Hit`
-class.
+magicka on a kill, spell damage) show 0 melee DPS. **Many Endings** is
+special: on a relay body the echo is owed into the **same** claim and shares
+the blow's cap, while on an ordinary foe it is its own hit. The imprint
+ranking still prices it as a separate capped hit; treat that column as a
+pricing convention, not the relay law (the assumptions register M23). Cast When
+Strikes spells are separate claims on a relay body; chain/quake hit other
+targets separately. Flow, Serpent's Kiss, Potent Vs, bane, sanctified, moon,
+rage and the other same-hit modifiers share the main hit's cap. The imprint
+table prints each power's `Hit` class.
 
 `enchant-plan` imports the game's enchantment cost table
 (`enchantmentCatalogue.js`) and item `enchantmentPoints`
@@ -204,13 +207,13 @@ Enchantments read `items[].enchantments`: Cast When Strikes (type 2) fires its s
 
 ## Backstab and the cap
 
-`combatStats` carries `Backstab: skillValue(Backstabbing)% ×3`. A front crit of 120–183 (sustained) becomes a **360–549** critical backstab; with the live card's opening First Blood it is 567–870, which the simulation deliberately excludes. `--behind` sets 100% uptime; `--backstab 0.5` uses the expected multiplier `1 + 2 × uptime × chance`.
+`combatStats` carries `Backstab: skillValue(Backstabbing)% ×3`. A back-facing swing is a ×1/×3 mixture, and the ×3 is rolled only on a landed hit. The live card's opening First Blood (Duelist's Vambrace) is separate and is deliberately excluded. `--behind` sets 100% uptime; `--backstab 0.5` uses the expected multiplier `1 + 2 × uptime × chance`.
 
 The Breach's per-blow cap is `HIT_CAP_X × dpsRef(level)` = 420 at level 30 (unless an Elite/Vestiges `relayBlowX` raises it). The tool reports raw backstab damage and **capped** DPS separately: a 600 display can be raw while only the cap reaches the health.
 
 ## The real Breach boss pool
 
-`net/gate/gateBrain.js`: a player's share of the Breach boss is `BOSS_TTK_S = 240` seconds of reference damage, `dpsRef(level) = 5 + level` (level 1..60). Solo at level 30 that is **8,400 HP**. He has plate armour 60, a **per-blow server cap of `HIT_CAP_X = 12` x reference (420 at level 30)**, and phase shields at 66% and 33% for **3 seconds each**. The Breach only carries bladeturning/stoneskin/thorned; it does not carry ward, curb or wrath. The tool adds the six shield seconds to TTK.
+`net/gate/gateBrain.js`: a player's share of the Breach boss is `BOSS_TTK_S = 240` seconds of reference damage, `dpsRef(level) = 5 + level` (level 1..60). Solo at level 30 that is **8,400 HP**. He has plate armour 60 and a **per-blow server cap of `HIT_CAP_X = 12` x reference (420 at level 30)**. The model applies phase shields at 66% and 33% for **3 seconds each**; that is a declared parameter, not a measured duration (A8: the source can hold the ward longer). The Breach's default relay traits at this pin are **spellproof + stoneskin** (the relay selector picks one element proof and one blow trait); it does not use Curbing or Wrath. The tool adds the model's shield seconds to TTK, and the 75 s Wrath is reported but does not terminate the fight in the simulation.
 
 ## Boss cap
 
@@ -223,8 +226,10 @@ The Breach's per-blow cap is `HIT_CAP_X × dpsRef(level)` = 420 at level 30 (unl
 - **Thorned** — 20% of weapon damage back at the striker
 - **Wrathful** — boss damage x1.6 after 75s
 
-The Breach and the other relay bosses only carry
-bladeturning/stoneskin/thorned; they have no ward, curb or wrath.
+Relay bosses draw **one element proof and one blow trait** from the game's
+`RELAY_BOSS_TRAITS`; the Breach's default at this pin is **spellproof +
+stoneskin**. They have no Curbing or Wrath by default. The three-second phase
+shield is the model's A8 parameter; the source can hold the ward longer.
 
 The cap is applied **after** backstab's ×3 and after any flat addition to the blow; backstab and poison are not exemptions. It is **per player**: `HIT_CAP_X * dpsRef(level)` for that fighter (times the relay bucket's `blowX`), while the health pool adds a `BOSS_TTK_S * dpsRef(level)` share for each player, so a group's cap does not grow with the group. Curbing only binds when the final blow would take more than 5% of **maximum** health. `analyze` stops at the per-blow cap. The loadout page's purse simulation adds the per-account bucket (`BUCKET_RATE_X` reference damage a second, `BUCKET_DEPTH_X` deep) and the `GATE_HIT_HZ_MAX` blows/s token limit.
 If your per-hit is 40 and the boss has 5,000 HP, the cap is 250 and does
@@ -233,7 +238,7 @@ matter.
 
 ## Live snapshot
 
-When a JSON with `equipSlots` is imported, the actual equip table wins over the saved `items[].equipSlot` and the live `_mods` cache. Its item `affixes` are folded into `_mods.skills`/`_mods.stats`; `_enchantMods.skillMods` is added separately. That reproduces the live Combat Stats card's skill line: for Moltenn, Long Blade 168, Critical Strike 217, Dodging 112, and the hit term `298`.
+When a JSON with `equipSlots` is imported, the actual equip table wins over the saved `items[].equipSlot` and the live `_mods` cache. Its item `affixes` are folded into `_mods.skills`/`_mods.stats`; `_enchantMods.skillMods` is added separately. That reproduces the live Combat Stats card's skill line for the same character and snapshot; compare the card's current values rather than a fixed example.
 
 ## Save import
 
@@ -248,6 +253,9 @@ on load; this project rebuilds the channels the combat model reads:
 - Master Skills: online is always active; offline `masterSkills` decides
 - `masteredSkills` gates which skills may read past 100
 
-The in-game Combat Stats card is the final oracle. If this tool and the card
-disagree for the same character and foe, the import or the model is wrong —
-check that first.
+The verification oracle is the pinned upstream source, checked by the
+differential and golden suites (the verification notes). The in-game Combat
+Stats card is a useful reference, not the oracle: it can include opening
+effects (First Blood) and a different live gear state, so a disagreement is a
+reason to check the import and the scenario, not proof that the model is
+wrong.
