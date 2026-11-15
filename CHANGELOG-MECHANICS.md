@@ -6,6 +6,35 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage 3.4.2 - ranged refusal, merge-key and compositor evidence (2026-11-16)
+
+**No supported melee numbers moved.** `src/relayClaim.js` is untouched and the plain-build path is unchanged where no
+shield window is set.
+
+**What changed.**
+- **Ranged/gun is refused on either hand in `simulateFight` and `simulateRelayFight`**, including a mixed melee +
+  Pistolet pair. The old guard checked only the main-hand analysis weapon; `analyze`'s dual arm (`src/model.js:1046`) does
+  not reject an off-hand gun, so a katana + Pistolet fell through to a melee exchange. The new checks use both hand
+  weapons and throw explicitly; `createAttackSchedule` remains the schedule-level helper the machine-clock test uses.
+- **Many Endings requires `target.relayBody === true`**, not a truthy value. Echo builds on an ordinary or hand-built
+  target are refused before the first attack.
+- **`formulaPositive` is part of the fight-tier merge key** (`src/blowOutcomes.js` `keyOf`), so a pre-pull/pre-trait
+  eligible miss cannot merge with an ineligible miss. A synthetic collision test holds this.
+- **Flow damage at stacks 1, 2, 3 and 4** is now compared with real upstream draws, by actual damage outcome counts,
+  in `test/relayFlowDamageDifferential.test.js` (the earlier local test compared `blowFightTier` with `analyze`).
+- **A real-sampler whole-compositor test** (`test/relayRealSampler.test.js`) runs the production sampler/tier, asserts
+  the stack count and hand actually passed to `blowFightTier`, replays the local trace's Flow state through upstream
+  `lootStrike` at the same item/time, and replays the claims through `relayStream`.
+- **The pre-sampled event list is branded** (`test/harness/relayEventSeam.mjs`); `simulateRelayFight` refuses a plain
+  `events` argument, so ordinary callers cannot bypass sampling by accident.
+- **Identity note:** Stage 3.3 plain-build identity holds **without a shield window**. A `shieldUntil` fight intentionally
+  differs: a warded attack now sends no claim (matching `gateCourt.hit`), so `claims`/`refused` change and the engine's
+  `shielded` counter is 0; `wardedAttacks` records the turned attacks.
+
+Full suite **551 tests, 551 pass**; vendor 289/122; parity **1855/1855**.
+
+---
+
 ## Stage 3.4.1 - relay hardening and whole-compositor evidence (2026-11-16)
 
 **No melee numbers moved.** The existing Stage 3.4 melee path and the no-mechanic Stage 3.3 metrics are unchanged

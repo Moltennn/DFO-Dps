@@ -301,6 +301,20 @@ test('8. exclusions and explicit assumptions: a Pistolet pair is refused, and th
   assert.throws(() => simulateFight(ch, { target: target(), health: 12000, weapon: weaponOf(it), seed: 1.5 }), /safe integer/);
   const fists = simCharacter(BASIC(), null);
   assert.throws(() => simulateFight(fists, { target: target(), health: 12000 }), /fist scheduling/);
+  // ranged/gun on either hand is refused, including a mixed melee + Pistolet pair
+  for (const tpl of [130, 560, 562]) {
+    const ranged = weapon(tpl, { material: 9 });
+    assert.throws(
+      () => simulateFight(ch, { target: target(), health: 12000, weapon: weaponOf(ranged) }),
+      /bow and gun builds are not supported/,
+    );
+    const mixed = dual();
+    mixed.ch.offWeapon = { ...ranged, equipSlot: 21 };
+    assert.throws(
+      () => simulateFight(mixed.ch, { target: target(), health: 12000, weapon: weaponOf(mixed.item), dual: true }),
+      /bow and gun builds are not supported/,
+    );
+  }
   const p = simCharacter(BASIC(), { ...weapon(562, { material: 4 }), equipSlot: 19 });
   p._pair = true;
   assert.throws(() => simulateFight(p, { target: target(), health: 12000 }), /Pistolet pair/);

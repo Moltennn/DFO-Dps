@@ -88,7 +88,7 @@ export async function upstreamRelayEvents(u, {
         hit: notes ? !!notes.hit : false,
         echoHits: owed > 0 ? 1 : 0,
         flowBefore, flowAfter: flowStacks(now),
-        sent, got, accepted: got > 0,
+        sent, hostBlow, got, accepted: got > 0,
         bucket: p.bucket, tokens: p.rate, hp: f.hp, clipped: p.clipped,
         outcome: {
           hit: notes ? !!notes.hit : false, whole, formulaPositive: raw > 0,

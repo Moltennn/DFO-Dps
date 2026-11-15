@@ -256,7 +256,7 @@ function finish(outcome, o, cap) {
 
 const keyOf = (o) => [
   o.directionIndex, o.facing ? 1 : 0, o.backstab ? 1 : 0, o.crit ? 1 : 0, o.hit ? 1 : 0, o.whole ? 1 : 0,
-  o.echoMask, o.blow, o.echoDamage,
+  o.echoMask, o.blow, o.echoDamage, o.formulaPositive ? 1 : 0,
 ].join('|');
 
 /**

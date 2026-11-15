@@ -275,7 +275,9 @@ const paired = simulatePairedFights([{ id: 'a', ch: a }, { id: 'b', ch: b }], { 
   Kaplan-Meier fit can be made by the caller if needed.
 - A ranged first hit is the upstream machine's: a gun on frame 1 of its 14 fps
   clock, a bow on frame 5 of the classic draw clock (2 when it starts drawn,
-  5 with BowDrawback). `simulateFight` reports the frame in `schedule`.
+  5 with BowDrawback). Stage 3.4.2 refuses bow and gun builds in
+  `simulateFight` and `simulateRelayFight`; only the schedule helper still
+  resolves the frame for the machine-clock test.
 - Axe/blunt mastery, venom and execute rebuild the blow table when the foe's
   health crosses 0.5 or an execute threshold.
 - Dual builds follow `dualSchedule`; a Pistolet pair throws instead of being

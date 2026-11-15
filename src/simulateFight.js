@@ -24,7 +24,7 @@
  * Excluded: relay bucket/token/claim, CWS, DoTs, Flow, equipment wear/break, ward lifecycle, incoming damage, attacker
  * health/death and pair support. The simulation does not pretend those are present.
  */
-import { analyze, weaponPowers } from './model.js';
+import { analyze, weaponOf, weaponPowers } from './model.js';
 import { blowFightTier, createBlowSampler } from './blowOutcomes.js';
 import { createRng } from './rng.js';
 import { healthThresholds } from './fight.js';
@@ -165,6 +165,12 @@ export function healthSegment(bounds, share) {
 export function simulateFight(ch, args = {}) {
   const scenario = normalizeScenario(args);
   if (scenario.pair || ch._pair) throw new Error('simulateFight: Pistolet pair is not supported in Stage 3.2');
+  // Refuse ranged/gun on either hand before the schedule; a mixed melee + Pistolet pair must not fall through to melee.
+  const mainWeapon = scenario.weapon === undefined ? (ch.weapon ? weaponOf(ch.weapon) : null) : scenario.weapon;
+  const offWeapon = ch.offWeapon ? weaponOf(ch.offWeapon) : null;
+  if (mainWeapon?.ranged || offWeapon?.ranged) {
+    throw new Error('simulateFight: bow and gun builds are not supported on either hand');
+  }
   const schedule = createAttackSchedule(ch, scenario);
   if (!schedule) return null;
   const pool = schedule.health;

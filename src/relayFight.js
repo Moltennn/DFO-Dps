@@ -22,7 +22,7 @@
  * halves, stun/profile hit multipliers, Wrath, host/crystal hits and the multi-body `spendBlow` sequence. A build with
  * fists is refused by the Stage 3.2 schedule (the unarmed StrikeLeft frame list is not in the analytical cadence).
  */
-import { echoChances, weaponPowers } from './model.js';
+import { echoChances, weaponOf, weaponPowers } from './model.js';
 import { blowFightTier, createBlowSampler } from './blowOutcomes.js';
 import { createRng } from './rng.js';
 import { healthThresholds } from './fight.js';
@@ -60,12 +60,20 @@ export function simulateRelayFight(ch, args = {}) {
   const players = Math.max(1, num(spec.players, 1));
   const pool = health / players;
   if (!(pool > 0)) return null;
+  // Refuse a ranged weapon on either hand BEFORE the schedule analysis, so a mixed melee + Pistolet pair cannot fall
+  // through to a melee exchange (analyze's dual arm only checks the off hand for `twoHanded`, not `gun`).
+  const mainWeapon = scenario.weapon === undefined ? (ch.weapon ? weaponOf(ch.weapon) : null) : scenario.weapon;
+  const offWeapon = ch.offWeapon ? weaponOf(ch.offWeapon) : null;
+  if (mainWeapon?.ranged || offWeapon?.ranged) {
+    throw new Error('simulateRelayFight: bow and gun builds are not supported on either hand until their release/landing timing and ward/Flow behaviour are modelled');
+  }
   // the blow model reads the WHOLE boss health for its cap/curb; the relay engine's pool is this player's share
   const schedule = createAttackSchedule(ch, { ...scenario, health });
   if (!schedule) return null;
   const probe = schedule.probe;
-  if (probe.weapon?.ranged || schedule.assumptions?.ranged) {
-    throw new Error('simulateRelayFight: bow and gun builds are not supported until their release/landing timing and ward/Flow behaviour are modelled');
+  const probeOffWeapon = probe.offHand?.weapon ?? (ch.offWeapon ? weaponOf(ch.offWeapon) : null);
+  if (probe.weapon?.ranged || probeOffWeapon?.ranged) {
+    throw new Error('simulateRelayFight: bow and gun builds are not supported on either hand until their release/landing timing and ward/Flow behaviour are modelled');
   }
   const dual = schedule.kind === 'dual';
   const mainPowers = weaponPowers(probe.weapon, scenario);
@@ -78,7 +86,7 @@ export function simulateRelayFight(ch, args = {}) {
   if (mainEchoes.length > 1 || offEchoes.length > 1) {
     throw new Error('simulateRelayFight: more than one Many Endings power on a hand is not supported');
   }
-  if ((mainEchoes.length + offEchoes.length) > 0 && !target?.relayBody) {
+  if ((mainEchoes.length + offEchoes.length) > 0 && target?.relayBody !== true) {
     throw new Error('simulateRelayFight: a relay body is required for Many Endings (echo) support');
   }
   const mainFlow = mainPowers.find((p) => p?.kind === 'flow') ?? null;
@@ -107,9 +115,13 @@ export function simulateRelayFight(ch, args = {}) {
   const maxBlows = Math.max(1, Math.floor(num(scenario.maxBlows, 1000000)));
   const trace = scenario.trace === true ? [] : null;
   const traceAll = scenario.traceAll === true ? [] : null;
-  // TEST SEAM: `events` supplies pre-sampled attack outcomes (for the whole-compositor upstream differential). It skips
-  // the local tier sampler but runs the same Flow/claim/rounding/engine path.
-  const provided = Array.isArray(scenario.events) ? scenario.events : null;
+  // TEST SEAM: `events` supplies pre-sampled attack outcomes (for the whole-compositor upstream differential). It is
+  // accepted only with an explicit test brand and skips the local tier sampler while running the same Flow/claim/
+  // rounding/engine path. Ordinary callers cannot pass it by accident.
+  const provided = Array.isArray(scenario.events) && scenario.__relayEventsTest === true ? scenario.events : null;
+  if (scenario.events !== undefined && !provided) {
+    throw new Error('simulateRelayFight: events is a test-only option (use test/harness/relayEventSeam.mjs)');
+  }
 
   const cache = new Map();
   const distribution = (index, hand, stacks) => {
@@ -121,7 +133,7 @@ export function simulateRelayFight(ch, args = {}) {
       ...scenario, target, health, healthShare: mid, hand, flowStacks: stacks,
       ...(dual && !scenario.dual ? { dual: true } : {}),
     });
-    d = { tier, sampler: createBlowSampler(tier), mid };
+    d = { tier, sampler: createBlowSampler(tier), mid, stacks, hand };
     cache.set(key, d);
     return d;
   };
@@ -153,12 +165,16 @@ export function simulateRelayFight(ch, args = {}) {
     // Flow is read BEFORE the blow, once per attack; a warded blow reads none for its (discarded) sample.
     const stackedBefore = flow.stacksAt(t);
     let outcome;
+    let tierStacks = null;
+    let tierHand = null;
     if (provided) {
       outcome = event.outcome;
       eventIndex += 1;
     } else {
       const dist = distribution(index, hand, stackedBefore);
       outcome = dist.sampler.sample(blowStream);
+      tierStacks = dist.stacks;
+      tierHand = dist.hand;
     }
     // The client's ward flag is the phase shield evaluated for this attack (gateCourt.target/body): no Flow, no echo,
     // no claim. The engine keeps its own shield clock too, but the compositor never sends a warded claim.
@@ -167,6 +183,7 @@ export function simulateRelayFight(ch, args = {}) {
       wardedAttacks += 1;
       if (traceAll) traceAll.push({
         t, hand, segment: index, share, warded: true, raw: null, claim: null,
+        tierStacks, tierHand,
         hit: outcome.hit, whole: outcome.whole, echoMask: outcome.echoMask, echoHits: outcome.echoHits,
         stacksBefore: stackedBefore, stacksAfter: stackedBefore, flowUntil: flow.until, flowBuilt: false,
         got: 0, accepted: false, reason: 'warded', bucket: engine.bucket, tokens: engine.tokens, hp: engine.hp,
@@ -186,6 +203,7 @@ export function simulateRelayFight(ch, args = {}) {
       zeroDamage += 1;
       if (traceAll) traceAll.push({
         t, hand, segment: index, share, warded: false, raw, claim: null,
+        tierStacks, tierHand,
         hit: outcome.hit, whole: outcome.whole, echoMask: outcome.echoMask, echoHits: outcome.echoHits,
         stacksBefore: flowResult.before, stacksAfter: flowResult.after, flowUntil: flowResult.until, flowBuilt: flowResult.built,
         got: 0, accepted: false, reason: 'zero', bucket: engine.bucket, tokens: engine.tokens, hp: engine.hp,
@@ -200,6 +218,7 @@ export function simulateRelayFight(ch, args = {}) {
       roundedZero += 1;
       if (traceAll) traceAll.push({
         t, hand, segment: index, share, warded: false, raw, claim: null,
+        tierStacks, tierHand,
         hit: outcome.hit, whole: outcome.whole, echoMask: outcome.echoMask, echoHits: outcome.echoHits,
         stacksBefore: flowResult.before, stacksAfter: flowResult.after, flowUntil: flowResult.until, flowBuilt: flowResult.built,
         got: 0, accepted: false, reason: 'rounded-zero', bucket: engine.bucket, tokens: engine.tokens, hp: engine.hp,
@@ -212,6 +231,7 @@ export function simulateRelayFight(ch, args = {}) {
     claims += 1;
     if (traceAll) traceAll.push({
       t, hand, segment: index, share, warded: false, raw, claim,
+      tierStacks, tierHand,
       hit: outcome.hit, whole: outcome.whole, echoMask: outcome.echoMask, echoHits: outcome.echoHits,
       stacksBefore: flowResult.before, stacksAfter: flowResult.after, flowUntil: flowResult.until, flowBuilt: flowResult.built,
       got: result.got, accepted: result.accepted, reason: result.reason,
@@ -220,6 +240,7 @@ export function simulateRelayFight(ch, args = {}) {
     if (trace) {
       trace.push({
         t, hand, segment: index, share, claim,
+        tierStacks, tierHand,
         hit: outcome.hit, whole: outcome.whole, echoMask: outcome.echoMask, echoHits: outcome.echoHits,
         stacksBefore: flowResult.before, stacksAfter: flowResult.after, flowUntil: flowResult.until,
         flowBuilt: flowResult.built,

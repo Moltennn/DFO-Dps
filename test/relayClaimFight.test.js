@@ -114,13 +114,15 @@ test('4. guards: fists are refused, one Many Endings is supported, a synthetic t
     /more than one Many Endings/,
   );
   // Many Endings requires a relay body before the first RNG draw
-  const noRelay = { ...gateTarget(45, { health: 2000 }), relayBody: undefined };
-  assert.throws(
-    () => simulateRelayFight(echoCh, { target: noRelay, health: 2000, weapon: weaponOf(echoItem) }),
-    /relay body is required for Many Endings/,
-  );
+  for (const relayBody of [undefined, false, 'no']) {
+    const noRelay = { ...gateTarget(45, { health: 2000 }), relayBody };
+    assert.throws(
+      () => simulateRelayFight(echoCh, { target: noRelay, health: 2000, weapon: weaponOf(echoItem) }),
+      /relay body is required for Many Endings/,
+    );
+  }
   // bow and gun timing is not modelled yet: refuse, never approximate
-  for (const tpl of [130, 560]) {
+  for (const tpl of [130, 560, 562]) {
     const ranged = weapon(tpl, { material: 9 });
     const rch = simCharacter(BASIC(), ranged);
     assert.throws(
@@ -128,6 +130,21 @@ test('4. guards: fists are refused, one Many Endings is supported, a synthetic t
       /bow and gun builds are not supported/,
     );
   }
+  // a mixed melee + ranged/gun off hand cannot fall through to a melee exchange
+  for (const tpl of [130, 560, 562]) {
+    const mixed = simCharacter(BASIC(), sword());
+    mixed.offWeapon = { ...weapon(tpl, { material: 9 }), equipSlot: 21 };
+    mixed._dual = true;
+    assert.throws(
+      () => simulateRelayFight(mixed, { target, health: 2000, weapon: weaponOf(sword()), dual: true }),
+      /bow and gun builds are not supported/,
+    );
+  }
+  // the pre-sampled event list is a branded test seam, not a production option
+  assert.throws(
+    () => simulateRelayFight(echoCh, { target, health: 2000, weapon: weaponOf(echoItem), events: [] }),
+    /test-only option/,
+  );
   // a non-relay target is not a relay fight
   assert.equal(simulateRelayFight(build(), { target: { level: 1, maxHealth: 100 }, health: 100, weapon: weaponOf(sword()) }), null);
 });

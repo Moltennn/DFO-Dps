@@ -17,6 +17,7 @@ import { upstream } from './harness/upstream.mjs';
 import { oracleEntity, upstreamBody } from './harness/upstreamBodies.mjs';
 import { oracleItem } from './harness/fightOracle.mjs';
 import { upstreamRelayEvents } from './harness/relayFightOracle.mjs';
+import { relayEventArgs } from './harness/relayEventSeam.mjs';
 
 const BASIC = () => character({
   level: 30, raceId: 1, stats: { strength: 70, agility: 60, speed: 60, luck: 50 },
@@ -44,7 +45,7 @@ async function compare({ desc, item, offItem = null, events, pool = 1e9, level =
   if (offItem) { ch.offWeapon = { ...offItem, equipSlot: 21 }; ch._dual = true; }
   const local = simulateRelayFight(ch, {
     target, health: pool, weapon: weaponOf(item), ...(offItem ? { dual: true } : {}),
-    events: events.map((e, i) => ({ t: e.t, hand: e.hand, outcome: up.rows[i].outcome })),
+    ...relayEventArgs(events.map((e, i) => ({ t: e.t, hand: e.hand, outcome: up.rows[i].outcome }))),
     traceAll: true, seed, fresh, shieldUntil, maxSeconds: 1e9,
   });
   assert.equal(local.traceAll.length, up.rows.length, 'one local event per upstream event');
@@ -53,7 +54,9 @@ async function compare({ desc, item, offItem = null, events, pool = 1e9, level =
     const b = up.rows[i];
     const at = `event ${i} (t ${b.t}, ${b.hand})`;
     assert.equal(a.warded, b.warded, `${at}: ward`);
-    assert.equal(a.claim ?? 0, b.sent, `${at}: claim ${a.claim} vs ${b.sent}`);
+    // independently recompute the host's rounded claim from the upstream pre-round number (not oracle.sent)
+    const expectedClaim = b.hostBlow > 0 && Math.round(b.hostBlow) >= 1 ? Math.round(b.hostBlow) : 0;
+    assert.equal(a.claim ?? 0, expectedClaim, `${at}: claim ${a.claim} vs ${expectedClaim}`);
     assert.equal(a.stacksBefore, b.flowBefore, `${at}: Flow before ${a.stacksBefore} vs ${b.flowBefore}`);
     assert.equal(a.stacksAfter, b.flowAfter, `${at}: Flow after ${a.stacksAfter} vs ${b.flowAfter}`);
     assert.ok(near(a.got, b.got), `${at}: got ${a.got} vs ${b.got}`);
@@ -61,7 +64,8 @@ async function compare({ desc, item, offItem = null, events, pool = 1e9, level =
     assert.ok(near(a.tokens, b.tokens), `${at}: tokens ${a.tokens} vs ${b.tokens}`);
     assert.ok(near(a.hp, b.hp), `${at}: hp ${a.hp} vs ${b.hp}`);
     assert.equal(a.accepted, b.accepted, `${at}: accepted`);
-    assert.equal(a.echoHits ?? 0, b.echoHits, `${at}: echoHits`);
+    // echoHits is an upstream outcome input in this seam; its distribution is independently checked in
+    // test/relayEchoDifferential.test.js, so it is not asserted against itself here.
   }
   return { local, up };
 }
