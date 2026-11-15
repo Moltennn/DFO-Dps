@@ -112,6 +112,10 @@ Use `./dfo-dps --help` for every flag, or see
   named targets.
 - The Stage 3.1 seeded RNG and exact per-blow distribution library
   (`src/rng.js`, `src/blowOutcomes.js`); these are library APIs, not CLI pages.
+- The Stage 3.2 seeded blow-by-blow fight simulation (`src/simulateFight.js`):
+  single and dual melee schedules, health-dependent distribution rebuilds,
+  TTK/damage/overkill distributions, censoring and paired seeds. It is a
+  library API, not a CLI page.
 
 **Supported with important approximations**
 
@@ -137,6 +141,10 @@ Use `./dfo-dps --help` for every flag, or see
 - Duelist's Vambrace **First Blood** (the `--first-blow` flag is the separate
   Assassin/Opening Strike scenario).
 - PvP/peer fights, incoming damage and player death.
+- The Stage 3.2 fight simulation does not model wear, CWS, DoTs, Flow, the
+  relay bucket/ward or incoming damage, and it refuses a Pistolet pair rather
+  than approximating it. A bow or gun's first-hit frame is a declared
+  one-frame assumption.
 - Per-blow ward suppression and the full proc/DoT budget.
 - Elite Breach, and non-English boss-trait seeding.
 - Exact reproduction of a live client's frame timing or RNG sequence.
@@ -199,9 +207,9 @@ npm run vendor:parity -- --from <upstream-checkout>
 ```
 
 The suite covers the combat model, the per-blow distribution, the seeded RNG,
-the differential/golden/vendor checks and the Stage 3 distribution oracle. The
-vendored tree is hash-checked; vendor parity compares the vendored subset with
-the full pinned checkout.
+the differential/golden/vendor checks, and the Stage 3 distribution and fight
+oracles. The vendored tree is hash-checked; vendor parity compares the vendored
+subset with the full pinned checkout.
 
 ## Documentation map
 
@@ -213,7 +221,8 @@ the full pinned checkout.
   what remains unverified.
 - [`docs/SOURCES.md`](docs/SOURCES.md) — the upstream pin and provenance.
 - the stage record — stochastic-engine design
-  and the source audit behind `src/rng.js` / `src/blowOutcomes.js`.
+  and the source audit behind `src/rng.js`, `src/blowOutcomes.js` and
+  `src/simulateFight.js`.
 - the documentation index — the full documentation index, including
   the engineering stage audits.
 

@@ -238,7 +238,44 @@ unless `--uncapped` is passed.
 `--old` reads `captures/old/`; the default reads only the live capture folder.
 See `METHOD.md` for the capture fields and the estimate rules.
 
-## 11. Outputs and JSON
+## 11. Stochastic fight simulation (library)
+
+Stage 3.2 adds a seeded, blow-by-blow simulation over the Stage 3.1 per-blow
+distribution. It is a library API, not a CLI command.
+
+```js
+import { simulateFight, simulateFights, simulatePairedFights, pairedFightSeeds } from './src/simulateFight.js';
+
+// ch, target and item are your build, foe and weapon (weaponOf comes from src/model.js)
+const scenario = { target, health: 12000, weapon: weaponOf(item), seed: 1 };
+
+// one fight (add trace: true to inspect every blow)
+const one = simulateFight(ch, scenario);
+one.ttk; one.damageDealt; one.overkill; one.remainingHealth; one.blows;
+
+// a distribution: 2,000 independent fights from one seed stream
+const many = simulateFights(ch, { ...scenario, trials: 2000 });
+many.ttk.mean; many.ttk.median; many.ttk.p10; many.ttk.p90; many.ttk.ci95;
+many.kills; many.censored; many.damageDealt.mean; many.overkill.mean;
+
+// two builds on the SAME seed list
+const seeds = pairedFightSeeds(2000, 7);
+const paired = simulatePairedFights([{ id: 'a', ch: a }, { id: 'b', ch: b }], { ...scenario, seeds });
+```
+
+- `damageMode: 'capped'` samples the per-hit-capped blow; the default is
+  `uncapped`, matching `fight()`.
+- `simulateFight` reports `killDps = health / ttk` and
+  `outputDps = damageDealt / time`; a run that reaches `maxSeconds` (or
+  `maxBlows`) with the pool alive is **censored** (`ttk: null`).
+- Axe/blunt mastery, venom and execute rebuild the blow table when the foe's
+  health crosses 0.5 or an execute threshold.
+- Dual builds follow `dualSchedule`; a Pistolet pair throws instead of being
+  approximated. Wear, CWS, DoTs, Flow, the relay bucket/ward and incoming
+  damage are outside this stage (the assumptions register M29).
+- 1,000 fights at a 12,000 pool take about 3 seconds in Node 22.
+
+## 12. Outputs and JSON
 
 HTML pages default to the current directory:
 
@@ -258,7 +295,7 @@ HTML pages default to the current directory:
 Use `--out <file>` to override. Many table commands accept `--json`; use
 `--help` for the exact command.
 
-## 12. First-run troubleshooting
+## 13. First-run troubleshooting
 
 - **No saves found**: set `DAGGER_USER_DATA` or pass `--save` explicitly;
   `doctor` prints the path it used.

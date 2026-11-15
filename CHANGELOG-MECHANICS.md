@@ -8,6 +8,49 @@ does not belong here (use the commit message).
 
 ---
 
+## Stage 3.2 - blow-only stochastic fight simulation (2026-11-16)
+
+**No existing number moved.** `analyze`, `fight`, `fightRelay`, the objectives and every table are unchanged. The
+stage adds `src/simulateFight.js` beside them, plus `test/simulateFight.test.js`, `test/fightDifferential.test.js` and
+the oracle `test/harness/fightOracle.mjs`.
+
+**What the game does.** A melee strike lands on `HIT_FRAME_MELEE` (2) and the machine advances the swing in whole
+ticks (`characters/weaponStates.js:226-250,409-470`). A fresh strike is a five-tick lead; once it is running, a strike
+within `FLURRY_WINDOW` is the other hand's, four ticks a blow, and the off hand holds its burden in whole ticks at its
+end (`combat/twoHands/handsLaw.js:127-151,253-283`, `combat/playerWeapon.js:775-830`). Axe/blunt mastery, venom and
+execute read the foe's trade at each blow as a threshold step at 0.5 (or the power's `below`)
+(`characters/weaponMastery.js:118-126`, `systems/loot/lootPowers.js:320,329`).
+
+**What changed.** `simulateFight` draws one blow at a time from the Stage 3.1 **fight tier** - there is no second damage
+formula. A single melee starts at t=0 and lands at 2 ticks, then every `cadence.seconds`; a dual build opens with the
+fresh lead and then the `dualSchedule` lead/off exchange; a single ranged first hit is a declared one-frame assumption.
+The foe's remaining share selects the tier segment and a new table is built at 0.5 or an execute threshold. The fight
+ends on the blow that empties the pool: `ttk` is that time, `overkill = damageDealt - pool`, and a horizon that ends
+first is censored. `simulateFights` reports sample count, mean, sd, se, 95% CI, median, p10/p90, kills/censored, damage,
+overkill, blows and per-swing damage; `simulatePairedFights` reuses one `pairedFightSeeds` list across builds. Damage
+mode defaults to `uncapped` (matching `fight`); `capped` is available. A Pistolet pair is refused. Excluded: wear,
+CWS, DoTs, Flow, relay bucket/token/ward, incoming damage, attacker health/death.
+
+**What proves it.** `test/simulateFight.test.js` (8 tests) pins the schedules against `HIT_FRAME_MELEE`/`dualSchedule`,
+seed reproducibility, the threshold rebuild, censoring, every summary field, paired seeds and the pair refusal.
+`test/fightDifferential.test.js` runs an independent event-by-event oracle: the schedule's events enter upstream
+`calculateAttackDamage` with a body the realm mints and a fresh item per hit (no wear), never a local damage or
+distribution. Single (1,000 fights), dual (700), axe half-health (800) and ordinary-foe echo (700) were compared.
+Blow counts: two-sample Pearson chi-square over fixed 10-blow bins z -1.70 / -0.32 / -1.83 / -0.16 (bound 3.5), and
+two-sample KS 0.023 / 0.034 / 0.023 / 0.037 (0.1% critical 0.087 / 0.104 / 0.098 / 0.104). TTK mean |z| <= 0.30,
+damage mean |z| <= 3.3, median/p10/p90 within 5%. Timing is proven separately, against the upstream hit-frame and
+flurry constants, because the oracle is handed the event list.
+
+**Test correction (not a threshold change).** The first blow-count comparison used the local sample's observed counts
+as the expected counts for the independent oracle sample. That adds the local sample's variance to every cell and
+roughly doubles the statistic; it reported z 4.4-5.1 on distributions whose means agreed to 0.02%. The test now uses
+the correct two-sample expectation, `(local + oracle) / 2`, in fixed bins, plus the bin-free KS check. The 3.5 bound
+is unchanged.
+
+Full suite **500 tests, 500 pass**; vendor 289/122; parity **1855/1855**.
+
+---
+
 ## Stage 3.1 audit follow-up - independent distribution checks (2026-11-16)
 
 Added a gun scenario, a fists scenario, exact upstream probability checks for the critical roll, direction/body-part
