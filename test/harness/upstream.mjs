@@ -27,6 +27,7 @@ const MODULES = Object.freeze({
   pcaao: 'combat/pcaao.js',
   formulas: 'combat/formulas.js',
   weaponStates: 'characters/weaponStates.js',
+  anims: 'characters/anims.js',
   swingLaw: 'combat/swingLaw.js',
   handsLaw: 'combat/twoHands/handsLaw.js',
   bowBloom: 'combat/bowBloom.js',

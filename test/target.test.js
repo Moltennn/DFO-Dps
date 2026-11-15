@@ -70,7 +70,7 @@ test('reference-foe resolution still matches the game for a plain target', async
       weapon: fresh(upstreamWeapon(item)), rolls: rng, modules, backstabChance: 0,
     }));
   }
-  const local = analyze(simCharacter(desc, item), { target: referenceFoe(45, 'tough'), core: 'overhaul', rri: false });
+  const local = analyze(simCharacter(desc, item), { target: referenceFoe(45, 'tough'), core: 'overhaul', rri: false, swing: 'StrikeLeft' });
   const cmp = compareSample({ expected: sample, actual: local.perSwing });
   assert.ok(cmp.ok, `reference per swing ${local.perSwing.toFixed(4)} vs ${mean(sample).toFixed(4)} (${cmp.detail ? JSON.stringify(cmp.detail) : 'inside CI'})`);
 });

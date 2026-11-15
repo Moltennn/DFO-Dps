@@ -109,6 +109,10 @@ export const ROOTS = Object.freeze([
   // enchantment row hit the "unknown type" abort - so no Strikes payload (Potent Vs' +5, Cast When Strikes) ever
   // ran in the vendored oracle. magicDef.js is a constants table.
   'formats/magicDef.js',
+  // Stage 2.11a. systems/loot/lootPowers.js wornPowers (:245) returns nothing while `setsDueling()` is true; with the
+  // sigil directory cut that call answered an inert, truthy stub, so no worn Legendary power or imprint ever fired in
+  // the vendored oracle. The full checkout's answer is false (a refereed set duel is the only true).
+  'systems/sigil/sigilSets.js',
 ]);
 
 /**

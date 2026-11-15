@@ -767,6 +767,7 @@ export function standInTarget(mobileType, { boot = UPSTREAM_BOOT } = {}) {
   return makeTarget({
     ...body,
     levelSource: 'mint',
+    relayBody: true, // a body the relay runs: a follow-up blow (Many Endings) is OWED into the next claim, not a hit of its own
     minMetalToHit: 0,
     armorValues: new Array(7).fill(BOSS_ARMOR),
     spareGear: true,

@@ -125,7 +125,7 @@ test('resolution: analyze() applies it once, before the per-hit cap', async () =
   for (const c of cases) {
     const ch = theoryCharacter({ blade: c.t, gearLB: 240, gearCS: 540, damagePct: 40 });
     ch.skills[c.t === 126 ? 32 : 29] = 200;
-    const r = analyze(ch, { target: gateTarget(45, { traits: c.traits }), health: 12000, rri: true, traits: c.traits });
+    const r = analyze(ch, { target: gateTarget(45, { traits: c.traits }), health: 12000, rri: true, traits: c.traits, swing: 'StrikeLeft' });
     const strike = (d) => u.bossTraits.bossStrike({ bossTraits: c.traits }, d, { kind: 'melee', weapon: r.weapon }).damage;
     // pcaao.js:1815-1817: the target's hide/natural resistance resolves before the host's traits.
     const natural = u.pcaao.pcaaoNaturalDamageResistance(r.target);
@@ -353,11 +353,11 @@ test('imprint pricing: a same-hit multiplier is resolved through the traits, in 
   assert.equal(r.with({}).cappedDps, r.cappedDps);
   assert.equal(r.with({ loot: { pct: 0, flat: 0 } }).cappedDps, r.cappedDps);
   // a +50% imprint is the same line on the item, which the differential stages verify
-  const real = analyze({ ...ch, weapon: { ...ch.weapon, affixes: [...(ch.weapon.affixes ?? []), { id: 'slayer', param: 'daedra', value: 50 }] } }, { target: gate, health: gate.maxHealth, rri: true });
-  const priced = r.with({ loot: { pct: 50, flat: 0 } });
+  const real = analyze({ ...ch, weapon: { ...ch.weapon, affixes: [...(ch.weapon.affixes ?? []), { id: 'slayer', param: 'daedra', value: 30 }] } }, { target: gate, health: gate.maxHealth, rri: true });
+  const priced = r.with({ loot: { pct: 30, flat: 0 } });
   assert.equal(priced.cappedDps, real.cappedDps);
   assert.equal(priced.dps, real.dps);
   // stoneskin halves the (scaled) blow, so the gain cannot be the raw +50% of the capped figure
-  assert.ok(priced.cappedDps < r.cappedDps * 1.5 - 1e-6);
+  assert.ok(priced.cappedDps < r.cappedDps * 1.3 - 1e-6);
   assert.ok(priced.dps > r.dps);
 });

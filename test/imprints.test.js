@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { imprintsFor, powerDps, rankAll, rankFamily, IMPRINT_FAMILIES, WEAPON_IMPRINTS } from '../src/imprints.js';
 import { maxCharacter, maxRun } from '../src/maxprofile.js';
-import { gateTarget } from '../src/model.js';
+import { gateTarget, referenceFoe } from '../src/model.js';
 
 const family = (key) => IMPRINT_FAMILIES.find((f) => f.key === key);
 
@@ -93,12 +93,18 @@ test('the per-hit cap is per player; the health pool scales with the group', () 
   assert.equal(group.maxHealth, solo.maxHealth * 4);
 });
 
-test('Many Endings is a separate hit, so it survives the main hit\'s cap', () => {
-  const base = maxRun(maxCharacter(123), { target: gateTarget(45) });
+test('Many Endings rides the blow\'s claim on a relay body, and is its own hit on an ordinary foe', () => {
+  // Stage 2.11b: upstream owes the echo into the blow's own claim (lootPowers.js:444-454, dungeonContext.js:4528-4531),
+  // so a relay cap clips the blow and its echo together - it is not a second, independently capped hit.
+  const gate = gateTarget(45);
+  const base = maxRun(maxCharacter(123), { target: gate });
   const echo = { kind: 'echo', chance: 10 };
   const boss = powerDps(echo, base, false, { capped: true });
-  assert.ok(boss > base.cappedDps);
-  assert.ok(Math.abs(boss - base.cappedDps * 1.1) < 1e-9);
+  assert.ok(boss > base.cappedDps, 'still worth something');
+  assert.ok(boss < base.cappedDps * 1.1 - 1e-6, 'not a whole second capped hit: the claim (mean 598 of 600) clips it');
+  // on an ordinary foe there is no relay claim: the echo is a second hit on the foe's health, uncapped
+  const raw = maxRun(maxCharacter(123), { target: referenceFoe(45, 'tough') });
+  assert.ok(Math.abs(powerDps(echo, raw, false) / raw.dps - 1.1) < 0.002, `${(powerDps(echo, raw, false) / raw.dps).toFixed(4)}`);
 });
 
 

@@ -78,37 +78,17 @@ export const imprintsFor = (template) => {
  * run applies only what is unconditional.
  */
 export function powerDps(power, base, conditional = false, { capped = false } = {}) {
-  let mult = 0;
-  let flat = 0;
-  switch (power.kind) {
-    case 'bane': if (conditional) mult += (power.pct ?? 0) / 100; break;
-    case 'unaware': if (conditional) mult += (power.pct ?? 0) / 100; break;
-    case 'sanctified': if (conditional) mult += (power.pct ?? 0) / 100; break;
-    case 'moon': if (conditional) mult += ((power.pct ?? 0) + (power.beast ?? 0)) / 100; break;
-    case 'rage': if (conditional) mult += (power.pct ?? 0) / 100; break;
-    case 'chain': case 'quake': break; // other targets: no single-target gain
-    case 'flow': mult += ((power.pct ?? 0) * (power.max ?? 1)) / 100; break;
-    case 'echo':
-      // Many Endings' extra strike is its own hit, so it gets its own cap.
-      return capped
-        ? base.cappedDps * (1 + (power.chance ?? 0) / 100)
-        : base.dps * (1 + (power.chance ?? 0) / 100);
-    case 'venom': flat += conditional ? (power.flat ?? 0) * 2 : (power.flat ?? 0); break;
-    case 'conduit': case 'siphon': case 'surge': break;
-    default: break;
-  }
-  // The power is priced by re-running the SAME card with it on the weapon (analyze's `with`): its percentage
-  // and flat enter lootBlow's step, so the crit, the condition, the defence, a pair's or a dual build's
-  // hands, a backstab, the trait, the cap all treat it as they treat a real line. (Stage 2.9, F2: the
-  // helper this replaced re-derived the card from the main hand's rolls and disagreed with it.)
-  const priced = mult || flat ? base.with({ loot: { pct: mult * 100, flat } }) : base;
+  // Every power - Many Endings included, since Stage 2.11b - is priced by putting it on the main-hand item of the SAME card (analyze's `with`): the
+  // code that reads an equipped power (src/model.js `lootPowerTerms`) reads this one, with its condition taken
+  // from the target and the scenario. `conditional` only assumes the trigger holds (a pricing assumption).
+  const priced = base.with({ imprint: power, assumeTriggers: conditional });
   return capped ? priced.cappedDps : priced.dps;
 }
 
 /** Powers whose condition cannot occur at the level-45 gate (a Daedra, one foe). */
 const HIT_KIND = Object.freeze({
   bane: 'same hit', unaware: 'same hit', sanctified: 'same hit', flow: 'same hit', venom: 'same hit',
-  moon: 'same hit', rage: 'same hit', echo: 'extra hit', chain: 'other target', quake: 'other targets',
+  moon: 'same hit', rage: 'same hit', echo: 'same claim', chain: 'other target', quake: 'other targets',
   conduit: 'utility', siphon: 'utility', surge: 'utility',
 });
 
@@ -124,7 +104,7 @@ const TRIGGER = Object.freeze({
   quake: 'another foe within 3 m',
   venom: 'foe is below half health (×2)',
   flow: 'five landed blows (steady)',
-  echo: '10% extra strike (expected)',
+  echo: '10% a blow repeats in the same claim (a relay body: owed into it)',
   conduit: 'spell cost / magicka',
   siphon: 'a kill',
   surge: 'spell damage above 75% MP',

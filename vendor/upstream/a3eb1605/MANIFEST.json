@@ -49,7 +49,8 @@
     "systems/enemyExpansion/dexInstall.js",
     "world/gate/gateBoss.js",
     "systems/sigil/sigil.js",
-    "formats/magicDef.js"
+    "formats/magicDef.js",
+    "systems/sigil/sigilSets.js"
   ],
   "exclude": [
     "/^src\\/assets\\//",
@@ -1796,6 +1797,13 @@
       "role": "vendored",
       "sha256": "89719a547ef70224f7fbf725592f16101941bcb35e61a3d1e0b13210ad59b0ef",
       "bytes": 19984
+    },
+    {
+      "path": "src/systems/sigil/sigilSets.js",
+      "upstream": "src/systems/sigil/sigilSets.js",
+      "role": "vendored",
+      "sha256": "5ddb1670973d7d816491fd86873ee2d6878d745314f0f6fc6f84960425416850",
+      "bytes": 48043
     },
     {
       "path": "src/systems/skills.js",
@@ -8873,6 +8881,32 @@
       ]
     },
     {
+      "path": "src/systems/sigil/setReach.js",
+      "upstream": "src/systems/sigil/setReach.js",
+      "role": "stub",
+      "reason": "outside the combat graph",
+      "bindings": [
+        "CATCH_UP_MULT",
+        "REACH_PIECES",
+        "SET_REACH_SAVE_VENDOR",
+        "_resetSetReachForTests",
+        "catchUpXp",
+        "noteReach",
+        "reachOfRanks",
+        "recordedReach",
+        "validReachRecord"
+      ],
+      "constants": {
+        "CATCH_UP_MULT": "3",
+        "REACH_PIECES": "2",
+        "SET_REACH_SAVE_VENDOR": "'SigilSetReach'"
+      },
+      "sha256": "74e5efa9f2b07518362052892ac70aea52284999b858d4ae54bbca1c01727324",
+      "importedBy": [
+        "src/systems/sigil/sigilSets.js"
+      ]
+    },
+    {
       "path": "src/systems/sigil/sigilSetPowers.js",
       "upstream": "src/systems/sigil/sigilSetPowers.js",
       "role": "stub",
@@ -8936,110 +8970,6 @@
         "src/systems/firmamentPowers.js",
         "src/systems/loot/lootPowers.js",
         "src/systems/martialPowers.js"
-      ]
-    },
-    {
-      "path": "src/systems/sigil/sigilSets.js",
-      "upstream": "src/systems/sigil/sigilSets.js",
-      "role": "stub",
-      "reason": "outside the combat graph",
-      "bindings": [
-        "BLOOD_SECONDS",
-        "BLOOD_STACKS",
-        "BRIEF_MAX",
-        "CLEAVE_METRES",
-        "COIL_SECONDS",
-        "COIL_STACKS",
-        "MARK_METRES",
-        "MARK_SECONDS",
-        "NOVA_METRES",
-        "RAMPAGE_SECONDS",
-        "RAMPAGE_STACKS",
-        "REPRIEVE_ALLY_SHARE",
-        "REPRIEVE_BELOW",
-        "REPRIEVE_METRES",
-        "REPRIEVE_SECONDS",
-        "RIPOSTE_SECONDS",
-        "ROUND_SECONDS",
-        "SET_BODY_SLOTS",
-        "SET_PLACES",
-        "SET_STAGE_MAX",
-        "SET_TIERS",
-        "SET_WEAPON_JOIN_IN",
-        "SHED_BELOW",
-        "SIGIL_SETS",
-        "STRAND_HITS",
-        "STRAND_SECONDS",
-        "UNBROKEN_LESS",
-        "VEIL_BELOW",
-        "WORLD_SET_IDS",
-        "WRATH_BELOW",
-        "WRATH_SECONDS",
-        "_resetSigilSetsForTests",
-        "awakeTier",
-        "catchUpText",
-        "drinkWorn",
-        "isSetPiece",
-        "raidSetOf",
-        "rollSetJoin",
-        "rollSetSigil",
-        "rollWorldSet",
-        "setById",
-        "setCardView",
-        "setIdOf",
-        "setLines",
-        "setPieceKind",
-        "setPlacesWorn",
-        "setReachOf",
-        "setRiseLine",
-        "setSetsDueling",
-        "setSetsWearer",
-        "setSigilLines",
-        "setSleepText",
-        "setState",
-        "setsAwake",
-        "setsDueling",
-        "setsSleep",
-        "setsWearer",
-        "stageValue",
-        "tierValues",
-        "wornSetPieces",
-        "wornSetRanks",
-        "wornSets"
-      ],
-      "constants": {
-        "RAMPAGE_SECONDS": "12",
-        "RAMPAGE_STACKS": "3",
-        "UNBROKEN_LESS": "50",
-        "ROUND_SECONDS": "5",
-        "CLEAVE_METRES": "3",
-        "WRATH_BELOW": "0.3",
-        "NOVA_METRES": "6",
-        "WRATH_SECONDS": "10",
-        "RIPOSTE_SECONDS": "4",
-        "MARK_METRES": "12",
-        "MARK_SECONDS": "10",
-        "BLOOD_SECONDS": "8",
-        "BLOOD_STACKS": "5",
-        "COIL_STACKS": "5",
-        "COIL_SECONDS": "6",
-        "SHED_BELOW": "0.35",
-        "STRAND_HITS": "4",
-        "STRAND_SECONDS": "8",
-        "VEIL_BELOW": "0.3",
-        "REPRIEVE_BELOW": "0.2",
-        "REPRIEVE_SECONDS": "6",
-        "REPRIEVE_METRES": "8",
-        "REPRIEVE_ALLY_SHARE": "0.5",
-        "BRIEF_MAX": "32",
-        "SET_WEAPON_JOIN_IN": "3"
-      },
-      "sha256": "eef90222557ca90662b40f211a50d5c331701efae92488cd5f5d6853e7a8401c",
-      "importedBy": [
-        "src/systems/aetheric.js",
-        "src/systems/loot/lootPowers.js",
-        "src/systems/loot/lootRarity.js",
-        "src/systems/powerBlows.js"
       ]
     },
     {
@@ -10151,6 +10081,7 @@
       },
       "sha256": "dd953c9dbe5281eba51cf1c903d18e0f6d62ddaf27b6cbac5c3de4c6b5c6795b",
       "importedBy": [
+        "src/systems/sigil/sigilSets.js",
         "src/systems/tutorialCatalogue.js"
       ]
     },

@@ -125,7 +125,7 @@ test('stage: hit chance, exact expectation over the body-part table', async () =
       return s.head.byFoe[PRESETS.indexOf(preset)].hit;
     },
     simulator: ({ desc, t, preset }) => {
-      const r = analyze(simCharacter(desc, weapon(t, { material: 1 })), { target: simReferenceFoe(desc.level, preset), core: 'overhaul' });
+      const r = analyze(simCharacter(desc, weapon(t, { material: 1 })), { target: simReferenceFoe(desc.level, preset), core: 'overhaul', swing: 'StrikeLeft' });
       return r.hit.hit;
     },
   });
@@ -758,7 +758,7 @@ test('stage: worn armour and shield end-to-end (sampled)', async () => {
         weapon: fresh(upstreamWeapon(item)), rolls: rng, modules, backstabChance: 0,
       }));
     }
-    const r = analyze(simCharacter(desc, item), { target: local, core: 'overhaul' });
+    const r = analyze(simCharacter(desc, item), { target: local, core: 'overhaul', swing: 'StrikeLeft' });
     const cmp = compareSample({ expected: sample, actual: r.perSwing });
     assert.ok(cmp.ok, `mobile ${mobile}: per swing ${r.perSwing.toFixed(4)} vs ${summarize(sample).mean.toFixed(4)} +/- ${(1.96 * summarize(sample).se).toFixed(4)} (n=${sample.length})`);
   }
@@ -970,7 +970,7 @@ test('stage: silver and enemy-type end-to-end against real foes (sampled)', asyn
         weapon: fresh(upstreamWeapon(item)), rolls: rng, modules, backstabChance: 0,
       }));
     }
-    const r = analyze(simCharacter(desc, item), { target: local, core: 'overhaul' });
+    const r = analyze(simCharacter(desc, item), { target: local, core: 'overhaul', swing: 'StrikeLeft' });
     const s = summarize(sample);
     const cmp = compareSample({ expected: sample, actual: r.perSwing });
     assert.ok(cmp.ok, `career ${careerIndex}, material ${mat}, template ${tpl}: ${r.perSwing.toFixed(4)} vs ${s.mean.toFixed(4)} +/- ${(1.96 * s.se).toFixed(4)} (n=${sample.length})`);
@@ -1046,7 +1046,7 @@ test('stage: backstab hit bonus and x3 mixture (sampled)', async () => {
           weapon: fresh(upstreamWeapon(item)), rolls: rng, modules, backstabChance: skill,
         }));
       }
-      const r = analyze(simCharacter(desc, item), { target: localTarget, core: 'overhaul', backstabUptime: 1 });
+      const r = analyze(simCharacter(desc, item), { target: localTarget, core: 'overhaul', backstabUptime: 1, swing: 'StrikeLeft' });
       const s = summarize(sample);
       const cappedSample = cap > 0 ? sample.map((v) => Math.min(v, cap)) : sample;
       const cs = summarize(cappedSample);
@@ -1108,7 +1108,7 @@ test('stage: backstab ranged (sampled)', async () => {
       weapon: fresh(upstreamWeapon(item)), rolls: rng, modules, backstabChance: 50,
     }));
   }
-  const r = analyze(simCharacter(desc, item), { target: localTarget, core: 'overhaul', backstabUptime: 1 });
+  const r = analyze(simCharacter(desc, item), { target: localTarget, core: 'overhaul', backstabUptime: 1, swing: 'StrikeLeft' });
   const s = summarize(sample);
   const cmp = compareSample({ expected: sample, actual: r.perSwing });
   assert.ok(cmp.ok, `ranged: ${r.perSwing.toFixed(4)} vs ${s.mean.toFixed(4)} +/- ${(1.96 * s.se).toFixed(4)} (n=${sample.length})`);
@@ -1144,7 +1144,7 @@ test('stage: backstab with worn armour, traits and the cap (sampled)', async () 
     sample.push(raw > 0 ? u.bossTraits.bossStrike({ bossTraits: traits }, raw, { kind: 'melee', weapon: fresh(upstreamWeapon(item)) }).damage : raw);
   }
   const r = analyze(simCharacter(desc, item), {
-    target: { ...local, bossTraits: traits, hitCap: cap }, core: 'overhaul', backstabUptime: 1,
+    target: { ...local, bossTraits: traits, hitCap: cap }, core: 'overhaul', backstabUptime: 1, swing: 'StrikeLeft',
   });
   const s = summarize(sample);
   const cs = summarize(sample.map((v) => Math.min(v, cap)));
@@ -1212,7 +1212,7 @@ test('stage: weapon condition end-to-end (sampled)', async () => {
         weapon: fresh(upstreamWeapon(item)), rolls: rng, modules, backstabChance: 0,
       }));
     }
-    const r = analyze(simCharacter(desc, item), { target: simReferenceFoe(30, 'tough'), core: 'overhaul' });
+    const r = analyze(simCharacter(desc, item), { target: simReferenceFoe(30, 'tough'), core: 'overhaul', swing: 'StrikeLeft' });
     const s = summarize(sample);
     const cmp = compareSample({ expected: sample, actual: r.perSwing });
     assert.ok(cmp.ok, `template ${tpl}, condition ${condition}: ${r.perSwing.toFixed(4)} vs ${s.mean.toFixed(4)} +/- ${(1.96 * s.se).toFixed(4)}`);
@@ -1240,7 +1240,7 @@ test('stage: weapon condition off-hand and ranged (sampled)', async () => {
     }));
   }
   const r = analyze(simCharacter(desc, weapon(121, { material: 9 })), {
-    target: simReferenceFoe(30, 'tough'), core: 'overhaul', weapon: weaponOf(worn), offHand: true,
+    target: simReferenceFoe(30, 'tough'), core: 'overhaul', weapon: weaponOf(worn), offHand: true, swing: 'StrikeLeft',
   });
   const s = summarize(sample);
   const cmp = compareSample({ expected: sample, actual: r.perSwing });
@@ -1254,7 +1254,7 @@ test('stage: weapon condition off-hand and ranged (sampled)', async () => {
       weapon: fresh(upstreamWeapon(bow)), rolls: rng2, modules, backstabChance: 0,
     }));
   }
-  const r2 = analyze(simCharacter(desc, bow), { target: simReferenceFoe(30, 'tough'), core: 'overhaul' });
+  const r2 = analyze(simCharacter(desc, bow), { target: simReferenceFoe(30, 'tough'), core: 'overhaul', swing: 'StrikeLeft' });
   const s2 = summarize(sample2);
   const cmp2 = compareSample({ expected: sample2, actual: r2.perSwing });
   assert.ok(cmp2.ok, `bow condition: ${r2.perSwing.toFixed(4)} vs ${s2.mean.toFixed(4)} +/- ${(1.96 * s2.se).toFixed(4)}`);
@@ -1290,7 +1290,7 @@ test('stage: weapon condition with armour, traits and the cap (sampled)', async 
     sample.push(raw > 0 ? u.bossTraits.bossStrike({ bossTraits: traits }, raw, { kind: 'melee', weapon: fresh(upstreamWeapon(item)) }).damage : raw);
   }
   const r = analyze(simCharacter(desc, item), {
-    target: { ...local, bossTraits: traits, hitCap: cap }, core: 'overhaul',
+    target: { ...local, bossTraits: traits, hitCap: cap }, core: 'overhaul', swing: 'StrikeLeft',
   });
   const s = summarize(sample);
   const cs = summarize(sample.map((v) => Math.min(v, cap)));
@@ -1390,7 +1390,7 @@ test('stage: racial end-to-end (sampled)', async () => {
       }));
     }
     const ch = item ? simCharacter(desc, item) : simCharacter(desc);
-    const r = analyze(ch, { target: simReferenceFoe(30, 'tough'), core: 'overhaul' });
+    const r = analyze(ch, { target: simReferenceFoe(30, 'tough'), core: 'overhaul', swing: 'StrikeLeft' });
     const s = summarize(sample);
     const cmp = compareSample({ expected: sample, actual: r.perSwing });
     assert.ok(cmp.ok, `race ${raceId}, template ${t}: ${r.perSwing.toFixed(4)} vs ${s.mean.toFixed(4)} +/- ${(1.96 * s.se).toFixed(4)}`);
@@ -1427,7 +1427,7 @@ test('stage: racial with backstab, condition, armour, traits and the cap (sample
     sample.push(raw > 0 ? u.bossTraits.bossStrike({ bossTraits: traits }, raw, { kind: 'melee', weapon: fresh(upstreamWeapon(item)) }).damage : raw);
   }
   const r = analyze(simCharacter(desc, item), {
-    target: { ...local, bossTraits: traits, hitCap: cap }, core: 'overhaul', backstabUptime: 1,
+    target: { ...local, bossTraits: traits, hitCap: cap }, core: 'overhaul', backstabUptime: 1, swing: 'StrikeLeft',
   });
   const s = summarize(sample);
   const cs = summarize(sample.map((v) => Math.min(v, cap)));
@@ -1458,7 +1458,7 @@ test('stage: racial off-hand (sampled)', async () => {
     }));
   }
   const r = analyze(simCharacter(desc, item), {
-    target: simReferenceFoe(30, 'tough'), core: 'overhaul', weapon: weaponOf(item), offHand: true,
+    target: simReferenceFoe(30, 'tough'), core: 'overhaul', weapon: weaponOf(item), offHand: true, swing: 'StrikeLeft',
   });
   const s = summarize(sample);
   const cmp = compareSample({ expected: sample, actual: r.perSwing });

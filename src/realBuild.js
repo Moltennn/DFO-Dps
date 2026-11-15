@@ -100,14 +100,6 @@ function bestImprint(template, run, capped) {
   return rows[0] ?? null;
 }
 
-/** The same-hit imprint effect on one blow. Echo is not credited by the purse. */
-function imprintEffect(power) {
-  if (!power) return {};
-  if (power.kind === 'flow') return { mult: 1 + ((power.pct ?? 0) * (power.max ?? 1)) / 100 };
-  if (power.kind === 'venom') return { flat: power.flat ?? 0 };
-  return {};
-}
-
 /** One real loadout for one template. */
 export function realTemplate(template, family, { mode = 'uncapped', vampire = false, dual = false, encounter = 'breach' } = {}) {
   const capped = mode !== 'uncapped';
@@ -129,7 +121,10 @@ export function realTemplate(template, family, { mode = 'uncapped', vampire = fa
   const enchRun = maxRun(enchCh, { target });
   const imprint = bestImprint(template, enchRun, capped);
   const total = enchRun.enchantDps + (imprint?.dps ?? enchRun.cappedDps);
-  const purse = capped ? simulatePurse(enchRun, encounter, { level: THEORY_LEVEL, ...imprintEffect(imprint?.power) }) : null;
+  // The purse is run on the imprinted CARD - the same blow the ranking priced, Many Endings' echo included (it rides
+  // that blow's claim, so the capped mean already carries what the relay accepts).
+  const imprintedRun = imprint ? enchRun.with({ imprint: imprint.power }) : enchRun;
+  const purse = capped ? simulatePurse(imprintedRun, encounter, { level: THEORY_LEVEL }) : null;
   return {
     mode, family: family.name, key: family.key, weapon: WEAPONS[template]?.name ?? String(template), template, dual, encounter,
     treeStars: tree.stars, freeStars: tree.freeStars, treeBlow: treeCh.firmamentDamagePct,

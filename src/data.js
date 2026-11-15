@@ -136,14 +136,18 @@ export const WEAPONS = Object.freeze({
 /** FormulaHelper.CalculateSwingModifiers, verbatim. */
 export const SWING_MODS = Object.freeze({
   StrikeLeft: { damage: 0, toHit: 0 },
+  StrikeRight: { damage: 0, toHit: 0 },
   StrikeUp: { damage: -4, toHit: 10 },
   StrikeDownRight: { damage: -2, toHit: 5 },
   StrikeDownLeft: { damage: 2, toHit: -5 },
   StrikeDown: { damage: 4, toHit: -10 },
 });
 
+/** The five distinct directions the card offers (StrikeLeft and StrikeRight are the same modifiers). 'random' is
+ *  the six-way draw of the click attack (src/model.js SWING_DIRECTIONS), not a card row. */
 export const SWINGS = Object.freeze([
   { key: 'StrikeLeft', label: 'Sideways' },
+  { key: 'StrikeRight', label: 'Sideways (mirror)' },
   { key: 'StrikeUp', label: 'Thrust up' },
   { key: 'StrikeDownRight', label: 'Down-right' },
   { key: 'StrikeDownLeft', label: 'Down-left' },

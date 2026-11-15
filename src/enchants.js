@@ -125,10 +125,13 @@ export function enchantDps(item, ch, target, {
   const procDot = s.procs.reduce((a, p) => a + capOne(p.dotTick ?? 0), 0);
   const procDotMin = cap > 0 ? Math.min(s.procDotMin ?? 0, cap) : (s.procDotMin ?? 0);
   const procDotMax = cap > 0 ? Math.min(s.procDotMax ?? 0, cap) : (s.procDotMax ?? 0);
-  const flat = cap > 0 ? Math.min(s.flat, cap) : s.flat;
-  const perSwing = hit * (procDamage + flat);
-  const perSwingMin = hit * (procDamageMin + flat);
-  const perSwingMax = hit * (procDamageMax + flat);
+  // Potent Vs / Low Damage Vs are NOT priced here any more: they are the blow's own Strikes payload
+  // (formulas.js:826-840, enchantments.js:1068), read by src/model.js `strikesNet` where the game applies them -
+  // after the defence and the off hand's share, to a swing that missed too - so the item and `with({ potentVs })`
+  // are one calculation (Stage 2.11a). `s.flat` stays on the result for the card's text.
+  const perSwing = hit * procDamage;
+  const perSwingMin = hit * procDamageMin;
+  const perSwingMax = hit * procDamageMax;
   const dotDps = procDot / MAGIC_ROUND_SECONDS;
   const dotDpsMin = procDotMin / MAGIC_ROUND_SECONDS;
   const dotDpsMax = procDotMax / MAGIC_ROUND_SECONDS;

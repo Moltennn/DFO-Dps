@@ -33,9 +33,9 @@ const TOUGH = () => referenceFoe(30, 'tough');
 const withAffix = (t, value, param = 'fire', material = 1) => ({ ...weapon(t, { material }), affixes: [{ id: 'elemental', param, value }] });
 
 test('once: +3/+6/+10 add exactly their value to every roll, not twice it', () => {
-  const base = analyze(PLAIN(), { target: TOUGH(), weapon: weaponOf(weapon(121, { material: 1 })) });
+  const base = analyze(PLAIN(), { swing: 'StrikeLeft', target: TOUGH(), weapon: weaponOf(weapon(121, { material: 1 })) });
   for (const value of [3, 6, 10]) {
-    const r = analyze(PLAIN(), { target: TOUGH(), weapon: weaponOf(withAffix(121, value)) });
+    const r = analyze(PLAIN(), { swing: 'StrikeLeft', target: TOUGH(), weapon: weaponOf(withAffix(121, value)) });
     assert.equal(r.damage.parts.roll[0], base.damage.parts.roll[0], 'the roll itself is unchanged');
     r.damage.plainRolls.forEach((v, i) => assert.equal(v, base.damage.plainRolls[i] + value, `roll ${i}: ${v} vs ${base.damage.plainRolls[i]} + ${value}`));
     assert.equal(r.damage.min, base.damage.min + value, `min +${value}`);
@@ -46,8 +46,8 @@ test('once: +3/+6/+10 add exactly their value to every roll, not twice it', () =
 
 test('once: the flat is inside the blow, so a critical multiplies it (once)', () => {
   const plain = simCharacter(character({ level: 30, raceId: 1, stats: { strength: 50 }, skills: 0, skillOverride: { 34: 100 } }));
-  const base = analyze(plain, { target: TOUGH(), weapon: weaponOf(weapon(121, { material: 1 })) });
-  const withIt = analyze(plain, { target: TOUGH(), weapon: weaponOf(withAffix(121, 10)) });
+  const base = analyze(plain, { swing: 'StrikeLeft', target: TOUGH(), weapon: weaponOf(weapon(121, { material: 1 })) });
+  const withIt = analyze(plain, { swing: 'StrikeLeft', target: TOUGH(), weapon: weaponOf(withAffix(121, 10)) });
   const mult = base.hit.crit.damageMult;
   assert.ok(mult > 1, `critical multiplier ${mult}`);
   // per roll: unityRound((d+10) x m) - unityRound(d x m), so within half a point of 10 x m
@@ -64,8 +64,8 @@ test('once: the flat is inside the blow, so a critical multiplies it (once)', ()
 test('scaling: mastery does not scale the flat, the martial path and the Firmament do (once)', async () => {
   const base = () => simCharacter(character({ level: 30, raceId: 1, stats: { strength: 50 }, skills: 0, skillOverride: { 34: 0 } }));
   const plainDelta = (() => {
-    const a = analyze(base(), { target: TOUGH(), weapon: weaponOf(weapon(121, { material: 1 })) });
-    const b = analyze(base(), { target: TOUGH(), weapon: weaponOf(withAffix(121, 10)) });
+    const a = analyze(base(), { swing: 'StrikeLeft', target: TOUGH(), weapon: weaponOf(weapon(121, { material: 1 })) });
+    const b = analyze(base(), { swing: 'StrikeLeft', target: TOUGH(), weapon: weaponOf(withAffix(121, 10)) });
     return b.damage.avg - a.damage.avg;
   })();
   assert.ok(near(plainDelta, 10, 1e-9));
@@ -73,30 +73,30 @@ test('scaling: mastery does not scale the flat, the martial path and the Firmame
   // mastery: a gear skill line does not touch the flat (the gate's host registers mastery before loot)
   const geared = base();
   geared._mods.skills[29] = 240;
-  const ga = analyze(geared, { target: TOUGH(), weapon: weaponOf(weapon(121, { material: 1 })) });
-  const gb = analyze(geared, { target: TOUGH(), weapon: weaponOf(withAffix(121, 10)) });
+  const ga = analyze(geared, { swing: 'StrikeLeft', target: TOUGH(), weapon: weaponOf(weapon(121, { material: 1 })) });
+  const gb = analyze(geared, { swing: 'StrikeLeft', target: TOUGH(), weapon: weaponOf(withAffix(121, 10)) });
   assert.ok(near(gb.damage.avg - ga.damage.avg, 10, 1e-9), 'a mastery of 105% must not double the flat');
 
   // the martial path: Blademaster at five stacks, +15% - applied to the flat exactly once
   const martial = theoryCharacter({ blade: 121, martialPath: 'blademaster' });
-  const ma = analyze(martial, { target: TOUGH(), weapon: weaponOf(weapon(121, { material: 1 })), stacks: 5 });
-  const mb = analyze(martial, { target: TOUGH(), weapon: weaponOf(withAffix(121, 10)), stacks: 5 });
+  const ma = analyze(martial, { swing: 'StrikeLeft', target: TOUGH(), weapon: weaponOf(weapon(121, { material: 1 })), stacks: 5 });
+  const mb = analyze(martial, { swing: 'StrikeLeft', target: TOUGH(), weapon: weaponOf(withAffix(121, 10)), stacks: 5 });
   const martialDelta = mb.damage.avg - ma.damage.avg;
   assert.ok(martialDelta >= 10 && martialDelta <= 11.6, `martial delta ${martialDelta}`);
 
   // the Firmament's blow channel, +30% - the same, once
   const firm = theoryCharacter({ blade: 121 });
   firm.firmamentDamagePct = 30;
-  const fa = analyze(firm, { target: TOUGH(), weapon: weaponOf(weapon(121, { material: 1 })) });
-  const fb = analyze(firm, { target: TOUGH(), weapon: weaponOf(withAffix(121, 10)) });
+  const fa = analyze(firm, { swing: 'StrikeLeft', target: TOUGH(), weapon: weaponOf(weapon(121, { material: 1 })) });
+  const fb = analyze(firm, { swing: 'StrikeLeft', target: TOUGH(), weapon: weaponOf(withAffix(121, 10)) });
   const firmDelta = fb.damage.avg - fa.damage.avg;
   assert.ok(firmDelta >= 10 && firmDelta <= 13.1, `firmament delta ${firmDelta}`);
 
   // Both together: still one addition, each channel applied once.
   const both = theoryCharacter({ blade: 121, martialPath: 'blademaster' });
   both.firmamentDamagePct = 30;
-  const ba = analyze(both, { target: TOUGH(), weapon: weaponOf(weapon(121, { material: 1 })), stacks: 5 });
-  const bb = analyze(both, { target: TOUGH(), weapon: weaponOf(withAffix(121, 10)), stacks: 5 });
+  const ba = analyze(both, { swing: 'StrikeLeft', target: TOUGH(), weapon: weaponOf(weapon(121, { material: 1 })), stacks: 5 });
+  const bb = analyze(both, { swing: 'StrikeLeft', target: TOUGH(), weapon: weaponOf(withAffix(121, 10)), stacks: 5 });
   const bothDelta = bb.damage.avg - ba.damage.avg;
   assert.ok(bothDelta >= 10 && bothDelta <= 15, `combined delta ${bothDelta} (never 2 x 10 x 1.15 x 1.3)`);
   assert.ok(bothDelta < 20, 'not the doubled contribution');
@@ -112,15 +112,15 @@ test('upstream: the increment equals lootBlow\'s own addition for every element 
   const plain = u.lootPowers.lootBlow({ ...item, affixes: [] }, 20, attacker, foe, { unaware: false, estimate: true });
   assert.equal(before - plain, 7, 'one addition of the affix value');
   // and the simulator agrees on the same blow
-  const a = analyze(PLAIN(), { target: TOUGH(), weapon: weaponOf({ ...weapon(121, { material: 1 }), affixes: [] }) });
-  const b = analyze(PLAIN(), { target: TOUGH(), weapon: weaponOf(item) });
+  const a = analyze(PLAIN(), { swing: 'StrikeLeft', target: TOUGH(), weapon: weaponOf({ ...weapon(121, { material: 1 }), affixes: [] }) });
+  const b = analyze(PLAIN(), { swing: 'StrikeLeft', target: TOUGH(), weapon: weaponOf(item) });
   assert.ok(near(b.damage.avg - a.damage.avg, before - plain, 1e-9));
 });
 
 test('a bow and a blunt weapon add it once too (a long bow\'s pull scales it once)', () => {
   for (const [t, pull] of [[129, 1], [130, 1.5], [126, 1]]) {
-    const a = analyze(PLAIN(), { target: TOUGH(), weapon: weaponOf(weapon(t, { material: 1 })) });
-    const b = analyze(PLAIN(), { target: TOUGH(), weapon: weaponOf(withAffix(t, 10)) });
+    const a = analyze(PLAIN(), { swing: 'StrikeLeft', target: TOUGH(), weapon: weaponOf(weapon(t, { material: 1 })) });
+    const b = analyze(PLAIN(), { swing: 'StrikeLeft', target: TOUGH(), weapon: weaponOf(withAffix(t, 10)) });
     // the long bow's pull is applied to the whole blow at the shaft's landing (bowFastDamage), so it
     // scales the flat once - exactly as upstream, and never twice.
     assert.ok(near(b.damage.avg - a.damage.avg, 10 * pull, 1.0), `template ${t}: ${b.damage.avg - a.damage.avg} vs ${10 * pull}`);
@@ -131,9 +131,9 @@ test('a bow and a blunt weapon add it once too (a long bow\'s pull scales it onc
 test('an off-hand blow takes its share of the (single) flat', () => {
   const ch = theoryCharacter({ blade: 121 });
   ch.offWeapon = { ...ch.weapon, equipSlot: 21, affixes: [{ id: 'elemental', param: 'fire', value: 10 }] };
-  const withIt = analyze(ch, { target: TOUGH(), rri: true, dual: true });
+  const withIt = analyze(ch, { swing: 'StrikeLeft', target: TOUGH(), rri: true, dual: true });
   const clean = { ...ch, offWeapon: { ...ch.offWeapon, affixes: [] } };
-  const without = analyze(clean, { target: TOUGH(), rri: true, dual: true });
+  const without = analyze(clean, { swing: 'StrikeLeft', target: TOUGH(), rri: true, dual: true });
   // the pair's per-swing figure averages the two hands, and the off hand lands x0.8: 10 x 0.8 / 2 = 4
   assert.ok(withIt.perSwing > without.perSwing);
   assert.ok(withIt.perSwing - without.perSwing <= 10, `off-hand delta ${withIt.perSwing - without.perSwing} (never 2 x 8)`);
@@ -142,8 +142,8 @@ test('an off-hand blow takes its share of the (single) flat', () => {
 test('Hand Wraps carry one addition onto the fist blow', () => {
   const ch = simCharacter(character({ level: 30, raceId: 1, stats: { strength: 50 }, skills: 0, skillOverride: { 34: 0 } }));
   const wraps = { group: 'Weapons', templateIndex: 563, material: 1, maxCondition: 100, currentCondition: 100, name: 'Hand Wraps', affixes: [{ id: 'elemental', param: 'fire', value: 9 }] };
-  const a = analyze(ch, { target: TOUGH() });
-  const b = analyze({ ...ch, wraps }, { target: TOUGH() });
+  const a = analyze(ch, { swing: 'StrikeLeft', target: TOUGH() });
+  const b = analyze({ ...ch, wraps }, { swing: 'StrikeLeft', target: TOUGH() });
   assert.ok(near(b.damage.avg - a.damage.avg, 9, 1e-9), `wraps: ${b.damage.avg - a.damage.avg}`);
 });
 
@@ -151,8 +151,8 @@ test('C2: a boss trait resolves the whole blow once - the affix is not quartered
   const gate = gateTarget(45);
   const ch = simCharacter(character({ level: 45, raceId: 1, stats: { strength: 70 }, skills: 60 }));
   const blade = (v) => ({ ...weapon(121, { material: 9 }), affixes: v ? [{ id: 'elemental', param: 'fire', value: v }] : [] });
-  const withIt = analyze(ch, { target: gate, health: 12000, weapon: weaponOf(blade(10)) });
-  const without = analyze(ch, { target: gate, health: 12000, weapon: weaponOf(blade(0)) });
+  const withIt = analyze(ch, { swing: 'StrikeLeft', target: gate, health: 12000, weapon: weaponOf(blade(10)) });
+  const without = analyze(ch, { swing: 'StrikeLeft', target: gate, health: 12000, weapon: weaponOf(blade(0)) });
   assert.deepEqual(withIt.traits, ['spellproof', 'stoneskin']);
   // `damage.*` is the blow before the foe resolves it (the card's basis); the trait shows in perSwing.
   assert.ok(near(withIt.damage.avg - without.damage.avg, 10, 1e-9), 'the flat is 10 in the blow, not 2.5');
@@ -165,8 +165,8 @@ test('C2: a boss trait resolves the whole blow once - the affix is not quartered
   assert.ok(near(withIt.perSwing - without.perSwing, expectedBlade, 1e-6), `a blade: the whole flat lands after the target's intrinsic defense (${withIt.perSwing - without.perSwing} vs ${expectedBlade})`);
   // a blunt blow IS halved as a whole by stoneskin, so the affix inside it is halved with it - once
   const blunt = (v) => ({ ...weapon(126, { material: 9 }), affixes: v ? [{ id: 'elemental', param: 'fire', value: 10 }] : [] });
-  const bWith = analyze(ch, { target: gate, health: 12000, weapon: weaponOf(blunt(10)) });
-  const bWithout = analyze(ch, { target: gate, health: 12000, weapon: weaponOf(blunt(0)) });
+  const bWith = analyze(ch, { swing: 'StrikeLeft', target: gate, health: 12000, weapon: weaponOf(blunt(10)) });
+  const bWithout = analyze(ch, { swing: 'StrikeLeft', target: gate, health: 12000, weapon: weaponOf(blunt(0)) });
   // The blunt blow is first hidden by the target, then halved by stoneskin. Use the same two-source
   // expectation the resolution test uses: intrinsicDamage (target) then the game's x0.5 trait.
   const bluntHide = (d) => intrinsicDamage(bWith.target, d, { weapon: bWith.weapon });
@@ -207,8 +207,8 @@ test('C1: the allowance receives the corrected claim, once', () => {
   const ch = simCharacter(character({ level: 45, raceId: 1, stats: { strength: 70 }, skills: 60 }));
   const item = (v) => ({ ...weapon(121, { material: 9 }), affixes: v ? [{ id: 'elemental', param: 'fire', value: v }] : [] });
   const gate = gateTarget(45);
-  const a = analyze(ch, { target: gate, health: 12000, weapon: weaponOf(item(0)) });
-  const b = analyze(ch, { target: gate, health: 12000, weapon: weaponOf(item(10)) });
+  const a = analyze(ch, { swing: 'StrikeLeft', target: gate, health: 12000, weapon: weaponOf(item(0)) });
+  const b = analyze(ch, { swing: 'StrikeLeft', target: gate, health: 12000, weapon: weaponOf(item(10)) });
   const perBlow = b.perSwing - a.perSwing;
   // perSwing is the hit- and crit-weighted mean of the blows; the affix adds its value to each,
   // and a critical multiplies it (it is inside the blow).
@@ -227,7 +227,7 @@ test('a weapon with no affix is unchanged by any of this', () => {
   const ch = simCharacter(character({ level: 30, raceId: 1, stats: { strength: 80 }, skills: 60 }));
   const w = weaponOf(weapon(120, { material: 1 }));
   assert.equal(w.elemental, 0);
-  const r = analyze(ch, { target: referenceFoe(5, 'soft'), core: 'classic', critDamage: false, weapon: w });
+  const r = analyze(ch, { swing: 'StrikeLeft', target: referenceFoe(5, 'soft'), core: 'classic', critDamage: false, weapon: w });
   // the live game's stock path: longsword 2..16, steel +0, strength (80-50)/10 = +3
   assert.equal(r.damage.min, 2 + 3);
   assert.equal(r.damage.max, 16 + 3);

@@ -71,7 +71,7 @@ test('long bow: the pull sits after the finished blow - outcome by outcome again
   for (const [index, c] of CASES.entries()) {
     const { desc, item, body, local, after, pull } = build(u, c, ctx);
     assert.equal(pull, c.tpl === 130 ? 1.5 : 1, `${c.id}: the pull upstream reads for this template`);
-    const r = analyze(simCharacter(desc, item), { target: local, core: 'overhaul', weapon: weaponOf(item), bowSpam: c.spam });
+    const r = analyze(simCharacter(desc, item), { target: local, core: 'overhaul', weapon: weaponOf(item), bowSpam: c.spam, swing: 'StrikeLeft' });
     const sample = sampleUpstream(u, modules, { desc, item, body, seed: 0x2a00 + index * 733, draws: DRAWS, after });
     const dist = Array.from({ length: 7 }, (_, part) => blowDistribution(r.damage.plainRolls, part, { target: local, weapon: r.weapon, traits: c.traits, cap: c.cap, bowSpam: c.spam }));
     const gaps = compareDistributions(sample, dist);
@@ -96,7 +96,7 @@ test('long bow: per-swing means (crits included) against upstream, and the contr
   for (const [index, c] of CASES.entries()) {
     const { desc, item, body, local, after } = build(u, c, ctx);
     const target = { ...local, bossTraits: c.traits, hitCap: c.cap };
-    const r = analyze(simCharacter(desc, item), { target, core: 'overhaul', weapon: weaponOf(item), bowSpam: c.spam });
+    const r = analyze(simCharacter(desc, item), { target, core: 'overhaul', weapon: weaponOf(item), bowSpam: c.spam, swing: 'StrikeLeft' });
     const s = sampleUpstream(u, modules, { desc, item, body, seed: 0x2a80 + index * 311, draws: DRAWS, after });
     const mine = c.cap > 0 ? r.cappedPerSwing : r.perSwing;
     const z = (mine - s.mean) / s.se;

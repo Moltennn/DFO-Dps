@@ -223,7 +223,7 @@ async function midLevel({ level, skill, agility, seed, draws }) {
     for (let i = 0; i < draws; i++) {
       sample.push(u.pcaao.pcaaoAttackDamage(upstreamEntity(desc), e, { weapon: fresh(upstreamWeapon(item)), rolls: rng, modules, backstabChance: 0 }));
     }
-    const per = (t) => analyze(simCharacter(desc, item), { target: { ...t, bossTraits: [], hitCap: 0 }, core: 'overhaul', weapon: weaponOf(item) });
+    const per = (t) => analyze(simCharacter(desc, item), { target: { ...t, bossTraits: [], hitCap: 0 }, core: 'overhaul', weapon: weaponOf(item), swing: 'StrikeLeft' });
     out[id] = {
       sample,
       hit: sample.filter((d) => d > 0).length / draws,
@@ -260,7 +260,7 @@ test('a weaker attacker below the 97% clamp: the hit chance itself reads the bod
     const item = weapon(121, { material: 6 });
     for (const off of [-5, 5]) {
       const t = encounterTarget(id, 10);
-      const wrong = analyze(simCharacter(desc, item), { target: { ...t, armorValues: t.armorValues.map((a) => a + off), bossTraits: [], hitCap: 0 }, core: 'overhaul', weapon: weaponOf(item) });
+      const wrong = analyze(simCharacter(desc, item), { target: { ...t, armorValues: t.armorValues.map((a) => a + off), bossTraits: [], hitCap: 0 }, core: 'overhaul', weapon: weaponOf(item), swing: 'StrikeLeft' });
       assert.ok(!compareSample({ expected: x.sample, actual: wrong.perSwing }).ok, `${id}: armour ${60 + off} would be caught (${wrong.perSwing.toFixed(4)})`);
     }
   }

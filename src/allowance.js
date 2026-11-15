@@ -81,8 +81,8 @@ export function allowanceSpec(level, { players = 1, phases = BREACH_PHASES, open
  * The claims one build offers, from a per-hit result (plain numbers):
  *
  *   blow   every landed swing is one claim: its expected capped damage per
- *          landed blow (cappedPerSwing / hit), imprint multiplier and flat
- *          addition riding it (they share the blow's claim and cap upstream).
+ *          landed blow (cappedPerSwing / hit). An imprint or an enchantment is IN that
+ *          blow (src/model.js), not a multiplier laid over its mean here.
  *   proc   each Cast When Strikes spell is its OWN claim on the boss
  *          (standInSpell.js:198-217 land(..., HIT_KINDS.Spell)); the client
  *          opens a fresh blow sequence for each (gateCourt.js:412 blowQ), so it
@@ -94,7 +94,7 @@ export function allowanceSpec(level, { players = 1, phases = BREACH_PHASES, open
  * folded in here (see the assumptions register): they matter only for a build that
  * does not already exceed the allowance.
  */
-export function claimStreams({ cappedPerSwing, hit, aps, procs = [], cap = 0, mult = 1, flat = 0, withProcs = true }) {
+export function claimStreams({ cappedPerSwing, hit, aps, procs = [], cap = 0, withProcs = true }) {
   const out = [];
   const h = Math.max(0, Math.min(1, Number(hit) || 0));
   const swings = Number(aps) || 0;
@@ -102,7 +102,7 @@ export function claimStreams({ cappedPerSwing, hit, aps, procs = [], cap = 0, mu
   if (!(h > 0) || !(swings > 0) || !(per > 0)) return out;
   const interval = 1 / (swings * h);
   const limit = (v) => (cap > 0 ? Math.min(v, cap) : v);
-  const blow = limit((per * mult) / h + flat);
+  const blow = limit(per / h);
   out.push({ kind: 'blow', perClaim: blow, interval, start: interval });
   if (!withProcs) return out;
   let dot = 0;
@@ -127,8 +127,11 @@ export function claimStreams({ cappedPerSwing, hit, aps, procs = [], cap = 0, mu
  * @param {number} [p.immunityShare] calibrated share of the fight in which nothing lands
  * @param {number} [p.splitPenaltyS]
  * @param {boolean} [p.fresh=true] false: joined a wounded boss, so the bucket starts empty (gateBrain.js:1231-1240)
+ * @param {(stream: object, hp: number, t: number) => number} [p.perClaimAt] what a claim is worth at the health that
+ *   stands when it is made - the same law, with the claim a function of the foe's share instead of a constant (a
+ *   health-dependent blow such as venom's doubling or axe mastery). Default: the stream's own `perClaim`.
  */
-export function simulateAllowance({ share, law, streams, phases = [], openingS = 0, immunityShare = null, splitPenaltyS = 0, fresh = true, maxSeconds = 3600, burstWindowS = 5 }) {
+export function simulateAllowance({ share, law, streams, phases = [], openingS = 0, immunityShare = null, splitPenaltyS = 0, fresh = true, maxSeconds = 3600, burstWindowS = 5, perClaimAt = null }) {
   const { depth, rate, cap, hitHz } = law;
   const total = Number(share) || 0;
   if (!(total > 0) || !streams.length) return null;
@@ -171,7 +174,8 @@ export function simulateAllowance({ share, law, streams, phases = [], openingS =
     tokens = Math.min(hitHz, tokens + Math.max(0, t - tokenAt) * hitHz);
     tokenAt = t;
 
-    offered += s.perClaim;
+    const claim = perClaimAt ? Math.max(0, Number(perClaimAt(s, hp, t)) || 0) : s.perClaim;
+    offered += claim;
     claims += 1;
     if (t <= shieldUntil) {
       // refused before a token is spent (gateBrain.js:1308)
@@ -183,11 +187,11 @@ export function simulateAllowance({ share, law, streams, phases = [], openingS =
       continue;
     }
     tokens -= 1;
-    claimed += s.perClaim;
-    const want = Math.min(s.perClaim, cap);
+    claimed += claim;
+    const want = Math.min(claim, cap);
     const got = Math.max(0, Math.min(want, bucket, hp));
     if (got < Math.min(want, hp) - 1e-9 && dryAt === null) dryAt = t;
-    clipped += s.perClaim - got;
+    clipped += claim - got;
     bucket -= got;
     hp -= got;
     landed += got;

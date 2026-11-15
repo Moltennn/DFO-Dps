@@ -37,7 +37,7 @@ import { generator } from './harness/prng.mjs';
 import { WAIVERS, expectKnownDiscrepancy } from './harness/waivers.mjs';
 
 const GATE = () => gateTarget(45);
-const OPTS = { core: 'overhaul', rri: true, healthShare: 1, passiveOn: true, stacks: 5 };
+const OPTS = { core: 'overhaul', rri: true, healthShare: 1, passiveOn: true, stacks: 5, swing: 'StrikeLeft' };
 
 /** The supported weapon configurations, as the pricing code sees them. */
 function configs() {
@@ -105,7 +105,8 @@ test('2. a what-if is the same line on the item: pct = a slayer line, flat = an 
     const extra = c.id.includes('backstab on') ? { backstabUptime: 1 } : {};
     if (c.id.includes('wraps')) continue; // wraps carry their lines on `wraps`, not `weapon`
     for (const [what, line] of [
-      [{ loot: { pct: 50, flat: 0 } }, [{ id: 'slayer', param: 'daedra', value: 50 }]],
+      // 30 is the top of the slayer band (a line above it is invalid and upstream ignores it)
+      [{ loot: { pct: 30, flat: 0 } }, [{ id: 'slayer', param: 'daedra', value: 30 }]],
       [{ loot: { pct: 0, flat: 8 } }, [{ id: 'elemental', param: 'fire', value: 8 }]],
       [{ loot: { pct: 30, flat: 6 } }, [{ id: 'slayer', param: 'daedra', value: 30 }, { id: 'elemental', param: 'fire', value: 6 }]],
     ]) {
@@ -180,7 +181,7 @@ test('3. Potent Vs on a landed blow matches upstream: main hand, off hand (weigh
     const withPv = run({ enchantments: enchanted, isIdentified: true });
     const without = run({});
     const tgt = { ...target, bossTraits: c.traits, hitCap: c.cap };
-    const baseLocal = analyze(simCharacter(desc, item), { target: tgt, core: 'overhaul', weapon: weaponOf(item), offHand: !!c.offHand, backstabUptime: c.backstab ? 1 : 0 });
+    const baseLocal = analyze(simCharacter(desc, item), { target: tgt, core: 'overhaul', weapon: weaponOf(item), offHand: !!c.offHand, backstabUptime: c.backstab ? 1 : 0, swing: 'StrikeLeft' });
     const priced = baseLocal.with({ potentVs: 5 });
     const pick = (r) => (c.cap > 0 ? r.cappedPerSwing : r.perSwing);
     const zWith = (pick(priced) - withPv.mean) / withPv.se;
@@ -217,7 +218,7 @@ test('4. a loot line (percentage + flat) on the blow matches upstream, in the ga
     };
     const up = sampleBlow(u, modules, { desc, item, extra: { affixes }, body, seed: 0x2e00 + index * 613, draws: DRAWS, backstabChance: c.backstab ? 50 : 0, after });
     const tgt = { ...target, bossTraits: c.traits, hitCap: c.cap };
-    const baseLocal = analyze(simCharacter(desc, item), { target: tgt, core: 'overhaul', weapon: weaponOf(item), backstabUptime: c.backstab ? 1 : 0 });
+    const baseLocal = analyze(simCharacter(desc, item), { target: tgt, core: 'overhaul', weapon: weaponOf(item), backstabUptime: c.backstab ? 1 : 0, swing: 'StrikeLeft' });
     const priced = baseLocal.with({ loot: { pct: 30, flat: 8 } });
     const mine = c.cap > 0 ? priced.cappedPerSwing : priced.perSwing;
     const z = (mine - up.mean) / up.se;
@@ -245,6 +246,6 @@ test('5. W-LOOT-CARRY: upstream carries a percentage line\'s fraction between bl
     sum += d; sq += d * d;
   }
   const m = sum / N; const se = Math.sqrt((sq / N - m * m) / N);
-  const local = analyze(simCharacter(desc, item), { target: standInTarget(31), core: 'overhaul', weapon: weaponOf(item) }).with({ loot: { pct: 25, flat: 0 } }).perSwing;
+  const local = analyze(simCharacter(desc, item), { target: standInTarget(31), core: 'overhaul', weapon: weaponOf(item), swing: 'StrikeLeft' }).with({ loot: { pct: 25, flat: 0 } }).perSwing;
   expectKnownDiscrepancy(assert, 'W-LOOT-CARRY', (m - local) / se > 8 && m / local - 1 > 0.005, { upstream: m, local, z: (m - local) / se });
 });

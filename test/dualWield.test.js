@@ -36,7 +36,7 @@ function pair(template, { material = 9, agility = 50, strength = 50, speed = 50,
   );
   return off ? { ...ch, offWeapon: { ...ch.weapon, equipSlot: 21 } } : ch;
 }
-const run = (ch, extra = {}) => analyze(ch, { target: TOUGH(), rri: false, ...extra });
+const run = (ch, extra = {}) => analyze(ch, { target: TOUGH(), rri: false, swing: 'StrikeLeft', ...extra });
 
 /**
  * The game's own machine, driven as its test drives it: a held button, one blow at a time, the frame
@@ -138,7 +138,7 @@ test('model: each hand is its own blow - damage, accuracy, crit and traits', () 
   // A low skill keeps the hit chance off the 3..97 clamp so the off hand's accuracy term is visible.
   const ch = pair(121, { agility: 30, skill: 60 });
   const dual = run(ch, { dual: true });
-  const main = analyze(ch, { target: TOUGH() });
+  const main = analyze(ch, { swing: 'StrikeLeft', target: TOUGH() });
   const off = dual.offHand;
   // the main hand is the ordinary blow
   assert.ok(near(dual.perSwing * 2 - off.perSwing, main.perSwing, 1e-9));
@@ -148,7 +148,7 @@ test('model: each hand is its own blow - damage, accuracy, crit and traits', () 
   assert.ok(off.hit.hitPlain < main.hit.hitPlain, 'the off swing is less accurate');
   assert.ok(off.perSwing < main.perSwing, 'and lands less');
   const noPenalty = run(pair(121, { agility: 100, skill: 120 }), { dual: true });
-  assert.ok(near(noPenalty.offHand.hit.hitPlain, analyze(pair(121, { agility: 100, skill: 120 }), { target: TOUGH() }).hit.hitPlain, 1e-9), 'Agility 100: the same accuracy');
+  assert.ok(near(noPenalty.offHand.hit.hitPlain, analyze(pair(121, { agility: 100, skill: 120 }), { swing: 'StrikeLeft', target: TOUGH() }).hit.hitPlain, 1e-9), 'Agility 100: the same accuracy');
   // criticals are the same model on both hands; the off blow is 0.8 of it
   assert.ok(near(off.hit.crit.chance, main.hit.crit.chance));
   assert.ok(Math.abs(off.damage.critAvg - offHandDamage(Math.round(main.damage.critAvg))) <= 1, 'off crit = 0.8 of the main blow, rounded');
@@ -156,7 +156,7 @@ test('model: each hand is its own blow - damage, accuracy, crit and traits', () 
 
 test('model: a heavy off weapon slows the exchange through its burden, not its stats', () => {
   const light = run(pair(120, { off: true, strength: 50 }), { dual: true });
-  const heavy = analyze({ ...pair(120, { off: true, strength: 50 }), offWeapon: { ...weapon(124, { material: 9 }), equipSlot: 21 } }, { target: TOUGH(), dual: true });
+  const heavy = analyze({ ...pair(120, { off: true, strength: 50 }), offWeapon: { ...weapon(124, { material: 9 }), equipSlot: 21 } }, { swing: 'StrikeLeft', target: TOUGH(), dual: true });
   assert.ok(heavy.cadence.period > light.cadence.period, 'a mace off hand is slower than a longsword');
   assert.ok(heavy.offHand.cadence.tick > light.offHand.cadence.tick, 'its own tick is what paces it');
   // the burden is the game's, from the off weapon's weight at this Strength
@@ -195,8 +195,8 @@ test('procs: the main hand fires every landed blow, the off hand at 0.8 weight',
 test('C1: each hand is its own time-ordered claim at the Breach', () => {
   const ch = pair(121, { off: true, agility: 50, skill: 150 });
   const gate = gateTarget(45);
-  const single = analyze(pair(121, { off: false, agility: 50, skill: 150 }), { target: gate, health: 12000 });
-  const dual = analyze(ch, { target: gate, health: 12000, dual: true });
+  const single = analyze(pair(121, { off: false, agility: 50, skill: 150 }), { swing: 'StrikeLeft', target: gate, health: 12000 });
+  const dual = analyze(ch, { swing: 'StrikeLeft', target: gate, health: 12000, dual: true });
   assert.ok(dual.allowance && single.allowance);
   // claims a second: one a period from each hand, each weighted by its own hit chance
   const expected = dual.cadence.aps * (dual.hit.hit + dual.offHand.hit.hit) / 2;
@@ -212,11 +212,11 @@ test('C2: a boss trait resolves each hand\'s own blow', () => {
   // main hand a blade, off hand a hammer: stoneskin halves the hammer alone
   const ch = { ...pair(121, { off: true, agility: 50 }), offWeapon: { ...weapon(124, { material: 9 }), equipSlot: 21 } };
   const gate = gateTarget(45);
-  const dual = analyze(ch, { target: gate, health: 12000, dual: true });
-  const mainOnly = analyze(pair(121, { off: false, agility: 50 }), { target: gate, health: 12000 });
+  const dual = analyze(ch, { swing: 'StrikeLeft', target: gate, health: 12000, dual: true });
+  const mainOnly = analyze(pair(121, { off: false, agility: 50 }), { swing: 'StrikeLeft', target: gate, health: 12000 });
   assert.ok(near(mainOnly.perSwing - (dual.perSwing * 2 - dual.offHand.perSwing), 0, 1e-9), 'the main blow is the same as alone');
   // the off hand's blow is halved by stoneskin before its own 0.8 share
-  const neutralOff = analyze(ch, { target: gate, health: 12000, dual: true, traits: [] }).offHand;
+  const neutralOff = analyze(ch, { swing: 'StrikeLeft', target: gate, health: 12000, dual: true, traits: [] }).offHand;
   assert.ok(near(dual.offHand.perSwing / neutralOff.perSwing, 0.5, 0.02), `off hand halved: ${(dual.offHand.perSwing / neutralOff.perSwing).toFixed(3)}`);
 });
 
@@ -226,6 +226,6 @@ test('single weapon and two-handed weapons are untouched', () => {
   assert.equal(s.dual, undefined);
   assert.ok(near(s.cadence.seconds, 5 * s.cadence.tick, 1e-12), 'a single weapon is five ticks a blow');
   // a two-handed main hand never enters a pair
-  const two = analyze({ ...pair(123, { off: false }), offWeapon: { ...weapon(121, { material: 9 }), equipSlot: 21 } }, { target: TOUGH(), dual: true });
+  const two = analyze({ ...pair(123, { off: false }), offWeapon: { ...weapon(121, { material: 9 }), equipSlot: 21 } }, { swing: 'StrikeLeft', target: TOUGH(), dual: true });
   assert.ok(!two.dual);
 });

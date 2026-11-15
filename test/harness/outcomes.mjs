@@ -95,3 +95,31 @@ export function pathHolder(u, { path = null, desc, health = 100, maxHealth = 100
   u.entityMods.computeEntityMods(e);
   return e;
 }
+
+/**
+ * Upstream's whole blow with the item WORN: the weapon sits in the attacker's equip table (lootPowers.js
+ * wornPowers reads the worn pieces, and `blowPowers` a weapon's power only for the weapon that struck), a fresh
+ * copy every blow so no fractional remainder is carried (docs W-LOOT-CARRY). The first `warm` blows are drawn
+ * and thrown away: a Flow power's stacks build through landed blows (lootStrike), and are read at five after.
+ * `fields` are the item's own upstream fields (rarity/imprint/legendary/affixes/enchantments).
+ */
+export function sampleWorn(u, { attacker, body, item, fields = {}, seed, draws, warm = 0, offHand = false, calc = {}, after = (d) => d }) {
+  const rng = generator(seed);
+  const slot = u.equip.equipTableOf(attacker);
+  const hand = offHand ? u.equip.EQUIP_SLOTS.LeftHand : u.equip.EQUIP_SLOTS.RightHand;
+  let sum = 0; let sq = 0;
+  for (let i = -warm; i < draws; i++) {
+    const w = { ...upstreamWeapon(item), ...fields };
+    slot[hand] = w;
+    const raw = u.formulas.calculateAttackDamage(attacker, body, {
+      weapon: w, rolls: rng, backstabChance: 0, ...calc,
+      ...(offHand ? { toHitMod: offHandToHit(attacker.stats.agility), ...u.handsLaw.OFF_HAND_BLOW } : {}),
+    });
+    if (i < 0) continue;
+    const d = raw > 0 || fields.enchantments ? after(raw) : raw;
+    sum += d; sq += d * d;
+  }
+  slot[hand] = null;
+  const mean = sum / draws;
+  return { mean, se: Math.sqrt(Math.max(0, sq / draws - mean * mean) / draws) };
+}

@@ -61,6 +61,7 @@ test('golden (combatStats.test.js:67-80): strength term, longsword range, swing 
     core: 'classic',
     critDamage: false,
     fixedStrengthDamageModifier: false, // the fixture uninstalls PCAAO above
+    swing: 'StrikeLeft', // this golden is the card's neutral row
   });
     assert.equal(r.damage.parts.strMod, 6);
     assert.equal(r.damage.parts.roll[0], 2);

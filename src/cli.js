@@ -78,7 +78,7 @@ Common options:
   --core <overhaul|classic>           combat core (default: overhaul)
   --offline                           offline rules (past-100 skills read as 100)
   --weapon <template:material>        override the equipped weapon (e.g. 121:9)
-  --swing <StrikeLeft|StrikeUp|...>   swing direction (default: StrikeLeft)
+  --swing <random|StrikeLeft|StrikeUp|...> swing direction (default: random, the game's six-way click draw)
   --passive <path|none>               martial path override
   --stacks <0-5>                      Flowing Steel stacks (default: 5)
   --rhythm                            War Rhythm is up (Warblade)
@@ -162,7 +162,7 @@ const optsSpec = {
   core: { type: 'string', default: 'overhaul' },
   offline: { type: 'boolean', default: false },
   weapon: { type: 'string' },
-  swing: { type: 'string', default: 'StrikeLeft' },
+  swing: { type: 'string', default: 'random' },
   passive: { type: 'string' },
   stacks: { type: 'string', default: '5' },
   rhythm: { type: 'boolean', default: false },

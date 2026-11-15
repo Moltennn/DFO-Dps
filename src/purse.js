@@ -18,7 +18,7 @@ import { allowanceSpec, claimStreams, runAllowance } from './allowance.js';
  * @param {string} encounterId
  * @param {{ level?: number, splitPenaltyS?: number, mult?: number, flat?: number }} [opts]
  */
-export function simulatePurse(base, encounterId, { level = 45, splitPenaltyS = 0, mult = 1, flat = 0 } = {}) {
+export function simulatePurse(base, encounterId, { level = 45, splitPenaltyS = 0 } = {}) {
   const encounter = encounterById(encounterId);
   if (!encounter) throw new Error(`unknown encounter: ${encounterId}`);
   const { depth, rate, cap, hitHz, ref } = purseOf(level);
@@ -34,8 +34,6 @@ export function simulatePurse(base, encounterId, { level = 45, splitPenaltyS = 0
     aps: base?.cadence?.aps,
     procs: base?.enchantProcs,
     cap: capRun,
-    mult,
-    flat,
   });
   if (!streams.length) return null;
 

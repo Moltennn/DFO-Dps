@@ -71,7 +71,7 @@ test('F1: per-outcome shield block against upstream, value by value and part by 
     equipArmour(local, c.pieces, { armorValues: true });
     // The card's raw rolls, before the off hand's share: `damage` of an off-hand analysis is the DISPLAY
     // card (already scaled), so the rolls come from the same blow read as a main hand's.
-    const r = analyze(simCharacter(desc, item), { target: local, core: 'overhaul', weapon: weaponOf(item), offHand: false });
+    const r = analyze(simCharacter(desc, item), { target: local, core: 'overhaul', weapon: weaponOf(item), offHand: false, swing: 'StrikeLeft' });
     const w = r.weapon;
     const ctx = { target: local, weapon: w, offHand: c.offHand, traits: c.traits, cap: c.cap };
     const mine = Array.from({ length: 7 }, (_, part) => blowDistribution(r.damage.plainRolls, part, ctx));
@@ -122,7 +122,7 @@ test('F1: the per-swing means agree too, capped and uncapped, with the sampled b
     }
     const m = sum / N; const mc = sumCap / N;
     const se = Math.sqrt(Math.max(0, sq / N - m * m) / N); const sec = Math.sqrt(Math.max(0, sqCap / N - mc * mc) / N);
-    const r = analyze(simCharacter(desc, item), { target: local, core: 'overhaul', weapon: weaponOf(item), offHand: c.offHand });
+    const r = analyze(simCharacter(desc, item), { target: local, core: 'overhaul', weapon: weaponOf(item), offHand: c.offHand, swing: 'StrikeLeft' });
     rows.push({ id: c.id, zUncapped: (r.perSwing - m) / se, zCapped: (r.cappedPerSwing - mc) / sec, local: r.cappedPerSwing, up: mc });
   }
   for (const r of rows) {

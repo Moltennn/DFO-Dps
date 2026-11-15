@@ -318,7 +318,7 @@ test('integration: armour resolves before the boss traits and the per-hit cap', 
   const target = { ...t, bossTraits: ['stoneskin'], hitCap: 20 };
   const w = fixedWeapon();
   const ch = integrationCharacter();
-  const r = analyze(ch, { target, core: 'overhaul', weapon: w });
+  const r = analyze(ch, { target, core: 'overhaul', weapon: w, swing: 'StrikeLeft' });
   const c = r.hit.crit.chance;
   const defend = (d) => targetPartDamage(t, d, 3, { weapon: w });
   const strike = (d) => (d > 0 ? resistBlow(['stoneskin'], d, { kind: 'melee', weapon: w }) : d);
@@ -394,7 +394,7 @@ test('armour: hit chance and worn armour share the same body-part roll', () => {
     stats: { strength: 50, agility: 50, speed: 50, luck: 50 },
     skillOverride: { 29: 10, 34: 0 },
   }));
-  const r = analyze(ch, { target: t, core: 'overhaul', weapon: w });
+  const r = analyze(ch, { target: t, core: 'overhaul', weapon: w, swing: 'StrikeLeft' });
   const c = r.hit.crit.chance;
   const weights = bodyPartWeights('overhaul');
   const joint = weights.reduce((sum, weight, part) => {

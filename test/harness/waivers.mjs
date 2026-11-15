@@ -23,8 +23,8 @@ export const WAIVERS = Object.freeze({
   'W-PROC-BUDGET': {
     title: 'The per-hit-capped ceiling still sums procs on top of weapon DPS',
     detail:
-      'C1 made every proc and DoT round its own relay claim in the allowance run (TTK, burst, sustained). The ceiling figures (totalDps, enchantDps) still add proc damage to weapon damage, cap each DoT tick apart rather than as one summed round claim, and fold Potent Vs / Low Damage Vs (+-5) into the enchant layer instead of the blow (enchantments.js:623-631). Stage 2.9 added what the blow does with it: the payload runs for a player whatever the blow did, so upstream returns the five for a swing that MISSED too (test/pricing.test.js); analyze `with({ potentVs })` models that, but an EQUIPPED Potent Vs weapon still goes through the enchant layer, which adds `hit x 5` to the capped figure - the two disagree by the miss share until that stage.',
-    evidence: 'standInSpell.js:131-151, enchantments.js:623-631 vs src/enchants.js:104-141',
+      'C1 made every proc and DoT round its own relay claim in the allowance run (TTK, burst, sustained). The ceiling figures (totalDps, enchantDps) still add proc damage to weapon damage, cap each DoT tick apart rather than as one summed round claim, and fold Potent Vs / Low Damage Vs (+-5) into the enchant layer instead of the blow (enchantments.js:623-631). Stage 2.9 modelled what the blow does with Potent Vs, and Stage 2.11a moved the EQUIPPED rows onto that same channel (src/model.js strikesNet), so an item and `with({ potentVs })` are one calculation and the enchant layer no longer adds `hit x 5`. What remains of this waiver is the Cast When Strikes procs and DoT rounds: summed on top of the weapon figure, each capped apart, and not a differential stage.',
+    evidence: 'standInSpell.js:131-151 vs src/enchants.js (procs and DoTs only since Stage 2.11a)',
     fix: 'Stage 4 (procs).',
   },
   'W-LOOT-CARRY': {

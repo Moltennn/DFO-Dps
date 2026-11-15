@@ -102,7 +102,7 @@ test('Frenzy end to end: sampled blows with the four health combinations', async
     const m = sum / DRAWS;
     const se = Math.sqrt((sq / DRAWS - m * m) / DRAWS);
     const target31 = standInTarget(31);
-    const r = analyze(simCharacter(desc, item), { target: target31, core: 'overhaul', weapon: weaponOf(item), attackerHealthShare: c.self, healthShare: c.foe });
+    const r = analyze(simCharacter(desc, item), { target: target31, core: 'overhaul', weapon: weaponOf(item), attackerHealthShare: c.self, healthShare: c.foe, swing: 'StrikeLeft' });
     const z = (r.perSwing - m) / se;
     means[c.id] = { up: m, local: r.perSwing };
     assert.ok(Math.abs(z) < 3.5, `${c.id}: ${r.perSwing.toFixed(4)} vs ${m.toFixed(4)} +/- ${(1.96 * se).toFixed(4)} (z ${z.toFixed(2)})`);

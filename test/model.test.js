@@ -46,14 +46,14 @@ test('strength terms: classic /5, overhaul /10', () => {
 test('classic longsword, STR 80: /10 live, /5 when the overhaul is uninstalled', () => {
   const ch = characterFromSave(testSave(), { online: false });
   // The live game installs PCAAO, whose damageModifier override is /10 even for the stock core.
-  const live = analyze(ch, { target: referenceFoe(5, 'soft'), core: 'classic', critDamage: false });
+  const live = analyze(ch, { target: referenceFoe(5, 'soft'), core: 'classic', critDamage: false, swing: 'StrikeLeft' });
   assert.equal(live.damage.min, 2 + 3);   // 2 + floor((80-50)/10)
   assert.equal(live.damage.max, 16 + 3);
   assert.equal(live.damage.parts.matMod, 0); // steel
   assert.equal(live.damage.parts.strMod, 3);
   // The golden stock fixture uninstalls PCAAO and pins DFU's own /5.
   const stock = analyze(ch, {
-    target: referenceFoe(5, 'soft'), core: 'classic', critDamage: false, fixedStrengthDamageModifier: false,
+    target: referenceFoe(5, 'soft'), core: 'classic', critDamage: false, fixedStrengthDamageModifier: false, swing: 'StrikeLeft',
   });
   assert.equal(stock.damage.min, 8);   // 2 + floor((80-50)/5)
   assert.equal(stock.damage.max, 22);
@@ -76,7 +76,7 @@ test('the source stats-card fixture: STR 66 steel longsword in the overhaul', ()
     stats: { strength: 66, agility: 58, speed: 54, luck: 47 },
     skills,
   }), { online: false });
-  const r = analyze(ch, { target: referenceFoe(5, 'tough'), core: 'overhaul' });
+  const r = analyze(ch, { target: referenceFoe(5, 'tough'), core: 'overhaul', swing: 'StrikeLeft' });
   assert.equal(r.damage.parts.strMod, 1); // floor((66-50)/10)
   assert.equal(r.damage.min, 3);          // longsword 2 + 1
   assert.equal(r.damage.max, 17);         // longsword 16 + 1
@@ -133,7 +133,7 @@ test('online mastery: a mastered Long Blade at 107 plus 20 gear skill', () => {
   const save = testSave({ skills, masteredSkills: [29], masterSkills: true, online: true });
   const ch = characterFromSave(save, { online: true });
   ch._mods.skills[29] = 20;
-  const r = analyze(ch, { target: referenceFoe(5, 'tough'), core: 'overhaul' });
+  const r = analyze(ch, { target: referenceFoe(5, 'tough'), core: 'overhaul', swing: 'StrikeLeft' });
   // effectiveSkill(107)=101 -> 1% climb; 20 gear points x 0.44 = 8.8%
   assert.ok(Math.abs(r.damage.parts.mastery - 9.8) < 0.001, `mastery ${r.damage.parts.mastery}`);
   const off = characterFromSave(save, { online: false });
@@ -189,8 +189,8 @@ test('backstab: 99% x3, and the gate group health', () => {
   const skills = Array.from({ length: 35 }, () => 40);
   skills[19] = 99;
   const ch = characterFromSave(testSave({ skills }), { online: false });
-  const base = analyze(ch, { target: referenceFoe(5, 'soft'), core: 'overhaul' });
-  const behind = analyze(ch, { target: referenceFoe(5, 'soft'), core: 'overhaul', backstabUptime: 1 });
+  const base = analyze(ch, { target: referenceFoe(5, 'soft'), core: 'overhaul', swing: 'StrikeLeft' });
+  const behind = analyze(ch, { target: referenceFoe(5, 'soft'), core: 'overhaul', backstabUptime: 1, swing: 'StrikeLeft' });
   assert.ok(behind.backstab.chance > 0.98);
   assert.equal(behind.backstab.multiplier, 3);
   assert.ok(Math.abs(behind.backstab.critMin - base.damage.critMin * 3) <= 1);

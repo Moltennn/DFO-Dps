@@ -25,11 +25,15 @@ import {
 import { allowanceSpec, claimStreams, runAllowance } from './allowance.js';
 import { relayTraitsFor, resistBlow } from './bossTraits.js';
 import { BOW_FAST, bowFastDamage } from '../vendor/upstream/a3eb1605/src/combat/bowBloom.js';
+import { powerIdsOf, powerOf } from '../vendor/upstream/a3eb1605/src/systems/loot/lootRarity.js';
+import { mobileAffinityMatches, itemEnchantments, ENCHANTMENT_TYPES as UPSTREAM_ENCHANTMENTS, POTENT_VS_DAMAGE, LOW_DAMAGE_VS } from '../vendor/upstream/a3eb1605/src/systems/enchantments.js';
 import { foeGroup } from '../vendor/upstream/a3eb1605/src/systems/loot/lootPowers.js';
 import { conditionPercentage } from '../vendor/upstream/a3eb1605/src/systems/item/itemTemplates.js';
+import { CLICK_ATTACK_DIRECTIONS } from '../vendor/upstream/a3eb1605/src/characters/weaponStates.js';
+import { DIRECTION_TO_STRIKE } from '../vendor/upstream/a3eb1605/src/characters/anims.js';
 import { OFF_HAND_BLOW, dualSchedule, offHandBurden, offHandDamage, offHandToHit } from './dualWield.js';
 import { enchantDps, procsBeforeBreak } from './enchants.js';
-import { socketAffixes } from './sockets.js';
+import { bladeLines, weaponDamagePct as itemWeaponDamagePct } from './gearLines.js';
 import {
   bodyPartWeights, elementShare, enemyTypeBonusRange, enemyTypeBonusValues,
   hasWornEquipment, intrinsicDamage, isSkeletalTarget, leftHandShield, makeTarget,
@@ -57,14 +61,60 @@ export function unityRound(x) {
   return f % 2 === 0 ? f : f + 1;
 }
 
+/**
+ * SWING DIRECTION (Stage 2.13). The game draws one direction per attack before the blow's own rolls:
+ *
+ *   WeaponManager.cs:343           Random.Range((int)UpRight, (int)DownRight + 1)
+ *   characters/weaponStates.js:278 CLICK_ATTACK_DIRECTIONS - UpRight, Left, Right, DownLeft, Down, DownRight
+ *   characters/anims.js:33         FPSWeapon.OnAttackDirection - UpRight -> StrikeUp, Left -> StrikeLeft, ...
+ *   combat/playerWeapon.js:1032    _rollClickStrike: Math.floor(rolls() * 6), one draw an attack (clickAttack :1108,
+ *                                  and the swing-mode gesture arm :992); the bow bypasses it (:1113, forced StrikeDown)
+ *
+ * Six equally likely strikes. `SWING_DIRECTIONS` is the upstream tables' own product, not a copy: the order is
+ * MouseDirections' click window and the probability is 1/6 per entry.
+ */
+export const RANDOM_SWING = 'random';
+export const SWING_DIRECTIONS = Object.freeze(CLICK_ATTACK_DIRECTIONS.map((d) => DIRECTION_TO_STRIKE[d]));
+
+/** Mix the per-direction cards into one expectation over the draw: each weighted equally, the ranges are the
+ *  mixture's support, and the parts report the distribution's mean swing modifier. */
+function mixCards(cards) {
+  if (cards.length === 1) return cards[0];
+  const n = cards.length;
+  const avgArr = (key) => (cards[0][key] ? cards[0][key].map((_, i) => cards.reduce((s, c) => s + c[key][i], 0) / n) : undefined);
+  const parts = cards[0].parts
+    ? { ...cards[0].parts, dmgMods: cards.reduce((s, c) => s + c.parts.dmgMods, 0) / n, swingDamage: cards.reduce((s, c) => s + c.parts.swingDamage, 0) / n }
+    : cards[0].parts;
+  return {
+    ...cards[0],
+    min: Math.min(...cards.map((c) => c.min)),
+    max: Math.max(...cards.map((c) => c.max)),
+    avg: cards.reduce((s, c) => s + c.avg, 0) / n,
+    critMin: Math.min(...cards.map((c) => c.critMin)),
+    critMax: Math.max(...cards.map((c) => c.critMax)),
+    critAvg: cards.reduce((s, c) => s + c.critAvg, 0) / n,
+    plainRolls: avgArr('plainRolls'),
+    critRolls: avgArr('critRolls'),
+    preFinishRolls: avgArr('preFinishRolls'),
+    backstabPlainRolls: avgArr('backstabPlainRolls'),
+    backstabCritRolls: avgArr('backstabCritRolls'),
+    parts,
+  };
+}
+
 /** The template and the live item as one weapon descriptor. */
 export function weaponOf(item, { rri = false } = {}) {
   if (!item) return null;
   const t = WEAPONS[item.templateIndex];
   if (!t) return null;
-  const affixes = [...(item.affixes ?? []), ...socketAffixes(item)];
+  // The lines as the game reads them (src/gearLines.js: readLines' gem cap, validAffix, lootBlow's per-line reading).
+  const blade = bladeLines(item);
+  // The powers the piece carries (systems/loot/lootRarity.js:1271 powerIdsOf: a Legendary's own, a Rare's
+  // imprint, a Gilded's), as the game's own records (powerOf) - one entry an id.
+  const powers = [...new Set(powerIdsOf(item))].map((id) => (typeof id === 'string' ? powerOf(id) : null)).filter(Boolean);
   return {
     item,
+    powers,
     templateIndex: item.templateIndex,
     name: item.name || t.name,
     baseName: t.name,
@@ -85,15 +135,11 @@ export function weaponOf(item, { rri = false } = {}) {
     material: num(item.material, 0),
     materialName: MATERIALS[num(item.material, 0)] ?? 'Iron',
     flags: num(item.flags, 0),
-    damagePct: affixes.filter((a) => a?.id === 'damage').reduce((s, a) => s + num(a.value), 0),
-    slayer: affixes.filter((a) => a?.id === 'slayer').reduce((s, a) => s + num(a.value), 0),
-    slayerByGroup: Object.fromEntries(affixes.filter((a) => a?.id === 'slayer').map((a) => [String(a.param), num(a.value)])),
-    elemental: affixes.filter((a) => a?.id === 'elemental').reduce((s, a) => s + num(a.value), 0),
-    elementalByElement: Object.fromEntries(
-      affixes
-        .filter((a) => a?.id === 'elemental' && a.param != null)
-        .map((a) => [String(a.param).toLowerCase(), num(a.value)]),
-    ),
+    damagePct: itemWeaponDamagePct(item),
+    slayer: blade.slayer,
+    slayerByGroup: blade.slayerByGroup,
+    elemental: blade.elemental,
+    elementalLines: blade.elementalLines,
     // systems/item/itemTemplates.js:277-279: the integer the condition band reads.
     conditionPercent: conditionPercentage(item),
     conditionPct: conditionPercentage(item) / 100,
@@ -326,7 +372,7 @@ function stat(ch, name, opts = {}) {
 }
 /** The combat read of a stat (the path's passive included), for the differential tests. */
 export const combatStat = (ch, name, opts = {}) => stat(ch, name, opts);
-function skill(ch, id, opts = {}) {
+export function skill(ch, id, opts = {}) {
   return skillValue(ch, id) + (opts.passiveOn !== false && ch.martialPath === 'shadowdancer' && id === SKILLS.Dodging ? 15 : 0);
 }
 
@@ -636,17 +682,18 @@ export function weaponBlow(ch, w, damage, target, opts = {}) {
   // from the pricing code - entering exactly there, so it composes with the slayer line, the crit, the
   // condition, the armour and the cap as a real line would (Stage 2.9, F2).
   const what = opts.loot ?? null;
-  const slayer = (lines?.slayerByGroup?.[String(target?.group ?? '')] ?? 0) + num(what?.pct, 0);
+  const power = lootPowerTerms([...(lines?.powers ?? []), ...(opts.imprintsExtra ?? [])], target, opts);
+  const slayer = (lines?.slayerByGroup?.[String(target?.group ?? '')] ?? 0) + num(what?.pct, 0) + power.pct;
   if (slayer > 0) d = applyPct(d, slayer);
-  const elementalMap = lines?.elementalByElement ?? null;
+  const elementalLines = lines?.elementalLines ?? null;
   let elemental = 0;
-  if (elementalMap && Object.keys(elementalMap).length) {
-    // systems/loot/lootPowers.js:286-294: each line is floored after its target's career tolerance.
-    for (const [element, value] of Object.entries(elementalMap)) elemental += Math.floor(num(value) * elementShare(target, element));
+  if (elementalLines && elementalLines.length) {
+    // systems/loot/lootPowers.js:293: EACH valid line is floored after its own career tolerance, repeats included.
+    for (const l of elementalLines) elemental += Math.floor(num(l.value) * elementShare(target, l.param));
   } else {
     elemental = Math.floor(num(lines?.elemental, 0)); // a hand-built weapon descriptor with only the total
   }
-  elemental += num(what?.flat, 0); // venom's flat rides the same `flat` (lootPowers.js:346 `out + flat`)
+  elemental += num(what?.flat, 0) + power.flat; // venom's flat rides the same `flat` (lootPowers.js:346 `out + flat`)
   if (elemental > 0) d += elemental;
   const martial = martialBlowPct(ch, target, opts);
   if (martial > 0) d = applyPct(d, martial);
@@ -658,6 +705,63 @@ export function weaponBlow(ch, w, damage, target, opts = {}) {
   // calculateAttackDamage (combat/arrowFlight.js:501-510), after the crit, the material, the condition,
   // the armour and the off hand's share, and before the boss trait and the cap. See `bowBlow`.
   return d;
+}
+
+/**
+ * What the weapon's powers add to lootBlow's `pct` and `flat` for THIS blow (systems/loot/lootPowers.js:286-347).
+ * Each condition is read where the game reads it - the foe's career and affinity, the foe's or the wielder's
+ * health share, the foe's group - from the target and the scenario; nothing is asked of the caller but the
+ * scenario itself. `opts.assumeTriggers` is a PRICING assumption (what the power is worth once its trigger
+ * holds), never a game state. Kinds that do not add to the blow (chain, quake, conduit, siphon, surge, echo - the
+ * last is a separate stage) contribute nothing here.
+ *   bane       :310-312  target.affinity !== 'Human' && foes.includes(target.careerIndex)
+ *   unaware    :313-315  the foe had not noticed the wielder (scenario `unaware`)
+ *   sanctified :316-318  foeGroup(target) === power.group
+ *   flow       :319-321  pct x flow stacks (scenario `flowStacks`, default the power's `max`: the steady state)
+ *   venom      :322-324  floor(flat x (foe under half its health ? 2 : 1) x elementShare(target, 'poison'))
+ *   moon       :325-327  night (scenario `night`; the oracle's sky clock is a stub) - pct, + beast on an animal
+ *   rage       :328-330  the WIELDER's health share below `below`%
+ *   execute    :331-333  the FOE's health share below `below`%
+ *   firstblood :334-336  the first blow on this foe (scenario `firstBlow`)
+ */
+export function lootPowerTerms(powers, target, opts = {}) {
+  let pct = 0;
+  let flat = 0;
+  const all = opts.assumeTriggers === true;
+  const foeShare = num(opts.healthShare, 1);
+  const selfShare = num(opts.attackerHealthShare, 1);
+  for (const p of powers ?? []) {
+    switch (p?.kind) {
+      case 'bane':
+        if (all || (target?.affinity !== 'Human' && Array.isArray(p.foes) && p.foes.includes(target?.careerIndex))) pct += num(p.pct, 0);
+        break;
+      case 'unaware': if (all || opts.unaware) pct += num(p.pct, 0); break;
+      case 'sanctified': if (all || (p.group != null && foeGroup(target) === p.group)) pct += num(p.pct, 0); break;
+      case 'flow': pct += num(p.pct, 0) * num(opts.flowStacks, num(p.max, 1)); break;
+      case 'venom': flat += floor(num(p.flat, 0) * (all || foeShare < 0.5 ? 2 : 1) * elementShare(target, 'poison')); break;
+      case 'moon': if (all || opts.night) pct += num(p.pct, 0) + (all || foeGroup(target) === 'animal' ? num(p.beast, 0) : 0); break;
+      case 'rage': if (all || selfShare < num(p.below, 0) / 100) pct += num(p.pct, 0); break;
+      case 'execute': if (all || foeShare < num(p.below, 0) / 100) pct += num(p.pct, 0); break;
+      case 'firstblood': if (all || opts.firstBlow) pct += num(p.pct, 0); break;
+      default: break;
+    }
+  }
+  return { pct, flat };
+}
+
+/**
+ * The net of the weapon's Strikes damage rows against this foe (systems/enchantments.js:622-631 Potent Vs +5,
+ * :886-892 Low Damage Vs -5; matched by the foe's AFFINITY, `mobileAffinityMatches`, never by a group): what
+ * `doItemEnchantmentPayloads` adds to the blow (`damageOut += ...`, :1068).
+ */
+export function strikesNet(item, target) {
+  if (target?.mobileType == null) return 0;
+  let net = 0;
+  for (const e of itemEnchantments(item) ?? []) {
+    if (e.type === UPSTREAM_ENCHANTMENTS.PotentVs && mobileAffinityMatches(target.mobileType, e.param)) net += POTENT_VS_DAMAGE;
+    else if (e.type === UPSTREAM_ENCHANTMENTS.LowDamageVs && mobileAffinityMatches(target.mobileType, e.param)) net += LOW_DAMAGE_VS;
+  }
+  return net;
 }
 
 /** The shaft's own multiplier as bowFastDamage reads it (combat/bowBloom.js:73-79): the bow kind's `pull`
@@ -695,30 +799,65 @@ export function resolveBlow(d, part, ctx = {}) {
  * test/pricing.test.js), and the hosts (combat/playerWeapon.js:1260-1277) take its answer as the blow. An off-hand blow
  * is `whole` only OFF_HAND_BLOW.blowWeight (0.8) of the time, so it is two outcomes. The relay cap is the caller's.
  */
-function afterShare(shared, p, { weapon = null, offHand = false, traits = [], strikeKind = 'melee', bow = null, potentVs = 0 } = {}) {
+export function afterShare(shared, p, { weapon = null, offHand = false, traits = [], strikeKind = 'melee', bow = null, potentVs = 0, echoes = [], relay = false } = {}) {
   const heard = potentVs ? (offHand ? OFF_HAND_BLOW.blowWeight : 1) : 0;
   const branches = heard > 0 && heard < 1
-    ? [{ p: p * heard, damage: shared + potentVs }, { p: p * (1 - heard), damage: shared }]
-    : [{ p, damage: heard >= 1 ? shared + potentVs : shared }];
-  return branches.map(({ p: q, damage }) => {
+    ? [{ p: p * heard, damage: Math.max(0, shared + potentVs) }, { p: p * (1 - heard), damage: shared }]
+    : [{ p, damage: heard >= 1 ? Math.max(0, shared + potentVs) : shared }]; // doItemEnchantmentPayloads clamps the sum at 0 (:1030-1033)
+  const out = [];
+  for (const { p: q, damage } of branches) {
     const shot = bowBlow(damage, bow); // the pull comes after the payloads, before the trait
     const v = shot > 0 && traits.length ? resistBlow(traits, shot, { kind: strikeKind, weapon }) : shot;
-    return { p: q, v };
-  });
+    if (!(damage > 0) || !echoes.length) { out.push({ p: q, v, x: 0, echoMask: 0, echoHits: 0 }); continue; }
+    // Many Endings (lootPowers.js:374-376, :444-454): the strike listener is told the blow's FINAL damage - the
+    // formula's, so before the pull and the trait - and each power rolls `chance` per cent. A hit repeats it as
+    // n = max(1, round(damage)): on a body the relay runs it is OWED (oweFoe) and taken into THIS blow's claim by the
+    // host (dungeonContext.js:4528-4531 landOnBoss: `damage += bossStrikeAt(takeOwed(...), 'melee', weapon)`), resisted
+    // on its own as a melee swing and added to the resisted blow - ONE claim, one cap on the sum; on an ordinary
+    // foe it is its own hit on the foe's health (`door.hurtFoe`): no trait, no cap.
+    const n = Math.max(1, Math.round(damage));
+    for (let mask = 0; mask < (1 << echoes.length); mask++) {
+      let pr = q;
+      let k = 0;
+      echoes.forEach((c, i) => { const hit = (mask >> i) & 1; pr *= hit ? c / 100 : 1 - c / 100; k += hit; });
+      if (!(pr > 0)) continue;
+      if (!k) { out.push({ p: pr, v, x: 0, echoMask: mask, echoHits: 0 }); continue; }
+      const owed = k * n;
+      if (relay) out.push({ p: pr, v: v + (traits.length ? resistBlow(traits, owed, { kind: 'melee', weapon }) : owed), x: 0, echoMask: mask, echoHits: k });
+      else out.push({ p: pr, v, x: owed, echoMask: mask, echoHits: k });
+    }
+  }
+  return out;
 }
+
+/**
+ * The what-if powers `opts.imprints` adds to a piece that already carries `held`: one a power is not added twice
+ * (upstream wornPowers counts a power once, lootPowers.js:247-253), so pricing the power a build has is no change.
+ */
+export const additionsTo = (held, imprints) =>
+  (imprints ?? []).filter((p) => !held.some((q) => q === p || JSON.stringify(q) === JSON.stringify(p)));
+
+/** Every power a blow carries: the wielded piece's own and the scenario's what-ifs (the same list the blow reads). */
+export const weaponPowers = (w, opts = {}) => {
+  const held = w?.powers ?? [];
+  return [...held, ...additionsTo(held, opts.imprints)];
+};
+
+/** The Many Endings chances (per cent) among a weapon's powers - one roll each, unconditional (lootPowers.js:374). */
+export const echoChances = (powers) => (powers ?? []).filter((p) => p?.kind === 'echo').map((p) => num(p.chance, 0)).filter((c) => c > 0);
 
 /**
  * The distribution of the damage a landed, non-critical blow of the card's rolls does to one body part:
  * `Map(value -> probability)`, after the shield, the off hand's share, the boss traits and the per-hit cap.
  * The differential tests compare it value by value with upstream's sampled blows.
  */
-export function blowDistribution(rolls, part, { target, weapon = null, offHand = false, traits = [], cap = 0, bowSpam = false, potentVs = 0 } = {}) {
+export function blowDistribution(rolls, part, { target, weapon = null, offHand = false, traits = [], cap = 0, bowSpam = false, potentVs = 0, echoes = [] } = {}) {
   const strikeKind = weapon?.ranged ? 'arrow' : 'melee';
   const bow = bowOf(weapon, { bowSpam });
   const out = new Map();
   for (const d of rolls) {
-    for (const { p, v } of resolveBlow(d, part, { target, weapon, offHand, traits, strikeKind, bow, potentVs })) {
-      const value = cap > 0 ? Math.min(v, cap) : v;
+    for (const { p, v, x } of resolveBlow(d, part, { target, weapon, offHand, traits, strikeKind, bow, potentVs, echoes, relay: !!target?.relayBody })) {
+      const value = (cap > 0 ? Math.min(v, cap) : v) + (x ?? 0);
       out.set(value, (out.get(value) ?? 0) + p / rolls.length);
     }
   }
@@ -861,18 +1000,30 @@ function allowancePatch(tgt, health, { cappedPerSwing, hit, aps, procs, cap, str
  * second damage calculation: the change enters the one blow at its upstream position.
  *   edit.loot     { pct, flat }  a loot power the weapon does not carry (lootBlow: the slayer-style
  *                                percentage and the flat, before the martial path, the crit, the defence)
- *   edit.potentVs n              Potent Vs' flat on a landed blow (formulas.js tail, after the defence and
+ *   edit.imprint  power record   a Legendary/Rare power the main-hand item does not carry (the same record
+ *                                `powerOf` gives an equipped item): its conditions read from the target and the
+ *                                scenario, `assumeTriggers: true` pricing it as if they held
+ *   edit.potentVs n              Potent Vs' flat on a blow (formulas.js tail, after the defence and
  *                                the off hand's share, before the pull, the trait and the cap)
+ * An item that CARRIES the power or the enchantment (`rarity`+`imprint`/`legendary`, `enchantments`) is read by the
+ * same code: equipped evaluation and `with(edit)` are one path (Stage 2.11a).
  * or any other analyze option. In a dual build the edit rides the main-hand item; a pair is one item.
  */
 export function analyze(ch, args = {}) {
   const r = analyzeCard(ch, args);
-  Object.defineProperty(r, 'with', { value: (edit = {}) => analyze(ch, { ...args, ...edit }), enumerable: false });
+  Object.defineProperty(r, 'with', {
+    value: (edit = {}) => {
+      const { imprint, ...rest } = edit;
+      // `imprint` is a power record (systems/loot/lootRarity.js powerOf) the main-hand item does not carry yet
+      return analyze(ch, { ...args, ...rest, ...(imprint ? { imprints: [...(args.imprints ?? []), imprint] } : {}) });
+    },
+    enumerable: false,
+  });
   return r;
 }
 
 function analyzeCard(ch, {
-  weapon, target, core = 'overhaul', swing = 'StrikeLeft', critDamage = true,
+  weapon, target, core = 'overhaul', swing = RANDOM_SWING, critDamage = true,
   traits = null, health = null, passiveOn = true, ...opts
 } = {}) {
   let w = weapon === undefined ? weaponOf(ch.weapon, { rri: !!opts.rri }) : weapon;
@@ -886,12 +1037,19 @@ function analyzeCard(ch, {
   // `entity.bossTraits`); an explicit `traits` argument is an override for trait experiments.
   const traitList = traits ?? t.bossTraits ?? [];
   const wraps = !w && ch.wraps ? weaponOf(ch.wraps, { rri: !!opts.rri }) : null;
+  // The draw is a melee attack's. A bow's release is forced to StrikeDown (playerWeapon.js:1113); a gun's shot has
+  // no swing state at all (its machine's state is Idle, so playerAttackOptions reads no modifier), which is the
+  // neutral entry. An explicit `swing` key is untouched, so a caller can still pin one direction.
+  const swingKeys = swing === RANDOM_SWING
+    ? (w?.ranged ? (w.gun ? ['StrikeLeft'] : ['StrikeDown']) : SWING_DIRECTIONS)
+    : [swing];
+  const swingChance = 1 / swingKeys.length;
   if (opts.dual && ch.offWeapon && !w?.twoHanded && !w?.gun && !WEAPONS[ch.offWeapon.templateIndex]?.twoHanded) {
     const offWeapon = weaponOf(ch.offWeapon, { rri: !!opts.rri });
     const base = { ...opts, dual: false, target: t, traits: traitList, health, core, swing, critDamage };
     const main = analyzeCard(ch, { ...base, weapon: w, offHand: false });
     // the what-if (a loot power, Potent Vs) is an item the MAIN hand carries; the off-hand weapon is its own item
-    const off = analyzeCard({ ...ch, weapon: ch.offWeapon }, { ...base, weapon: offWeapon, offHand: true, loot: null, potentVs: 0 });
+    const off = analyzeCard({ ...ch, weapon: ch.offWeapon }, { ...base, weapon: offWeapon, offHand: true, loot: null, imprints: null, potentVs: 0 });
 
     // THE EXCHANGE (dualWield.js, handsLaw.js): lead, off, lead, off - four ticks a blow once the flurry is
     // running, plus the off hand's burden held in whole ticks at its blows' end. One weapon alone is five
@@ -1004,38 +1162,50 @@ function analyzeCard(ch, {
   // after the critical and before the condition band. `softMaterialRequirements` is upstream's
   // default true; false is its whole-blow refusal.
   const matReqMulti = materialRequirementMultiplier(tgt, w, { soft: opts.softMaterialRequirements !== false });
-  const simOpts = { ...opts, passiveOn, critDamage, healthShare: opts.healthShare ?? t.healthShare ?? 1, firmamentDamagePct: opts.firmamentDamagePct ?? ch.firmamentDamagePct ?? 0, wraps, matReqMulti };
-  const hit = hitModel(ch, w, tgt, swing, core, simOpts);
-  const dmg = damageModel(ch, w, tgt, swing, core, simOpts);
-  // The off hand's share is applied after the target's intrinsic defenses in the hit path; keep the
-  // returned `damage` card in the hand's post-share terms for display/API compatibility.
+  // A power the wielded item already carries is not added a second time: upstream's wornPowers counts a power once
+  // (lootPowers.js:247-253, by its id), so pricing the power a build already has is no change. The additions ride the
+  // loot step (`imprintsExtra`), the same list the Echo's chances are read from.
+  const heldPowers = (w ?? wraps)?.powers ?? [];
+  const powerAdditions = additionsTo(heldPowers, opts.imprints);
+  const simOpts = { ...opts, passiveOn, critDamage, healthShare: opts.healthShare ?? t.healthShare ?? 1, firmamentDamagePct: opts.firmamentDamagePct ?? ch.firmamentDamagePct ?? 0, wraps, matReqMulti, imprintsExtra: powerAdditions };
+  // One hit and one damage model per direction of the draw; every later stage (share, defence, traits, cap,
+  // echoes) resolves each direction through the same pipeline and the expectation is the equal mixture. No new
+  // random draw is introduced: the direction is enumerated, never sampled.
   const shaft = bowOf(w, opts);
-  const cardDmg = opts.offHand
-    ? (() => {
-        const plain = dmg.plainRolls.map((d) => offHandDamage(d));
-        const crits = dmg.critRolls.map((d) => offHandDamage(d));
-        return {
-          ...dmg,
-          min: Math.min(...plain), max: Math.max(...plain), avg: mean(plain),
-          critMin: Math.min(...crits), critMax: Math.max(...crits), critAvg: mean(crits),
-          plainRolls: plain, critRolls: crits,
-        };
-      })()
-    : dmg;
-  // A shaft's displayed card is the pulled blow (bowFastDamage); the rolls stay the card's own, since the hit
-  // path applies the pull after the defence.
-  const displayDmg = shaft
-    ? (() => {
-        const plain = cardDmg.plainRolls.map((d) => bowBlow(d, shaft));
-        const crits = cardDmg.critRolls.map((d) => bowBlow(d, shaft));
-        return {
-          ...cardDmg,
-          min: Math.min(...plain), max: Math.max(...plain), avg: mean(plain),
-          critMin: Math.min(...crits), critMax: Math.max(...crits), critAvg: mean(crits),
-          bow: shaft,
-        };
-      })()
-    : cardDmg;
+  const hits = swingKeys.map((key) => hitModel(ch, w, tgt, key, core, simOpts));
+  const dmgs = swingKeys.map((key) => damageModel(ch, w, tgt, key, core, simOpts));
+  const dmgMix = mixCards(dmgs);
+  const cardOf = (dmg) => {
+    // The off hand's share is applied after the target's intrinsic defenses in the hit path; keep the
+    // returned `damage` card in the hand's post-share terms for display/API compatibility.
+    const cardDmg = opts.offHand
+      ? (() => {
+          const plain = dmg.plainRolls.map((d) => offHandDamage(d));
+          const crits = dmg.critRolls.map((d) => offHandDamage(d));
+          return {
+            ...dmg,
+            min: Math.min(...plain), max: Math.max(...plain), avg: mean(plain),
+            critMin: Math.min(...crits), critMax: Math.max(...crits), critAvg: mean(crits),
+            plainRolls: plain, critRolls: crits,
+          };
+        })()
+      : dmg;
+    // A shaft's displayed card is the pulled blow (bowFastDamage); the rolls stay the card's own, since the hit
+    // path applies the pull after the defence.
+    return shaft
+      ? (() => {
+          const plain = cardDmg.plainRolls.map((d) => bowBlow(d, shaft));
+          const crits = cardDmg.critRolls.map((d) => bowBlow(d, shaft));
+          return {
+            ...cardDmg,
+            min: Math.min(...plain), max: Math.max(...plain), avg: mean(plain),
+            critMin: Math.min(...crits), critMax: Math.max(...crits), critAvg: mean(crits),
+            bow: shaft,
+          };
+        })()
+      : cardDmg;
+  };
+  const displayDmg = mixCards(dmgs.map(cardOf));
   // pcaao.js:1706-1724 / 1764-1768: the host's backstab chance is the live Backstabbing skill when
   // the foe's back was to the player (and the foe is no Watchful revenant); it is added FLAT to the
   // to-hit roll, and a landed blow rolls once for the ×3 (only above skill 1). `backstabUptime` is
@@ -1046,9 +1216,9 @@ function analyzeCard(ch, {
   const backUptime = clamp(num(opts.backstabUptime, 0), 0, 1);
   const backProb = backSkill > 1 ? clamp(backSkill, 0, 100) / 100 : 0;
   const behind = backUptime > 0 && backSkill !== 0;
-  const hitBehind = behind
-    ? hitModel(ch, w, tgt, swing, core, { ...simOpts, backstabBonus: backSkill })
-    : hit;
+  const hitsBehind = swingKeys.map((key, i) => (behind
+    ? hitModel(ch, w, tgt, key, core, { ...simOpts, backstabBonus: backSkill })
+    : hits[i]));
   const cad = w?.ranged ? rangedCadence(ch, w, simOpts) : cadence(ch, w, simOpts);
 
   const resist = weaponResistFactor(w, traitList);
@@ -1086,13 +1256,22 @@ function analyzeCard(ch, {
   const capped = (v) => (cap > 0 ? Math.min(v, cap) : v);
   const hand = (d) => (opts.offHand ? offHandDamage(d) : d);
   const bow = bowOf(w, opts);
+  // The Strikes damage rows the wielded item carries (equipped Potent Vs / Low Damage Vs) and any what-if
+  // (`opts.potentVs`) are ONE channel of the blow, applied where the game applies them.
+  const strikes = num(opts.potentVs, 0) + strikesNet((w ?? wraps)?.item ?? null, tgt);
+  // Many Endings (and any other echo power the wielded item carries or a what-if puts on it): a chance per power
+  const echoes = echoChances([...heldPowers, ...powerAdditions]);
+  // What one outcome adds to the swing: `landed` uncapped, `claimed` with the relay's per-hit cap on the CLAIM
+  // (v: the blow and, on a relay body, its owed echo together); `x` is an ordinary foe's independent echo hit.
+  const landed = (o) => o.v + (o.x ?? 0);
+  const claimed = (o) => capped(o.v) + (o.x ?? 0);
   const computeBranch = (h, plainRolls, critRolls) => {
     if (geared) {
       // Per part, every card roll resolves into the whole-number outcomes the game can produce
       // (the shield's block or its miss), each already through the off hand's share and the boss
       // trait; the cap and the means are taken over those outcomes (Stage 2.9, F1).
       const parts = [];
-      const ctx = { target: tgt, weapon: w, offHand: !!opts.offHand, traits: traitList, strikeKind, bow: bowOf(w, opts), potentVs: num(opts.potentVs, 0) };
+      const ctx = { target: tgt, weapon: w, offHand: !!opts.offHand, traits: traitList, strikeKind, bow: bowOf(w, opts), potentVs: strikes, echoes, relay: !!tgt.relayBody };
       for (let part = 0; part < 7; part++) {
         const weight = weights[part] ?? 0;
         if (!weight) continue;
@@ -1104,7 +1283,7 @@ function analyzeCard(ch, {
         });
       }
       // `fn` reduces one roll's outcome list to a number; `across` combines the rolls.
-      const meanOf = (outs, f) => outs.reduce((sum, o) => sum + o.p * f(o.v), 0);
+      const meanOf = (outs, f) => outs.reduce((sum, o) => sum + o.p * f(o), 0);
       const agg = (across, one) => parts.reduce(
         (sum, p) => sum + p.weight * ((1 - h.crit.chance) * h.byPart.plain[p.part] * across(p.plain.map((o) => one(o)))
           + h.crit.chance * h.byPart.crit[p.part] * across(p.crit.map((o) => one(o)))),
@@ -1117,52 +1296,81 @@ function analyzeCard(ch, {
         (sum, p) => sum + p.weight * (1 - ((1 - h.crit.chance) * h.byPart.plain[p.part] + h.crit.chance * h.byPart.crit[p.part])) * reduce(missOuts, f),
         0,
       ) : 0);
-      const sumOver = (outs, f) => outs.reduce((x, o) => x + o.p * f(o.v), 0);
-      const lowOver = (outs, f) => Math.min(...outs.map((o) => f(o.v)));
-      const highOver = (outs, f) => Math.max(...outs.map((o) => f(o.v)));
+      const sumOver = (outs, f) => outs.reduce((x, o) => x + o.p * f(o), 0);
+      const lowOver = (outs, f) => Math.min(...outs.map((o) => f(o)));
+      const highOver = (outs, f) => Math.max(...outs.map((o) => f(o)));
       const expect = (f) => agg(mean, (outs) => meanOf(outs, f)) + missOf(f, sumOver);
-      const lowest = (f) => agg((a) => Math.min(...a), (outs) => Math.min(...outs.map((o) => f(o.v)))) + missOf(f, lowOver);
-      const highest = (f) => agg((a) => Math.max(...a), (outs) => Math.max(...outs.map((o) => f(o.v)))) + missOf(f, highOver);
-      const same = (v) => v;
+      const lowest = (f) => agg((a) => Math.min(...a), (outs) => Math.min(...outs.map((o) => f(o)))) + missOf(f, lowOver);
+      const highest = (f) => agg((a) => Math.max(...a), (outs) => Math.max(...outs.map((o) => f(o)))) + missOf(f, highOver);
       return {
-        perSwing: expect(same),
-        perSwingMin: lowest(same),
-        perSwingMax: highest(same),
-        cappedPerSwing: expect(capped),
-        cappedPerSwingMin: lowest(capped),
-        cappedPerSwingMax: highest(capped),
+        perSwing: expect(landed),
+        perSwingMin: lowest(landed),
+        perSwingMax: highest(landed),
+        cappedPerSwing: expect(claimed),
+        cappedPerSwingMin: lowest(claimed),
+        cappedPerSwingMax: highest(claimed),
       };
     }
     // A bare target (no worn piece): one defended number per roll, then the same host steps as outcomes.
-    const ctx = { weapon: w, offHand: !!opts.offHand, traits: traitList, strikeKind, bow, potentVs: num(opts.potentVs, 0) };
+    const ctx = { weapon: w, offHand: !!opts.offHand, traits: traitList, strikeKind, bow, potentVs: strikes, echoes, relay: !!tgt.relayBody };
     const each = (rolls) => rolls.map((d) => afterShare(hand(defended(d)), 1, ctx));
     const plain = each(plainRolls);
     const crits = each(critRolls);
     const over = (rows, f, across) => across(rows.map((outs) => f(outs)));
-    const e = (g) => (outs) => outs.reduce((sum, o) => sum + o.p * g(o.v), 0);
-    const lo = (g) => (outs) => Math.min(...outs.map((o) => g(o.v)));
-    const hi = (g) => (outs) => Math.max(...outs.map((o) => g(o.v)));
-    const idv = (v) => v;
+    const e = (g) => (outs) => outs.reduce((sum, o) => sum + o.p * g(o), 0);
+    const lo = (g) => (outs) => Math.min(...outs.map((o) => g(o)));
+    const hi = (g) => (outs) => Math.max(...outs.map((o) => g(o)));
     // With Potent Vs a swing that missed is the five (afterShare), weighted by the chance to miss.
     const missOuts = ctx.potentVs ? afterShare(0, 1, ctx) : null;
     const missP = 1 - ((1 - h.crit.chance) * h.hitPlain + h.crit.chance * h.hitCrit);
     const miss = (fOne) => (missOuts ? missP * fOne(missOuts) : 0);
     const mix = (fOne, across) => (1 - h.crit.chance) * h.hitPlain * over(plain, fOne, across) + h.crit.chance * h.hitCrit * over(crits, fOne, across) + miss(fOne);
     return {
-      perSwing: mix(e(idv), mean),
-      perSwingMin: mix(lo(idv), (a) => Math.min(...a)),
-      perSwingMax: mix(hi(idv), (a) => Math.max(...a)),
-      cappedPerSwing: mix(e(capped), mean),
-      cappedPerSwingMin: mix(lo(capped), (a) => Math.min(...a)),
-      cappedPerSwingMax: mix(hi(capped), (a) => Math.max(...a)),
+      perSwing: mix(e(landed), mean),
+      perSwingMin: mix(lo(landed), (a) => Math.min(...a)),
+      perSwingMax: mix(hi(landed), (a) => Math.max(...a)),
+      cappedPerSwing: mix(e(claimed), mean),
+      cappedPerSwingMin: mix(lo(claimed), (a) => Math.min(...a)),
+      cappedPerSwingMax: mix(hi(claimed), (a) => Math.max(...a)),
     };
   };
   // Three outcomes: an ordinary swing (the foe not back-facing), and a back-facing swing that is
   // either ordinary or a ×3 backstab. Each is its own mixture so the cap and the body-part
   // distribution see the ×3 blow as a separate claim, never as a scaled average.
-  const ordinary = computeBranch(hit, dmg.plainRolls, dmg.critRolls);
-  const behindOrdinary = behind ? computeBranch(hitBehind, dmg.plainRolls, dmg.critRolls) : ordinary;
-  const behindBackstab = behind ? computeBranch(hitBehind, dmg.backstabPlainRolls, dmg.backstabCritRolls) : ordinary;
+  const branchLists = { ordinary: [], behindOrdinary: [], behindBackstab: [] };
+  swingKeys.forEach((key, i) => {
+    const dmg = dmgs[i];
+    branchLists.ordinary.push(computeBranch(hits[i], dmg.plainRolls, dmg.critRolls));
+    if (behind) {
+      branchLists.behindOrdinary.push(computeBranch(hitsBehind[i], dmg.plainRolls, dmg.critRolls));
+      branchLists.behindBackstab.push(computeBranch(hitsBehind[i], dmg.backstabPlainRolls, dmg.backstabCritRolls));
+    }
+  });
+  const mixBranch = (list) => {
+    if (list.length === 1) return list[0];
+    const out = {};
+    for (const key of ['perSwing', 'perSwingMin', 'perSwingMax', 'cappedPerSwing', 'cappedPerSwingMin', 'cappedPerSwingMax'])
+      out[key] = list.reduce((sum, b) => sum + b[key] * swingChance, 0);
+    return out;
+  };
+  const ordinary = mixBranch(branchLists.ordinary);
+  const behindOrdinary = behind ? mixBranch(branchLists.behindOrdinary) : ordinary;
+  const behindBackstab = behind ? mixBranch(branchLists.behindBackstab) : ordinary;
+  // Per-direction figures, on the same backstab mixture, for a caller that wants to see the draw.
+  const swingMix = swingKeys.map((key, i) => {
+    const o = branchLists.ordinary[i];
+    const bo = behind ? branchLists.behindOrdinary[i] : o;
+    const bb = behind ? branchLists.behindBackstab[i] : o;
+    const bl = (k) => (1 - backUptime) * o[k] + backUptime * ((1 - backProb) * bo[k] + backProb * bb[k]);
+    return {
+      key, chance: swingChance,
+      damage: (SWING_MODS[key] ?? { damage: 0 }).damage,
+      toHit: (SWING_MODS[key] ?? { toHit: 0 }).toHit,
+      hit: hits[i].hit,
+      perSwing: bl('perSwing'),
+      cappedPerSwing: bl('cappedPerSwing'),
+    };
+  });
   const blend = (key) => (1 - backUptime) * ordinary[key]
     + backUptime * ((1 - backProb) * behindOrdinary[key] + backProb * behindBackstab[key]);
   const perSwing = blend('perSwing');
@@ -1171,17 +1379,38 @@ function analyzeCard(ch, {
   const cappedPerSwing = blend('cappedPerSwing');
   const cappedPerSwingMin = blend('cappedPerSwingMin');
   const cappedPerSwingMax = blend('cappedPerSwingMax');
-  // The hit card and the allowance read the same mixture's hit chance.
+  // The hit card and the allowance read the same mixture's hit chance: the draw's expectation, then the
+  // back-facing share.
+  const mixHits = (list) => {
+    if (list.length === 1) return list[0];
+    const acc = (key) => list.reduce((sum, h) => sum + h[key] * swingChance, 0);
+    const terms = { ...list[0].terms };
+    for (const key of ['base', 'armour', 'other', 'backstab'])
+      terms[key] = list.reduce((sum, h) => sum + num(h.terms?.[key], 0) * swingChance, 0);
+    return {
+      ...list[0],
+      hit: acc('hit'),
+      hitPlain: acc('hitPlain'),
+      hitCrit: acc('hitCrit'),
+      byPart: {
+        plain: list[0].byPart.plain.map((_, i) => list.reduce((sum, h) => sum + h.byPart.plain[i] * swingChance, 0)),
+        crit: list[0].byPart.crit.map((_, i) => list.reduce((sum, h) => sum + h.byPart.crit[i] * swingChance, 0)),
+      },
+      terms,
+    };
+  };
+  const hitMix = mixHits(hits);
+  const hitBehindMix = behind ? mixHits(hitsBehind) : hitMix;
   const hitOut = {
-    ...hit,
-    hit: (1 - backUptime) * hit.hit + backUptime * hitBehind.hit,
-    hitPlain: (1 - backUptime) * hit.hitPlain + backUptime * hitBehind.hitPlain,
-    hitCrit: (1 - backUptime) * hit.hitCrit + backUptime * hitBehind.hitCrit,
+    ...hitMix,
+    hit: (1 - backUptime) * hitMix.hit + backUptime * hitBehindMix.hit,
+    hitPlain: (1 - backUptime) * hitMix.hitPlain + backUptime * hitBehindMix.hitPlain,
+    hitCrit: (1 - backUptime) * hitMix.hitCrit + backUptime * hitBehindMix.hitCrit,
     byPart: {
-      plain: hit.byPart.plain.map((v, i) => (1 - backUptime) * v + backUptime * hitBehind.byPart.plain[i]),
-      crit: hit.byPart.crit.map((v, i) => (1 - backUptime) * v + backUptime * hitBehind.byPart.crit[i]),
+      plain: hitMix.byPart.plain.map((v, i) => (1 - backUptime) * v + backUptime * hitBehindMix.byPart.plain[i]),
+      crit: hitMix.byPart.crit.map((v, i) => (1 - backUptime) * v + backUptime * hitBehindMix.byPart.crit[i]),
     },
-    terms: { ...hit.terms, backstab: backUptime * backSkill },
+    terms: { ...hitMix.terms, backstab: backUptime * backSkill },
   };
 
   const dps = perSwing * cad.aps;
@@ -1205,7 +1434,7 @@ function analyzeCard(ch, {
   const wrath = traitList.includes('wrathful');
   const gate = allowancePatch(tgt, bossHealth, { cappedPerSwing, hit: hitOut.hit, aps: cad.aps, procs: ench?.procs, cap });
   return {
-    core, weapon: w, target: tgt, swing, hit: hitOut, damage: displayDmg, cadence: cad,
+    core, weapon: w, target: tgt, swing, swingDirections: swingKeys, swingMix, hit: hitOut, damage: displayDmg, cadence: cad,
     perSwing, perSwingMin, perSwingMax, dps, dpsMin, dpsMax,
     cappedPerSwing, cappedPerSwingMin, cappedPerSwingMax, cappedDps, cappedDpsMin, cappedDpsMax, cap, capSource, capLoss: dps > 0 ? 1 - cappedDps / dps : 0,
     enchantPerSwing, enchantDps: enchantDpsValue, enchantDpsMin, enchantDpsMax, totalDps, totalDpsMin, totalDpsMax, totalTtk: gate?.totalTtk ?? totalTtk, enchantProcs: ench?.procs ?? [], procsBeforeBreak: procsBeforeBreak(w?.item ?? ch.wraps ?? ch.weapon),
@@ -1220,10 +1449,10 @@ function analyzeCard(ch, {
       uptime: backUptime,
       expectedMult: 1 + 2 * backUptime * backProb,
       watchful,
-      min: struck(bowBlow(defended(Math.min(...dmg.backstabPlainRolls)), bow)),
-      max: struck(bowBlow(defended(Math.max(...dmg.backstabPlainRolls)), bow)),
-      critMin: struck(bowBlow(defended(Math.min(...dmg.backstabCritRolls)), bow)),
-      critMax: struck(bowBlow(defended(Math.max(...dmg.backstabCritRolls)), bow)),
+      min: struck(bowBlow(defended(Math.min(...dmgMix.backstabPlainRolls)), bow)),
+      max: struck(bowBlow(defended(Math.max(...dmgMix.backstabPlainRolls)), bow)),
+      critMin: struck(bowBlow(defended(Math.min(...dmgMix.backstabCritRolls)), bow)),
+      critMax: struck(bowBlow(defended(Math.max(...dmgMix.backstabCritRolls)), bow)),
     },
     traits: traitList, healthShare: simOpts.healthShare,
     notes: {

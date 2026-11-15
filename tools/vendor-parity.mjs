@@ -47,6 +47,8 @@ const MODULES = [
   'systems/sigil/sigil.js', 'systems/martialPaths.js',
   // Stage 2.9: the enchantment registry and its type table (formats/magicDef.js was a stub).
   'systems/enchantments.js', 'formats/magicDef.js',
+  // Stage 2.11a: the set-duel flag wornPowers asks first (a stub answered a truthy object: no worn power fired).
+  'systems/sigil/sigilSets.js',
 ];
 
 function mulberry32(seed) {
@@ -289,6 +291,18 @@ for (const [param, mobile] of [[1, 31], [0, 31], [2, 128], [1, 36]]) {
     return [E.ENCHANTMENT_TYPES.PotentVs, E.ENCHANTMENT_TYPES.LowDamageVs, E.isEnchantedItem(item), E.doItemEnchantmentPayloads(E.PAYLOAD.Strikes, item, { entity: { isPlayer: true }, target, damage: 20, nowMinutes: 0 })];
   };
   same(`Potent Vs payload param ${param} vs ${mobile}`, strikes, strikes);
+}
+// Stage 2.11a: a worn piece's power is read (wornPowers -> setsDueling false) and lootBlow adds it to the blow.
+for (const [rarity, field, id] of [['rare', 'imprint', 'tsaesci-fang'], ['legendary', 'legendary', 'anseis-edge'], ['rare', 'imprint', 'nightwhisper']]) {
+  const worn = (x) => {
+    const L = x['systems/loot/lootPowers.js'];
+    const e = { isPlayer: true, level: 30, stats: {}, skills: [], equip: { slots: [] } };
+    const w = { group: 'Weapons', templateIndex: 121, material: 9, maxCondition: 1000, currentCondition: 1000, rarity, [field]: id };
+    x['systems/equip.js'].equipTableOf(e)[19] = w;
+    const t = { isPlayer: false, mobileType: 31, careerIndex: 31, affinity: 'Daedra', health: 40, maxHealth: 100 };
+    return [x['systems/sigil/sigilSets.js'].setsDueling(), L.wornPowers(e).map((p) => p.id), L.lootBlow(w, 100, e, t, { estimate: true, unaware: true })];
+  };
+  same(`worn power ${id}`, worn, worn);
 }
 const boot = (x) => {
   const r = x['systems/enemyExpansion/dexInstall.js'].installEnemyExpansion({ log: () => {} });

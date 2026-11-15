@@ -8,6 +8,263 @@ does not belong here (use the commit message).
 
 ---
 
+## Stage 3.1 - seeded RNG and the exact per-blow outcome distribution (2026-11-16)
+
+**No number moved.** `analyze`, `fight`, `fightRelay`, the objectives and every table are unchanged; this stage adds `src/rng.js` and
+`src/blowOutcomes.js` beside them. Three additive edits in `src/model.js`: `skill` and `afterShare` are exported, and `afterShare`'s
+outcomes carry `echoMask` / `echoHits` (new fields; no existing reader uses them).
+
+What it adds: the full, fight and sampling tiers of one blow (the assumptions register M28), a seeded named-stream RNG, and the oracle
+harness `test/harness/blowOracle.mjs`. Verified: the distribution's means equal `analyze` to 1e-12 for all eleven scenarios; the joint
+distribution matches 300,000-500,000 upstream draws per scenario (chi-square z within +-1.3, max cell z 4.3 over up to 1,347 cells);
+three negative controls are rejected (chi-square z 216-304). The first enumeration labelled a miss in the x3 branch `backstab`; a
+local test caught it (the x3 is rolled on a hit only) and it was fixed before the differential ran.
+
+Full suite **482 tests, 482 pass**; vendor 289/122; parity **1855/1855**.
+
+---
+
+## Stage 2.13 - swing-direction fidelity (2026-11-16)
+
+**What the game does.** A melee attack draws one direction before the blow's own rolls: `WeaponManager.cs:343`
+`Random.Range((int)UpRight, (int)DownRight + 1)` over `CLICK_ATTACK_DIRECTIONS` (`characters/weaponStates.js:278`),
+mapped by `FPSWeapon.OnAttackDirection` (`characters/anims.js:33`) to `StrikeUp`, `StrikeLeft`, `StrikeRight`,
+`StrikeDownLeft`, `StrikeDown`, `StrikeDownRight`. The draw is `Math.floor(rolls() * 6)` in
+`combat/playerWeapon.js:1032` (`clickAttack` :1108 and the swing-mode gesture arm :992), once per attack; a bow bypasses
+it and releases `StrikeDown` (:1113), and a gun's shot has no swing state. The direction adds its flat damage and to-hit
+(`SWING_MODS` :83-90, `playerAttackOptions` :1344) INSIDE the one blow, before the crit, the material/condition, the
+defence, the trait and the per-hit cap. The port's default control mode is 2, click or hold (`settings.js`
+`PORT_DEFAULTS`), so this draw is the default attack.
+
+**What changed.** `src/model.js` now enumerates the six directions with equal probability for every melee swing, each
+through the unchanged pipeline, and mixes the results (hit chance, uncapped and capped per-swing damage, echoes and
+backstab included). No direction is sampled; `swing: 'StrikeLeft'` (or any single key) still pins one, and
+`analyze(...).swingMix` exposes the six per-swing figures. `SWING_DIRECTIONS` is the product of the upstream tables, not
+a copy. A4's "the six directions average to 0 / 0, so use `StrikeLeft`" is **disproved**: the per-part hit clamp (3..97)
+and the damage floor/rounding are nonlinear.
+
+| build | neutral `StrikeLeft` | six-way draw | change |
+|---|---|---|---|
+| max katana, gate 45 (capped DPS) | 857.19 | 853.49 | -0.43% |
+| max dai-katana, gate 45 (capped DPS) | 818.12 | 815.45 | -0.33% |
+| max long bow, reference foe (DPS) | 867.83 | 949.31 | +9.39% (its release is `StrikeDown`, not a side swing) |
+| L10 katana vs reference foe (DPS) | 0.991 | 0.914 | -7.75% |
+| L10 short blade vs reference foe (DPS) | 0.145 | 0.152 | +4.80% |
+
+A ranking moves too: at the level-45 reference foe the neutral card puts the short blade (117) 988.75 above the long
+blade (120) 988.54; the draw puts 120 (988.56) above 117 (987.53).
+
+**Proof.** `test/swingDirection.test.js` (6 tests): the six directions x four weapon types (katana, warhammer, short
+blade, fists) against upstream `pcaaoAttackDamage` with each direction's own `damageMod`/`toHitMod`; the full draw
+against 20,000 seeded upstream draws for a strong and a weak build; crit 100% + a binding cap, capped and uncapped; the
+long bow's forced `StrikeDown`; a whole fight against 160 seeded fights that draw per blow (inside 1%); a ranking whose
+order the draw reverses. Test 1 also pins the distribution to the upstream tables and every modifier to upstream
+`SWING_MODS`. Existing stages that compare a single direction now state `swing: 'StrikeLeft'` explicitly (they are not
+changed in meaning); consumer pins that legitimately moved use the new default (the gate katana 857.19 -> 853.49 in
+`test/integration.test.js`).
+
+Full suite **451 tests, 451 pass**; vendor 289/122; parity **1855/1855**.
+
+---
+
+## Stage 2.12b - fight metrics, relay saturation and ranking objectives (2026-11-16)
+
+**Part A - what the numbers mean.** The fight walk uses the expected damage per blow, so its `health / ttk` is a KILL RATE, not the damage
+dealt. `fight()` now returns `killDps` (the old `dps`), `outputDps` (damage actually dealt / ttk), `expectedPerSwing` (dealt / blows) and
+`overkill`, the last blow's excess. Against seeded upstream fights the walk is within 0.6% at a 600-point pool and within 0.3% from 2,600 up;
+the damage and kill rates differ by the overkill share (1.5% at 600, 0.1% at 12,000).
+
+**Part B - the relay on a health-dependent claim.** `simulateAllowance` takes `perClaimAt` - the claim read at the health that stands when it is
+made - and keeps the law (`joinFight :1213` / `applyHit :1298`: `got = min(claim, 12 x ref, bucket, hp)`, the token hand, the phase shields).
+`fightRelay` composes it with the health-dependent blow and reports `uncappedDps` (neither cap nor relay), `ceilingDps` (after the per-hit cap,
+before the relay), `acceptedDps` (what the relay took), `saturated` (the bucket ran dry) and `marginDps` (`ceiling - refill`).
+
+| gate 45, max profile | uncapped | ceiling | margin | relay kill rate |
+|---|---|---|---|---|
+| 117 (short blade) | 939 | 939 | 789 | 158.7 |
+| 121 (katana) | 985 | 857 | 707 | 157.8 |
+| 123 (dai-katana) | 1066 | 818 | 668 | 157.9 |
+| 126 (warhammer) | 478 | 405 | 255 | 157.2 |
+
+**Part C - objectives.** `src/objectives.js`: `snapshot`, `fight`, `relay`, `relay-ceiling`; `evaluateObjective` and `rankBuilds` return the
+objective, the target's identity, health and allowance on every row, refuse an unknown objective and mixed targets, and keep a row that cannot
+be evaluated (marked, not dropped). Existing consumers are untouched: the tables still print the full-health snapshot.
+
+| check | result |
+|---|---|
+| snapshot vs fight, reference foe at 12,000 | warhammer 1005.3 > short blade 988.8 -> short blade 987.7 > warhammer 828.3 |
+| relay vs uncapped at the gate | the dai-katana leads uncapped; the short blade leads the relay ceiling |
+| the relay ties | top four within 0.34% (158.7 / 158.7 / 158.7 / 158.1) |
+| the ceiling separates | 939 / 917 / 873 / 857 (8.8%); margins 789 / 767 / 723 / 707 |
+| two builds past the cap on every blow | identical capped per swing, identical relay kill time; only `uncappedDps` differs |
+
+**Proof.** `test/relayFight.test.js` (4): the law with a health-dependent claim against `applyHit`; below/at/above the refill; identical-capped
+builds; the relay fight exact against `applyHit` on the expected claims and within 1% of 120 seeded upstream relay fights (0.23% bias).
+`test/objectives.test.js` (6): metric semantics, objective identity and assumptions, the two reorderings, determinism, mixed-target refusal,
+marked failures.
+
+Full suite **445 tests, 445 pass**; vendor 289/122; parity **1855/1855**.
+
+---
+
+## Stage 2.12a - whole-fight health-dependent damage (2026-11-16)
+
+**The game.** Three effects in the blow read the FOE's share of its health at the moment of the blow, and pay on one side of a
+threshold: axe mastery below 0.5 and blunt at or above it (`systems/weaponMastery.js:114-126`, `WEAPON_HALF_LINE`), venom's flat
+doubled below 0.5 (`systems/loot/lootPowers.js:320`), an execute power's pct below its own `below` (`:329`). `share` is
+`health / maxHealth` (`combat/healthShare.js:24-40`; the relay's word for a relay body). The wielder's own health controls Orc Rage
+(`:328-330`) and Berserker's Frenzy (`systems/martialPowers.js:217`, `:276`) - a different entity, and the one the model does not
+simulate (no damage taken).
+
+**Changed.** `src/fight.js`: a walk over the foe's pool. The shares where the blow changes are 0.5 and each execute's `below`;
+between them the expected damage per swing is constant, so each segment's blows are `ceil(health above the segment's floor / perSwing)`
+at `1/aps`, and a blow that crosses a threshold carries its excess into the next. `dps = health / ttk` (the kill rate; the last blow
+overshoots), `segments`, and the fixed-health figure as `snapshot`. The wielder's `attackerHealthShare` is the caller's declaration in
+every segment. `analyze` and `with` are untouched - the fight only supplies the share - and `fight(...).with(edit)` prices a what-if
+exactly as the item that carries it. `src/model.js` exports `additionsTo`/`weaponPowers` so the walk sees the same power list the blow does.
+
+| max profile vs a tough reference foe, 12,000 health | full-health snapshot | whole fight | segments (share: per swing) |
+|---|---|---|---|
+| battle axe 127 | 607.0 | **672.2 (+10.7%)** | 0.75: 451, 0.25: 604 |
+| warhammer 126 | 1005.3 | **828.3 (-17.6%)** | 0.75: 809, 0.25: 572 |
+| katana 121 (no health effect) | 1036.4 | 1021.5 (-1.4%, the kill blow) | 676 / 676 |
+| katana at the Breach 45 | 984.5 | 967.7 | - |
+| venom build (fixture, 2,600 health) | 33.0 | 37.2 | 24.96 / 32.34 |
+| execute what-if (Sweet Mother's Kiss) | 22.9 | 25.0 | 17 / 17 / 26 |
+
+The weapon-family comparison moves: the warhammer is 1.66x the axe on the snapshot and **1.23x** over the fight.
+
+**Proof.** `test/fight.test.js` (7 tests): mastery exactly equal to upstream `weaponPastPct` at 0.9..0.2 for axe and blunt (the boundary
+at 0.5 included); venom at seven shares and execute at five against the worn-item blow; crit 100 + stoneskin + cap on both sides of the
+threshold; Orc Rage and Berserker at four attacker/foe combinations (the foe's health does not move them); a whole fight where health
+really falls - the walk's TTK against 300 seeded upstream blow-by-blow fights - and a what-if equal to the item.
+
+Full suite **435 tests, 435 pass**; vendor 289/122; parity **1855/1855**.
+
+---
+
+## Stage 2.11c - independent integration audit of 2.11a/2.11b (2026-11-16)
+
+**Fixed: one pricing double-count.** `with({ imprint })` added a power the item already carried a second time (two Echo rolls, or a doubled
+percentage), where upstream's `wornPowers` counts a power once (`lootPowers.js:247-253`). `analyze` now filters a what-if power already among the
+weapon's own (`src/model.js`); pricing the power a build has is no change. Regression: `test/integration.test.js` test 2 (fails on the pre-fix code:
+`carried anseis-edge, priced again: perSwing`).
+
+**Verified, no change needed.** One blow carrying every 2.11a/2.11b change - three perfect diamonds (past the +25 cap), a damage line, own fire 4 +
+two rubies (past the +6 cap), a slayer line, Potent Vs and an Echo - matches upstream value by value (z < 4.5), with and without stoneskin and at a
+binding cap. Equipped equals priced exactly over one-handed, two-handed, pair, dual, bow and backstab x flow, venom, echo, Potent Vs, a 25% line,
+a +6 fire line and both at once. The ordinary-foe Echo arm now has its differential: with a `playerDoor` record the oracle's echo takes `hurtFoe`
+(nothing owed), and `blow + echo` matches the model's independent hit (z < 4). The Stage 2.9 reproductions are unchanged (shield z -1.8..1.2, long-bow
+pull z -0.4..-0.1, pricing identity exact, saturated gate build 857.19).
+
+Two channels checked and found to be different by design, documented rather than changed: the `damagePct` option is a blow-size scenario (+2.2..+8.8%
+larger than the same `damage` line, which is a card change); a wraps `damage` line rides a fist blow exactly as upstream's `weaponDamageMods(info.wraps, ...)`
+does (+17.45% vs +17.46%).
+
+Full suite **428 tests, 428 pass**; vendor 289/122; parity **1855/1855**.
+
+---
+
+## Stage 2.11b - gear-line fidelity and Many Endings (2026-11-16)
+
+**A. A piece's lines are read as the game reads them.** *Game:* `systems/loot/lootRarity.js` - `layGemLines` (:2085-2088) lays a piece's own
+lines then its gems' (`gemLine`, graded: a perfect diamond +12, a plain one +6); `readLines` (:2155-2165) reads a piece's own lines whole but
+holds its GEM lines to law 6's cap - the top of the kind-and-param's Rare band, in the sockets' order (damage 25, fire/frost 6, stat 10);
+`validAffix` (:839-847) drops an unknown kind, a param the kind does not allow, or a value outside 1..the Legendary top; `affixWeaponDamage`
+(:2475-2479) sums the 'damage' lines; `lootBlow` (`lootPowers.js:286-347`) sums the slayer lines per param and floors EACH elemental line after
+its own career tolerance.
+
+*Changed:* `src/gearLines.js` is a thin adapter over those functions; `weaponOf`, `rebuildMods` and the blow read through it; `sockets.js`
+takes `gemLine`/`socketMax` from upstream instead of a table of its own; a repeated element accumulates instead of overwriting.
+
+*Impact:* three perfect diamonds read 25, not 36. The nine three-socket weapons lose 1.5-2.2% uncapped DPS (two-socket weapons unchanged):
+
+| max profile | damage % before -> after | uncapped DPS | gate capped DPS |
+|---|---|---|---|
+| 123 Dai-katana | 61 -> 50 | 1139.16 -> 1122.59 (-1.5%) | 818 unchanged |
+| 126 Warhammer | 61 -> 50 | 1027.53 -> 1005.27 (-2.2%) | 488.26 -> 477.65 (-2.2%) |
+| 128 War Axe | 72 -> 50 | 738.29 -> 722.04 (-2.2%) | 654.13 -> 650.97 (-0.5%) |
+| 130 Long Bow | 61 -> 50 | 887.69 -> 867.83 (-2.2%) | 465.58 unchanged |
+| 121 Katana (2 sockets) | 49 unchanged | 1139.16 -> 1139.16 | 857.19 unchanged |
+
+A pre-existing bug the differential found: a `skill` line whose param was `0` was dropped by the fold's `!key` guard; skill 0 is a skill.
+
+**B. Many Endings rides the blow's own claim.** *Game:* `lootStrike` (`lootPowers.js:374-376`) rolls `chance` per landed blow and `again()`
+(:444-454) repeats the blow's FINAL formula damage as `n = max(1, round(damage))` - a foe with a room record takes it as its own hit
+(`door.hurtFoe`: no trait, no cap); a body the relay runs is owed it (`oweFoe`, `playerDoor.js:47-49`) and its host takes it into the SAME
+claim (`dungeonContext.js:4528-4531` landOnBoss): `damage += bossStrikeAt(takeOwed, 'melee', weapon)` - resisted on its own as a melee swing,
+added to the resisted blow, ONE relay cap on the sum.
+
+*Changed:* `src/model.js` `echoChances` + the echo branches in `afterShare` (an outcome now carries `v` - the claim - and `x` - an ordinary
+foe's independent hit); `powerDps`/`with({ imprint })` price it through the same path; `realBuild` credits it by running the purse on the
+imprinted card. No multiplier stands in for it.
+
+*Impact:* the priced echo collapses where the claim is near the cap, and is unchanged where it is far below:
+
+| check (gate, level 45) | before | after |
+|---|---|---|
+| Warp-Edge on the long blade, delta | +85.72 DPS | +3.46 |
+| long-blade #1 imprint | Warp-Edge +85.72 | Ansei's Edge +34.56 |
+| Warp-Edge, short blade | +93.94 | +35.39 |
+| Warp-Edge, blunt | +48.83 | +24.46 |
+| real build 121 / 117 / 126 totalDps | 1128.31 / 1616.48 / 934.94 | 1030.77 / 1476.74 / 854.03 |
+| the same build on an ordinary foe, echo ratio | 1.1000 | 1.1000 (its own hit there) |
+
+**Proof.** `test/gearLines.test.js` (7 tests): 400 seeded items against `affixFold`/`affixWeaponDamage`/`lootBlow`, the +25% cap,
+socket counts for every template, invalid lines, four whole builds against the worn-item blow. `test/manyEndings.test.js` (3 tests): seven
+configurations at chance 100 compared value by value with the host's composition (binding, partial and no cap; stoneskin; off hand at 0.8
+with bladeturning; a shaft), the seeded 10% at two caps, and the independent-hit pricing rejected. The old readings fail each check.
+
+Full suite **424 tests, 424 pass**; vendor 289/122; parity **1855/1855**.
+
+---
+
+## Stage 2.11a - equipped state on the hit path (an item and its price are one calculation) (2026-11-15)
+
+**What the game does.** A worn piece carries its power as `rarity: 'legendary'` + `legendary` or `rarity: 'rare'` + `imprint`
+(`systems/loot/lootRarity.js:1271` `powerIdsOf`, record by `powerOf`); `lootBlow` (`systems/loot/lootPowers.js:286-347`) adds every
+carried power's percentage to the slayer lines' in ONE `shareOf` of the blow and its flat after, each condition read from the foe
+and the scenario (`:304-336`). A weapon's Potent Vs / Low Damage Vs rows are Strikes payloads (`systems/enchantments.js:622-631`,
+`:886-892`, matched by the foe's affinity) that `doItemEnchantmentPayloads` (`:1031-1075`) sums into the blow after the defence and
+the off hand's share, in `combat/formulas.js:826-840`, for a player whatever the blow did - a miss returns the five.
+
+**Changed.**
+- `src/model.js`: `weaponOf` reads the item's powers; `lootPowerTerms` turns powers into the loot step's `pct`/`flat` (bane,
+  unaware, sanctified, flow, venom, moon, rage, execute, firstblood); `strikesNet` reads the item's Potent Vs / Low Damage Vs rows into
+  the blow's Strikes channel (summed, clamped at 0, `mobileAffinityMatches`); `with({ imprint })` puts a power on the main-hand item.
+  Equipped and priced are the same code.
+- `src/imprints.js` `powerDps`: `base.with({ imprint, assumeTriggers })` for every kind but Many Endings (own stage).
+- `src/enchants.js` `enchantDps`: Potent Vs / Low Damage Vs are no longer added as `hit x flat` outside the blow.
+- `src/realBuild.js` / `src/purse.js` / `src/allowance.js`: `imprintEffect` and the `mult`/`flat` of `simulatePurse` and `claimStreams`
+  are deleted; the purse runs on the imprinted card.
+- Vendor (same pin): `systems/sigil/sigilSets.js` (+ `setReach.js`) vendored. Its stub made `setsDueling()` truthy, so `wornPowers`
+  was empty and **no worn power ever fired in the oracle**. 289 files + 122 stubs; parity 1855/1855 (adds a worn-power check).
+
+**Proof.** `test/equippedBuild.test.js` (10 tests): equipped == `with(edit)` exactly; the oracle holding the item worn matches
+within z 3.5 for 11 power cases, 7 enchantment cases and a five-modifier item; the old behaviour is rejected.
+
+| Output | Before | After |
+|---|---|---|
+| equipped Potent Vs, max katana at the gate (totalDps gain) | +7.43 | +2.83 (= the priced `with` gain) |
+| equipped Potent Vs, Pistolet pair | +5.11 | +3.80 |
+| equipped Potent Vs, max warhammer | +6.03 | +3.49 |
+| equipped Potent Vs, mid warhammer vs stoneskin | +4.53 | +2.41 |
+| equipped Potent Vs, mid katana (low hit) | +5.80 | +5.98 (the five rides the miss) |
+| equipped Ansei's Edge (flow), max katana, capped DPS | +0.00 (ignored) | +34.56 |
+| equipped Serpent's Kiss, max katana, capped DPS | +0.00 (ignored) | +22.11 |
+| realTemplate totalDps, 121 / 117 / 126 (cap mode) | 1128.31 / 1616.48 / 934.94 | 1121.05 / 1606.07 / 928.83 |
+
+realTemplate moves by -0.6..-1.0% because Potent Vs is now inside the capped blow (before, `enchantDps` added it uncapped); TTK and
+sustained are unchanged (saturated). The imprint ranking is unchanged, including Many Endings, whose pricing is a separate stage.
+
+**Limits.** Many Endings, chain/quake/conduit/siphon/surge, armour and jewellery powers, Gilded records and Cast When Strikes are not on
+the equipped path. Moon's night and Flow's build-up are scenario inputs (the oracle's sky clock is a stub). `W-LOOT-CARRY` applies to
+an equipped percentage power exactly as to a slayer line.
+
+Full suite **414 tests, 414 pass**; vendor 289/122; parity **1855/1855**.
+
+---
+
 ## Stage 2.9 - combat resolution fidelity and one damage calculation (2026-11-15)
 
 **F1 - the shield block is a per-blow outcome.** *Game:* `combat/pcaao.js:1784-1796` rolls one `dice100` block per blow;

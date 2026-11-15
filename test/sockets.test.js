@@ -15,7 +15,9 @@ test('socket counts follow the weapon size', () => {
 test('perfect diamond sockets are +12% damage each', () => {
   const ch = theoryCharacter({ damagePct: 40, sockets: perfectSockets(123) });
   const w = weaponOf(ch.weapon);
-  assert.equal(w.damagePct, 40 + 36);
+  // three perfect diamonds are 36 as lines, but a piece's gems read at most the top of the damage Rare band
+  // together (lootRarity.js:2151-2165 readLines, law 6): 12 + 12 + 1 = 25. The piece's own 40 reads whole.
+  assert.equal(w.damagePct, 40 + 25);
   assert.equal(socketAffixes(ch.weapon).length, 3);
   assert.equal(socketAffixes(ch.weapon)[0].value, 12);
 });

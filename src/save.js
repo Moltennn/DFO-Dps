@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { RACE_NAMES, SKILL_NAMES, SKILLS } from './data.js';
-import { socketAffixes } from './sockets.js';
+import { validItemLines, weaponDamagePct as itemWeaponDamagePct } from './gearLines.js';
 
 export function userDataDir(home = os.homedir()) {
   if (process.env.DAGGER_USER_DATA) return path.resolve(process.env.DAGGER_USER_DATA);
@@ -180,7 +180,7 @@ export function liveStat(ch, name) {
 }
 
 function addMap(obj, key, value) {
-  if (!key || !Number.isFinite(value)) return;
+  if (key == null || key === '' || !Number.isFinite(value)) return; // skill 0 is a skill: a falsy param is not a missing one
   obj[key] = (obj[key] ?? 0) + value;
 }
 
@@ -211,14 +211,16 @@ export function rebuildMods(items) {
   const armoredParts = new Array(7).fill(0);
   for (const it of items) {
     if (!it || it.equipSlot == null) continue;
-    for (const a of [...ARRAY(it.affixes), ...socketAffixes(it)]) {
-      if (!a || !Number.isFinite(a.value)) continue;
+    // Upstream's fold reads the piece's lines through readLines (the gem cap) and validAffix, `value | 0`
+    // (lootRarity.js:2373-2406 affixFold); the weapon's damage is affixWeaponDamage's own sum (:2475).
+    if (it.group === 'Weapons') weaponDamagePct += itemWeaponDamagePct(it);
+    for (const a of validItemLines(it)) {
+      const v = a.value | 0;
       switch (a.id) {
-        case 'stat': addMap(stats, a.param, a.value); break;
-        case 'skill': addMap(skills, a.param, a.value); break;
-        case 'damage': if (it.group === 'Weapons') weaponDamagePct += a.value; break;
-        case 'slayer': addMap(slayer, a.param, a.value); break;
-        case 'armor': for (let i = 0; i < 7; i++) armoredParts[i] += a.value; break;
+        case 'stat': addMap(stats, a.param, v); break;
+        case 'skill': addMap(skills, a.param, v); break;
+        case 'slayer': addMap(slayer, a.param, v); break;
+        case 'armor': for (let i = 0; i < 7; i++) armoredParts[i] += v; break; // unsupported input (M24); not read by a blow
         default: break;
       }
     }
