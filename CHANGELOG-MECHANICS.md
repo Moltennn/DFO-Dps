@@ -6,6 +6,41 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage 3.3 - streaming relay claim engine (2026-11-16)
+
+**No existing number moved.** `analyze`, `fight`, `fightRelay`, the objectives, `simulateAllowance` and the Stage 3.2
+fight path are unchanged. The stage adds `src/relayClaim.js`, `src/relayFight.js`, the upstream claim oracle and three
+test files. The one behavioural addition is a **guard**: `createAttackSchedule` now refuses an unarmed build (the
+`StrikeLeft` eight-tick list is not in the analytical cadence) instead of silently scheduling the five-frame interval.
+
+**What the game does.** `gateBrain.applyHit` (`:1298-1336`) refuses a dead fight and a non-finite/non-positive claim
+before any clock; refuses while `now < shieldUntil`; spends one token from a four-token bucket refilled at four a
+second (`spendBlow`, `:3411`); then refills the damage purse at `3 x ref` a second to `15 x ref` and pays
+`got = max(0, min(claim, 12 x ref, bucket, boss health))`. The excess is clipped and discarded, never deferred. A fresh
+join starts with a full purse and four tokens; a wounded-boss join starts empty (`:1231-1240`). `ref = 5 + level`
+(`:302`). The kill line is `hp <= 1e-6`; there is no rounding.
+
+**What changed.** `createRelayClaimEngine` is a streaming state machine: `claim({t, damage})` returns the per-claim
+accepted/refused reason, `want`, cap/bucket/health clips, `got`, and the bucket/token/health state after it, while the
+engine keeps only counters and current state. It preserves the game's stale-clock behaviour on refused claims (a
+no-token claim advances the token clock, not the purse clock; a shielded or invalid claim advances neither) and the
+exact boundaries (token at `>= 1`, shield at equality, cap at equality, exact-health kill). `simulateRelayFight` feeds
+it the Stage 3.2 schedule and Stage 3.1 fight tier: a miss is not a claim (no token), the claim is the uncapped sampled
+blow, the tier is rebuilt on the player's remaining share, and a build carrying an echo power is refused. The engine
+does not model geometry, Sundered halves, stun/profile `hitX`, the Wrath clock, host/crystal claims, phase-ward
+lifecycle, CWS/DoTs/Flow, wear or the optimizer; a fixed `shieldUntil` may be supplied.
+
+**What proves it.** `test/relayClaimDifferential.test.js` reads `bucket`, `rate`, `hp`, `dealt` and `clipped` from the
+vendored relay after every one of six schedules - four tokens at one instant, the 0.25 s boundary, cap/bucket/health
+clipping, an exact-health kill, the shield's strict boundary, a wounded join, invalid claims and a 1,000-claim seeded
+stream. `test/relayClaim.test.js` pins the boundaries and a 50,000-claim stream (no history). `test/relayClaimFight.test.js`
+replays every traced claim of a seeded relay fight against the upstream oracle, and covers saturation, deterministic
+replay, the trial distribution and the guards.
+
+Full suite **525 tests, 525 pass**; vendor 289/122; parity **1855/1855**.
+
+---
+
 ## Stage 3.2 closure audit - timing, thresholds and censoring (2026-11-16)
 
 **One output moved: a bow fight's first hit.** The Stage 3.2 schedule had used `cadence.tick`, the bow's *swing* frame

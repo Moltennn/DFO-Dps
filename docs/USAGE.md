@@ -283,7 +283,41 @@ const paired = simulatePairedFights([{ id: 'a', ch: a }, { id: 'b', ch: b }], { 
   damage are outside this stage (the assumptions register M29).
 - 1,000 fights at a 12,000 pool take about 3 seconds in Node 22.
 
-## 12. Outputs and JSON
+## 12. Relay claim engine (library)
+
+Stage 3.3 adds a streaming implementation of the relay's per-player claim law. It consumes one claim at a time; it
+does not precompute a DPS approximation and keeps no claim history.
+
+```js
+import { createRelayClaimEngine } from './src/relayClaim.js';
+import { simulateRelayFight, simulateRelayFights } from './src/relayFight.js';
+
+const engine = createRelayClaimEngine({ level: 45, share: 12000 });
+const r = engine.claim({ t: 0.5, damage: 700 });
+r.accepted; r.got; r.reason; r.capClip; r.bucketClip; r.healthClip;
+r.bucketAfter; r.tokensAfter; r.hpAfter;
+engine.summary(); // counters + remaining bucket/token state, no history
+
+// a seeded relay fight: Stage 3.2's schedule and Stage 3.1's tier, with the relay's cap/bucket
+const fight = simulateRelayFight(ch, {
+  target: gateTarget(45, { health: 2000 }), health: 2000, weapon, seed: 7, trace: true,
+});
+fight.claims; fight.accepted; fight.refused; fight.damageDealt; fight.overkill;
+fight.offered; fight.clipped; fight.refusedDamage;
+fight.saturated; fight.dryAt; fight.bucket; fight.ttk; fight.killDps;
+```
+
+- `claim({t, damage})` takes `t` in seconds (the source uses milliseconds). A claim is a landed, positive blow; a miss is not a claim and spends no token. The claim is the uncapped sampled
+  blow: the relay's `12 x ref` cap is the first cap it meets.
+- `fresh: false` models a join to a wounded boss (empty damage bucket). `shieldUntil` is a fixed window in seconds;
+  a claim at exactly its end is accepted. Phase-ward lifecycle is not scheduled.
+- The engine refuses an unarmed build (the Stage 3.2 schedule guard) and a build carrying a Many Endings echo power.
+  Geometry, Sundered halves, Wrath, host/crystal claims, CWS/DoTs/Flow and wear are outside this stage.
+- `simulateRelayFights` reports the conditional TTK, `killProbability`, accepted/refused claims, damage, clipping,
+  saturation and remaining bucket state across seeded trials. `offered = dealt + clipped + refusedDamage`; a refused
+  claim's damage is not in `clipped` because the game never reached the purse.
+
+## 13. Outputs and JSON
 
 HTML pages default to the current directory:
 
@@ -303,7 +337,7 @@ HTML pages default to the current directory:
 Use `--out <file>` to override. Many table commands accept `--json`; use
 `--help` for the exact command.
 
-## 13. First-run troubleshooting
+## 14. First-run troubleshooting
 
 - **No saves found**: set `DAGGER_USER_DATA` or pass `--save` explicitly;
   `doctor` prints the path it used.

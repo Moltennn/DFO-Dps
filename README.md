@@ -116,6 +116,10 @@ Use `./dfo-dps --help` for every flag, or see
   single and dual melee schedules, health-dependent distribution rebuilds,
   TTK/damage/overkill distributions, censoring and paired seeds. It is a
   library API, not a CLI page.
+- The Stage 3.3 streaming relay claim engine (`src/relayClaim.js`,
+  `src/relayFight.js`): the four-token hand, the damage purse, the per-claim
+  cap, clipped/refused claims, saturation, remaining bucket state and seeded
+  relay fights. Also a library API.
 
 **Supported with important approximations**
 
@@ -146,6 +150,10 @@ Use `./dfo-dps --help` for every flag, or see
   than approximating it. A ranged first hit is the upstream machine's own
   frame. Censored runs report a kill probability and a conditional TTK; no
   Kaplan-Meier estimate is made.
+- The Stage 3.3 relay engine does not model geometry, Sundered halves,
+  stun/profile hit multipliers, Wrath, host/crystal claims, phase-ward
+  lifecycle, CWS/DoTs/Flow or Many Endings; a build carrying an echo power
+  and an unarmed build are refused rather than approximated.
 - Per-blow ward suppression and the full proc/DoT budget.
 - Elite Breach, and non-English boss-trait seeding.
 - Exact reproduction of a live client's frame timing or RNG sequence.
@@ -222,8 +230,8 @@ subset with the full pinned checkout.
   what remains unverified.
 - [`docs/SOURCES.md`](docs/SOURCES.md) — the upstream pin and provenance.
 - the stage record — stochastic-engine design
-  and the source audit behind `src/rng.js`, `src/blowOutcomes.js` and
-  `src/simulateFight.js`.
+  and the source audit behind `src/rng.js`, `src/blowOutcomes.js`,
+  `src/simulateFight.js`, `src/relayClaim.js` and `src/relayFight.js`.
 - the documentation index — the full documentation index, including
   the engineering stage audits.
 

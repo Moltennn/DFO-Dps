@@ -71,6 +71,9 @@ export function createAttackSchedule(ch, args = {}) {
   if (wantsDual && probe.pair) throw new Error('simulateFight: Pistolet pair is not supported in Stage 3.2');
   const cad = probe.cadence;
   if (!cad || !(cad.seconds > 0)) return null;
+  if (!probe.weapon) {
+    throw new Error('simulateFight: fist scheduling is not supported (the unarmed StrikeLeft eight-tick list is not in the analytical cadence)');
+  }
 
   if (!dual) {
     const ranged = !!probe.weapon?.ranged;
@@ -274,7 +277,7 @@ export function summarize(values, { p10 = 0.1, p90 = 0.9 } = {}) {
 }
 
 /** Wilson score interval for a binomial share, the one small-sample interval that stays inside [0, 1]. */
-function wilson(kills, trials, z = 1.96) {
+export function wilsonInterval(kills, trials, z = 1.96) {
   if (!(trials > 0)) return null;
   const p = kills / trials;
   const den = 1 + (z * z) / trials;
@@ -320,7 +323,7 @@ export function simulateFights(ch, args = {}) {
     // horizon. With censored fights, the conditional mean is biased low relative to an unconditional TTK.
     ttk,
     ttkConditional: ttk,
-    killProbability: wilson(kills.length, rows.length),
+    killProbability: wilsonInterval(kills.length, rows.length),
     horizonSeconds: num(args.maxSeconds, 3600),
     damageMode: rows[0].damageMode,
     outputDps: output,
