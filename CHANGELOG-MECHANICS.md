@@ -6,6 +6,51 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage 3.5.3e - what-if edits ride their carrier (2026-11-16)
+
+**What the game does.** An imprint is a field on the item (`systems/loot/lootRarity.js:1271`), and every reader takes the
+powers from the equip table on the call: `wornPowers` (`vendor:systems/loot/lootPowers.js:134`, `:244-258`), `blowPowers`
+(`:262-268`), `lootBlow` (`:286-347`), `lootStrike` (`:351-387`), `lootSpellPower`/`lootSpellPierce` (`:747-763`). The Strikes
+payload reads the `charged` weapon's own rows (`vendor:combat/formulas.js:826-833`). There is no cache; `lowerCondition`
+unequips by identity (`vendor:systems/equip.js:570-608`), so a break removes the item and every imprint with it. The breaking
+blow keeps them (payload and `lootBlow` run before `damageEquipment`, `formulas.js:769`). Main and off hand behave the same.
+
+**What changed.** `analyze(...).with(edit)` prices `imprint`/`loot`/`potentVs` on the MAIN-hand item (`src/model.js:1010-1022`,
+`:1055`; `src/blowOutcomes.js:96-99` nulls them for the off hand). `src/simulateFight.js` now treats those three keys as
+carrier-bound: `CARRIER_EDIT_KEYS`/`withoutCarrierEdits` strip them **only when the main hand breaks**, before the survivor's
+schedule, tier and `refresh()` thresholds are rebuilt. An off-hand break keeps them (the main carrier is alive). Equipped item
+powers are untouched; `potencyPct`, `pierce`, `flowStacks` and every other scenario field are kept.
+
+**Before and after** (production `simulateFight`, main breaks on blow 1, same seed). Venom what-if (+8):
+
+| | breaking blow | post-break blows |
+|---|---|---|
+| equipped Rare imprint on the main | 7* | 21 0 20 15 22 |
+| priced what-if before | 7* | 29 0 28 23 30 |
+| priced what-if after | 7* | 21 0 20 15 22 |
+| control | 5* | 21 0 20 15 22 |
+
+`potentVs: 5`: +5 on the breaking blow; +5 on every later blow before, 0 after. `loot: { flat: 6 }`: +1 on the breaking blow;
++6 on landed later blows before, 0 after. An execute imprint's `bounds` `[1,0.5,0.25,0]` becomes `[1,0.5,0]`. An off-hand break
+keeps the main's edits (+8 post-break). A survivor's own equipped Rare imprint remains (+8).
+
+**Evidence.** `test/imprintLifetime.test.js` (10): the vendored lifecycle (`wornPowers`/`lootBlow`/`lowerCondition`/full blow),
+then production fights for the priced imprint, Potent Vs and loot flat (breaking blow keeps them; post-break equals the no-edit
+control and the equipped item), an off-hand break, the execute threshold, a survivor's own equipped imprint, scenario
+`potencyPct`/`pierce`, and `flowStacks`. Mutations caught in a throwaway copy (10): no strip (4 fail), strip on every break (1),
+strip before the breaking blow (4), strip only `imprints` (2), only `loot`+`potentVs` (2), only `potentVs` (3), `flowStacks`
+(1), the wrong hand (5), strip after `refresh()` (1, stale thresholds), and strip the real character-level inputs from `scenario`
+(1). Stripping `potencyPct`/`pierce` from `fightScenario` alone is equivalent - `refreshCwsPower` reads the original `scenario`.
+Parity with `b6ee533`: 250 pair/single fights (durability off and on, no break), 120 CWS no-kill fights (40 with breaks), the
+3.5.3a scheduling table and 160 kill/echo/post-kill-break fights byte-identical. Full suite **681 tests, 681 pass**; vendor
+**289 vendored + 122 stubbed**; parity **1855/1855**.
+
+**Not changed / limits.** Priced spell-power imprints remain unsupported (`spellPowerInputs` reads worn items and explicit
+`potencyPct`/`pierce`, `src/cws.js:250-291`) - the pre-existing priced spell-power gap, pinned by the test. Flow stack dynamics
+are out of scope (the fight takes `flowStacks` as a scenario constant). No event-level RNG equivalence is claimed. `vendor/` and
+`src/relayClaim.js` untouched; G5, G7, G8, relay durability, target gear wear, fist scheduling, DoT, ranged combat and the
+optimizer are untouched.
+
 ## Stage 3.5.3c - closing the independent audit of Stage 3.5.3b (2026-11-16)
 
 The audit of `2c2ece8` found three proven defects (G3-1, G2-1, G6-1) and coverage gaps; none moved a damage, kill or TTK number.

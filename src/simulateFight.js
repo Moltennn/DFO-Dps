@@ -52,6 +52,22 @@ function normalizeScenario(args) {
   return scenario;
 }
 
+/**
+ * The scenario keys that ride the ORIGINAL MAIN-HAND item, not the character or the fight. `analyze`'s `with(edit)` prices
+ * an imprint / a loot power / Potent Vs on the main-hand weapon (`src/model.js:1010-1022`, `:1055`; the off-hand blow nulls
+ * them, `src/blowOutcomes.js:96-99`), and an item that carries one is read by the same code. When that carrier breaks the
+ * edits must go with it: upstream's powers and Strikes rows are read from the worn item (`systems/loot/lootPowers.js:244-258`,
+ * `:262-268`; `combat/formulas.js:826-833`), and `lowerCondition` takes a broken item out of the equip table
+ * (`systems/equip.js:570-608`). Character-level inputs (`potencyPct`, `pierce`, `flowStacks`, the target, the health, the
+ * limits, the streams) are not carrier-bound and stay.
+ */
+const CARRIER_EDIT_KEYS = Object.freeze(['imprints', 'loot', 'potentVs']);
+const withoutCarrierEdits = (scenario) => {
+  const out = { ...scenario };
+  for (const key of CARRIER_EDIT_KEYS) delete out[key];
+  return out;
+};
+
 /** The first-hit frame of a flurry: the hit frame reached from FLURRY_FROM_FRAME. */
 const FLURRY_HIT_FRAME = HIT_FRAME_MELEE - DUAL.FLURRY_FROM_FRAME;
 /**
@@ -229,7 +245,7 @@ export function simulateFight(ch, args = {}) {
   const durability = scenario.durability === true;
   const dur = durability ? prepareDurability(ch, scenario) : null;
   const fightCh = dur ? dur.ch : ch;
-  const fightScenario = dur ? dur.scenario : scenario;
+  let fightScenario = dur ? dur.scenario : scenario;
   const schedule = createAttackSchedule(fightCh, fightScenario);
   if (!schedule) return null;
   const pool = schedule.health;
@@ -568,6 +584,11 @@ export function simulateFight(ch, args = {}) {
       fightCh.offWeapon = null;
       fightCh._dual = false;
       dual = false;
+      // The what-if edits (`imprints`, `loot`, `potentVs`) belong to the ORIGINAL main-hand item. They rode the breaking blow
+      // (already resolved), and when the main hand is the one that broke they must not move onto the promoted survivor: strip
+      // them before the survivor's schedule, tier and thresholds are rebuilt. An off-hand break leaves the main carrier alive,
+      // so its edits stay (and the off hand never carried them anyway - blowOutcomes.js:96-99).
+      if (hand === 'main') fightScenario = withoutCarrierEdits(fightScenario);
       const single = createAttackSchedule(fightCh, { ...fightScenario, dual: false, weapon: weaponOf(survivor) });
       if (!single) { dur.endedByBreak = true; break; }
       scheduleNow = single;
