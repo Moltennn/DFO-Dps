@@ -20,7 +20,7 @@ import { upstream, referenceFoe, referenceFoe as upstreamReferenceFoe, weaponIte
 import { upstreamEntity, character, simCharacter, weapon } from './harness/fixtures.mjs';
 import { makeTarget, EFFECT_FLAGS } from '../src/target.js';
 import { referenceFoe as localReferenceFoe, weaponOf, strikesNet } from '../src/model.js';
-import { resolveCwsCast, cwsEligible, isDamageHealth, cwsRows, spellPowerInputs } from '../src/cws.js';
+import { resolveCwsCast, cwsEligible, isDamageHealth, cwsRows, spellPowerInputs, schoolPotencyFor } from '../src/cws.js';
 import { payloadRows } from '../src/enchants.js';
 import { blowFightTier } from '../src/blowOutcomes.js';
 import { createAttackSchedule, simulateFight, simulateFights, summarize } from '../src/simulateFight.js';
@@ -28,7 +28,7 @@ import { oracleEntity } from './harness/upstreamBodies.mjs';
 import { oracleItem, upstreamFight } from './harness/fightOracle.mjs';
 import { setPlayerDoor } from '../vendor/upstream/a3eb1605/src/systems/playerDoor.js';
 import { _resetLootPowersForTests, _setLootPowersRandForTests } from '../vendor/upstream/a3eb1605/src/systems/loot/lootPowers.js';
-import { registerSpellPowerMod, registerSpellPierceMod } from '../vendor/upstream/a3eb1605/src/systems/spell/spellPower.js';
+import { registerSpellPowerMod, registerSpellPierceMod, schoolPotency } from '../vendor/upstream/a3eb1605/src/systems/spell/spellPower.js';
 
 const DESC = character({
   level: 30, raceId: 1, stats: { strength: 70, agility: 60, speed: 60, luck: 50 }, skills: 50,
@@ -543,40 +543,163 @@ test('echo kill: upstream hurtFoe and the local fight both drop the melee blow',
 });
 
 
-test('fight-level CWS: local simulateFights and the upstream host fight agree on damage, TTK and overkill', async () => {
-  const u = await upstream();
-  const spell = spellOf([eff(4, 0, 10)]);
-  const spells = new Map([[1, spell]]);
-  const item = enchItem([{ type: 2, param: 1 }], 121);
+/**
+ * One local build and the upstream host fight on the SAME event list and per-trial seeds. `events` is the schedule's
+ * deterministic sequence up to `horizon`; every upstream call gets only test inputs (spell record, item, minted body,
+ * events, seed).
+ */
+function fightPair(u, { item, offItem = null, pool, trials, seed, maxSeconds = 3600, horizon = 3600, standard = null }) {
   const ch = simCharacter(BASIC(), item);
-  const target = localReferenceFoe(30, 'tough');
-  const args = { target, health: 12000, weapon: weaponOf(item) };
+  if (offItem) {
+    ch.offWeapon = { ...offItem, equipSlot: 21 };
+    ch._dual = true;
+  }
+  const args = {
+    target: localReferenceFoe(30, 'tough'), health: pool, weapon: weaponOf(item),
+    ...(offItem ? { dual: true } : {}), ...(standard ? { standard } : {}), maxSeconds,
+  };
   const schedule = createAttackSchedule(ch, args);
   assert.ok(schedule);
-  const events = Array.from({ length: 20000 }, () => schedule.next());
-  const local = simulateFights(ch, { ...args, trials: 240, seed: 0x3510, standard: spells });
-  assert.ok(local && local.ttk);
-
-  const upRows = local.seeds.map((seed) => upstreamFight(u, {
+  const events = [];
+  for (let i = 0; i < 20000; i += 1) {
+    const ev = schedule.next();
+    if (!ev || ev.t > horizon) break;
+    events.push(ev);
+  }
+  const local = simulateFights(ch, { ...args, trials, seed });
+  assert.ok(local, 'the local fights ran');
+  const up = local.seeds.map((s) => upstreamFight(u, {
     desc: BASIC(),
     item: oracleItem(item),
-    body: oracleEntity({ ...upstreamReferenceFoe(u, 30, 'tough'), health: 12000, maxHealth: 12000 }),
+    offItem: offItem ? oracleItem(offItem) : null,
+    body: oracleEntity({ ...upstreamReferenceFoe(u, 30, 'tough'), health: pool, maxHealth: pool }),
     events,
-    seed,
-    cws: spells,
+    seed: s,
+    ...(standard ? { cws: standard } : {}),
   }));
-  const upDamage = summarize(upRows.map((r) => r.damageDealt));
-  const upOver = summarize(upRows.map((r) => r.overkill));
-  const upTtk = summarize(upRows.filter((r) => r.ttk != null).map((r) => r.ttk));
-  assert.ok(upDamage && upOver && upTtk, 'the upstream fights killed');
-  assert.equal(local.ttk.n, upTtk.n, 'the same number of kills');
-  const rel = (a, b) => Math.abs(a - b) / Math.max(1, Math.abs(b));
-  assert.ok(rel(local.damageDealt.mean, upDamage.mean) <= 0.01,
-    `damage mean ${local.damageDealt.mean} vs ${upDamage.mean}`);
-  assert.ok(Math.abs(local.overkill.mean - upOver.mean) <= 1,
-    `overkill mean ${local.overkill.mean} vs ${upOver.mean}`);
-  assert.ok(rel(local.ttk.mean, upTtk.mean) <= 0.01, `ttk mean ${local.ttk.mean} vs ${upTtk.mean}`);
+  return { local, up, events };
+}
+const rel = (a, b) => Math.abs(a - b) / Math.max(1, Math.abs(b));
+/** A difference over the combined standard error: the independent-samples z of two means. */
+const zOf = (a, b) => (a.mean - b.mean) / Math.hypot(a.se, b.se);
+/** Two-proportion z (pooled), for the kill-source shares. */
+const shareZ = (k1, n1, k2, n2) => {
+  const p = (k1 + k2) / (n1 + n2);
+  return ((k1 / n1) - (k2 / n2)) / Math.sqrt(p * (1 - p) * (1 / n1 + 1 / n2));
+};
+
+test('fight-level CWS: TTK agrees with the upstream host fight (main hand, gear potency)', async () => {
+  const u = await upstream();
+  const spells = new Map([[1, spellOf([eff(4, 0, 10)])]]);
+  const item = enchItem([{ type: 2, param: 1 }], 121);
+  item.affixes = [{ id: 'potency', value: 10 }]; // the potency line both sides must wear
+  const { local, up } = fightPair(u, { item, pool: 12000, trials: 480, seed: 0x3510, standard: spells });
+  assert.ok(local.ttk, 'the local fights kill');
+  const upTtk = summarize(up.filter((r) => r.ttk != null).map((r) => r.ttk));
+  assert.equal(local.ttk.n, 480);
+  assert.equal(upTtk.n, 480);
+  // The mean is the sensitive metric: a 5% spell-power error moves it by z ~ 8 at this n, while the sampling
+  // standard error of the mean TTK is about 0.2%. |z| <= 4 (about four standard errors) and a 1% equivalence margin.
+  const z = zOf(local.ttk, upTtk);
+  assert.ok(Math.abs(z) <= 4, `TTK mean ${local.ttk.mean} vs ${upTtk.mean}: z ${z}`);
+  assert.ok(rel(local.ttk.mean, upTtk.mean) <= 0.01, `TTK mean ${local.ttk.mean} vs ${upTtk.mean}`);
   for (const q of ['median', 'p10', 'p90']) {
-    assert.ok(rel(local.ttk[q], upTtk[q]) <= 0.05, `ttk ${q} ${local.ttk[q]} vs ${upTtk[q]}`);
+    assert.ok(rel(local.ttk[q], upTtk[q]) <= 0.05, `TTK ${q} ${local.ttk[q]} vs ${upTtk[q]}`);
   }
+});
+
+test('fight-level CWS: the fixed-horizon damage and CWS share agree with the upstream host fight', async () => {
+  const u = await upstream();
+  const spells = new Map([[1, spellOf([eff(4, 0, 10)])]]);
+  const item = enchItem([{ type: 2, param: 1 }], 121);
+  item.affixes = [{ id: 'potency', value: 10 }];
+  // The pool never empties inside the horizon: the comparison is damage over the same 600 s of blows, not a kill race.
+  const { local, up } = fightPair(u, {
+    item, pool: 1e9, trials: 240, seed: 0x3510, maxSeconds: 600, horizon: 600, standard: spells,
+  });
+  const lAll = summarize(local.rows.map((r) => r.damageDealt));
+  const lCws = summarize(local.rows.map((r) => r.cwsDamage));
+  const uAll = summarize(up.map((r) => r.damageDealt));
+  const uCws = summarize(up.map((r) => r.cwsDamage));
+  assert.ok(Math.abs(zOf(lAll, uAll)) <= 4 && rel(lAll.mean, uAll.mean) <= 0.01,
+    `damage ${lAll.mean} vs ${uAll.mean}`);
+  assert.ok(Math.abs(zOf(lCws, uCws)) <= 4 && rel(lCws.mean, uCws.mean) <= 0.02,
+    `CWS damage ${lCws.mean} vs ${uCws.mean}`);
+  const lShare = lCws.mean / lAll.mean;
+  const uShare = uCws.mean / uAll.mean;
+  assert.ok(lShare >= 0.15, `CWS is ${(lShare * 100).toFixed(1)}% of the horizon damage; too little to protect`);
+  assert.ok(Math.abs(lShare - uShare) <= 0.02, `CWS share ${lShare} vs ${uShare}`);
+});
+
+test('fight-level CWS: the kill-source split (CWS / Many Endings / melee) agrees with the upstream host fight', async () => {
+  const u = await upstream();
+  const spells = new Map([[1, spellOf([eff(4, 0, 10)])]]);
+  const item = enchItem([{ type: 2, param: 1 }], 121);
+  Object.assign(item, { rarity: 'rare', imprint: 'warp-edge' }); // Many Endings rides the same blows
+  const { local, up } = fightPair(u, { item, pool: 80, trials: 480, seed: 0x3510, standard: spells });
+  assert.equal(local.kills, 480);
+  assert.equal(up.filter((r) => r.ttk != null).length, 480);
+  const n = 480;
+  const count = (rows, k) => rows.filter((r) => r.killSource === k).length;
+  for (const k of ['cws', 'echo', 'melee']) {
+    const lc = count(local.rows, k);
+    const uc = count(up, k);
+    assert.ok(lc >= 20 && uc >= 20, `${k} kills ${lc} local / ${uc} upstream: too few to compare`);
+    // A broken source reads 0 against its upstream share (CWS ~21%, echo ~7%, melee the rest): z far past 3.5.
+    const z = shareZ(lc, n, uc, n);
+    assert.ok(Math.abs(z) <= 3.5, `${k} kill share ${lc / n} vs ${uc / n}: z ${z}`);
+  }
+  assert.ok(count(local.rows, 'cws') / n >= 0.10, 'CWS kills are a real share of the fights');
+});
+
+test('fight-level CWS on the OFF hand agrees with the upstream host fight', async () => {
+  const u = await upstream();
+  const spells = new Map([[1, spellOf([eff(4, 0, 10)])]]);
+  const main = weapon(121, { material: 9 });
+  const off = enchItem([{ type: 2, param: 1 }], 121);
+  off.affixes = [{ id: 'potency', value: 10 }];
+  const { local, up } = fightPair(u, { item: main, offItem: off, pool: 9000, trials: 480, seed: 0x99, standard: spells });
+  assert.ok(local.ttk, 'the local fights kill');
+  const upTtk = summarize(up.filter((r) => r.ttk != null).map((r) => r.ttk));
+  assert.equal(local.ttk.n, 480);
+  assert.equal(upTtk.n, 480);
+  assert.ok(Math.abs(zOf(local.ttk, upTtk)) <= 4 && rel(local.ttk.mean, upTtk.mean) <= 0.01,
+    `TTK mean ${local.ttk.mean} vs ${upTtk.mean}`);
+  const lCws = summarize(local.rows.map((r) => r.cwsDamage));
+  const uCws = summarize(up.map((r) => r.cwsDamage));
+  assert.ok(lCws.mean > 0 && uCws.mean > 0, 'the off hand casts');
+  assert.ok(Math.abs(zOf(lCws, uCws)) <= 4 && rel(lCws.mean, uCws.mean) <= 0.02,
+    `off-hand CWS damage ${lCws.mean} vs ${uCws.mean}`);
+});
+
+test('online school potency matches the upstream schoolPotency branch on the `_online` entity', async () => {
+  const cases = [
+    { online: true, skill: 150, mastered: true, masterSkills: false }, // the default online save
+    { online: true, skill: 150, mastered: false, masterSkills: false },
+    { online: true, skill: 150, mastered: true, masterSkills: true },
+    { online: true, skill: 200, mastered: true, masterSkills: false },
+    { online: false, skill: 150, mastered: true, masterSkills: true },
+  ];
+  for (const c of cases) {
+    const desc = character({
+      level: 30, raceId: 1, stats: { strength: 0, agility: 50, speed: 50, luck: 50 },
+      skills: 0, skillOverride: { 22: c.skill }, mastered: c.mastered ? [22] : [],
+      masterSkills: c.masterSkills, online: c.online,
+    });
+    const local = schoolPotencyFor(simCharacter(desc, enchItem([], 121)), 22);
+    // The game sets the player entity's `_online = isOnlinePage()` (world.js:25813); schoolPotency's own `online`
+    // option is that page lane (spellPower.js:66).
+    const up = schoolPotency({ ...upstreamEntity(desc), _online: c.online, masterSkills: c.masterSkills, masteredSkills: c.mastered ? [22] : [] }, { online: c.online, school: 22 });
+    assert.equal(local, up, JSON.stringify(c));
+  }
+  // The `_online` flag is load-bearing: without it upstream reads the OFFLINE master-skills switch on an online page.
+  const desc = character({
+    level: 30, raceId: 1, stats: { strength: 0, agility: 50, speed: 50, luck: 50 },
+    skills: 0, skillOverride: { 22: 150 }, mastered: [22], online: true,
+  });
+  const up = { ...upstreamEntity(desc), masterSkills: false, masteredSkills: [22] };
+  assert.equal(schoolPotency({ ...up, _online: true }, { online: true, school: 22 }), 1.17);
+  assert.equal(schoolPotency({ ...up, _online: false }, { online: true, school: 22 }), 1,
+    'without `_online` the offline switch caps the school at 100');
+  assert.equal(schoolPotencyFor(simCharacter(desc, enchItem([], 121)), 22), 1.17);
 });

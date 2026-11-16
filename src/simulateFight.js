@@ -22,7 +22,8 @@
  * its own machine and reload law are not part of this stage.
  *
  * Included since Stage 3.5.1: Cast When Strikes DIRECT DAMAGE on an ordinary foe, resolved before the melee blow with
- * its own injectable stream. Excluded: relay bucket/token/claim, CWS condition costs and wear, DoTs, other spell
+ * its own injectable stream. A CWS fight takes no per-hit cap and no scenario boss traits (the cast path knows neither;
+ * a melee-only fight supports both). Excluded: relay bucket/token/claim, CWS condition costs and wear, DoTs, other spell
  * families, Flow, ward lifecycle, ranged support, incoming damage, attacker health/death and pair support. The
  * simulation does not pretend those are present.
  */
@@ -190,26 +191,45 @@ export function simulateFight(ch, args = {}) {
   const standard = scenario.standard;
   const target = schedule.target;
   const probe = schedule.probe;
+  const strikeItems = [probe.weapon?.item, probe.offHand?.weapon?.item].filter(Boolean);
+  // A CWS row can only ride the item that struck: `doItemEnchantmentPayloads(Strikes, item, ...)`
+  // (enchantments.js:1031-1072). No CWS row on a striking item means no cast, so no spell-power path is resolved.
+  const castsCws = strikeItems.some((it) => cwsRows(it, standard).length > 0);
   // The ordinary-enemy boundary. Upstream sends spareGear/relay bodies to the relay's own spell door
   // (hostEnchant.js:215) and its boss/shield/revenant/bout/companion arms are host additions; this simulator supports a
   // plain ordinary foe only (no `spareGear`, no relay body, no boss traits/caps/phase shields/shield pool, no revenant
-  // last stand, no bout/companion).
+  // last stand, no bout/companion). The flags are read by truthiness: the tier reads `!!tgt.relayBody`
+  // (blowOutcomes.js:148), so a truthy non-`true` flag must not slip through a `=== true` guard.
   if (target) {
-    if (target.relayBody === true || target.spareGear === true) {
+    if (!!target.relayBody || !!target.spareGear) {
       throw new Error('simulateFight: relay stand-ins and spareGear targets are not ordinary targets');
     }
     if (
-      target.isBoss === true || (target.bossTraits?.length ?? 0) > 0
-      || (target.phaseShields ?? 0) > 0 || target.shieldPool != null
+      !!target.isBoss || (target.bossTraits?.length ?? 0) > 0
+      || !!target.phaseShields || target.shieldPool != null
       || target.revenant != null || target.bout != null || target.companion != null
     ) {
       throw new Error('simulateFight: the supported target contract is a plain ordinary foe (no boss traits/caps/phase shields/shield pool/revenant/bout/companion)');
     }
   }
-  const cwsPower = spellPowerInputs(ch, {
-    potencyPct: scenario.potencyPct, pierce: scenario.pierce,
-    worn: equippedForFight(ch, [probe.weapon?.item, probe.offHand?.weapon?.item].filter(Boolean)),
-  });
+  // A per-hit cap and scenario boss traits are resolved by the MELEE blow only (blowOutcomes.js:111,:138; model.js:1232).
+  // A CWS cast would be resolved by the direct-damage path, which knows neither, so the two halves of one fight would
+  // follow different rules. Refused rather than silently mixed; without a CWS row both are the Stage 3.2/3.3 melee
+  // contract and stay supported.
+  if (castsCws) {
+    if (!!target?.hitCap) {
+      throw new Error('simulateFight: a target per-hit cap is not supported with Cast When Strikes (the cast is not capped)');
+    }
+    if ((scenario.traits?.length ?? 0) > 0) {
+      throw new Error('simulateFight: boss `traits` are not supported with Cast When Strikes (the cast ignores them)');
+    }
+  }
+  const cwsPower = castsCws
+    ? spellPowerInputs(ch, {
+      potencyPct: scenario.potencyPct, pierce: scenario.pierce,
+      worn: equippedForFight(ch, [probe.weapon?.item ?? null, probe.offHand?.weapon?.item ?? null]),
+    })
+    : { potencyPct: 0, pierce: 0 };
   const dual = schedule.kind === 'dual';
   const powers = [
     ...weaponPowers(probe.weapon, scenario),
@@ -240,8 +260,11 @@ export function simulateFight(ch, args = {}) {
   let blows = 0;
   let dealt = 0;
   let cwsDealt = 0;
+  let echoDealt = 0;
+  let meleeDealt = 0;
   let cwsCasts = 0;
   let cwsKills = 0;
+  let killSource = null;
   let ttk = null;
   const trace = scenario.trace === true ? [] : null;
   const cwsTrace = scenario.trace === true ? [] : null;
@@ -302,12 +325,16 @@ export function simulateFight(ch, args = {}) {
       hp = Math.max(0, hp - echoApplied);
       echoKill = hp <= 0;
     }
+    if (cwsKill) killSource = 'cws';
+    else if (echoKill) killSource = 'echo';
     if (!cwsKill && !echoKill && blowDamage > 0) {
       meleeDamage = blowDamage;
       hp = Math.max(0, hp - meleeDamage);
     }
     if (hp < 0) hp = 0;
     cwsDealt += cwsDamage;
+    echoDealt += echoApplied;
+    meleeDealt += meleeDamage;
     cwsCasts += cwsCastsThis;
     dealt += cwsDamage + echoApplied + meleeDamage;
     const key = `${index}|${hand}`;
@@ -331,9 +358,11 @@ export function simulateFight(ch, args = {}) {
   if (hp < 0) hp = 0;
   const remainingHealth = Math.max(0, hp);
   const kill = ttk !== null;
+  if (kill && killSource == null) killSource = 'melee';
   return {
     seed,
     kill,
+    killSource: kill ? killSource : null,
     ttk,
     time: t,
     health: pool,
@@ -341,8 +370,11 @@ export function simulateFight(ch, args = {}) {
     overkill: Math.max(0, dealt - pool),
     damageDealt: dealt,
     cwsDamage: cwsDealt,
+    echoDamage: echoDealt,
+    meleeDamage: meleeDealt,
     cwsCasts,
     cwsKills,
+    cwsCapable: castsCws,
     blows,
     damageMode,
     outputDps: t > 0 ? dealt / t : null,

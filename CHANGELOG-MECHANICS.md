@@ -37,9 +37,11 @@ swing trace. `src/target.js` defaults `activeEffects: []`.
 no longer carries the melee blow in `damageDealt`/`overkill`. Builds without CWS are unchanged. The analytical
 `analyze`/`enchantDps` card is unchanged.
 
-**Final-audit corrections.** The gear spell-power list is the effective equipped list (`equippedForFight`): the scenario weapons are overlaid on `ch.worn` by equip slot (or content for a hand-built piece), never added as a second copy, and `spellPowerInputs` requires `worn` rather than falling back to the inventory. Arcane Surge uses `liveMaxMagicka` (base + the ExtraSpellPts `_enchantMods.maxMagicka`), and an ExtraSpellPts row without that fold is rejected. The school branch is explicit (`online === true`). `simulateFight` now refuses relay/`spareGear` targets and the unsupported boss/shield/revenant/bout/companion contract; `makeTarget`/`enemyTarget` default `spareGear: false`, with `standInTarget` keeping true. The fake firmament field guard was removed. A fight-level CWS comparison (240 local/upstream trials) checks `damageDealt`, TTK and overkill; the upstream CWS door and host death gate are isolated in `test/harness/fightOracle.mjs`.
+**Final-audit corrections.** The gear spell-power list is the effective equipped list (`equippedForFight`), and `spellPowerInputs` requires `worn` rather than falling back to the inventory. Arcane Surge uses `liveMaxMagicka` (base + the ExtraSpellPts `_enchantMods.maxMagicka`), and an ExtraSpellPts row without that fold is rejected. `simulateFight` refuses relay/`spareGear` targets and the unsupported boss/shield/revenant/bout/companion contract; `makeTarget`/`enemyTarget` default `spareGear: false`, with `standInTarget` keeping true. The fake firmament field guard was removed.
 
-**Evidence.** `test/cws.test.js` (10), `test/cwsCorrections.test.js` (15) and `test/cwsDifferential.test.js` (15).
+**Closure-audit corrections** (the stage record). The equipped list is now upstream's equip table: `equippedForFight` places the scenario main/off weapons as the occupants of the HAND SLOTS (the worn hand piece is replaced, never joined), recognises a live snapshot's clone and the caller's original as one piece by slot or content, and applies `countedPieces` (a Legendary record counts once, `lootRarity.js:2348-2357`); `spellPowerInputs` holds one piece per slot under the same law. `schoolPotencyFor` passes `_online: true` on the entity handed to `fightingClimb`, as the game sets `playerEntity._online = isOnlinePage()` (`full:scenes/world.js:25813`), so an online character's master skills are in force regardless of the offline switch - an online default save with a mastered school reads 1.17, not 1. ExtraSpellPts without the live fold is rejected only where an Arcane Surge power reads it, and `simulateFight` resolves the spell-power path only when a striking item carries a CWS row, so unrelated ExtraSpellPts gear no longer refuses a plain fight. The target guard reads relay/`spareGear`/boss/phase-shield flags by truthiness, and refuses a per-hit cap or scenario boss traits when the fight can cast (the direct-damage path knows neither). The fight-level evidence is replaced: a TTK z-test, a fixed-horizon damage/CWS share, the CWS/Many Endings/melee kill-source split, and an off-hand CWS case. `simulateFight` also reports `cwsCapable` and the new `echoDamage`, `meleeDamage` and `killSource` (`cwsDamage`/`cwsCasts`/`cwsKills` were already there).
+
+**Evidence.** `test/cws.test.js` (10), `test/cwsCorrections.test.js` (21) and `test/cwsDifferential.test.js` (19).
 The differential drives the pinned `calculateAttackDamage` with an enchantCtx whose `applySpellToTarget` calls the
 vendored `applySpell`, then compares the local resolver on the same seeded draws: direct damage and draw counts;
 career tolerance, immunity, spell resistance and elemental resistance; absorption; reflection; the 4,0/1,0/11,8
@@ -48,23 +50,32 @@ boundary; the call/no-call matrix; row order; and the CWS-kill host gate. The re
 with the vendored payload walk, compare registered spell power/pierce and online school with `applySpell`, compare the
 gear inputs with `lootSpellPower`/`lootSpellPierce`, compare multi-effect death with the host hurt sink, and compare
 the echo-kill gate with the host `lootStrike`/`hurtFoe` path. Absorption reuses the vendored `tryAbsorption` law, so
-the differential verifies its integration rather than a second absorption implementation. Full suite
-**591 tests, 591 pass**; vendor **289 vendored + 122 stubbed**; parity **1855/1855**.
+the differential verifies its integration rather than a second absorption implementation. The fight level has four
+independent comparisons on the same event list and per-trial seeds: TTK (480 trials, |z| <= 4 and a 1% mean; a 5%
+spell-power error gives z ~ 11.6), fixed-horizon damage and CWS share (240 trials, 600 s), the kill-source split
+(CWS/Many Endings/melee, 480 trials, two-proportion |z| <= 3.5) and an off-hand CWS case (480 trials). Full suite
+**601 tests, 601 pass**; vendor **289 vendored + 122 stubbed**; parity **1855/1855**.
 
-**Mutation checks.** In a throwaway copy of this tree (40 CWS tests) every audited mutation is now detected: A zero
-spell-power/pierce wiring **37/3**, B items argument dropped **39/1**, C rows after a kill **39/1**, D echo after a CWS
-kill **39/1**, E dedupe disabled **39/1**, F school without `isPlayer` **39/1**, G off hand reading the main item
-**39/1**, H caster level 1 **39/1**, I potency cap removed **39/1**, J Surge threshold `>=` **39/1**, K floor instead of
-`max(1, round)` **37/3**. (The earlier five mutations - `formulaPositive` gate, no payload abort, no pierce/power,
-counting after death, melee after an echo kill - remain detected.)
+**Mutation checks.** In a throwaway copy of this tree (55 CWS/fight tests) the eleven audited mutations fail for the
+right reasons: A zero spell-power/pierce wiring **51/4**, B the scenario weapon dropped from the equip input **54/1**,
+C rows after a kill **54/1**, D echo after a CWS kill **54/1**, E one-piece-per-slot dedupe off **53/2**, F school
+without `isPlayer` **54/1**, G off hand reading the main item **54/1**, H caster level 1 **54/1**, I potency cap removed
+**54/1**, J Surge threshold `>=` **54/1**, K floor instead of `max(1, round)` **51/4**. The closure audit's survivors
+now fail too: L append instead of replace **52/3**, M content dedupe in the equip list **51/4**, O/P/Q each
+target-guard clause **54/1** each, T1 strict truthiness on `relayBody` **54/1**, C3 `_online` dropped **54/1**, C4 the
+ExtraSpellPts gate made unconditional **54/1**, C4b the gate removed **53/2**, T2 the per-hit cap and the scenario
+traits each accepted **54/1**. Y (echo `round` -> `floor`) is an EQUIVALENT mutant: every tier `blow`/`echoDamage` is
+an integer. (The earlier five mutations - `formulaPositive` gate, no payload abort, no pierce/power, counting after
+death, melee after an echo kill - remain detected.)
 
 **Not changed.** `src/relayClaim.js` is untouched. Relay-boss CWS, condition costs, ordinary wear, condition bands and
 break, Continuous Damage and the other spell families, the reflected bundle's caster-side landing, absorption's
 magicka refund, the ward lifecycle, ranged support and the optimizer are not modelled. A static `target.warded` gates
 CWS only; the melee blow is not refused. Firmament spell power/pierce is not a `simulateFight` build field; a caller
 that has one must pass `potencyPct`/`pierce`. There is no producer field, so there is no refusal guard. `simulateFight`
-accepted only a plain ordinary foe: relay/`spareGear` targets and the boss/shield/revenant/bout/companion contract are
-refused. No event-level RNG equivalence with the game's default `Math.random`
+accepts only a plain ordinary foe: relay/`spareGear` (by truthiness), boss traits/phase shields/shield pool and the
+revenant/bout/companion contract are refused; a per-hit cap and scenario boss traits are supported for a melee-only
+fight and refused when the fight can cast CWS. No event-level RNG equivalence with the game's default `Math.random`
 path is claimed.
 
 ---

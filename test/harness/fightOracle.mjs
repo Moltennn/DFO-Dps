@@ -19,7 +19,8 @@ import {
 /**
  * @param {object} u the oracle
  * @param {object} o desc, item, offItem, body (upstream-minted), events [{t,hand}], seed, uptime, traits
- * @returns {{ttk:number|null, damageDealt:number, blows:number, remainingHealth:number, overkill:number, trace:Array}}
+ * @returns {{ttk:number|null, damageDealt:number, cwsDamage:number, echoDamage:number, meleeDamage:number,
+ *   killSource:'cws'|'echo'|'melee'|null, blows:number, remainingHealth:number, overkill:number, trace:Array}}
  */
 export function upstreamFight(u, { desc, item, offItem = null, body, events, seed, uptime = 0, traits = [], cws = null }) {
   const rng = generator(seed);
@@ -33,6 +34,10 @@ export function upstreamFight(u, { desc, item, offItem = null, body, events, see
   let dead = false;
   let own = 0;
   let cwsDealt = 0;
+  let killSource = null;
+  let totalCws = 0;
+  let totalEcho = 0;
+  let totalMelee = 0;
   _resetLootPowersForTests();
   _setLootPowersRandForTests(() => rng());
   setPlayerDoor({
@@ -43,7 +48,7 @@ export function upstreamFight(u, { desc, item, offItem = null, body, events, see
       own += n;
       hp = Math.max(0, hp - n);
       body.health = hp;
-      if (hp <= 0) { f.dead = true; dead = true; }
+      if (hp <= 0) { f.dead = true; dead = true; if (!killSource) killSource = 'echo'; }
     },
     castOnPlayer: () => {},
   });
@@ -84,7 +89,7 @@ export function upstreamFight(u, { desc, item, offItem = null, body, events, see
               cwsDealt += n;
               hp = Math.max(0, hp - n);
               body.health = hp;
-              if (hp <= 0) { dead = true; foe.dead = true; }
+              if (hp <= 0) { dead = true; foe.dead = true; if (!killSource) killSource = 'cws'; }
             },
           }, rng, { entity: att });
         },
@@ -110,9 +115,12 @@ export function upstreamFight(u, { desc, item, offItem = null, body, events, see
       const damage = cwsDealt + echo + melee;
       t = ev.t;
       hp = Math.max(0, hp - melee);
-      if (hp <= 0) { dead = true; foe.dead = true; }
+      if (hp <= 0) { dead = true; foe.dead = true; if (!killSource) killSource = 'melee'; }
       dealt += damage;
-      trace.push({ t, hand: ev.hand, damage, hit: damage > 0, remaining: hp, cws: cwsDealt });
+      totalCws += cwsDealt;
+      totalEcho += echo;
+      totalMelee += melee;
+      trace.push({ t, hand: ev.hand, damage, hit: damage > 0, remaining: hp, cws: cwsDealt, echo, melee });
       if (hp <= 0) { ttk = t; break; }
     }
   } finally {
@@ -124,6 +132,10 @@ export function upstreamFight(u, { desc, item, offItem = null, body, events, see
   return {
     ttk,
     damageDealt: dealt,
+    cwsDamage: totalCws,
+    echoDamage: totalEcho,
+    meleeDamage: totalMelee,
+    killSource: hp <= 0 ? (killSource ?? 'melee') : null,
     blows: trace.length,
     remainingHealth: Math.max(0, hp),
     overkill: Math.max(0, dealt - initial),
@@ -137,5 +149,7 @@ export const oracleItem = (item) => (item ? {
   ...(item.rarity ? { rarity: item.rarity } : {}),
   ...(item.legendary ? { legendary: item.legendary } : {}),
   ...(item.imprint ? { imprint: item.imprint } : {}),
+  // The potency lines the vendored loot law sums over the worn piece (lootPowers.js:136-137,747-758).
+  ...(item.affixes ? { affixes: item.affixes.map((a) => ({ ...a })) } : {}),
   ...(item.enchantments ? { enchantments: item.enchantments.map((e) => ({ ...e })), isIdentified: true } : {}),
 } : null);
