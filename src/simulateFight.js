@@ -267,6 +267,12 @@ export function simulateFight(ch, args = {}) {
     effective = equippedForFight(fightCh, [probe.weapon?.item ?? null, probe.offHand?.weapon?.item ?? null]);
     dur.effective = effective;
   }
+  const initialEffective = effective;
+  // Split the HAND entries from the rest at the start: `lowerCondition` deletes a broken item's `equipSlot`, so a
+  // later slot test would no longer recognise it as the hand's piece. The rest of the table cannot break in this scope.
+  const otherEffective = initialEffective
+    ? initialEffective.filter((it) => it.equipSlot !== EQUIP_SLOTS.RightHand && it.equipSlot !== EQUIP_SLOTS.LeftHand)
+    : [];
   let cwsPower = castsCws
     ? spellPowerInputs(fightCh, {
       potencyPct: scenario.potencyPct, pierce: scenario.pierce,
@@ -286,6 +292,27 @@ export function simulateFight(ch, args = {}) {
   const slotItem = (hand) => (dur
     ? (dur.owner.equip.slots[hand === 'off' ? EQUIP_SLOTS.LeftHand : EQUIP_SLOTS.RightHand] ?? null)
     : (hand === 'off' ? (probe.offHand?.weapon?.item ?? null) : (probe.weapon?.item ?? null)));
+  // Upstream's spellPowerMult reads the wearer's CURRENT worn powers when the spell resolves (lootPowers.js:747-763), so
+  // a break by ordinary wear or by an earlier row's bill must reach the very next cast. The effective table is the
+  // initial one's non-hand pieces plus the two hand occupants as they now stand; the hand slot is the equip table's own
+  // address, so a broken what-if and a broken worn clone are both removed by the hand that lost them.
+  const rebuildEffective = () => {
+    if (!initialEffective) return;
+    const main = slotItem('main');
+    const off = slotItem('off');
+    effective = [
+      ...otherEffective,
+      ...(main ? [{ ...main, equipSlot: EQUIP_SLOTS.RightHand }] : []),
+      ...(off ? [{ ...off, equipSlot: EQUIP_SLOTS.LeftHand }] : []),
+    ];
+    dur.effective = effective;
+  };
+  const refreshCwsPower = () => {
+    if (!castsCws) return;
+    cwsPower = spellPowerInputs(fightCh, {
+      potencyPct: scenario.potencyPct, pierce: scenario.pierce, worn: effective ?? undefined,
+    });
+  };
   const itemIds = new WeakMap();
   let nextItemId = 1;
   const idOf = (it) => {
@@ -360,7 +387,6 @@ export function simulateFight(ch, args = {}) {
     // blow; a spareGear target wears nothing; a weapon with no condition to lower cannot break.
     let wear = 0;
     let brokeNow = false;
-    let brokeItem = null;
     if (durability && item && !target?.spareGear && outcome.strikesDamage > 0) {
       wear = blowWear(outcome.strikesDamage, conditionRolls);
       if (wear > 0) {
@@ -371,8 +397,10 @@ export function simulateFight(ch, args = {}) {
         dur.wear += applied;
         if (broke) {
           brokeNow = true;
-          brokeItem = item;
           dur.breaks.push({ t, hand, reason: 'wear', amount: wear, item: item.name ?? null });
+          // The CWS payload of this blow resolves after the core's wear: refresh before the first row.
+          rebuildEffective();
+          refreshCwsPower();
         }
       }
     }
@@ -388,6 +416,7 @@ export function simulateFight(ch, args = {}) {
         let rowBroke = false;
         let cast = null;
         let killed = false;
+        const rowPower = { potencyPct: cwsPower.potencyPct, pierce: cwsPower.pierce };
         if (row.spell) {
           // The sink is the host's landing: later effects still roll, but they stop being counted/applied at death.
           const hurt = (n) => { hp = Math.max(0, hp - n); return hp > 0; };
@@ -410,9 +439,11 @@ export function simulateFight(ch, args = {}) {
             const broke = wearItem(dur.owner, item, bill, null);
             if (broke) {
               brokeNow = true;
-              brokeItem = item;
               rowBroke = true;
               dur.breaks.push({ t, hand, reason: 'cws', amount: bill, item: item.name ?? null });
+              // A later row on the same item still runs, but its caster's power is the equipment as it now stands.
+              rebuildEffective();
+              refreshCwsPower();
             }
           }
         }
@@ -429,6 +460,7 @@ export function simulateFight(ch, args = {}) {
           } : {}),
           kill: killed,
           bill, broke: rowBroke,
+          potencyPct: rowPower.potencyPct, pierce: rowPower.pierce,
           condition: durability ? (item?.currentCondition ?? null) : null,
           conditionPct: durability ? conditionPct(item) : null,
         });
@@ -492,10 +524,6 @@ export function simulateFight(ch, args = {}) {
       // and the next swing is a single-weapon swing. With no weapon left the local model has no fist schedule
       // (Stage 3.2 refuses unarmed cadence), so the fight stops at this blow and says so.
       const survivor = slotItem(hand === 'main' ? 'off' : 'main');
-      if (brokeItem && effective) {
-        effective = effective.filter((it) => it !== brokeItem);
-        dur.effective = effective;
-      }
       if (!survivor) { dur.endedByBreak = true; break; }
       const owner = dur.owner;
       owner.equip.slots[EQUIP_SLOTS.RightHand] = survivor;
@@ -511,12 +539,9 @@ export function simulateFight(ch, args = {}) {
       scheduleNow = single;
       clock = t;
       next = single.next();
+      rebuildEffective();
       refresh();
-      if (castsCws) {
-        cwsPower = spellPowerInputs(fightCh, {
-          potencyPct: scenario.potencyPct, pierce: scenario.pierce, worn: effective ?? undefined,
-        });
-      }
+      refreshCwsPower();
     } else {
       next = scheduleNow.next();
     }

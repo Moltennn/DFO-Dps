@@ -55,6 +55,7 @@ const fight = (ch, it, opts = {}) => simulateFight(ch, {
   ...(opts.standard ? { standard: opts.standard } : {}),
   ...(opts.dual ? { dual: true } : {}),
   ...(opts.conditionRolls ? { conditionRolls: opts.conditionRolls } : {}),
+  ...(opts.cwsRolls ? { cwsRolls: opts.cwsRolls } : {}),
   ...(opts.extra ?? {}),
 });
 /** The first seed whose run satisfies `pred`, so a hit/whole precondition is a test input, not a lucky default. */
@@ -285,6 +286,114 @@ test('a main-hand break promotes the surviving off hand; an off-hand break leave
   assert.equal(rOff.endedByBreak, false);
   assert.equal(rOff.condition.off, 0);
   assert.ok(rOff.condition.main < 1000, 'the main wears and continues');
+});
+
+test('a wear-break before the CWS payload refreshes potency for that same cast', () => {
+  const standard = new Map([[1, spellOf(1)]]);
+  const potency = cws(1, [1], { affixes: [{ id: 'potency', value: 15 }] });
+  const ch = simCharacter(DESC(), potency);
+  const broken = findRun(
+    (seed) => fight(ch, potency, { seed, maxBlows: 1, standard, cwsRolls: () => 0.5, conditionRolls: () => 0.1 }),
+    (r) => r.breaks.some((b) => b.reason === 'wear') && r.cwsTrace.length > 0,
+  );
+  assert.ok(broken, 'the wear breaks the weapon before its CWS row');
+  const row = broken.run.cwsTrace[0];
+  assert.equal(row.potencyPct, 0, 'the broken potency line is no longer worn');
+  assert.equal(row.damage, 8, 'base 10, 80% save');
+
+  const controlItem = cws(1000, [1], { affixes: [{ id: 'potency', value: 15 }] });
+  const controlCh = simCharacter(DESC(), controlItem);
+  const control = findRun(
+    (seed) => fight(controlCh, controlItem, { seed, maxBlows: 1, standard, cwsRolls: () => 0.5 }),
+    (r) => r.breaks.length === 0 && r.cwsTrace.length > 0,
+  );
+  assert.ok(control, 'the same cast without a break');
+  assert.equal(control.run.cwsTrace[0].potencyPct, 15, 'the potency line is still worn');
+  assert.equal(control.run.cwsTrace[0].damage, 9);
+});
+
+test('a CWS bill break refreshes the next row\'s spell power; the payload still continues', () => {
+  const it = cws(10, [1, 2], { affixes: [{ id: 'potency', value: 15 }] });
+  const ch = simCharacter(DESC(), it);
+  const standard = new Map([[1, spellOf(1)], [2, spellOf(2)]]);
+  const found = findRun(
+    (seed) => fight(ch, it, { seed, maxBlows: 1, standard, cwsRolls: () => 0.5 }),
+    (r) => r.cwsTrace.length === 2 && r.cwsTrace[1].broke && r.breaks[0].reason === 'cws',
+  );
+  assert.ok(found, 'the first row breaks the weapon on its bill');
+  const [first, second] = found.run.cwsTrace;
+  assert.equal(first.potencyPct, 15, 'the first row casts before the bill');
+  assert.equal(first.damage, 9);
+  assert.equal(second.potencyPct, 0, 'the second row sees the broken table');
+  assert.equal(second.damage, 8);
+  assert.equal(found.run.cwsCasts, 2, 'the payload continues after the break');
+});
+
+test('a broken weapon\'s pierce is gone from the next cast', () => {
+  const standard = new Map([[1, spellOf(1)]]);
+  const item15 = cws(1, [1], { rarity: 'legendary', legendary: 'eye-of-magnus' });
+  const ch = simCharacter(DESC(), item15);
+  const broken = findRun(
+    (seed) => fight(ch, item15, { seed, maxBlows: 1, standard, cwsRolls: () => 0.5, conditionRolls: () => 0.1 }),
+    (r) => r.breaks.some((b) => b.reason === 'wear') && r.cwsTrace.length > 0,
+  );
+  assert.ok(broken, 'the pierce weapon wears out before the cast');
+  assert.equal(broken.run.cwsTrace[0].pierce, 0);
+  assert.equal(broken.run.cwsTrace[0].damage, 8, 'the 50/50 save is not pierced');
+
+  const controlItem = cws(1000, [1], { rarity: 'legendary', legendary: 'eye-of-magnus' });
+  const controlCh = simCharacter(DESC(), controlItem);
+  const control = findRun(
+    (seed) => fight(controlCh, controlItem, { seed, maxBlows: 1, standard, cwsRolls: () => 0.5 }),
+    (r) => r.breaks.length === 0 && r.cwsTrace.length > 0,
+  );
+  assert.ok(control, 'the same cast without a break');
+  assert.equal(control.run.cwsTrace[0].pierce, 15);
+  assert.equal(control.run.cwsTrace[0].damage, 10);
+});
+
+test('a broken weapon\'s Arcane Surge is gone from the next cast', () => {
+  const standard = new Map([[1, spellOf(1)]]);
+  const surge = cws(1, [1], { rarity: 'legendary', legendary: 'shalidors-brand' });
+  const ch = simCharacter(DESC(), surge);
+  ch.magicka = 90;
+  ch.maxMagicka = 100;
+  const broken = findRun(
+    (seed) => fight(ch, surge, { seed, maxBlows: 1, standard, cwsRolls: () => 0.5, conditionRolls: () => 0.1 }),
+    (r) => r.breaks.some((b) => b.reason === 'wear') && r.cwsTrace.length > 0,
+  );
+  assert.ok(broken, 'the surge weapon wears out before the cast');
+  assert.equal(broken.run.cwsTrace[0].potencyPct, 0);
+  assert.equal(broken.run.cwsTrace[0].damage, 8);
+
+  const controlItem = cws(1000, [1], { rarity: 'legendary', legendary: 'shalidors-brand' });
+  const controlCh = simCharacter(DESC(), controlItem);
+  controlCh.magicka = 90;
+  controlCh.maxMagicka = 100;
+  const control = findRun(
+    (seed) => fight(controlCh, controlItem, { seed, maxBlows: 1, standard, cwsRolls: () => 0.5 }),
+    (r) => r.breaks.length === 0 && r.cwsTrace.length > 0,
+  );
+  assert.ok(control, 'the same cast without a break');
+  assert.equal(control.run.cwsTrace[0].potencyPct, 25);
+  assert.equal(control.run.cwsTrace[0].damage, 10);
+});
+
+test('an off-hand wear-break refreshes the off-hand cast\'s power', () => {
+  const main = item(1000);
+  const off = cws(1, [1], { affixes: [{ id: 'potency', value: 15 }] });
+  const ch = dual(main, off);
+  const standard = new Map([[1, spellOf(1)]]);
+  const found = findRun(
+    (seed) => fight(ch, main, {
+      seed, maxBlows: 40, standard, dual: true, cwsRolls: () => 0.5, conditionRolls: () => 0.1,
+    }),
+    (r) => r.breaks.some((b) => b.hand === 'off' && b.reason === 'wear') && r.cwsTrace.some((c) => c.hand === 'off'),
+  );
+  assert.ok(found, 'an off-hand blow wears the off weapon out before its cast');
+  const row = found.run.cwsTrace.find((c) => c.hand === 'off');
+  assert.equal(row.potencyPct, 0);
+  assert.equal(row.damage, 8);
 });
 
 test('a break on the first of three rows still walks and bills the later rows', () => {

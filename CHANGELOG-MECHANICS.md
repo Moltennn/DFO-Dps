@@ -34,14 +34,24 @@ has no fist schedule). A condition-band crossing rebuilds the next blow's tier. 
 `durability: true`, a fight's damage/TTK move as the weapon's condition crosses a band and stops (or continues on the
 other hand) when it breaks; the `condition`/`breaks`/`endedByBreak` fields are new.
 
-**Evidence.** `test/durability.test.js` (19). The wear, bill and break laws are compared directly with the vendored
+**Live spell power after a break (correction).** Upstream's `spellPowerMult` reads the wearer's current worn powers when
+the spell resolves (`systems/loot/lootPowers.js:747-763`), so a break by ordinary wear or by an earlier CWS row's bill
+must reach the very next cast. The fight now rebuilds its effective hand table and refreshes potency, pierce and Arcane
+Surge immediately after such a break - before the first row of the same blow, and before the next row after a bill
+break. The CWS row trace records the `potencyPct`/`pierce` used. Before: a wear-broken potency weapon cast at 1.15/9
+instead of 1/8; a first-row bill break left the second row at 1.15/9 instead of 1/8; a broken `eye-of-magnus` kept its
+15 pierce (10 instead of 8); a broken `shalidors-brand` kept 25% Surge (10 instead of 8). After: each reads the surviving
+table. Stale-table mutations after the wear and after the bill both fail.
+
+**Evidence.** `test/durability.test.js` (24). The wear, bill and break laws are compared directly with the vendored
 `damageEquipment`, `doItemEnchantmentPayloads` and `lowerCondition`; a production fight's whole wear/bill/break state is
 replayed through upstream on the fight's own `strikesDamage` sequence. Mutation checks in a throwaway copy caught wear
 rounding, the floor roll omitted/always drawn/at 19%, the bill at 9 or only on a damaging cast, echo suppression off, a
 break without unequip, no survivor promotion, content-based item removal, the current blow dropped on break, later rows
 skipped after a break, survivor powers not refreshed, the off slot left occupied, the schedule not swapped, the broken
 item kept in the spell-power table, `conditionRolls` ignored, the band missing from the tier key, post-payload wear and
-an extra condition draw. Full suite **625 tests, 625 pass**; vendor **289 vendored + 122 stubbed**; parity
+an extra condition draw, no refresh after a wear break and no refresh after a CWS bill break. Full suite
+**630 tests, 630 pass**; vendor **289 vendored + 122 stubbed**; parity
 **1855/1855**.
 
 **Not changed.** `src/relayClaim.js` is untouched. Relay-boss durability, the target's shield/armour wear, the fist
