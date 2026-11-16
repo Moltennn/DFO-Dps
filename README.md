@@ -116,6 +116,13 @@ Use `./dfo-dps --help` for every flag, or see
   single and dual melee schedules, health-dependent distribution rebuilds,
   TTK/damage/overkill distributions, censoring and paired seeds. It is a
   library API, not a CLI page.
+- The Stage 3.5.1/3.5.2 ordinary-foe additions (`src/cws.js`,
+  `src/durability.js`, `src/simulateFight.js`): Cast When Strikes direct
+  damage, and opt-in `durability: true` with ordinary weapon wear, the CWS
+  condition bill, breaks/unequipping and survivor promotion. Durability is off
+  by default, so the Stage 3.1-3.5.1 no-wear fight is unchanged. Relay
+  durability is not implemented: `simulateRelayFight` rejects
+  `durability: true` (Stage 3.5.3g).
 - The Stage 3.3 streaming relay claim engine (`src/relayClaim.js`,
   `src/relayFight.js`): the four-token hand, the damage purse, the per-claim
   cap, clipped/refused claims, saturation, remaining bucket state and seeded
@@ -126,9 +133,12 @@ Use `./dfo-dps --help` for every flag, or see
 
 **Supported with important approximations**
 
-- **Cast When Strikes and DoTs** are priced as expected damage per landed blow
-  and per tick. Proc/DoT claims are not fully integrated into the headline
-  ceilings and the relay fight; see `W-PROC-BUDGET`.
+- **Cast When Strikes and DoTs.** A CWS row's direct damage is resolved per blow
+  in the ordinary fight (Stage 3.5.1), with its condition bill when
+  `durability: true` (Stage 3.5.2). The card, ceilings and relay still price
+  CWS/DoTs as expected damage per landed blow and per tick; proc/DoT claims are
+  not fully integrated into the headline ceilings and the relay fight; see
+  `W-PROC-BUDGET`.
 - **Spells** use the live `SPELLS.STD` records, saving throws and school
   potency. Reflection/absorption and some effect families are not modelled.
 - **Firmament, enchant-plan, imprint and loadout** are supported planner
@@ -148,14 +158,18 @@ Use `./dfo-dps --help` for every flag, or see
 - Duelist's Vambrace **First Blood** (the `--first-blow` flag is the separate
   Assassin/Opening Strike scenario).
 - PvP/peer fights, incoming damage and player death.
-- The Stage 3.2 fight simulation does not model wear, CWS, DoTs, Flow, the
-  relay bucket/ward or incoming damage, and it refuses a Pistolet pair rather
-  than approximating it. Ranged builds are refused by the fight APIs (the schedule helper still
-  resolves their first frame). Censored runs report a kill probability and a conditional TTK; no
+- The default (no-durability) Stage 3.2 fight simulation does not model ordinary
+  wear or the CWS condition bill; `durability: true` adds both (Stage 3.5.2).
+  CWS direct damage is modelled since Stage 3.5.1. It does not model DoTs,
+  dynamic Flow stack increments, the relay bucket/ward or incoming damage, and
+  it refuses a Pistolet pair rather than approximating it. Ranged builds are
+  refused by the fight APIs (the schedule helper still resolves their first
+  frame). Censored runs report a kill probability and a conditional TTK; no
   Kaplan-Meier estimate is made.
 - The Stage 3.3/3.4 relay engine does not model geometry, Sundered halves,
   stun/profile hit multipliers, Wrath, host/crystal claims, phase-ward
-  lifecycle, CWS or DoTs. A static Warded trait/ward pool is not modelled. A synthetic two-echo
+  lifecycle, CWS, DoTs or relay durability; `durability: true` is refused
+  (Stage 3.5.3g). A static Warded trait/ward pool is not modelled. A synthetic two-echo
   build, an unarmed build, and bow/gun builds (whose release/landing timing is
   not modelled) are refused rather than approximated. Flow and one Many
   Endings power are supported; an echo build requires `target.relayBody === true` up front.

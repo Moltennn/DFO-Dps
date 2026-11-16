@@ -23,9 +23,17 @@
  *
  * Included since Stage 3.5.1: Cast When Strikes DIRECT DAMAGE on an ordinary foe, resolved before the melee blow with
  * its own injectable stream. A CWS fight takes no per-hit cap and no scenario boss traits (the cast path knows neither;
- * a melee-only fight supports both). Excluded: relay bucket/token/claim, CWS condition costs and wear, DoTs, other spell
- * families, Flow, ward lifecycle, ranged support, incoming damage, attacker health/death and pair support. The
- * simulation does not pretend those are present.
+ * a melee-only fight supports both).
+ *
+ * Durability is opt-in (`durability: true`, Stage 3.5.2): ordinary weapon wear (the core's `damageEquipment`), the Cast
+ * When Strikes condition bill, the break/unequip leaf and the surviving hand's promotion are modelled. The default
+ * (`durability` false or omitted) keeps the Stage 3.1-3.5.1 no-wear path unchanged. Relay durability is NOT modelled:
+ * this ordinary simulator refuses relay targets outright, and `simulateRelayFight` rejects `durability: true`
+ * (Stage 3.5.3g).
+ *
+ * Excluded: relay bucket/token/claim and relay durability, DoTs, other spell families, dynamic Flow stack increments,
+ * ward lifecycle, ranged support, incoming damage, attacker health/death and pair support. The simulation does not
+ * pretend those are present.
  */
 import { analyze, conditionMultiplier, weaponOf, weaponPowers } from './model.js';
 import { blowFightTier, createBlowSampler } from './blowOutcomes.js';

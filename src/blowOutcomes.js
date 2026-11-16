@@ -37,9 +37,10 @@
  * A MISS is its own outcome, even when its damage is 0 and even when a Strikes payload (Potent Vs) gives it damage:
  * `hit` says whether the swing landed, `damage` what the blow was worth.
  *
- * WHAT IS NOT HERE (it follows the blow, and belongs to later stages): the Cast When Strikes cast itself (this module
- * carries its trigger as `strikesPositive`/`strikesDamage`), DoTs, Flow and other timed state, equipment wear, the
- * relay's bucket, dual-hand scheduling. The off-hand `whole` flag is carried so a later stage can gate those on it.
+ * WHAT IS NOT HERE (the fight loop owns it): the Cast When Strikes cast itself (this module carries its trigger as
+ * `strikesPositive`/`strikesDamage`; `src/simulateFight.js` and `src/cws.js` resolve it), DoTs, dynamic Flow state,
+ * ordinary equipment wear and breaks (`src/durability.js` under `durability: true`), the relay's bucket, dual-hand
+ * scheduling. The off-hand `whole` flag is carried so the fight loop can gate those on it.
  *
  * The setup lines (weapon, target, simOpts, caps, powers) mirror `analyzeCard` in src/model.js and are checked against
  * it: test/blowOutcomes.test.js asserts that the distribution's means equal analyze()'s perSwing / cappedPerSwing.
