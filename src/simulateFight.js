@@ -207,7 +207,10 @@ function prepareDurability(ch, scenario) {
     ? { ...scenario, weapon: (weaponItem ? { ...scenario.weapon, item: main } : scenario.weapon) }
     : { ...scenario };
   const owner = makeOwner(main, off);
-  return { ch: fightCh, scenario: fightScenario, owner, main, off, effective: null, breaks: [], wear: 0, endedByBreak: false };
+  // An item SUPPLIED at 0 condition is already broken: nothing transitions when it is worn again, so it is not a weapon lost
+  // in this fight (`weaponsBroken` counts transitions) and the break `lowerCondition` reports for it is a repeat.
+  const suppliedBroken = new Set([main, off].filter((it) => it && (it.maxCondition ?? 0) > 0 && Number.isFinite(it.currentCondition) && it.currentCondition <= 0));
+  return { ch: fightCh, scenario: fightScenario, owner, main, off, suppliedBroken, effective: null, breaks: [], wear: 0, endedByBreak: false };
 }
 
 /** One seeded battle. The result is one of the samples `simulateFights` summarises. `seed` defaults to 0, so even an
@@ -401,13 +404,14 @@ export function simulateFight(ch, args = {}) {
       wear = blowWear(outcome.strikesDamage, conditionRolls);
       if (wear > 0) {
         const beforeCond = Number.isFinite(item.currentCondition) ? item.currentCondition : (item.maxCondition ?? null);
+        const wasBroken = Number.isFinite(item.currentCondition) && item.currentCondition <= 0;
         const broke = wearItem(dur.owner, item, wear, null);
         const applied = beforeCond == null ? wear : Math.max(0, beforeCond - (item.currentCondition ?? 0));
         wear = applied;
         dur.wear += applied;
         if (broke) {
           brokeNow = true;
-          dur.breaks.push({ t, hand, reason: 'wear', amount: wear, item: item.name ?? null });
+          dur.breaks.push({ t, hand, reason: 'wear', amount: wear, item: item.name ?? null, ...(wasBroken ? { again: true } : {}) });
           // The CWS payload of this blow resolves after the core's wear: refresh before the first row.
           dropItem(item);
           refreshCwsPower();
@@ -420,7 +424,8 @@ export function simulateFight(ch, args = {}) {
     let cwsCastsThis = 0;
     let cwsKill = false;
     // A break by a bill AFTER the killing cast (the row walk continues past a kill, see below). It is a break of the
-    // item, so it counts in `broke`/`breaks`, but the echo was already lost to the kill, not to this break.
+    // item like any other: it counts in `broke`/`breaks` and unequips the weapon before the strike listener, but it is kept
+    // apart from `brokeNow` because the fight ends at the kill and never reaches the survivor promotion.
     let brokeAfterKill = false;
     if (cwsEligible({
       target, strikesPositive: outcome.strikesPositive === true, whole: outcome.whole === true, item, standard,
@@ -501,8 +506,10 @@ export function simulateFight(ch, args = {}) {
     let echoKill = false;
     let meleeDamage = 0;
     // A broken weapon is no longer in wornPowers when the strike listener runs, so its Many Endings echo does not roll;
-    // Flow's current-blow damage was already read before the wear and survives.
-    const echoSuppressed = durability && brokeNow && echoDamage > 0;
+    // Flow's current-blow damage was already read before the wear and survives. The listener runs after the whole Strikes
+    // payload, so a break by a bill AFTER the killing cast has unequipped the weapon by then too (`brokeAfterKill`). Applied
+    // damage is unchanged either way: a CWS kill already stops the echo (`!cwsKill` below).
+    const echoSuppressed = durability && (brokeNow || brokeAfterKill) && echoDamage > 0;
     if (echoSuppressed) echoDamage = 0;
     if (!cwsKill && echoDamage > 0) {
       echoApplied = echoDamage;
@@ -583,8 +590,11 @@ export function simulateFight(ch, args = {}) {
   // Why this fight stopped - exclusive, in the loop's own priority: a kill, then no weapon left (a break the local model
   // cannot continue past, no fist schedule), then the blow budget, then the time horizon.
   const endReason = kill ? 'kill' : (dur?.endedByBreak ? 'noWeaponLeft' : (blows >= maxBlows ? 'blowBudget' : 'horizon'));
+  // Weapons that TRANSITIONED to 0 condition in this fight: at 0 at the end and not supplied at 0. (`endCondition.*.broken`
+  // is the other reading, "at 0 at the end", and includes a supplied-broken piece.)
   const weaponsBroken = dur
-    ? [dur.main, dur.off].filter((it) => it && (it.maxCondition ?? 0) > 0 && Number.isFinite(it.currentCondition) && it.currentCondition <= 0).length
+    ? [dur.main, dur.off].filter((it) => it && !dur.suppliedBroken.has(it) && (it.maxCondition ?? 0) > 0
+      && Number.isFinite(it.currentCondition) && it.currentCondition <= 0).length
     : 0;
   if (kill && killSource == null) killSource = 'melee';
   return {
@@ -684,8 +694,11 @@ export function pairedFightSeeds(count, seed = 0) {
  */
 export function durabilityStats(rows) {
   const trials = rows.length;
-  const first = rows.map((r) => r.breaks[0]?.t).filter((v) => Number.isFinite(v));
-  const withBreak = rows.filter((r) => r.breaks.length > 0);
+  // A repeat report (`again`) is `lowerCondition` re-announcing a weapon already at 0 - never the weapon's first break - so a
+  // fight "has a break" only if a weapon actually transitioned, and the first break is the first distinct one.
+  const firstDistinct = (r) => r.breaks.find((b) => !b.again);
+  const first = rows.map((r) => firstDistinct(r)?.t).filter((v) => Number.isFinite(v));
+  const withBreak = rows.filter((r) => firstDistinct(r) !== undefined);
   const counts = [0, 0, 0];
   for (const r of rows) counts[Math.min(2, r.weaponsBroken)] += 1;
   const events = rows.flatMap((r) => r.breaks);
@@ -707,7 +720,8 @@ export function durabilityStats(rows) {
     fightsWithBreak: withBreak.length,
     breakProbability: wilsonInterval(withBreak.length, trials),
     timeToFirstBreak: summarize(first),
-    timeAtRiskWithoutBreak: summarize(rows.filter((r) => r.breaks.length === 0).map((r) => r.time)),
+    // null when EVERY trial broke (no unbroken fight is at risk), like any empty summary
+    timeAtRiskWithoutBreak: summarize(rows.filter((r) => firstDistinct(r) === undefined).map((r) => r.time)),
     weaponsBroken: { counts, mean: trials ? (counts[1] + 2 * counts[2]) / trials : 0 },
     breakEvents: {
       distinct: distinct.length,

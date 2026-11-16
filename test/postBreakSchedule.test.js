@@ -219,18 +219,29 @@ test('7. the off hand\'s held burden is part of the swing in flight', async () =
   assert.ok(gap > 6 * 0.15, `the break swing's tail plus its held tick plus the lone hand's hit frame: ${gap}`);
 });
 
-test('8. controls: with no break, durability on and off keep the same blow times, and equal the machine', async () => {
+test('8. controls: no break - durability on = off, the first two pair blows equal the machine, and the pre-break pair timeline drifts by exactly the averaged held burden', async () => {
   const mk = () => build({ main: { template: 121 }, off: { template: 121 } });
-  const on = fight(mk().ch, mk().mainItem, { seed: 3, dual: true, maxBlows: 4 });
+  const on = fight(mk().ch, mk().mainItem, { seed: 3, dual: true, maxBlows: 6 });
   const { ch, mainItem } = mk();
-  const off = simulateFight(ch, { target: FOE(), health: 1e7, weapon: weaponOf(mainItem), seed: 3, dual: true, trace: true, maxBlows: 4 });
+  const off = simulateFight(ch, { target: FOE(), health: 1e7, weapon: weaponOf(mainItem), seed: 3, dual: true, trace: true, maxBlows: 6 });
   assert.equal(on.breaks.length, 0);
   assert.deepEqual(on.trace.map((e) => e.t), off.trace.map((e) => e.t), 'durability on = durability off');
   const tick = on.schedule.mainTick;
-  const oracle = await swingMachine({ right: 121, left: 121, stats: STATS, speed: 60, dt: tick, hits: 2 });
+  const oracle = await swingMachine({ right: 121, left: 121, stats: STATS, speed: 60, dt: tick, hits: 6 });
+  // the lead hit and the first flurry blow are the machine's (no held tick has been owed yet)
   assert.ok(Math.abs(off.trace[0].t - oracle.hits[0].t) < EXACT);
   assert.ok(Math.abs(off.trace[1].t - oracle.hits[1].t) < EXACT);
-  assert.equal(times(oracle.hits).length, 2);
+  // Documented limitation (the stage record, "Verified vs assumed"): the pair's PRE-break timeline times every off
+  // blow with the exchange's AVERAGED held burden, where the machine pays whole ticks (zero here for the first swings). Each
+  // off blow before a hit adds `offHandHoldTicks` ticks of drift; this pins that and nothing else (scheduling is unchanged).
+  const avgHold = on.schedule.offHandHoldTicks;
+  assert.ok(avgHold > 0 && avgHold < 0.2, `a fractional burden (${avgHold} ticks)`);
+  for (let i = 0; i < 6; i += 1) {
+    const offBlowsBefore = Math.floor(i / 2); // off blows whose averaged hold precedes this hit's swing
+    const drift = off.trace[i].t - oracle.hits[i].t;
+    assert.ok(Math.abs(drift - offBlowsBefore * avgHold * tick) < EXACT, `blow ${i}: drift ${drift} vs ${offBlowsBefore} x ${avgHold} ticks`);
+  }
+  assert.equal(times(oracle.hits).length, 6);
 });
 
 test('9. the survivor\'s own cadence, hit frame, powers and thresholds govern every later blow', async () => {

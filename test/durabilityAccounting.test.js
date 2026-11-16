@@ -10,12 +10,15 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { character, simCharacter, weapon } from './harness/fixtures.mjs';
 import { analyze, referenceFoe, weaponOf } from '../src/model.js';
 import {
-  durabilityStats, simulateFight, simulateFights, simulatePairedFights, wilsonInterval,
+  createAttackSchedule, durabilityStats, simulateFight, simulateFights, simulatePairedFights, wilsonInterval,
 } from '../src/simulateFight.js';
 import { cwsBill } from '../src/durability.js';
 import {
@@ -146,9 +149,21 @@ test('G3: bills after the kill can break the weapon; the kill still wins and not
   assert.equal(e.broke, true, 'the blow reports the break');
   assert.equal(e.meleeApplied, false, 'no melee after a CWS kill');
   assert.equal(e.echoApplied, 0, 'no echo after a CWS kill');
-  assert.equal(e.echoSuppressed, false, 'the echo was lost to the kill, not to the break');
+  // The break by the after-kill bill unequipped the weapon before the strike listener ran, so the echo did not roll for THAT
+  // reason too (upstream reads wornPowers after the payload: lootPowers.js:244-258, :351-386). The applied damage is the
+  // same either way - the kill already stopped the echo.
+  assert.equal(e.echoSuppressed, true, 'the weapon was unequipped before the listener');
+  assert.equal(e.echoDamage, 0);
+  assert.equal(r.echoDamage, 0);
   assert.equal(r.blows, 1);
   assert.equal(r.ttk, e.t);
+  // control: the same kill with the weapon intact - the echo is lost to the kill alone, so it is NOT reported as suppressed
+  const intact = killFight({ cond: 45, killAt: 1, extra: { imprints: [echo] } });
+  assert.equal(intact.breaks.length, 0);
+  assert.equal(intact.trace[0].echoSuppressed, false, 'no break, no suppression: the kill stopped the echo');
+  assert.ok(intact.trace[0].echoDamage > 0, 'the echo would have rolled');
+  assert.equal(intact.trace[0].echoApplied, 0);
+  assert.equal(intact.trace[0].meleeApplied, false);
   // the break on the KILLING row itself (cond 5: 4 left after wear, the row-1 bill breaks it) is not an after-kill break
   const early = killFight({ cond: 5, killAt: 1 });
   assert.deepEqual(early.breaks.map((x) => [x.afterKill === true, x.again === true]), [[false, false], [true, true], [true, true]]);
@@ -426,11 +441,7 @@ test('G6: procsBeforeBreak is the bill-only capacity, same value, labelled as su
   assert.equal(a.procsBeforeBreakBasis, 'cws-bill-only', 'and it says what it counts');
   assert.match(billCapacityNote(12), /bill-only/);
   assert.match(billCapacityNote(12), /wear/);
-  // no surface calls it procs "before break" any more
-  const cli = fs.readFileSync(new URL('../src/cli.js', import.meta.url), 'utf8');
-  assert.equal(/procs before break/i.test(cli), false, 'the CLI no longer says "procs before break"');
-  assert.ok(cli.includes('billCapacityNote('));
-  assert.ok(cli.includes('procsBeforeBreakBasis'));
+  // the CLI surfaces are tested by parsing their JSON (below), not by grepping the source
 });
 
 test('G6: the bound is not a cast count (upstream, no wear): the exhausting cast is real and not in floor(cond / 10)', () => {
@@ -470,4 +481,290 @@ test('G6: ordinary wear makes the bound overstate the casts a real weapon gets b
   assert.ok(Math.max(...casts) < bound, `no trial reached the bound: ${Math.max(...casts)} < ${bound}`);
   assert.ok(mean < 0.9 * bound, `mean ${mean} casts against a bound of ${bound}`);
   assert.ok(r.rows.every((x) => x.wear > 0), 'ordinary wear took condition the bound never counted');
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Stage 3.5.3c: closing the independent audit of 3.5.3b
+// ---------------------------------------------------------------------------------------------------------------------
+
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+/** Run the real CLI in theory mode (no save needed) and parse its `--json` stdout. */
+const cliJson = (cmd) => {
+  const out = execFileSync(process.execPath, [path.join(REPO, 'bin', 'dfo-dps.js'), cmd, '--theory', '--json'], {
+    env: { ...process.env, HOME: os.tmpdir() }, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8',
+  });
+  // `build --json` prints one JSON document; `enchant --json` prints its table first, then the document (existing behaviour)
+  const at = out.startsWith('{') ? 0 : out.indexOf('\n{') + 1;
+  assert.ok(at >= 0, `${cmd}: a JSON document in the output`);
+  return JSON.parse(out.slice(at));
+};
+
+test('G6-1: both public JSON emitters carry procsBeforeBreak and its basis, and they agree', () => {
+  const build = cliJson('build');
+  const enchant = cliJson('enchant');
+  assert.equal(build.result.procsBeforeBreakBasis, PROCS_BEFORE_BREAK_BASIS, '`build --json`');
+  assert.equal(enchant.result.procsBeforeBreakBasis, PROCS_BEFORE_BREAK_BASIS, '`enchant --json`');
+  assert.equal(build.result.procsBeforeBreakBasis, 'cws-bill-only');
+  assert.ok(Number.isInteger(build.result.procsBeforeBreak) && build.result.procsBeforeBreak >= 0);
+  assert.equal(build.result.procsBeforeBreak, enchant.result.procsBeforeBreak, 'the same weapon reads the same bill capacity');
+  // the number is the bill capacity of the weapon's own condition, and the field name is unchanged
+  assert.equal('procsBeforeBreak' in build.result, true);
+});
+
+/** The vendored walk for rows given as `{ t, p }` (type, param): the foe dies at the cast of `killParam`; `missing` params have no record. */
+function upstreamSpec({ cond, rows, killParam = null, missing = [], wear = 0 }) {
+  const it = item(cond, { enchantments: rows.map((r) => ({ type: r.t, param: r.p })) });
+  const owner = { equip: { slots: [] }, weapon: it, items: [it] };
+  owner.equip.slots[19] = it;
+  if (wear > 0) lowerCondition(it, wear, owner);
+  const foe = { spareGear: false, dead: false };
+  const casts = [];
+  const map = new Map(rows.filter((r) => r.t === 2 && !missing.includes(r.p)).map((r) => [r.p, { index: r.p }]));
+  doItemEnchantmentPayloads(PAYLOAD.Strikes, it, {
+    entity: owner, target: foe, damage: 10,
+    ctx: {
+      spellsByIndex: () => map,
+      applySpellToTarget: (rec) => { if (foe.dead) return; casts.push(rec.index); if (rec.index === killParam) foe.dead = true; },
+    },
+  });
+  return { cond: it.currentCondition, equipped: !!owner.equip.slots[19], casts };
+}
+
+/** A production fight over rows `{ t, p }`; `walked` is how many rows the payload walk reaches (it stops at an unregistered type). */
+function specFight({ cond, rows, killParam, missing = [], walked }) {
+  const standard = new Map(rows.filter((r) => r.t === 2 && !missing.includes(r.p)).map((r) => [r.p, spellOf(r.p, r.p === killParam ? 60 : 3)]));
+  const it = item(cond, { enchantments: rows.map((r) => ({ type: r.t, param: r.p })) });
+  const ch = simCharacter(DESC(), it);
+  const found = findRun(
+    (seed) => fight(ch, it, { seed, health: 20, standard }),
+    (r) => r.cwsTrace.filter((e) => e.swing === 1).length === walked && r.kill && r.cwsKills === 1,
+  );
+  assert.ok(found, 'a first blow that walks the expected rows and kills');
+  return found.run;
+}
+
+test('G3: an unregistered row after the killing row aborts the walk exactly where upstream does', () => {
+  const CWS = (p) => ({ t: 2, p });
+  const UNK = { t: 18, p: 0 }; // VisionProblems: no registry entry, `doItemEnchantmentPayloads` returns (enchantments.js:1052-1060)
+  const cases = [
+    { name: 'kill, abort, later row', rows: [CWS(1), UNK, CWS(2)], killParam: 1, walked: 1 },
+    { name: 'kill, after-kill row, abort, later row', rows: [CWS(1), CWS(2), UNK, CWS(3)], killParam: 1, walked: 2 },
+    { name: 'two rows, kill on the second, abort, later row', rows: [CWS(1), CWS(2), UNK, CWS(3)], killParam: 2, walked: 2 },
+  ];
+  for (const c of cases) {
+    for (const cond of [65, 25, 15]) {
+      const r = specFight({ cond, ...c });
+      const up = upstreamSpec({ cond, rows: c.rows, killParam: c.killParam, wear: r.trace[0].wear });
+      assert.equal(r.condition.main, up.cond, `${c.name} @${cond}: final condition`);
+      assert.equal(r.trace[0].equippedAfter.main, up.equipped, `${c.name} @${cond}: equipped`);
+      assert.equal(r.cwsCasts, up.casts.length, `${c.name} @${cond}: casts`);
+      assert.equal(r.cwsTrace.length, c.walked, `${c.name} @${cond}: rows walked stop at the unregistered type`);
+      assert.deepEqual(r.cwsTrace.map((e) => e.bill), Array(c.walked).fill(10), `${c.name}: only walked rows are billed`);
+    }
+  }
+});
+
+test('G3: a missing CWS record is processed and billed after a kill, and before one, but never cast', () => {
+  const CWS = (p) => ({ t: 2, p });
+  const cases = [
+    { name: 'missing row after the kill', rows: [CWS(1), CWS(2), CWS(3)], killParam: 1, missing: [2], expectCasts: 1 },
+    { name: 'missing row before the kill', rows: [CWS(1), CWS(2), CWS(3)], killParam: 2, missing: [1], expectCasts: 1 },
+    { name: 'every later row missing', rows: [CWS(1), CWS(2), CWS(3)], killParam: 1, missing: [2, 3], expectCasts: 1 },
+  ];
+  for (const c of cases) {
+    for (const cond of [45, 15, 5]) {
+      const r = specFight({ cond, rows: c.rows, killParam: c.killParam, missing: c.missing, walked: 3 });
+      const up = upstreamSpec({ cond, rows: c.rows, killParam: c.killParam, missing: c.missing, wear: r.trace[0].wear });
+      assert.equal(r.condition.main, up.cond, `${c.name} @${cond}`);
+      assert.equal(r.trace[0].equippedAfter.main, up.equipped, `${c.name} @${cond}: equipped`);
+      assert.equal(r.cwsCasts, up.casts.length);
+      assert.equal(r.cwsCasts, c.expectCasts);
+      const rows = r.cwsTrace.filter((e) => e.swing === 1);
+      assert.deepEqual(rows.map((e) => e.bill), [10, 10, 10], `${c.name}: all three rows billed`);
+      assert.deepEqual(rows.map((e) => e.missing), c.rows.map((x) => c.missing.includes(x.p)), `${c.name}: which rows had no record`);
+      assert.ok(rows.filter((e) => e.afterKill).every((e) => e.damage === 0 && e.cast === false));
+    }
+  }
+});
+
+test('G2: when every trial breaks there is no unbroken fight at risk: timeAtRiskWithoutBreak is null', () => {
+  const it = { ...weapon(121, { material: 9 }), maxCondition: 4, currentCondition: 4 };
+  const ch = simCharacter(DESC(), it);
+  const r = simulateFights(ch, {
+    target: referenceFoe(30, 'soft'), health: 1e9, weapon: weaponOf(it), seeds: [1, 2, 3], durability: true, maxSeconds: 30,
+  });
+  assert.equal(r.outcomes.noWeaponLeft, 3);
+  assert.equal(r.durability.fightsWithBreak, 3);
+  assert.equal(r.durability.breakProbability.p, 1);
+  assert.equal(r.durability.timeToFirstBreak.n, 3);
+  assert.equal(r.durability.timeAtRiskWithoutBreak, null, 'an empty summary is null, as every summary is');
+  // and the mirror: no trial broke -> no first-break time, every trial at risk
+  const intact = durabilityStats([
+    { endReason: 'kill', time: 5, weaponsBroken: 0, breaks: [], condition: { main: 9, off: null }, conditionPct: { main: 90, off: null } },
+    { endReason: 'horizon', time: 7, weaponsBroken: 0, breaks: [], condition: { main: 8, off: null }, conditionPct: { main: 80, off: null } },
+  ]);
+  assert.equal(intact.timeToFirstBreak, null);
+  assert.equal(intact.timeAtRiskWithoutBreak.n, 2);
+  assert.equal(intact.breakProbability.p, 0);
+});
+
+test('G2: the blow budget and the horizon reached together are reported as the blow budget; each alone as itself', () => {
+  const it = item(1000);
+  const ch = simCharacter(DESC(), it);
+  const t = (() => { const s = createAttackSchedule(ch, { target: referenceFoe(30, 'soft'), health: 1e9, weapon: weaponOf(it) }); return [s.next().t, s.next().t, s.next().t]; })();
+  const mid23 = (t[1] + t[2]) / 2;
+  const base = { target: referenceFoe(30, 'soft'), health: 1e9, weapon: weaponOf(it), seed: 4 };
+  for (const durability of [false, true]) {
+    const run = (extra) => simulateFight(ch, { ...base, durability, ...extra });
+    // two blows land inside the horizon AND the budget is two: both stop the loop at once -> the budget (the loop's order)
+    const both = run({ maxBlows: 2, maxSeconds: mid23 });
+    assert.equal(both.blows, 2);
+    assert.equal(both.endReason, 'blowBudget', `durability ${durability}: the tie goes to the blow budget`);
+    // the same horizon with room in the budget: only the clock stops it
+    const clock = run({ maxBlows: 3, maxSeconds: mid23 });
+    assert.equal(clock.blows, 2);
+    assert.equal(clock.endReason, 'horizon');
+    // the same budget with room in the clock: only the budget stops it
+    const budget = run({ maxBlows: 2, maxSeconds: 1e6 });
+    assert.equal(budget.endReason, 'blowBudget');
+    // a horizon before the second blow
+    const early = run({ maxBlows: 9, maxSeconds: (t[0] + t[1]) / 2 });
+    assert.equal(early.blows, 1);
+    assert.equal(early.endReason, 'horizon');
+  }
+  const r = simulateFights(ch, { ...base, durability: true, trials: 6, maxBlows: 2, maxSeconds: mid23 });
+  assert.deepEqual(r.outcomes, { killed: 0, noWeaponLeft: 0, horizonCensored: 0, blowBudgetCensored: 6 }, 'the aggregate follows the per-fight reason');
+  assert.equal(r.censored, 6);
+});
+
+test('G2: paired builds with different weapons each fight with their own equipment', () => {
+  const fragile = { ...weapon(121, { material: 9 }), maxCondition: 6, currentCondition: 6 };
+  const sturdy = { ...weapon(113, { material: 9 }), maxCondition: 100000, currentCondition: 100000 };
+  const a = simCharacter(DESC(), fragile);
+  const b = simCharacter(DESC(), sturdy);
+  const before = JSON.stringify([fragile, sturdy]);
+  const seeds = Array.from({ length: 16 }, (_, i) => 300 + i);
+  // NO shared `weapon` argument: each entry's own wielded weapon is the one fought with
+  const paired = simulatePairedFights([{ id: 'fragile', ch: a }, { id: 'sturdy', ch: b }], {
+    target: referenceFoe(30, 'tough'), health: 1e9, durability: true, trace: true, maxSeconds: 30, seeds,
+  });
+  const [ra, rb] = paired.rows.map((x) => x.result);
+  assert.deepEqual(ra.seeds, rb.seeds);
+  // each build's first blow lands where its OWN weapon's schedule puts it
+  const first = (ch, it) => createAttackSchedule(ch, { target: referenceFoe(30, 'tough'), health: 1e9, weapon: weaponOf(it) }).next().t;
+  assert.ok(Math.abs(ra.rows[0].trace[0].t - first(a, fragile)) < 1e-12);
+  assert.ok(Math.abs(rb.rows[0].trace[0].t - first(b, sturdy)) < 1e-12);
+  assert.notEqual(first(a, fragile), first(b, sturdy), 'the two weapons really differ');
+  // the fragile build wears out; the sturdy one is untouched by it
+  assert.ok(ra.durability.fightsWithBreak > 0);
+  assert.equal(rb.durability.fightsWithBreak, 0);
+  assert.ok(rb.rows.every((x) => x.condition.main === 100000 - x.wear), 'the sturdy item lost only its own ordinary wear');
+  assert.equal(rb.outcomes.noWeaponLeft, 0);
+  assert.deepEqual(ra.durability, durabilityStats(ra.rows));
+  assert.deepEqual(rb.durability, durabilityStats(rb.rows));
+  assert.equal(JSON.stringify([fragile, sturdy]), before, 'the callers\' items are unchanged');
+});
+
+test('G2: breaks by bills after a kill count in the break probability, the first-break time and the distinct events', () => {
+  const standard = new Map([[1, spellOf(1, 60)], [2, spellOf(2, 3)], [3, spellOf(3, 3)]]);
+  const it = cwsItem(15, [1, 2, 3]);
+  const ch = simCharacter(DESC(), it);
+  const r = simulateFights(ch, {
+    target: referenceFoe(30, 'soft'), health: 20, weapon: weaponOf(it), seeds: Array.from({ length: 40 }, (_, i) => i), durability: true,
+    maxBlows: 1, standard, cwsRolls: () => 0.5, conditionRolls: () => 0.1,
+  });
+  const killed = r.rows.filter((x) => x.kill);
+  assert.ok(killed.length > 20 && killed.length < 40, 'some first blows miss, so some fights do not kill');
+  for (const x of killed) {
+    assert.equal(x.breaks[0].afterKill, true, 'the only break is a post-kill bill');
+    assert.equal(x.breaks[0].t, x.ttk, 'at the kill blow');
+    assert.equal(x.weaponsBroken, 1);
+  }
+  const d = r.durability;
+  assert.equal(d.fightsWithBreak, killed.length);
+  assert.equal(d.breakProbability.p, killed.length / 40);
+  assert.equal(d.breakEvents.distinct, killed.length);
+  assert.equal(d.breakEvents.afterKill, killed.length, 'every break is an after-kill break; afterKill lets a reader subtract them');
+  assert.equal(d.breakEvents.repeats, killed.length, 'and each had the third row re-report it');
+  assert.ok(Math.abs(d.timeToFirstBreak.mean - killed.reduce((a, x) => a + x.ttk, 0) / killed.length) < 1e-12, 'the first break IS the kill time');
+  assert.equal(d.timeAtRiskWithoutBreak.n, 40 - killed.length);
+  assert.equal(r.outcomes.killed, killed.length);
+});
+
+test('G2-1: a weapon supplied at zero condition is not a weapon lost; its break reports are repeats', () => {
+  const run = (cond, extra = {}) => {
+    const it = { ...weapon(121, { material: 9 }), maxCondition: 1000, currentCondition: cond };
+    const ch = simCharacter(DESC(), it);
+    return simulateFights(ch, {
+      target: referenceFoe(30, 'tough'), health: 1e9, weapon: weaponOf(it), seeds: [0, 1, 2, 3, 4, 5, 6, 7], durability: true, maxBlows: 1, ...extra,
+    });
+  };
+  const zero = run(0);
+  const worn = zero.rows.filter((x) => x.breaks.length > 0);
+  assert.ok(worn.length > 0 && worn.length < 8, 'some first blows land and wear the broken weapon again, some do not');
+  for (const x of zero.rows) {
+    assert.equal(x.weaponsBroken, 0, 'nothing transitioned');
+    assert.ok(x.breaks.every((b) => b.again === true), 'lowerCondition re-reports a weapon already at 0');
+    assert.equal(x.condition.main, 0);
+  }
+  const d = zero.durability;
+  assert.deepEqual(d.weaponsBroken.counts, [8, 0, 0]);
+  assert.equal(d.weaponsBroken.mean, 0);
+  assert.equal(d.fightsWithBreak, 0, 'no weapon broke in these fights');
+  assert.equal(d.breakProbability.p, 0);
+  assert.equal(d.timeToFirstBreak, null);
+  assert.equal(d.timeAtRiskWithoutBreak.n, 8);
+  assert.deepEqual(d.breakEvents, { distinct: 0, byReason: { wear: 0, cws: 0 }, afterKill: 0, repeats: worn.length });
+  // "at 0 at the end" is the other reading and still includes the supplied-broken piece
+  assert.equal(d.endCondition.main.broken, 8);
+  // such a weapon is unequipped by its first landed wear, so the fight has no weapon left - that is a no-weapon stop, not a transition
+  assert.equal(zero.outcomes.noWeaponLeft, worn.length);
+  // the control: one point of condition DOES transition, and everything reconciles to it
+  const one = run(1);
+  const broke = one.rows.filter((x) => x.weaponsBroken === 1);
+  assert.equal(broke.length, one.durability.fightsWithBreak);
+  assert.ok(broke.length > 0);
+  assert.ok(broke.every((x) => x.breaks.length === 1 && !x.breaks[0].again));
+  assert.equal(one.durability.breakEvents.distinct, broke.length);
+  assert.equal(one.durability.breakEvents.repeats, 0);
+  assert.equal(one.durability.timeToFirstBreak.n, broke.length);
+  // a pair: the main supplied at 0, the off hand at 5 - only the off hand can transition
+  const main = { ...weapon(121, { material: 9 }), maxCondition: 1000, currentCondition: 0 };
+  const dual = simCharacter(DESC(), main);
+  dual.offWeapon = { ...weapon(121, { material: 9 }), maxCondition: 1000, currentCondition: 5, equipSlot: 21 };
+  dual._dual = true;
+  const pair = simulateFights(dual, {
+    target: referenceFoe(30, 'soft'), health: 1e9, weapon: weaponOf(main), seeds: Array.from({ length: 12 }, (_, i) => i), durability: true, dual: true, maxSeconds: 30,
+  });
+  assert.ok(pair.rows.every((x) => x.weaponsBroken <= 1), 'the supplied-broken main is never counted');
+  assert.ok(pair.rows.some((x) => x.weaponsBroken === 1), 'the off hand wore out in some fights');
+  assert.equal(pair.durability.weaponsBroken.counts[2], 0);
+});
+
+test('G2-1: weaponsBroken equals the distinct break reports of every fight (the reconciliation law)', () => {
+  const sets = [mixed()];
+  const small = (c) => ({ ...weapon(121, { material: 9 }), maxCondition: c, currentCondition: c });
+  const mi = small(6);
+  const dualCh = simCharacter(DESC(), mi);
+  dualCh.offWeapon = { ...small(6), equipSlot: 21 };
+  dualCh._dual = true;
+  sets.push(simulateFights(dualCh, {
+    target: referenceFoe(30, 'tough'), health: 1e7, weapon: weaponOf(mi), seeds: Array.from({ length: 24 }, (_, i) => i), durability: true, dual: true, maxSeconds: 60,
+  }));
+  const standard = new Map([[1, spellOf(1, 60)], [2, spellOf(2, 3)]]);
+  const ci = cwsItem(15, [1, 2]);
+  sets.push(simulateFights(simCharacter(DESC(), ci), {
+    target: referenceFoe(30, 'soft'), health: 20, weapon: weaponOf(ci), seeds: Array.from({ length: 20 }, (_, i) => i), durability: true, maxBlows: 3, standard,
+  }));
+  let checked = 0;
+  for (const r of sets) {
+    for (const x of r.rows) {
+      assert.equal(x.weaponsBroken, x.breaks.filter((b) => !b.again).length, `seed ${x.seed}`);
+      checked += 1;
+    }
+    const d = r.durability;
+    assert.equal(d.breakEvents.distinct, d.weaponsBroken.counts[1] + 2 * d.weaponsBroken.counts[2]);
+    assert.equal(d.fightsWithBreak, d.weaponsBroken.counts[1] + d.weaponsBroken.counts[2]);
+  }
+  assert.ok(checked > 100);
 });

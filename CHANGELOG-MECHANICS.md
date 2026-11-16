@@ -6,6 +6,44 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage 3.5.3c - closing the independent audit of Stage 3.5.3b (2026-11-16)
+
+The audit of `2c2ece8` found three proven defects (G3-1, G2-1, G6-1) and coverage gaps; none moved a damage, kill or TTK number.
+Full record: the stage record section 6. Implementation fixes vs documentation/test-only items:
+
+**Implementation fixes.**
+- **G3-1 (trace).** A bill after a killing cast can break and unequip the striking weapon before the strike listener reads
+  `wornPowers` (`vendor:systems/loot/lootPowers.js:244-258`, `:351-386`; `systems/equip.js:570-608`). `echoSuppressed` now reports
+  that case (`src/simulateFight.js`: `brokeNow || brokeAfterKill`). Applied echo, melee, kill, TTK are unchanged - the CWS kill
+  already stopped the echo. Before: cond 25 / 15 with an echo weapon, `echoSuppressed false`, `echoDamage 5`; after: `true`, `0`.
+  A kill with the weapon intact is still `false` (the echo is lost to the kill alone).
+- **G2-1 (aggregate).** `weaponsBroken` counted a weapon supplied at 0. It now counts transitions: the fight snapshots which hand
+  items start at 0; a wear break on such an item carries `again` (as a CWS bill already did), and `fightsWithBreak`,
+  `timeToFirstBreak`, `timeAtRiskWithoutBreak` use DISTINCT breaks. Before (5 fights, main supplied at 0): `weaponsBroken` counts
+  `[0,5,0]`, `breakProbability` 0.4 with `breakEvents.distinct` 2 - three numbers that disagreed; after: `[5,0,0]`, 0, distinct 0,
+  repeats 2. A weapon that starts above 0 is unchanged, so every other fight reconciles as before (law: `weaponsBroken` = distinct
+  break reports, tested on every row of three sets).
+- **G6-1 (CLI JSON).** `build --json` now carries `procsBeforeBreakBasis` like `enchant --json`; the source-string test is replaced
+  by tests that run `dfo-dps build|enchant --theory --json` and parse both documents.
+
+**Documentation / test only.** `timeAtRiskWithoutBreak` is `null` when every trial broke (documented, tested); after-kill breaks
+count in the break probability at the kill time (documented, tested); an unregistered row after a kill stops the walk and the bills,
+and a missing record after (or before) a kill is billed, never cast (production fights against the vendored walk, 18 cases); the
+budget/horizon tie is `blowBudget` (tested alone and tied); paired builds with different weapons fight with their own items; Stage
+3.5.3a test 8 is renamed and pins the documented pre-break drift as exactly `offHandHoldTicks` x tick per earlier off blow
+(scheduling unchanged).
+
+**Verification.** Parity with `2c2ece8`: 250 pair/single fights (durability off and on, no break), 120 CWS no-kill fights (40 with
+breaks) and the 3.5.3a scheduling table are byte-identical; 160 kill/echo/post-kill-break fights are identical in every field
+except the trace's `echoSuppressed`/`echoDamage` entries (suppressed entries 40 -> 120). Mutations caught in a throwaway copy
+(14): `echoSuppressed` ignoring the after-kill break (1 fail); `weaponsBroken` counting the supplied-at-0 weapon (1), the wear repeat
+not flagged (1), `fightsWithBreak` / the first-break time / the at-risk set from any report (3); the basis dropped from `build`
+(1) or `enchant` JSON (1); the walk passing an unregistered row (1), a missing record after a kill unbilled (1), an empty at-risk
+summary object (1), horizon winning the tie (1), paired builds sharing the first entry (2), and the pair timeline losing its
+averaged hold (1, test 8). Full suite **671 tests, 671 pass**; vendor **289 vendored + 122 stubbed**; parity **1855/1855**.
+
+**Not changed.** The combat formula, CWS order, post-break scheduling, the RNG model, `vendor/`, `src/relayClaim.js`; G4, G5, G7, G8.
+
 ## Stage 3.5.3b - durability accounting and aggregate metrics (2026-11-16)
 
 Closes G2, G3 and G6 of the Stage 3.5.3 audit. Full record: the stage record.
