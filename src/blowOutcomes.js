@@ -31,13 +31,15 @@
  *   whole       an off-hand blow counts whole with OFF_HAND_BLOW.blowWeight (formulas.js:830), independently of
  *               everything above; it gates the Strikes payload (Potent Vs) - a main-hand blow is always whole
  *   echo        Many Endings: one Bernoulli per power on a landed blow whose final damage is > 0
+ *   strikesPositive  the PRE-payload formula damage > 0 - the CWS guard. `formulaPositive` is the POST-payload value
+ *                    Flow and Many Endings read.
  *
  * A MISS is its own outcome, even when its damage is 0 and even when a Strikes payload (Potent Vs) gives it damage:
  * `hit` says whether the swing landed, `damage` what the blow was worth.
  *
- * WHAT IS NOT HERE (it follows the blow, and belongs to later stages): Cast When Strikes, DoTs, Flow and other timed
- * state, equipment wear, the relay's bucket, dual-hand scheduling. The off-hand `whole` flag is carried so a later
- * stage can gate those on it.
+ * WHAT IS NOT HERE (it follows the blow, and belongs to later stages): the Cast When Strikes cast itself (this module
+ * carries its trigger as `strikesPositive`/`strikesDamage`), DoTs, Flow and other timed state, equipment wear, the
+ * relay's bucket, dual-hand scheduling. The off-hand `whole` flag is carried so a later stage can gate those on it.
  *
  * The setup lines (weapon, target, simOpts, caps, powers) mirror `analyzeCard` in src/model.js and are checked against
  * it: test/blowOutcomes.test.js asserts that the distribution's means equal analyze()'s perSwing / cappedPerSwing.
@@ -255,12 +257,13 @@ function finish(outcome, o, cap) {
     blow, echoDamage, damage: blow + echoDamage, claim, cappedDamage: claim + echoDamage,
     echoMask: o.echoMask ?? 0, echoHits: o.echoHits ?? 0, echoEligible: o.echoEligible === true,
     formulaPositive: o.formulaPositive === true,
+    strikesDamage: o.strikesDamage ?? 0, strikesPositive: o.strikesPositive === true,
   });
 }
 
 const keyOf = (o) => [
   o.directionIndex, o.facing ? 1 : 0, o.backstab ? 1 : 0, o.crit ? 1 : 0, o.hit ? 1 : 0, o.whole ? 1 : 0,
-  o.echoMask, o.blow, o.echoDamage, o.formulaPositive ? 1 : 0,
+  o.echoMask, o.blow, o.echoDamage, o.formulaPositive ? 1 : 0, o.strikesPositive ? 1 : 0,
 ].join('|');
 
 /**
@@ -291,6 +294,7 @@ export function mergeToFightTier(full) {
     p: sum.value,
     direction: o.direction, directionIndex: o.directionIndex, facing: o.facing, backstab: o.backstab,
     crit: o.crit, hit: o.hit, whole: o.whole, echoMask: o.echoMask, echoHits: o.echoHits, echoEligible: o.echoEligible === true, formulaPositive: o.formulaPositive === true,
+    strikesDamage: o.strikesDamage, strikesPositive: o.strikesPositive === true,
     blow: o.blow, echoDamage: o.echoDamage, damage: o.damage, claim: o.claim, cappedDamage: o.cappedDamage,
   }));
   outcomes.sort((a, b) => a.directionIndex - b.directionIndex

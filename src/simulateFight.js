@@ -28,7 +28,7 @@
  */
 import { analyze, weaponOf, weaponPowers } from './model.js';
 import { blowFightTier, createBlowSampler } from './blowOutcomes.js';
-import { cwsEligible, cwsRows, resolveCwsCast } from './cws.js';
+import { cwsEligible, cwsRows, resolveCwsCast, spellPowerInputs } from './cws.js';
 import { createRng } from './rng.js';
 import { healthThresholds } from './fight.js';
 import { DUAL, FLURRY_TICKS } from './dualWield.js';
@@ -190,6 +190,13 @@ export function simulateFight(ch, args = {}) {
   const standard = scenario.standard;
   const target = schedule.target;
   const probe = schedule.probe;
+  if (ch?.firmamentSpellPower != null || ch?.firmamentSpellPierce != null || ch?.spellPower != null || ch?.spellPierce != null) {
+    throw new Error('simulateFight: firmament spell power/pierce is not modelled; pass potencyPct/pierce explicitly');
+  }
+  const cwsPower = spellPowerInputs(ch, {
+    potencyPct: scenario.potencyPct, pierce: scenario.pierce,
+    items: [probe.weapon?.item, probe.offHand?.weapon?.item].filter(Boolean),
+  });
   const dual = schedule.kind === 'dual';
   const powers = [
     ...weaponPowers(probe.weapon, scenario),
@@ -199,7 +206,6 @@ export function simulateFight(ch, args = {}) {
   const maxSeconds = num(scenario.maxSeconds, 3600);
   const maxBlows = Math.max(1, Math.floor(num(scenario.maxBlows, 1000000)));
   const damageMode = scenario.damageMode === 'capped' ? 'capped' : 'uncapped';
-  const damageOf = (o) => (damageMode === 'capped' ? o.cappedDamage : o.damage);
 
   const cache = new Map();
   const distribution = (index, hand) => {
@@ -234,18 +240,18 @@ export function simulateFight(ch, args = {}) {
     const hand = dual ? next.hand : 'main';
     const dist = distribution(index, hand);
     const outcome = dist.sampler.sample(blowStream);
-    const blowDamage = damageOf(outcome);
+    const blowDamage = damageMode === 'capped' ? outcome.claim : outcome.blow; // the host's melee blow
+    const echoDamage = num(outcome.echoDamage, 0); // the strike listener's separate hit, before the host's blow
     t = next.t;
     blows += 1;
-    // CWS runs inside the blow's formula, before the host applies the melee damage. The row's trigger is the formula
-    // damage > 0 before Potent Vs (`formulaPositive`), the off-hand `whole` outcome, the item's enchantment list, and
-    // a target the relay has not warded. Each row is its own cast, in the item's order.
+    // CWS runs inside the blow's formula, before the strike listener (echo) and the host's melee blow. Its guard is the
+    // PRE-payload damage (`strikesPositive`), not the post-Potent-Vs `formulaPositive` Flow/echo read.
     const item = hand === 'off' ? (probe.offHand?.weapon?.item ?? null) : (probe.weapon?.item ?? null);
     let cwsDamage = 0;
     let cwsCastsThis = 0;
     let cwsKill = false;
     if (cwsEligible({
-      target, damagePositive: outcome.formulaPositive === true, whole: outcome.whole === true, item, standard,
+      target, strikesPositive: outcome.strikesPositive === true, whole: outcome.whole === true, item, standard,
     })) {
       for (const row of cwsRows(item, standard)) {
         if (!row.spell) {
@@ -254,12 +260,14 @@ export function simulateFight(ch, args = {}) {
           });
           continue;
         }
+        // The sink is the host's landing: later effects still roll, but they stop being counted/applied at death.
+        const hurt = (n) => { hp = Math.max(0, hp - n); return hp > 0; };
         const cast = resolveCwsCast({
           spell: row.spell, caster: { entity: ch }, casterLevel: num(ch.level, 1), target, rolls: cwsRolls,
+          pierce: cwsPower.pierce, potencyPct: cwsPower.potencyPct, hurt,
         });
         cwsDamage += cast.damage;
         cwsCastsThis += 1;
-        hp -= cast.damage;
         const killed = hp <= 0;
         if (killed) { hp = 0; cwsKill = true; cwsKills += 1; }
         cwsTrace?.push({
@@ -270,24 +278,36 @@ export function simulateFight(ch, args = {}) {
         if (killed) break; // the host's applySpellToTarget finds no live foe for a later row
       }
     }
-    // A CWS kill means the host's damageFoe sees `foe.dead` and drops the melee blow. The swing still happened, so
-    // `blows` and the trace keep it; only its damage is not applied.
-    let meleeDamage = blowDamage;
-    if (cwsKill) meleeDamage = 0;
-    else hp -= meleeDamage;
+    // Upstream order after the formula: the strike listener's echo lands as its own hit (`hurtFoe`) first; the host's
+    // melee blow lands after. A CWS kill (or an echo kill) makes `damageFoe` see `foe.dead`, so the later hit is not
+    // applied. The swing still happened, so `blows` and the trace keep it.
+    let echoApplied = 0;
+    let echoKill = false;
+    let meleeDamage = 0;
+    if (!cwsKill && echoDamage > 0) {
+      echoApplied = echoDamage;
+      hp = Math.max(0, hp - echoApplied);
+      echoKill = hp <= 0;
+    }
+    if (!cwsKill && !echoKill && blowDamage > 0) {
+      meleeDamage = blowDamage;
+      hp = Math.max(0, hp - meleeDamage);
+    }
     if (hp < 0) hp = 0;
     cwsDealt += cwsDamage;
     cwsCasts += cwsCastsThis;
-    dealt += cwsDamage + meleeDamage;
+    dealt += cwsDamage + echoApplied + meleeDamage;
     const key = `${index}|${hand}`;
-    const u = used.get(key) ?? { segment: index, hand, share: dist.mid, blows: 0, damage: 0, cwsDamage: 0 };
+    const u = used.get(key) ?? { segment: index, hand, share: dist.mid, blows: 0, damage: 0, cwsDamage: 0, echoDamage: 0 };
     u.blows += 1;
-    u.damage += cwsDamage + meleeDamage;
+    u.damage += cwsDamage + echoApplied + meleeDamage;
     u.cwsDamage += cwsDamage;
+    u.echoDamage += echoApplied;
     used.set(key, u);
     if (trace) trace.push({
-      t, hand, swing: blows, segment: index, share, damage: meleeDamage, blowDamage, cwsDamage, cwsCasts: cwsCastsThis,
-      cwsKill, meleeApplied: meleeDamage > 0, formulaPositive: outcome.formulaPositive === true,
+      t, hand, swing: blows, segment: index, share, damage: meleeDamage, blowDamage, echoDamage, echoApplied,
+      cwsDamage, cwsCasts: cwsCastsThis, cwsKill, echoKill, meleeApplied: meleeDamage > 0,
+      strikesPositive: outcome.strikesPositive === true, formulaPositive: outcome.formulaPositive === true,
       whole: outcome.whole === true, hit: outcome.hit, crit: outcome.crit,
       blow: outcome.blow, claim: outcome.claim, cappedDamage: outcome.cappedDamage,
       echoHits: outcome.echoHits, remaining: Math.max(0, hp),

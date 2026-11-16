@@ -61,10 +61,10 @@ test('the Strikes gate: target, damage, ward, whole, item, CWS row', () => {
   const item = itemWith([1]);
   const standard = new Map([[1, spellOf([effect(4, 0)])]]);
   const t = target();
-  const base = { target: t, damagePositive: true, whole: true, item, standard };
+  const base = { target: t, strikesPositive: true, whole: true, item, standard };
   assert.equal(cwsEligible(base), true);
   assert.equal(cwsEligible({ ...base, target: null }), false);
-  assert.equal(cwsEligible({ ...base, damagePositive: false }), false, 'a miss / fully stopped blow');
+  assert.equal(cwsEligible({ ...base, strikesPositive: false }), false, 'a miss / fully stopped blow');
   assert.equal(cwsEligible({ ...base, whole: false }), false, 'the off-hand whole draw failed');
   assert.equal(cwsEligible({ ...base, target: { ...t, warded: true } }), false, 'a warded target');
   assert.equal(cwsEligible({ ...base, item: weapon(121, { material: 9 }) }), false, 'no CWS row');

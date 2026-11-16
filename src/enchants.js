@@ -2,9 +2,11 @@
  * dfo-dps - item enchantments and loot-affix procs.
  *
  * A Cast When Strikes row is `{type: 2, param: <SPELLS.STD index>}`.
- * It fires on every landed blow, not on a chance, with the spell's own
- * saving throw (enchantments.js CastWhenStrikes). Potent Vs is +5 flat
- * on a landed blow against one affinity; Low Damage Vs is -5.
+ * It rides the Strikes payload on a qualifying blow (the row's own guard
+ * plus the item/whole gates; enchantments.js CastWhenStrikes), with the
+ * spell's own saving throw. Potent Vs is +5 flat on a qualifying blow
+ * against one affinity; Low Damage Vs is -5. The payload walk stops at the
+ * first enchantment type the vendored REGISTRY does not answer.
  */
 import { MAGIC_ROUND_SECONDS, standardSpells } from './spells.js';
 import { spellDamage } from './spells.js';
@@ -46,6 +48,27 @@ const AFFINITY = Object.freeze({ 0: 'undead', 1: 'daedra', 2: 'humanoid', 3: 'an
 
 export const enchantmentRows = (item) => (item?.enchantments ?? []).filter((e) => e && e.type >= 0);
 
+/**
+ * The classic types `vendor:systems/enchantments.js`'s REGISTRY answers (`:509-980`). `doItemEnchantmentPayloads`
+ * RETURNS at the first row whose `REGISTRY.get(type)` is undefined (`:1052-1060`), so every later row - Strikes rows
+ * included - never runs. `VisionProblems` (18) and `WalkingProblems` (19) are the two classic keys the registry does
+ * not answer; any type outside 0..26 is also unknown. A second list would drift, so `test/cwsDifferential.test.js`
+ * checks this set against the vendored registry's own payload walk.
+ */
+export const REGISTERED_ENCHANTMENT_TYPES = new Set(
+  Array.from({ length: 27 }, (_, i) => i).filter((t) => t !== ENCHANTMENT_TYPES.VisionProblems && t !== ENCHANTMENT_TYPES.WalkingProblems),
+);
+
+/** The rows the payload walk actually reaches: item order, up to (not including) the first unregistered type. */
+export function payloadRows(item) {
+  const out = [];
+  for (const e of enchantmentRows(item)) {
+    if (!REGISTERED_ENCHANTMENT_TYPES.has(e.type)) break;
+    out.push(e);
+  }
+  return out;
+}
+
 /** The held fold: EnhancesSkill is +15 to its param. The save's own
  *  `_enchantMods` is the live copy; this rebuilds it for a raw save. */
 export function rebuildEnchantMods(items) {
@@ -65,7 +88,7 @@ export function rebuildEnchantMods(items) {
 /** Cast When Strikes rows, resolved through the standard spellbook. */
 export function castWhenStrikes(item, standard = standardSpells()) {
   const out = [];
-  for (const e of enchantmentRows(item)) {
+  for (const e of payloadRows(item)) {
     if (e.type !== ENCHANTMENT_TYPES.CastWhenStrikes) continue;
     const sp = standard.get(Number(e.param));
     if (sp) out.push(sp);
@@ -102,7 +125,7 @@ export function strikeEnchantments(item, ch, target, {
     procs.push({ name: sp.name, index: sp.index, damage: d.instant, min: dMin.instant, max: dMax.instant, dotTick: d.dotPerTick, dotRounds: d.dotRounds });
   }
   let flat = 0;
-  for (const e of enchantmentRows(item)) {
+  for (const e of payloadRows(item)) {
     const group = AFFINITY[e.param];
     if (!group) continue;
     if (e.type === ENCHANTMENT_TYPES.PotentVs && target?.group === group) flat += POTENT_VS_FLAT;

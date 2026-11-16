@@ -67,12 +67,20 @@ export function upstreamFight(u, { desc, item, offItem = null, body, events, see
       const owed = takeOwed(body); // relay-only; zero for an ordinary body
       const struck = (d, kind) => (traits.length && d > 0
         ? u.bossTraits.bossStrike({ bossTraits: traits }, d, { kind, weapon: w }).damage : d);
-      const damage = struck(raw, w?.group === 'Weapons' && w?.templateIndex === 129 ? 'arrow' : 'melee')
-        + (owed > 0 ? struck(owed, 'melee') : 0) + own;
+      // The strike listener's echo is its own ordinary-foe hit (`door.hurtFoe`) inside the formula, before the host
+      // applies the melee blow. If the echo kills, `damageFoe` sees `foe.dead` and drops the melee (and any owed
+      // echo the melee claim would have carried). This is the host order the local fight now reproduces.
+      const echo = own;
+      const afterEcho = Math.max(0, hp - echo);
+      const melee = afterEcho > 0
+        ? struck(raw, w?.group === 'Weapons' && w?.templateIndex === 129 ? 'arrow' : 'melee')
+          + (owed > 0 ? struck(owed, 'melee') : 0)
+        : 0;
+      const damage = echo + melee;
       t = ev.t;
-      hp -= damage;
+      hp = Math.max(0, afterEcho - melee);
       dealt += damage;
-      trace.push({ t, hand: ev.hand, damage, hit: damage > 0, remaining: Math.max(0, hp) });
+      trace.push({ t, hand: ev.hand, damage, hit: damage > 0, remaining: hp });
       if (hp <= 0) { ttk = t; break; }
     }
   } finally {

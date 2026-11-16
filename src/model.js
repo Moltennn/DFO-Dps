@@ -26,7 +26,8 @@ import { allowanceSpec, claimStreams, runAllowance } from './allowance.js';
 import { relayTraitsFor, resistBlow } from './bossTraits.js';
 import { BOW_FAST, bowFastDamage } from '../vendor/upstream/a3eb1605/src/combat/bowBloom.js';
 import { powerIdsOf, powerOf } from '../vendor/upstream/a3eb1605/src/systems/loot/lootRarity.js';
-import { mobileAffinityMatches, itemEnchantments, ENCHANTMENT_TYPES as UPSTREAM_ENCHANTMENTS, POTENT_VS_DAMAGE, LOW_DAMAGE_VS } from '../vendor/upstream/a3eb1605/src/systems/enchantments.js';
+import { mobileAffinityMatches, ENCHANTMENT_TYPES as UPSTREAM_ENCHANTMENTS, POTENT_VS_DAMAGE, LOW_DAMAGE_VS } from '../vendor/upstream/a3eb1605/src/systems/enchantments.js';
+import { payloadRows } from './enchants.js';
 import { foeGroup } from '../vendor/upstream/a3eb1605/src/systems/loot/lootPowers.js';
 import { conditionPercentage } from '../vendor/upstream/a3eb1605/src/systems/item/itemTemplates.js';
 import { CLICK_ATTACK_DIRECTIONS } from '../vendor/upstream/a3eb1605/src/characters/weaponStates.js';
@@ -757,7 +758,7 @@ export function lootPowerTerms(powers, target, opts = {}) {
 export function strikesNet(item, target) {
   if (target?.mobileType == null) return 0;
   let net = 0;
-  for (const e of itemEnchantments(item) ?? []) {
+  for (const e of payloadRows(item)) {
     if (e.type === UPSTREAM_ENCHANTMENTS.PotentVs && mobileAffinityMatches(target.mobileType, e.param)) net += POTENT_VS_DAMAGE;
     else if (e.type === UPSTREAM_ENCHANTMENTS.LowDamageVs && mobileAffinityMatches(target.mobileType, e.param)) net += LOW_DAMAGE_VS;
   }
@@ -798,6 +799,9 @@ export function resolveBlow(d, part, ctx = {}) {
  * five too - upstream's own calculateAttackDamage answers 5 for every miss with the enchantment on (sampled in
  * test/pricing.test.js), and the hosts (combat/playerWeapon.js:1260-1277) take its answer as the blow. An off-hand blow
  * is `whole` only OFF_HAND_BLOW.blowWeight (0.8) of the time, so it is two outcomes. The relay cap is the caller's.
+ *
+ * Each outcome also carries `strikesDamage`/`strikesPositive`: the PRE-payload damage (`shared`), which is what the
+ * Cast When Strikes guard reads. `formulaPositive` is the POST-Payload value Flow and Many Endings read.
  */
 export function afterShare(shared, p, { weapon = null, offHand = false, traits = [], strikeKind = 'melee', bow = null, potentVs = 0, echoes = [], relay = false } = {}) {
   const heard = potentVs ? (offHand ? OFF_HAND_BLOW.blowWeight : 1) : 0;
@@ -808,7 +812,7 @@ export function afterShare(shared, p, { weapon = null, offHand = false, traits =
   for (const { p: q, damage } of branches) {
     const shot = bowBlow(damage, bow); // the pull comes after the payloads, before the trait
     const v = shot > 0 && traits.length ? resistBlow(traits, shot, { kind: strikeKind, weapon }) : shot;
-    if (!(damage > 0) || !echoes.length) { out.push({ p: q, v, x: 0, echoMask: 0, echoHits: 0, echoEligible: false, formulaPositive: damage > 0 }); continue; }
+    if (!(damage > 0) || !echoes.length) { out.push({ p: q, v, x: 0, echoMask: 0, echoHits: 0, echoEligible: false, formulaPositive: damage > 0, strikesDamage: shared, strikesPositive: shared > 0 }); continue; }
     // Many Endings (lootPowers.js:374-376, :444-454): the strike listener is told the blow's FINAL damage - the
     // formula's, so before the pull and the trait - and each power rolls `chance` per cent. A hit repeats it as
     // n = max(1, round(damage)): on a body the relay runs it is OWED (oweFoe) and taken into THIS blow's claim by the
@@ -821,10 +825,10 @@ export function afterShare(shared, p, { weapon = null, offHand = false, traits =
       let k = 0;
       echoes.forEach((c, i) => { const hit = (mask >> i) & 1; pr *= hit ? c / 100 : 1 - c / 100; k += hit; });
       if (!(pr > 0)) continue;
-      if (!k) { out.push({ p: pr, v, x: 0, echoMask: mask, echoHits: 0, echoEligible: true, formulaPositive: true }); continue; }
+      if (!k) { out.push({ p: pr, v, x: 0, echoMask: mask, echoHits: 0, echoEligible: true, formulaPositive: true, strikesDamage: shared, strikesPositive: shared > 0 }); continue; }
       const owed = k * n;
-      if (relay) out.push({ p: pr, v: v + (traits.length ? resistBlow(traits, owed, { kind: 'melee', weapon }) : owed), x: 0, echoMask: mask, echoHits: k, echoEligible: true, formulaPositive: true });
-      else out.push({ p: pr, v, x: owed, echoMask: mask, echoHits: k, echoEligible: true, formulaPositive: true });
+      if (relay) out.push({ p: pr, v: v + (traits.length ? resistBlow(traits, owed, { kind: 'melee', weapon }) : owed), x: 0, echoMask: mask, echoHits: k, echoEligible: true, formulaPositive: true, strikesDamage: shared, strikesPositive: shared > 0 });
+      else out.push({ p: pr, v, x: owed, echoMask: mask, echoHits: k, echoEligible: true, formulaPositive: true, strikesDamage: shared, strikesPositive: shared > 0 });
     }
   }
   return out;

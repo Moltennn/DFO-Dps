@@ -11,42 +11,55 @@ does not belong here (use the commit message).
 **What the game does.** A Cast When Strikes row is a `Strikes` payload at the tail of
 `calculateAttackDamage` (`vendor:combat/formulas.js:826-836`, `vendor:systems/enchantments.js:590-602`). It casts
 when a target exists, the final formula damage is not 0, the target is not `warded`, the item is enchanted, the blow
-counts `whole`, and the attacker is the player or the damage is positive. Each row is cast in the item's order; a
-missing spell record casts nothing. The cast lands before the host applies the melee blow; on an ordinary foe a CWS
-kill makes `damageFoe` drop the melee blow (`full:scenes/dungeonContext.js:6781`). Direct damage is the actual
-`isDamageHealth` family, classic (4,0) (`vendor:systems/effects.js:440`, `:1080-1088`); the spell's per-effect
-absorption, reflection, resistance and saving throw follow `vendor:systems/effects.js:991-1038` and
-`vendor:systems/spellcast.js:203-236`.
+counts `whole`, and the attacker is the player or the damage is positive. The guard reads the damage BEFORE the
+payload (`enchantments.js:1060-1072`); Potent Vs / Low Damage Vs only change the separate `damageOut`. Each row is
+cast in the item's order; the payload walk returns at the first unregistered enchantment type (`:1052-1060`), so no
+later row runs. A missing spell record casts nothing. The cast lands before the strike listener's echo and the host's
+melee blow; a CWS kill or an echo kill makes `damageFoe` drop the melee blow
+(`full:scenes/dungeonContext.js:6781`). Direct damage is the actual `isDamageHealth` family, classic (4,0)
+(`vendor:systems/effects.js:440`, `:1080-1088`); the spell's per-effect absorption, reflection, resistance and
+saving throw follow `vendor:systems/effects.js:991-1038` and `vendor:systems/spellcast.js:203-236`. Damage Health's
+save takes `spellPierce`; the landed amount takes `spellPowerMult` (online school past 100 and registered spell-power
+modifiers, `spellPower.js:56-101`, `lootPowers.js:747-763`).
 
-**What changed.** `src/cws.js` adds `cwsRows`, `cwsEligible` and `resolveCwsCast`; `src/simulateFight.js` resolves
-the CWS event before the melee damage, on a dedicated `cws` stream that `cwsRolls` can replace. A CWS kill leaves the
-melee blow rolled but not applied; multiple rows are cast in item order and stop when the target dies. The local
-result exposes `cwsDamage`, `cwsCasts`, `cwsKills` and `cwsTrace`, plus `cwsDamage`/`meleeApplied`/`blowDamage` on each
-swing trace. `src/target.js` defaults `activeEffects: []` for the gate shapes.
+**What changed.** `src/enchants.js` adds `REGISTERED_ENCHANTMENT_TYPES` and `payloadRows`; `src/model.js` carries
+`strikesDamage`/`strikesPositive` (the PRE-payload damage); `src/blowOutcomes.js` keeps them in the fight tier and
+merge key. `src/cws.js` uses `strikesPositive` for `cwsEligible` (not `formulaPositive`, which stays Flow/echo),
+stops `cwsRows` at the payload abort, and applies pierce, online school potency and spell power in `resolveCwsCast`.
+`src/simulateFight.js` resolves the CWS event before the echo and the melee blow, applies the echo as its own hit,
+suppresses the melee on a CWS or echo kill, and counts only effects that land. The local result exposes `cwsDamage`,
+`cwsCasts`, `cwsKills`, `cwsTrace`, plus `strikesPositive`/`echoDamage`/`echoApplied`/`echoKill`/`meleeApplied` on the
+swing trace. `src/target.js` defaults `activeEffects: []`.
 
 **Outputs moved.** Builds with a CWS row and a resolvable Damage Health spell now include CWS direct damage in
 `simulateFight`'s `damageDealt`, `outputDps`, `expectedPerSwing`, `ttk`/`kill`, `overkill` and `segments`; the
-`cws*` fields are new. Builds without CWS are unchanged. The analytical `analyze`/`enchantDps` card is unchanged.
+`cws*` fields are new. A Potent Vs miss no longer casts; a Low Damage Vs blow taken to zero still casts. An echo kill
+no longer carries the melee blow in `damageDealt`/`overkill`. Builds without CWS are unchanged. The analytical
+`analyze`/`enchantDps` card is unchanged.
 
-**Evidence.** `test/cws.test.js` (10 tests) and `test/cwsDifferential.test.js` (8 tests). The differential drives the
-pinned `calculateAttackDamage` with an enchantCtx whose `applySpellToTarget` calls the vendored `applySpell`, then
-compares the local resolver on the same seeded draws: direct damage and draw count; career tolerance, immunity, spell
-resistance and elemental resistance; absorption; reflection; the 4,0/1,0/11,8 boundary; the call/no-call matrix; row
-order; and the CWS-kill host gate. Absorption reuses the vendored `tryAbsorption` law, so the differential verifies
-its integration rather than a second absorption implementation. Full suite **569 tests, 569 pass**; vendor
-**289 vendored + 122 stubbed**; parity **1855/1855**.
+**Evidence.** `test/cws.test.js` (10), `test/cwsCorrections.test.js` (6) and `test/cwsDifferential.test.js` (14).
+The differential drives the pinned `calculateAttackDamage` with an enchantCtx whose `applySpellToTarget` calls the
+vendored `applySpell`, then compares the local resolver on the same seeded draws: direct damage and draw counts;
+career tolerance, immunity, spell resistance and elemental resistance; absorption; reflection; the 4,0/1,0/11,8
+boundary; the call/no-call matrix; row order; and the CWS-kill host gate. The rebuilt cases start from
+`blowFightTier`/`simulateFight` for the Potent Vs/Low Damage Vs trigger, compare `cwsRows`/`payloadRows`/`strikesNet`
+with the vendored payload walk, compare registered spell power/pierce and online school with `applySpell`, compare the
+gear inputs with `lootSpellPower`/`lootSpellPierce`, compare multi-effect death with the host hurt sink, and compare
+the echo-kill gate with the host `lootStrike`/`hurtFoe` path. Absorption reuses the vendored `tryAbsorption` law, so
+the differential verifies its integration rather than a second absorption implementation. Full suite
+**581 tests, 581 pass**; vendor **289 vendored + 122 stubbed**; parity **1855/1855**.
 
-**Mutation checks.** In a throwaway copy of this tree (18 CWS tests): removing the `whole` gate, the `warded` gate or
-the `damagePositive` gate from `cwsEligible` each gives **15 pass / 3 fail**; applying the melee blow after a CWS kill
-gives **17 pass / 1 fail**; broadening `isDamageHealth` to 1,0/11,8 gives **15 pass / 3 fail**. Each mutation is
-detected by the gate, order or family test named above.
+**Mutation checks.** In a throwaway copy of this tree (30 CWS tests): using `formulaPositive` for the CWS gate, disabling
+the `payloadRows` abort, dropping pierce/school/power, counting later effects after death, and applying the melee after
+an echo kill each gives **28 pass / 2 fail**. Each mutation is detected by the corrected trigger, abort, scaling or
+accounting test named above.
 
 **Not changed.** `src/relayClaim.js` is untouched. Relay-boss CWS, condition costs, ordinary wear, condition bands and
-break, Continuous Damage and the other spell families, the reflected bundle's caster-side landing, the ward lifecycle,
-ranged support and the optimizer are not modelled. A static `target.warded` gates CWS only; the melee blow is not
-refused. `applySpell`'s magnitude/save is preserved, but its `casterDamageScaled`/`spellPowerMult` school-past-100 and
-registered spell-power modifiers are not applied yet. No event-level RNG equivalence with the game's default
-`Math.random` path is claimed.
+break, Continuous Damage and the other spell families, the reflected bundle's caster-side landing, absorption's
+magicka refund, the ward lifecycle, ranged support and the optimizer are not modelled. A static `target.warded` gates
+CWS only; the melee blow is not refused. Firmament spell power/pierce is not a `simulateFight` build field; a caller
+that has one must pass `potencyPct`/`pierce`, and a build carrying a firmament spell-channel field is refused. No event-level RNG equivalence with the game's default `Math.random`
+path is claimed.
 
 ---
 
