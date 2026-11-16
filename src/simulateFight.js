@@ -29,7 +29,7 @@
  */
 import { analyze, conditionMultiplier, weaponOf, weaponPowers } from './model.js';
 import { blowFightTier, createBlowSampler } from './blowOutcomes.js';
-import { cwsEligible, cwsRows, equippedForFight, resolveCwsCast, spellPowerInputs } from './cws.js';
+import { cwsEligible, cwsRows, equipTableForFight, equippedForFight, resolveCwsCast, spellPowerInputs } from './cws.js';
 import { createRng } from './rng.js';
 import { blowWear, cloneItem, conditionPct, cwsBill, makeOwner, wearItem } from './durability.js';
 import { healthThresholds } from './fight.js';
@@ -181,6 +181,10 @@ function prepareDurability(ch, scenario) {
     ? (weaponItem ? cloneRef(weaponItem) : cloneRef(scenario.weapon))
     : cloneRef(ch.weapon);
   const off = cloneRef(ch.offWeapon);
+  // The fight's hand items carry the hand slot they occupy, so the full table's entries and `lowerCondition`'s item are
+  // the same objects; a break can then remove exactly that item.
+  if (main) main.equipSlot = EQUIP_SLOTS.RightHand;
+  if (off) off.equipSlot = EQUIP_SLOTS.LeftHand;
   const fightCh = { ...ch, worn, weapon: main, offWeapon: off, wraps: cloneRef(ch.wraps) };
   const fightScenario = scenario.weapon !== undefined
     ? { ...scenario, weapon: (weaponItem ? { ...scenario.weapon, item: main } : scenario.weapon) }
@@ -260,23 +264,19 @@ export function simulateFight(ch, args = {}) {
       throw new Error('simulateFight: boss `traits` are not supported with Cast When Strikes (the cast ignores them)');
     }
   }
-  // The effective equip table (spell power) the fight starts with. Durability keeps its own mutable copy; a break
-  // removes the broken item from it by identity (upstream's lowerCondition unequips by identity).
-  let effective = null;
+  // The FULL equip table (before `countedPieces`): what a break rebuilds from. It keeps the hand items, a hand-slot
+  // non-weapon (a shield), and every worn piece including a higher-slot copy of a Legendary record the count had
+  // hidden. `spellPowerInputs` applies `countedPieces` to the CURRENT table on every read, so the surviving copy and
+  // the shield count exactly as upstream's fresh `wornPieces` would.
+  let fightTable = null;
   if (durability && Array.isArray(fightCh.worn)) {
-    effective = equippedForFight(fightCh, [probe.weapon?.item ?? null, probe.offHand?.weapon?.item ?? null]);
-    dur.effective = effective;
+    fightTable = equipTableForFight(fightCh, [probe.weapon?.item ?? null, probe.offHand?.weapon?.item ?? null]);
+    dur.effective = fightTable;
   }
-  const initialEffective = effective;
-  // Split the HAND entries from the rest at the start: `lowerCondition` deletes a broken item's `equipSlot`, so a
-  // later slot test would no longer recognise it as the hand's piece. The rest of the table cannot break in this scope.
-  const otherEffective = initialEffective
-    ? initialEffective.filter((it) => it.equipSlot !== EQUIP_SLOTS.RightHand && it.equipSlot !== EQUIP_SLOTS.LeftHand)
-    : [];
   let cwsPower = castsCws
     ? spellPowerInputs(fightCh, {
       potencyPct: scenario.potencyPct, pierce: scenario.pierce,
-      worn: durability ? effective : equippedForFight(fightCh, [probe.weapon?.item ?? null, probe.offHand?.weapon?.item ?? null]),
+      worn: durability ? fightTable : equippedForFight(fightCh, [probe.weapon?.item ?? null, probe.offHand?.weapon?.item ?? null]),
     })
     : { potencyPct: 0, pierce: 0 };
   let dual = schedule.kind === 'dual';
@@ -293,24 +293,17 @@ export function simulateFight(ch, args = {}) {
     ? (dur.owner.equip.slots[hand === 'off' ? EQUIP_SLOTS.LeftHand : EQUIP_SLOTS.RightHand] ?? null)
     : (hand === 'off' ? (probe.offHand?.weapon?.item ?? null) : (probe.weapon?.item ?? null)));
   // Upstream's spellPowerMult reads the wearer's CURRENT worn powers when the spell resolves (lootPowers.js:747-763), so
-  // a break by ordinary wear or by an earlier row's bill must reach the very next cast. The effective table is the
-  // initial one's non-hand pieces plus the two hand occupants as they now stand; the hand slot is the equip table's own
-  // address, so a broken what-if and a broken worn clone are both removed by the hand that lost them.
-  const rebuildEffective = () => {
-    if (!initialEffective) return;
-    const main = slotItem('main');
-    const off = slotItem('off');
-    effective = [
-      ...otherEffective,
-      ...(main ? [{ ...main, equipSlot: EQUIP_SLOTS.RightHand }] : []),
-      ...(off ? [{ ...off, equipSlot: EQUIP_SLOTS.LeftHand }] : []),
-    ];
-    dur.effective = effective;
+  // a break by ordinary wear or by an earlier row's bill must reach the very next cast. Remove exactly the broken item
+  // from the full table; everything else stays for the next `countedPieces` read.
+  const dropItem = (item) => {
+    if (!durability || !fightTable) return;
+    fightTable = fightTable.filter((it) => it !== item);
+    dur.effective = fightTable;
   };
   const refreshCwsPower = () => {
     if (!castsCws) return;
     cwsPower = spellPowerInputs(fightCh, {
-      potencyPct: scenario.potencyPct, pierce: scenario.pierce, worn: effective ?? undefined,
+      potencyPct: scenario.potencyPct, pierce: scenario.pierce, worn: fightTable ?? undefined,
     });
   };
   const itemIds = new WeakMap();
@@ -399,7 +392,7 @@ export function simulateFight(ch, args = {}) {
           brokeNow = true;
           dur.breaks.push({ t, hand, reason: 'wear', amount: wear, item: item.name ?? null });
           // The CWS payload of this blow resolves after the core's wear: refresh before the first row.
-          rebuildEffective();
+          dropItem(item);
           refreshCwsPower();
         }
       }
@@ -442,7 +435,7 @@ export function simulateFight(ch, args = {}) {
               rowBroke = true;
               dur.breaks.push({ t, hand, reason: 'cws', amount: bill, item: item.name ?? null });
               // A later row on the same item still runs, but its caster's power is the equipment as it now stands.
-              rebuildEffective();
+              dropItem(item);
               refreshCwsPower();
             }
           }
@@ -539,7 +532,7 @@ export function simulateFight(ch, args = {}) {
       scheduleNow = single;
       clock = t;
       next = single.next();
-      rebuildEffective();
+      dropItem(item);
       refresh();
       refreshCwsPower();
     } else {

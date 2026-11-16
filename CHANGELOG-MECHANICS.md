@@ -43,15 +43,27 @@ instead of 1/8; a first-row bill break left the second row at 1.15/9 instead of 
 15 pierce (10 instead of 8); a broken `shalidors-brand` kept 25% Surge (10 instead of 8). After: each reads the surviving
 table. Stale-table mutations after the wear and after the bill both fail.
 
-**Evidence.** `test/durability.test.js` (24). The wear, bill and break laws are compared directly with the vendored
+**Full-equipment reconstruction (closure-audit correction).** The closure audit found that `rebuildEffective` rebuilt
+from the already-`countedPieces` effective list and excluded every slot-19/21 entry. That lost a surviving higher-slot
+copy of a duplicated Legendary record when the lower-slot hand copy broke (cast potency/pierce 0 instead of the surviving
+copy's 5/15), and dropped a shield in the other hand (potency 0/damage 8 instead of the shield's 10/damage 9). The fight
+now keeps the FULL pre-dedup equip table (`equipTableForFight`), removes exactly the broken item by identity, and lets
+`spellPowerInputs` apply `countedPieces` to the current table on every read. A surviving higher-slot Legendary copy, a
+hand-slot shield and all non-hand pieces stay; potency, pierce and Arcane Surge refresh from the rebuilt current
+equipment before the next cast. No-break numbers are unchanged. The stage record is
+the stage record; Stage 3.5.2 remains pending an independent closure audit.
+
+**Evidence.** `test/durability.test.js` (30). The wear, bill and break laws are compared directly with the vendored
 `damageEquipment`, `doItemEnchantmentPayloads` and `lowerCondition`; a production fight's whole wear/bill/break state is
 replayed through upstream on the fight's own `strikesDamage` sequence. Mutation checks in a throwaway copy caught wear
 rounding, the floor roll omitted/always drawn/at 19%, the bill at 9 or only on a damaging cast, echo suppression off, a
 break without unequip, no survivor promotion, content-based item removal, the current blow dropped on break, later rows
 skipped after a break, survivor powers not refreshed, the off slot left occupied, the schedule not swapped, the broken
 item kept in the spell-power table, `conditionRolls` ignored, the band missing from the tier key, post-payload wear and
-an extra condition draw, no refresh after a wear break and no refresh after a CWS bill break. Full suite
-**630 tests, 630 pass**; vendor **289 vendored + 122 stubbed**; parity
+an extra condition draw, no refresh after a wear break, no refresh after a CWS bill break, taking the table from the
+post-`countedPieces` list, dropping a surviving hand-slot non-weapon, refreshing only the first break, and skipping the
+worn-list clone. Full suite
+**636 tests, 636 pass**; vendor **289 vendored + 122 stubbed**; parity
 **1855/1855**.
 
 **Not changed.** `src/relayClaim.js` is untouched. Relay-boss durability, the target's shield/armour wear, the fist

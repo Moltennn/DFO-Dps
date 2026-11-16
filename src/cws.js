@@ -167,14 +167,12 @@ function equipList(list) {
 }
 
 /**
- * The effective equip table for a fight.
- *
- * Upstream reads ONE table - one piece per slot (`systems/equip.js` equipTableOf; `wornPieces` is
- * `countedPieces(table.filter(Boolean))`, lootPowers.js:134-137) - and a weapon is one entry in one hand slot
- * (paperdoll.js RightHand 19 / LeftHand 21). This builds that table: the build's `worn` pieces, with the scenario's
- * striking weapons overlaid as the occupants of the hand they strike with. The main-hand weapon REPLACES the
- * main-hand piece and the off-hand weapon replaces the off-hand piece; neither is ever a second copy beside it. A
- * Legendary record then counts once, the first the table lists (countedPieces, lootRarity.js:2348-2357).
+ * The equip table for a fight, BEFORE the Legendary count: one piece per slot (`systems/equip.js` equipTableOf) with the
+ * scenario's striking weapons overlaid as the occupants of the hand they strike with. Upstream's `wornPieces` is
+ * `countedPieces(table.filter(Boolean))` (lootPowers.js:134-137), so a Legendary record counts once, the first the
+ * table lists (countedPieces, lootRarity.js:2348-2357). `equippedForFight` is that counted list; this is the full table
+ * a fight rebuilds from after a break, so a surviving higher-slot copy of a Legendary record can be counted when the
+ * lower-slot copy is removed, and a hand-slot non-weapon (a shield) stays in it.
  *
  * `weapons` = [main, off] as the fight actually wields them (`analyze`'s probe weapons). A scenario weapon replaces the
  * occupant of ITS hand: the build's `weapon`/`offWeapon` object first, then the slot that object is worn in, then the
@@ -182,13 +180,13 @@ function equipList(list) {
  * identical weapon in the other hand is a different piece. A build with no `worn` list but an inventory is ambiguous
  * and is rejected: upstream reads only the equip table.
  */
-export function equippedForFight(ch, weapons = []) {
+export function equipTableForFight(ch, weapons = []) {
   const base = ch?.worn;
   if (!Array.isArray(base)) {
     if (ch?.items != null) {
       throw new Error('simulateFight: the build has no equipped (`worn`) list; inventory items are not equipped gear');
     }
-    return countedPieces(weapons.filter(Boolean));
+    return weapons.filter(Boolean);
   }
   const table = base.filter(Boolean).map((item, index) => ({
     item,
@@ -225,11 +223,14 @@ export function equippedForFight(ch, weapons = []) {
   place(weapons[1] ?? null, ch?.offWeapon ?? null, EQUIP_SLOTS.LeftHand);
   // The equip table is ordered by slot (EQ table order); a hand-built piece with no slot keeps its list position after
   // the slotted ones. The order decides which copy of a duplicated Legendary record counts.
-  return countedPieces(table
+  return table
     .slice()
     .sort((a, b) => ((a.slot ?? Number.MAX_SAFE_INTEGER) - (b.slot ?? Number.MAX_SAFE_INTEGER)) || (a.index - b.index))
-    .map((e) => e.item));
+    .map((e) => e.item);
 }
+
+/** The effective worn list readers use: the equip table under upstream's `countedPieces`. */
+export const equippedForFight = (ch, weapons = []) => countedPieces(equipTableForFight(ch, weapons));
 
 /**
  * The registered spell-power and pierce inputs the supported build model can carry:

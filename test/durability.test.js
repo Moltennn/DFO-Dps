@@ -10,7 +10,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { character, simCharacter, weapon } from './harness/fixtures.mjs';
 import { referenceFoe, weaponOf } from '../src/model.js';
-import { createAttackSchedule, simulateFight } from '../src/simulateFight.js';
+import { createAttackSchedule, simulateFight, simulateFights } from '../src/simulateFight.js';
+import { characterFromSave } from '../src/save.js';
 import {
   blowWear, cwsBill, makeOwner, wearAmount, wearItem, CWS_CONDITION_COST,
 } from '../src/durability.js';
@@ -44,6 +45,23 @@ const dual = (main, off) => {
   ch._dual = true;
   return ch;
 };
+const saveFor = (items) => {
+  const d = DESC();
+  return {
+    name: 'fixture', level: 30, raceId: 1, race: 'fixture', stats: d.stats, skills: d.skills,
+    health: 100, maxHealth: 100, reflexes: 2, career: d.career, items, activeEffects: [],
+    masterSkills: false, masteredSkills: [], _mods: { stats: {}, skills: {}, statMax: {} },
+    _enchantMods: { skillMods: {}, chanceToHitMod: 0 },
+  };
+};
+const ring = (slot, value, extra = {}) => ({
+  group: 'Jewellery', templateIndex: 135, name: 'ring', equipSlot: slot,
+  maxCondition: 1000, currentCondition: 1000, affixes: [{ id: 'potency', value }], ...extra,
+});
+const shield = (value) => ({
+  group: 'Armor', templateIndex: 109, name: 'buckler', equipSlot: 21,
+  maxCondition: 1000, currentCondition: 1000, affixes: [{ id: 'potency', value }],
+});
 const fight = (ch, it, opts = {}) => simulateFight(ch, {
   target: referenceFoe(30, 'tough'),
   health: opts.health ?? 3000,
@@ -286,6 +304,113 @@ test('a main-hand break promotes the surviving off hand; an off-hand break leave
   assert.equal(rOff.endedByBreak, false);
   assert.equal(rOff.condition.off, 0);
   assert.ok(rOff.condition.main < 1000, 'the main wears and continues');
+});
+
+test('a surviving higher-slot Legendary copy counts after the hand copy breaks', () => {
+  // The hand (slot 19) and the legs (slot 23) carry the same Legendary record. The initial countedPieces keeps the
+  // hand; when it breaks, upstream's fresh count keeps the surviving legs copy - its potency and pierce must apply.
+  const hand = cws(1, [1], {
+    rarity: 'legendary', legendary: 'eye-of-magnus', affixes: [{ id: 'potency', value: 10 }],
+  });
+  const legs = {
+    group: 'Armor', templateIndex: 104, name: 'greaves', equipSlot: 23, maxCondition: 1000, currentCondition: 1000,
+    rarity: 'legendary', legendary: 'eye-of-magnus', affixes: [{ id: 'potency', value: 5 }],
+  };
+  const ch = characterFromSave(saveFor([hand, legs]), { online: false });
+  const standard = new Map([[1, spellOf(1)]]);
+  const found = findRun(
+    (seed) => fight(ch, hand, { seed, maxBlows: 1, standard, cwsRolls: () => 0.5, conditionRolls: () => 0.1 }),
+    (r) => r.breaks.some((b) => b.reason === 'wear') && r.cwsTrace.length > 0,
+  );
+  assert.ok(found, 'the hand copy wears out before the cast');
+  const row = found.run.cwsTrace[0];
+  assert.equal(row.potencyPct, 5, 'the surviving legs copy\'s potency, not the broken hand\'s 10');
+  assert.equal(row.pierce, 15, 'the surviving legs copy\'s pierce');
+  assert.equal(row.damage, 11, 'base 10 at full save x 1.05');
+});
+
+test('a slot-21 shield keeps its potency after the main hand breaks', () => {
+  const hand = cws(1, [1], { affixes: [{ id: 'potency', value: 15 }] });
+  const ch = characterFromSave(saveFor([hand, shield(10)]), { online: false });
+  const standard = new Map([[1, spellOf(1)]]);
+  const found = findRun(
+    (seed) => fight(ch, hand, { seed, maxBlows: 1, standard, cwsRolls: () => 0.5, conditionRolls: () => 0.1 }),
+    (r) => r.breaks.some((b) => b.reason === 'wear') && r.cwsTrace.length > 0,
+  );
+  assert.ok(found, 'the main hand wears out before the cast');
+  const row = found.run.cwsTrace[0];
+  assert.equal(row.potencyPct, 10, 'the shield is still equipped');
+  assert.equal(row.damage, 9, 'base 8 x 1.10');
+});
+
+test('repeated breaks refresh every row from the current table', () => {
+  const main = cws(10, [1], { affixes: [{ id: 'potency', value: 15 }] });
+  const off = cws(10, [1, 2], { affixes: [{ id: 'potency', value: 5 }] });
+  const ch = characterFromSave(saveFor([main, ring(4, 10)]), { online: false });
+  ch.offWeapon = { ...off, equipSlot: 21 };
+  ch._dual = true;
+  const standard = new Map([[1, spellOf(1)], [2, spellOf(2)]]);
+  const found = findRun(
+    (seed) => fight(ch, main, { seed, maxBlows: 40, standard, dual: true, cwsRolls: () => 0.5 }),
+    (r) => r.cwsTrace.length >= 3 && r.cwsTrace[0].potencyPct === 30 && r.cwsTrace[2].potencyPct === 10,
+  );
+  assert.ok(found, 'the main and the promoted off hand both break their bills');
+  const rows = found.run.cwsTrace.slice(0, 3);
+  assert.deepEqual(rows.map((r) => r.potencyPct), [30, 15, 10], '15 + 10 + 5, then 10 + 5, then the ring 10');
+  assert.deepEqual(rows.map((r) => r.damage), [10, 9, 9]);
+  assert.deepEqual(rows.map((r) => r.broke), [true, true, true], 'the third bill runs on the already-broken off item (a second break report)');
+});
+
+test('both weapon hands breaking ends the fight after the current blow', () => {
+  const main = cws(1, [1]);
+  const off = cws(1, [1]);
+  const ch = dual(main, off);
+  const standard = new Map([[1, spellOf(1)]]);
+  const found = findRun(
+    (seed) => fight(ch, main, { seed, maxBlows: 40, standard, dual: true, conditionRolls: () => 0.1 }),
+    (r) => r.endedByBreak && r.breaks.some((b) => b.hand === 'off') && r.breaks.some((b) => b.hand === 'main'),
+  );
+  assert.ok(found, 'both hands break in sequence');
+  const r = found.run;
+  assert.equal(r.endedByBreak, true);
+  assert.equal(r.kill, false);
+  assert.equal(r.ttk, null);
+  assert.equal(r.condition.main, 0);
+  assert.equal(r.condition.off, 0);
+  const last = r.trace.at(-1);
+  assert.equal(last.meleeApplied, last.blowDamage > 0, 'the breaking blow still lands its melee');
+});
+
+test('a break on the build\'s own worn weapon leaves the caller\'s items unchanged', () => {
+  const hand = cws(1, [1], { affixes: [{ id: 'potency', value: 15 }] });
+  const ch = simCharacter(DESC(), hand);
+  const before = JSON.stringify({ worn: ch.worn, weapon: ch.weapon, item: hand });
+  const standard = new Map([[1, spellOf(1)]]);
+  const found = findRun(
+    (seed) => simulateFight(ch, {
+      target: referenceFoe(30, 'tough'), health: 3000, seed, durability: true, trace: true, maxBlows: 20,
+      standard, cwsRolls: () => 0.5, conditionRolls: () => 0.1,
+    }),
+    (r) => r.breaks.length > 0,
+  );
+  assert.ok(found, 'the worn weapon breaks without a scenario weapon');
+  assert.equal(JSON.stringify({ worn: ch.worn, weapon: ch.weapon, item: hand }), before);
+});
+
+test('repeated same-seed trials share no durability state', () => {
+  const hand = cws(10, [1], { affixes: [{ id: 'potency', value: 15 }] });
+  const ch = simCharacter(DESC(), hand);
+  const before = JSON.stringify({ worn: ch.worn, weapon: ch.weapon });
+  const standard = new Map([[1, spellOf(1)]]);
+  const out = simulateFights(ch, {
+    target: referenceFoe(30, 'tough'), health: 3000, weapon: weaponOf(hand), seeds: [7, 7],
+    durability: true, trace: true, maxBlows: 20, standard, cwsRolls: () => 0.5,
+  });
+  assert.equal(out.rows.length, 2);
+  for (const key of ['breaks', 'condition', 'wear', 'remainingHealth', 'damageDealt', 'blows']) {
+    assert.deepEqual(out.rows[0][key], out.rows[1][key], key);
+  }
+  assert.equal(JSON.stringify({ worn: ch.worn, weapon: ch.weapon }), before);
 });
 
 test('a wear-break before the CWS payload refreshes potency for that same cast', () => {
