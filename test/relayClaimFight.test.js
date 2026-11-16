@@ -402,3 +402,27 @@ test('15. a build with neither mechanic remains bit-identical to Stage 3.3', () 
     outputDps: 19.268618302434728, killDps: 19.268618302434728,
   });
 });
+
+test('durability is refused on a relay fight; omitted and false are unchanged', () => {
+  const item = sword();
+  const ch = build();
+  const target = gateTarget(45, { health: 2000 });
+  const args = { target, health: 2000, weapon: weaponOf(item), seed: 11 };
+  // Omitted and explicit false keep the exact Stage 3.3 result (same claims, same engine trace).
+  const omitted = simulateRelayFight(ch, args);
+  const off = simulateRelayFight(ch, { ...args, durability: false });
+  assert.deepEqual(strip(off), strip(omitted), 'durability: false is the omitted path');
+  assert.equal(off.claims, omitted.claims);
+  // Unrelated options still work: trace is orthogonal.
+  const traced = simulateRelayFight(ch, { ...args, trace: true });
+  assert.equal(traced.claims, omitted.claims);
+  // durability: true fails deterministically through the public single-fight entry.
+  const message = /simulateRelayFight: relay durability is not supported/;
+  assert.throws(() => simulateRelayFight(ch, { ...args, durability: true }), message);
+  assert.throws(() => simulateRelayFight(ch, { ...args, durability: true }), /pass durability: false/);
+  assert.throws(() => simulateRelayFight(ch, { ...args, durability: true }), message, 'the same error on a repeat call');
+  // ... and through the public batch entry, which runs the single fight.
+  assert.throws(() => simulateRelayFights(ch, { ...args, trials: 2, durability: true }), message);
+  // A non-relay target keeps the established null contract even with the flag: it is not a relay fight at all.
+  assert.equal(simulateRelayFight(ch, { target: { level: 1, maxHealth: 100 }, health: 100, weapon: weaponOf(item), durability: true }), null);
+});

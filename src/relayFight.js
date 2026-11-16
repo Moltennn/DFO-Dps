@@ -21,6 +21,8 @@
  * Excluded by this stage (the assumptions register M30/M31): CWS, DoTs, wear, phase-ward lifecycle, geometry, the Sundered
  * halves, stun/profile hit multipliers, Wrath, host/crystal hits and the multi-body `spendBlow` sequence. A build with
  * fists is refused by the Stage 3.2 schedule (the unarmed StrikeLeft frame list is not in the analytical cadence).
+ * Relay durability is not implemented: `durability: true` is REFUSED (Stage 3.5.3g) rather than silently ignored;
+ * omitted and `durability: false` keep the Stage 3.3 behaviour.
  */
 import { echoChances, weaponOf, weaponPowers } from './model.js';
 import { blowFightTier, createBlowSampler } from './blowOutcomes.js';
@@ -49,6 +51,7 @@ function normalizeScenario(args) {
  * @param {object} ch the build
  * @param {object} args `analyze`/`simulateFight` args plus `target` (must carry `allowance`), `health`, `seed`,
  *   `fresh` (false: a wounded boss, empty damage bucket), `shieldUntil` (seconds), `maxSeconds`, `maxBlows`, `trace`.
+ *   `durability: true` is refused (relay durability is not implemented); `durability: false`/omitted is unchanged.
  * @returns {null|object} null when the target is not a relay body or the schedule cannot run
  */
 export function simulateRelayFight(ch, args = {}) {
@@ -60,6 +63,11 @@ export function simulateRelayFight(ch, args = {}) {
   const players = Math.max(1, num(spec.players, 1));
   const pool = health / players;
   if (!(pool > 0)) return null;
+  // Ordinary durability is not implemented in the relay fight (Stage 3.5.3g). Ignoring the flag would make a caller
+  // believe wear/breaks had been applied; refuse it with the same explicit error shape as the other unsupported modes.
+  if (scenario.durability === true) {
+    throw new Error('simulateRelayFight: relay durability is not supported; omit durability or pass durability: false');
+  }
   // Refuse a ranged weapon on either hand BEFORE the schedule analysis, so a mixed melee + Pistolet pair cannot fall
   // through to a melee exchange (analyze's dual arm only checks the off hand for `twoHanded`, not `gun`).
   const mainWeapon = scenario.weapon === undefined ? (ch.weapon ? weaponOf(ch.weapon) : null) : scenario.weapon;

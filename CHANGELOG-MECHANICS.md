@@ -6,6 +6,32 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage 3.5.3g - relay durability option guard (2026-11-17)
+
+**What was wrong.** `simulateRelayFight` ignored `durability: true`: relay durability is not implemented, but the option
+silently produced an ordinary relay fight with no wear/bill/break state. The module's established convention for an
+unsupported option on a supported target is an explicit `Error` (`simulateRelayFight: ... not supported`), not `null` or a
+no-op.
+
+**What changed.** `src/relayFight.js` refuses the flag after the relay target and positive pool are established:
+
+```text
+simulateRelayFight: relay durability is not supported; omit durability or pass durability: false
+```
+
+`simulateRelayFights` runs the single fight and propagates the error. Omitted and `durability: false` are byte-for-byte the
+same result (deep-equal minus the `with` closure; same claims/engine trace). A non-relay target keeps the `null` contract.
+Only `=== true` is refused, matching `simulateFight`'s own durability switch; `durability: 1`/`'true'` are not enabled
+states there either. No relay claim, Flow, echo, ward, target or result semantics change.
+
+**Evidence.** `test/relayClaimFight.test.js` new guard test: omitted vs `false` deep equality and claims; `trace`
+orthogonal; the exact error on the single entry, on repeat, and through `simulateRelayFights`; a non-relay target stays
+`null`. Focused relay suite **40/40**. Full suite **690 tests, 690 pass**; vendor **289 vendored + 122 stubbed**; parity
+**1855/1855**. `vendor/` and `src/relayClaim.js` untouched.
+
+**Limits.** Relay durability itself is not implemented; the guard only makes the unsupported request fail clearly. The
+guard is on the relay path (a non-relay target still returns `null`). Ordinary fight durability is unchanged.
+
 ## Stage 3.5.3f - Many Endings after a weapon break (same-ID survivor)
 
 **What the game does.** `blowPowers` keeps a worn weapon's power when it is the striking weapon **or when the striking weapon
