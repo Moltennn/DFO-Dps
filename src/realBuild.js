@@ -100,12 +100,24 @@ function bestImprint(template, run, capped) {
   return rows[0] ?? null;
 }
 
-/** One real loadout for one template. */
-export function realTemplate(template, family, { mode = 'uncapped', vampire = false, dual = false, encounter = 'breach' } = {}) {
+/**
+ * The character chain behind one real loadout, at each stage:
+ *
+ *   gear   the max profile's legal gear budget only (no Firmament, no enchants, no imprint)
+ *   tree   gear + the real Firmament tree for the weapon family
+ *   ench   tree + the enchant plan's skill lines and weapon strike rows
+ *   imprint the power `bestImprint` selected for `ench` (a what-if addition, not yet on the item)
+ *
+ * `realTemplate` reports this chain's card numbers; the benchmark (`tools/benchmark-loadouts.mjs`) runs the same
+ * characters through `simulateFights`. One construction, so the two cannot drift.
+ */
+export function realBuildStages(template, family, { mode = 'uncapped', vampire = false, dual = false, encounter = 'breach' } = {}) {
   const capped = mode !== 'uncapped';
   const target = capped ? encounterTarget(encounter, THEORY_LEVEL) : referenceFoe(THEORY_LEVEL, 'tough');
   const tree = planBuild(buildById(BUILD_ID[family.key] ?? family.key), {});
-  const treeCh = applyFirmament(maxCharacter(template, { vampire }), tree);
+  // The gear-only baseline is kept before the tree folds into the same character (`applyFirmament` mutates).
+  const gearCh = maxCharacter(template, { vampire });
+  const treeCh = applyFirmament(clone(gearCh), tree);
   if (dual) {
     treeCh.offWeapon = { ...treeCh.weapon, equipSlot: 21 };
     treeCh._dual = true;
@@ -120,6 +132,12 @@ export function realTemplate(template, family, { mode = 'uncapped', vampire = fa
   }
   const enchRun = maxRun(enchCh, { target });
   const imprint = bestImprint(template, enchRun, capped);
+  return { capped, target, tree, treeCh, gearCh, enchCh, enchPlan, treeRun, enchRun, imprint };
+}
+
+/** One real loadout for one template. */
+export function realTemplate(template, family, { mode = 'uncapped', vampire = false, dual = false, encounter = 'breach' } = {}) {
+  const { capped, tree, treeCh, treeRun, enchRun, enchPlan, imprint } = realBuildStages(template, family, { mode, vampire, dual, encounter });
   const total = enchRun.enchantDps + (imprint?.dps ?? enchRun.cappedDps);
   // The purse is run on the imprinted CARD - the same blow the ranking priced, Many Endings' echo included (it rides
   // that blow's claim, so the capped mean already carries what the relay accepts).

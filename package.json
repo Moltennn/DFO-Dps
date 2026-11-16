@@ -16,7 +16,8 @@
     "vendor:verify": "node tools/vendor-upstream.mjs --verify",
     "vendor:list": "node tools/vendor-upstream.mjs --list",
     "vendor:parity": "node tools/vendor-parity.mjs",
-    "report": "node bin/dfo-dps.js report"
+    "report": "node bin/dfo-dps.js report",
+    "benchmark": "node tools/benchmark-loadouts.mjs"
   },
   "engines": {
     "node": ">=18"

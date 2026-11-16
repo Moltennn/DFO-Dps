@@ -4,7 +4,7 @@
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const COLORS = ['#c08a3e', '#7fae6a', '#c25b4e', '#6fa8dc', '#c9a0dc', '#e0d36a', '#8fd3c7', '#d98cb3'];
 
-export function lineChart({ title, xLabel, yLabel, series, width = 920, height = 430 }) {
+export function lineChart({ title, xLabel, yLabel, series, width = 920, height = 430, xTicks = null, yTicks = null, invertY = false }) {
   const legendCols = 5;
   const legendRows = Math.max(1, Math.ceil(series.length / legendCols));
   const left = 64, right = 24, top = 46 + (legendRows - 1) * 16, bottom = 54;
@@ -14,19 +14,27 @@ export function lineChart({ title, xLabel, yLabel, series, width = 920, height =
   const xMin = Math.min(...xs), xMax = Math.max(...xs);
   const yMax = Math.max(1, ...all) * 1.08;
   const sx = (x) => left + ((x - xMin) / Math.max(1e-9, xMax - xMin)) * w;
-  const sy = (y) => top + h - (y / yMax) * h;
+  // `invertY` puts a small value at the TOP (a rank of 1 is the best); `yTicks` names the grid values.
+  const sy = (y) => (invertY ? top + (y / yMax) * h : top + h - (y / yMax) * h);
   const grid = [];
-  for (let i = 0; i <= 5; i++) {
-    const y = top + (h * i) / 5;
+  const yGrid = yTicks ?? Array.from({ length: 6 }, (_, i) => {
     const v = yMax * (1 - i / 5);
+    return { y: v, label: v.toFixed(v >= 100 ? 0 : 1) };
+  });
+  for (const tick of yGrid) {
+    const y = sy(tick.y);
     grid.push(`<line x1="${left}" y1="${y}" x2="${left + w}" y2="${y}" stroke="#3a3026" stroke-width="1"/>`);
-    grid.push(`<text x="${left - 8}" y="${y + 4}" fill="#a8a092" font-size="11" text-anchor="end">${v.toFixed(v >= 100 ? 0 : 1)}</text>`);
+    grid.push(`<text x="${left - 8}" y="${y + 4}" fill="#a8a092" font-size="11" text-anchor="end">${esc(tick.label)}</text>`);
   }
-  for (let i = 0; i <= 5; i++) {
-    const x = left + (w * i) / 5;
-    const v = xMin + ((xMax - xMin) * i) / 5;
+  // Explicit ticks name the x values (`[{ x, label }]`); without them the axis stays numeric and evenly divided.
+  const ticks = xTicks ?? Array.from({ length: 6 }, (_, i) => {
+    const x = xMin + ((xMax - xMin) * i) / 5;
+    return { x, label: x.toFixed(x % 1 ? 1 : 0) };
+  });
+  for (const tick of ticks) {
+    const x = sx(tick.x);
     grid.push(`<line x1="${x}" y1="${top}" x2="${x}" y2="${top + h}" stroke="#2b241c" stroke-width="1"/>`);
-    grid.push(`<text x="${x}" y="${top + h + 20}" fill="#a8a092" font-size="11" text-anchor="middle">${v.toFixed(v % 1 ? 1 : 0)}</text>`);
+    grid.push(`<text x="${x}" y="${top + h + 20}" fill="#a8a092" font-size="11" text-anchor="middle">${esc(tick.label)}</text>`);
   }
   const lines = series.map((s, i) => {
     const pts = s.points.map((p) => `${sx(p.x).toFixed(1)},${sy(p.y).toFixed(1)}`).join(' ');

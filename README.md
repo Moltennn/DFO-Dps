@@ -226,6 +226,7 @@ game measurement.
 
 ```bash
 npm test
+npm run benchmark
 npm run test:differential
 npm run test:golden
 npm run test:invariants
@@ -251,6 +252,9 @@ subset with the full pinned checkout.
 - the stage record — stochastic-engine design
   and the source audit behind `src/rng.js`, `src/blowOutcomes.js`,
   `src/simulateFight.js`, `src/relayClaim.js`, `src/relayFight.js` and `src/flowState.js`.
+- [`docs/LOADOUT-BENCHMARK.md`](docs/LOADOUT-BENCHMARK.md) — the reproducible
+  loadout benchmark, with charts in `docs/charts/` and machine-readable results
+  in `docs/benchmark/` (`npm run benchmark`).
 - the documentation index — the full documentation index, including
   the engineering stage audits.
 
