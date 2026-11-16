@@ -101,14 +101,31 @@ export function schoolPotencyFor(caster, school) {
   return climb > 100 ? 1 + (climb - 100) * 0.01 : 1;
 }
 
-/** vendor:systems/enchantments.js:1322-1326 - the live maximum magicka: a getter wins; otherwise the base plus the
- *  enchantment fold (ExtraSpellPts). The fold is the game's own `_enchantMods.maxMagicka`; where an Arcane Surge power
- *  reads this value and a worn ExtraSpellPts row has no fold, `spellPowerInputs` rejects rather than guesses. */
+/**
+ * vendor:systems/enchantments.js:1322-1326 - the live maximum magicka. One contract, stated at the boundary:
+ *
+ *   - `maxMagicka` is the LIVE value, as the game's accessor reports it. A save stores exactly that number
+ *     (`full:systems/save/save.js:341` copies `maxMagicka` from the entity, whose accessor includes the ExtraSpellPts
+ *     channel `maxMagickaModifier`, enchantments.js:1172-1176; the online-only folds are taken out by
+ *     renownLayer.js:152-168 and are not this channel). A LIVE value is never folded again.
+ *   - A caller that holds only a BASE value declares it as `maxMagickaBase`; the ExtraSpellPts fold
+ *     (`_enchantMods.maxMagicka`) is then added once. This is the hand-built lab fixture's form.
+ *   - An own getter is live (the game's accessor; chargen.js:398-421) and wins over both.
+ *
+ * Where an Arcane Surge power reads a declared BASE and a worn ExtraSpellPts row has no fold, `spellPowerInputs`
+ * rejects rather than guesses. A live value needs no fold and is not refused.
+ */
 export function liveMaxMagicka(ch) {
   const desc = ch ? Object.getOwnPropertyDescriptor(ch, 'maxMagicka') : null;
   if (desc?.get) return ch.maxMagicka;
-  return (ch?.maxMagicka ?? 0) + (ch?._enchantMods?.maxMagicka ?? 0);
+  if (Number.isFinite(ch?.maxMagickaBase)) return ch.maxMagickaBase + (ch?._enchantMods?.maxMagicka ?? 0);
+  return ch?.maxMagicka ?? 0;
 }
+
+/** Whether the build declared a BASE maximum magicka (and so needs the ExtraSpellPts fold added once). A live accessor
+ *  is never a base, whatever else the object carries. */
+const declaresMaxMagickaBase = (ch) => Number.isFinite(ch?.maxMagickaBase)
+  && !(ch ? Object.getOwnPropertyDescriptor(ch, 'maxMagicka')?.get : false);
 
 /** One piece's content, apart from the slot it sits in: what makes two objects THE SAME piece. A live snapshot's
  *  `equipSlots` clone carries an `equipSlot` while the original the caller still holds does not (src/save.js:248-253),
@@ -125,14 +142,18 @@ function pieceContent(it) {
   ]);
 }
 
-/** The same equipped piece: the same content for a piece the caller and the build hold as two objects, or one slot
- *  (paperdoll.js EQUIP_SLOTS) for a piece already worn. */
+/** Two objects holding the same piece: the same content. Slot equality is NOT identity here - the equip table's order
+ *  and count law is `equipList`/`countedPieces`, and content is only used where no slot can answer. */
 const sameContent = (a, b) => !!a && !!b && pieceContent(a) === pieceContent(b);
-const samePiece = (a, b) => sameContent(a, b)
-  || (!!a && !!b && Number.isInteger(a.equipSlot) && Number.isInteger(b.equipSlot) && a.equipSlot === b.equipSlot);
 
-/** A hand-built list as the equip table holds it: one piece per slot (a later entry takes the slot, as an equip
- *  rebuild does), a piece with no slot is its own entry, and a Legendary record counts once. */
+/**
+ * A hand-built list as the equip table holds it, in the table's own terms:
+ *   - one piece per slot (a later entry takes the slot, as an equip rebuild does);
+ *   - ordered by SLOT NUMBER, which is the equip table's order (`equipTableOf` = the slot array, equip.js:47) and so
+ *     the order `countedPieces` reads - a duplicated Legendary record counts at its LOWEST slot, as upstream does;
+ *   - a piece with no slot is its own entry, after the slotted ones;
+ *   - then `countedPieces` (lootRarity.js:2348-2357) keeps the first copy of a Legendary id.
+ */
 function equipList(list) {
   const bySlot = new Map();
   const slotless = [];
@@ -141,7 +162,8 @@ function equipList(list) {
     if (Number.isInteger(it.equipSlot)) bySlot.set(it.equipSlot, it);
     else slotless.push(it);
   }
-  return countedPieces([...bySlot.values(), ...slotless]);
+  const ordered = [...bySlot.entries()].sort((a, b) => a[0] - b[0]).map(([, it]) => it);
+  return countedPieces([...ordered, ...slotless]);
 }
 
 /**
@@ -154,10 +176,11 @@ function equipList(list) {
  * main-hand piece and the off-hand weapon replaces the off-hand piece; neither is ever a second copy beside it. A
  * Legendary record then counts once, the first the table lists (countedPieces, lootRarity.js:2348-2357).
  *
- * `weapons` = [main, off] as the fight actually wields them (`analyze`'s probe weapons). A scenario weapon is
- * recognised as the hand's own occupant by object identity, by slot, or by content, so a live snapshot's clone and the
- * original the caller holds are one piece. A build with no `worn` list but an inventory is ambiguous and is rejected:
- * upstream reads only the equip table.
+ * `weapons` = [main, off] as the fight actually wields them (`analyze`'s probe weapons). A scenario weapon replaces the
+ * occupant of ITS hand: the build's `weapon`/`offWeapon` object first, then the slot that object is worn in, then the
+ * hand slot itself. Content equality is used only for a hand-built list with no slots, and never across hands: an
+ * identical weapon in the other hand is a different piece. A build with no `worn` list but an inventory is ambiguous
+ * and is rejected: upstream reads only the equip table.
  */
 export function equippedForFight(ch, weapons = []) {
   const base = ch?.worn;
@@ -174,13 +197,25 @@ export function equippedForFight(ch, weapons = []) {
   }));
   const place = (item, occupant, hand) => {
     if (!item) return;
-    let at = occupant ? table.findIndex((e) => e.item === occupant || samePiece(e.item, occupant)) : -1;
-    // The scenario item's own `equipSlot` is NOT where it will be worn: a what-if piece may carry the slot it was
-    // minted for (a fixture's default RightHand) while it is the off-hand weapon. Only its content can recognise the
-    // worn piece it is a copy of; the hand is the caller's word.
-    if (at < 0) at = table.findIndex((e) => e.item === item || sameContent(e.item, item));
+    // The hand's own piece first: by object (a live snapshot's clone is the build's `weapon`), then by the slot the
+    // build already holds it in (`characterFromSave` takes the left hand as the main when the right is empty). The
+    // scenario item's own `equipSlot` is NOT where it will be worn - a what-if piece may carry the slot it was minted
+    // for while it is the off-hand weapon - so it is never read here.
+    let at = -1;
+    if (occupant) {
+      at = table.findIndex((e) => e.item === occupant);
+      if (at < 0 && Number.isInteger(occupant.equipSlot)) at = table.findIndex((e) => e.slot === occupant.equipSlot);
+    }
+    // The hand slot is the equip table's own address for a weapon (paperdoll.js RightHand/LeftHand).
     if (at < 0) at = table.findIndex((e) => e.slot === hand);
-    const slot = (at >= 0 ? (table[at].slot ?? hand) : hand);
+    // A hand-built list with no slots: recognise the same piece by content, ONLY among slotless entries. Content must
+    // never match a piece in another hand - an identical weapon in the other hand is a different piece.
+    if (at < 0) {
+      const hits = [];
+      table.forEach((e, i) => { if (e.slot == null && sameContent(e.item, item)) hits.push(i); });
+      if (hits.length === 1) at = hits[0];
+    }
+    const slot = at >= 0 ? (table[at].slot ?? hand) : hand;
     // The table's entry carries the hand it occupies, so a later reader cannot re-derive a stale slot from the item.
     const worn = Number.isInteger(item.equipSlot) && item.equipSlot === slot ? item : { ...item, equipSlot: slot };
     if (at >= 0) table[at] = { item: worn, slot, index: table[at].index };
@@ -206,9 +241,10 @@ export function equippedForFight(ch, weapons = []) {
  * own law (one piece per slot, a Legendary record once - countedPieces). A build with no `worn` list but an inventory
  * is rejected. The cap is SPELL_POWER_MOST.
  *
- * An ExtraSpellPts row feeds the LIVE maximum magicka the surge threshold reads (enchantments.js:1322-1326). It is
- * required only when this build actually carries an Arcane Surge power: without one the fold is never read, and an
- * unrelated ExtraSpellPts piece must not refuse the fight.
+ * An ExtraSpellPts row feeds the maximum magicka the surge threshold reads (enchantments.js:1322-1326). Its fold is
+ * required only where it is actually READ: when this build carries an Arcane Surge power and declared a BASE
+ * `maxMagickaBase`. Without a Surge power, or with a LIVE `maxMagicka` (a save's number already contains the channel;
+ * see `liveMaxMagicka`), the fold is never added and an unrelated ExtraSpellPts piece must not refuse the fight.
  */
 export function spellPowerInputs(ch, { potencyPct = 0, pierce = 0, worn = null } = {}) {
   let list = worn ?? ch?.worn;
@@ -237,8 +273,8 @@ export function spellPowerInputs(ch, { potencyPct = 0, pierce = 0, worn = null }
       else if (power.kind === 'pierce' && !piercePower) piercePower = power;
     }
   }
-  if (surge && extraSpellPts && ch?._enchantMods?.maxMagicka == null) {
-    throw new Error('spellPowerInputs: ExtraSpellPts max-magicka requires ch._enchantMods.maxMagicka (the live fold)');
+  if (surge && extraSpellPts && declaresMaxMagickaBase(ch) && ch?._enchantMods?.maxMagicka == null) {
+    throw new Error('spellPowerInputs: a base `maxMagickaBase` with ExtraSpellPts requires ch._enchantMods.maxMagicka (the fold)');
   }
   potency = Math.min(POTENCY_CAP, potency);
   const maxMagicka = liveMaxMagicka(ch);

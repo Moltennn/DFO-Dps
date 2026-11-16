@@ -234,6 +234,11 @@ export function rebuildMods(items) {
  * opts.online       DFO Online rules (master skills, weapon mastery). Default true.
  * opts.martialPath  override the saved path (null in most saves).
  * opts.passiveOn    false switches the path's passive off for the simulation.
+ *
+ * `maxMagicka` is the save's LIVE accessor value, not a base: DFO's save copies `entity.maxMagicka`
+ * (`full:systems/save/save.js:341`), whose accessor already holds the ExtraSpellPts channel `maxMagickaModifier`
+ * (`vendor:systems/enchantments.js:1172-1176`). A hand-built snapshot that carries a BASE instead declares it as
+ * `save.maxMagickaBase`, and `spellPowerInputs` adds the fold once (src/cws.js `liveMaxMagicka`).
  */
 export function characterFromSave(save, { online = true, martialPath, ...opts } = {}) {
   const stats = {};
@@ -272,6 +277,8 @@ export function characterFromSave(save, { online = true, martialPath, ...opts } 
     maxHealth: NUM(save.maxHealth, Math.max(1, NUM(save.health, 1))),
     magicka: NUM(save.magicka ?? save.spellPoints, 0),
     maxMagicka: NUM(save.maxMagicka ?? save.maxSpellPoints, 0),
+    // A lab fixture may hold a BASE instead of the save's live number; the fold is added where it is read.
+    ...(Number.isFinite(save.maxMagickaBase) ? { maxMagickaBase: save.maxMagickaBase } : {}),
     spells: ARRAY(save.spells).map((s) => (typeof s === 'number' ? s : { ...s })),
     readiedSpellIndex: save.readiedSpellIndex ?? null,
     stats,

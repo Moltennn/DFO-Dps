@@ -41,7 +41,9 @@ no longer carries the melee blow in `damageDealt`/`overkill`. Builds without CWS
 
 **Closure-audit corrections** (the stage record). The equipped list is now upstream's equip table: `equippedForFight` places the scenario main/off weapons as the occupants of the HAND SLOTS (the worn hand piece is replaced, never joined), recognises a live snapshot's clone and the caller's original as one piece by slot or content, and applies `countedPieces` (a Legendary record counts once, `lootRarity.js:2348-2357`); `spellPowerInputs` holds one piece per slot under the same law. `schoolPotencyFor` passes `_online: true` on the entity handed to `fightingClimb`, as the game sets `playerEntity._online = isOnlinePage()` (`full:scenes/world.js:25813`), so an online character's master skills are in force regardless of the offline switch - an online default save with a mastered school reads 1.17, not 1. ExtraSpellPts without the live fold is rejected only where an Arcane Surge power reads it, and `simulateFight` resolves the spell-power path only when a striking item carries a CWS row, so unrelated ExtraSpellPts gear no longer refuses a plain fight. The target guard reads relay/`spareGear`/boss/phase-shield flags by truthiness, and refuses a per-hit cap or scenario boss traits when the fight can cast (the direct-damage path knows neither). The fight-level evidence is replaced: a TTK z-test, a fixed-horizon damage/CWS share, the CWS/Many Endings/melee kill-source split, and an off-hand CWS case. `simulateFight` also reports `cwsCapable` and the new `echoDamage`, `meleeDamage` and `killSource` (`cwsDamage`/`cwsCasts`/`cwsKills` were already there).
 
-**Evidence.** `test/cws.test.js` (10), `test/cwsCorrections.test.js` (21) and `test/cwsDifferential.test.js` (19).
+**Second closure-audit correction** (equip-table identity and the Surge contract). A scenario weapon now replaces ITS hand's piece: `equippedForFight` matches the build's `weapon`/`offWeapon` object first, then the slot it is worn in, then the hand slot; content equality is used only for a hand-built list with no slots and never across hands. Before this, two content-identical weapons in worn order `[off, main]` with a main-hand what-if of potency 5 read 20% and cast 17 instead of 15% and 16. `equipList` now orders the effective list by slot - the equip table's own order - before `countedPieces`, so a duplicated Legendary record keeps its lowest slot: a direct list `[slot5:10, slot4:15]` reads 15 (was 10), and a duplicated Legendary across the hands with an off-hand override reads 10 (was 5). Arcane Surge's maximum magicka now has one contract: `maxMagicka` is the LIVE value a save stores (`full:systems/save/save.js:341`; the accessor already contains the ExtraSpellPts channel), so it is never folded again; a hand-built BASE declares `maxMagickaBase` and gets `_enchantMods.maxMagicka` once. A live getter is accepted without the fold, and the ExtraSpellPts check fires only where a Surge power reads a declared base.
+
+**Evidence.** `test/cws.test.js` (10), `test/cwsCorrections.test.js` (26) and `test/cwsDifferential.test.js` (19).
 The differential drives the pinned `calculateAttackDamage` with an enchantCtx whose `applySpellToTarget` calls the
 vendored `applySpell`, then compares the local resolver on the same seeded draws: direct damage and draw counts;
 career tolerance, immunity, spell resistance and elemental resistance; absorption; reflection; the 4,0/1,0/11,8
@@ -64,8 +66,11 @@ without `isPlayer` **54/1**, G off hand reading the main item **54/1**, H caster
 now fail too: L append instead of replace **52/3**, M content dedupe in the equip list **51/4**, O/P/Q each
 target-guard clause **54/1** each, T1 strict truthiness on `relayBody` **54/1**, C3 `_online` dropped **54/1**, C4 the
 ExtraSpellPts gate made unconditional **54/1**, C4b the gate removed **53/2**, T2 the per-hit cap and the scenario
-traits each accepted **54/1**. Y (echo `round` -> `floor`) is an EQUIVALENT mutant: every tier `blow`/`echoDamage` is
-an integer. (The earlier five mutations - `formulaPositive` gate, no payload abort, no pierce/power, counting after
+traits each accepted **54/1**. In the second correction's 60-test set, the content-across-hands mutation fails
+C7/C7b/C7c **57/3**, insertion-order and reversed-order `equipList` each fail C8 **59/1**, the live double count and the
+ignored base fold each fail the Arcane Surge case **59/1**, the check on any maximum fails **58/2**, and removing the
+slotless content match fails C7d **59/1**. Y (echo `round` -> `floor`) is an EQUIVALENT mutant: every tier
+`blow`/`echoDamage` is an integer. (The earlier five mutations - `formulaPositive` gate, no payload abort, no pierce/power, counting after
 death, melee after an echo kill - remain detected.)
 
 **Not changed.** `src/relayClaim.js` is untouched. Relay-boss CWS, condition costs, ordinary wear, condition bands and

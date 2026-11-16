@@ -324,6 +324,98 @@ test('C6: distinct pieces are never collapsed by their content', () => {
     'a hand-built list holds one piece per slot: the later occupant');
 });
 
+test('C7: a scenario weapon replaces ITS hand, never a content-identical piece in the other hand', () => {
+  // 18 magnitude -> 80% save -> 14: 1.15 rounds to 16, 1.20 to 17, so the damage distinguishes the tables.
+  const standard = new Map([[1, spellOf([effect(4, 0, 18)])]]);
+  const over = potencyItem(5);
+  delete over.equipSlot;
+  for (const order of ['main first', 'off first']) {
+    const items = order === 'main first'
+      ? [potencyItem(10), potencyItem(10, { equipSlot: 21 })]
+      : [potencyItem(10, { equipSlot: 21 }), potencyItem(10)];
+    const ch = characterFromSave(saveFor(BASIC(), { items }), { online: false });
+    ch._dual = true;
+    const effective = equippedForFight(ch, [over, ch.offWeapon]);
+    assert.deepEqual(effective.map((it) => [it.equipSlot, it.affixes[0].value]), [[19, 5], [21, 10]], order);
+    assert.equal(spellPowerInputs(ch, { worn: effective }).potencyPct, 15, order);
+    const run = simulateFight(ch, {
+      target: daedraTarget(), health: 100000, weapon: weaponOf(over), dual: true, seed: 0, trace: true, maxBlows: 1,
+      standard, cwsRolls: () => 0.5,
+    });
+    assert.equal(run.cwsTrace[0].damage, 16, `${order}: 14 x 1.15; 17 means the main override was lost`);
+  }
+});
+
+test('C7b: the off hand overrides its own piece; both hands can be overridden', () => {
+  const main = potencyItem(10);
+  const off = potencyItem(10, { equipSlot: 21 });
+  const ch = characterFromSave(saveFor(BASIC(), { items: [main, off] }), { online: false });
+  const offOver = potencyItem(5);
+  delete offOver.equipSlot;
+  let effective = equippedForFight(ch, [ch.weapon, offOver]);
+  assert.deepEqual(effective.map((it) => [it.equipSlot, it.affixes[0].value]), [[19, 10], [21, 5]]);
+  assert.equal(spellPowerInputs(ch, { worn: effective }).potencyPct, 15);
+  const mainOver = potencyItem(5);
+  delete mainOver.equipSlot;
+  effective = equippedForFight(ch, [mainOver, offOver]);
+  assert.deepEqual(effective.map((it) => [it.equipSlot, it.affixes[0].value]), [[19, 5], [21, 5]]);
+  assert.equal(spellPowerInputs(ch, { worn: effective }).potencyPct, 10);
+
+  // The fight's off hand is the build's `offWeapon`; make it the override so both overridden hands are the ones fought.
+  ch.offWeapon = offOver;
+  const standard = new Map([[1, spellOf([effect(4, 0, 18)])]]);
+  const run = simulateFight(ch, {
+    target: daedraTarget(), health: 100000, weapon: weaponOf(mainOver), dual: true, seed: 0, trace: true, maxBlows: 1,
+    standard, cwsRolls: () => 0.5,
+  });
+  assert.equal(run.cwsTrace[0].damage, 15, '14 x 1.10; 16 means an override crossed hands');
+});
+
+test('C7c: a duplicated Legendary across the hands counts at the LOWEST slot, as upstream orders the table', () => {
+  const leg = (slot, value) => ({
+    ...weapon(121, { material: 9 }), equipSlot: slot, rarity: 'legendary', legendary: 'wyrmbane',
+    affixes: [{ id: 'potency', value }], enchantments: [{ type: 2, param: 1 }],
+  });
+  const ch = characterFromSave(saveFor(BASIC(), { items: [leg(19, 10), leg(21, 10)] }), { online: false });
+  const offOver = leg(21, 15);
+  delete offOver.equipSlot;
+  const effective = equippedForFight(ch, [ch.weapon, offOver]);
+  assert.equal(effective.length, 1, 'one Legendary record');
+  assert.equal(effective[0].equipSlot, 19, 'the slot-19 copy is the one the table keeps');
+  assert.equal(spellPowerInputs(ch, { worn: effective }).potencyPct, 10);
+
+  const standard = new Map([[1, spellOf([effect(4, 0, 18)])]]);
+  const run = simulateFight(ch, {
+    target: daedraTarget(), health: 100000, weapon: weaponOf(effective[0]), dual: true, seed: 0, trace: true, maxBlows: 1,
+    standard, cwsRolls: () => 0.5,
+  });
+  assert.equal(run.cwsTrace[0].damage, 15, '14 x 1.10; 16 means the higher-slot copy counted');
+});
+
+test('C7d: a clone of a slotless worn piece is still one piece', () => {
+  const ring = { group: 'Jewellery', templateIndex: 135, name: 'ring', affixes: [{ id: 'potency', value: 10 }] };
+  const ch = { worn: [{ ...ring }], weapon: null, items: [] };
+  const effective = equippedForFight(ch, [{ ...ring }]);
+  assert.equal(effective.length, 1, 'the slotless content match unifies the caller\'s clone');
+  assert.equal(spellPowerInputs(ch, { worn: effective }).potencyPct, 10);
+});
+
+test('C8: the equip table reads in SLOT order, so a duplicated Legendary keeps its lowest slot', () => {
+  const ring = (slot, value) => ({
+    group: 'Jewellery', templateIndex: 135, name: 'ring', equipSlot: slot, rarity: 'legendary',
+    legendary: 'eye-of-magnus', affixes: [{ id: 'potency', value }],
+  });
+  assert.equal(spellPowerInputs({ worn: [ring(5, 10), ring(4, 15)] }).potencyPct, 15, 'slot 4 is read first');
+  assert.equal(spellPowerInputs({ worn: [ring(4, 15), ring(5, 10)] }).potencyPct, 15);
+  const ch = characterFromSave(saveFor(BASIC(), { items: [ring(5, 10), ring(4, 15)] }), { online: false });
+  const whatIf = potencyItem(5);
+  delete whatIf.equipSlot;
+  const effective = equippedForFight(ch, [whatIf]);
+  assert.deepEqual(effective.map((it) => [it.equipSlot, it.affixes[0].value]), [[4, 15], [19, 5]]);
+  assert.equal(spellPowerInputs(ch, { worn: effective }).potencyPct, 20,
+    '15 at slot 4 + the 5 what-if; an insertion-order table would keep the slot-5 copy (15)');
+});
+
 test('D2: a build without `worn` is rejected instead of reading the whole inventory', () => {
   const ring = { group: 'Jewellery', templateIndex: 135, name: 'ring', affixes: [{ id: 'potency', value: 10 }] };
   assert.throws(() => spellPowerInputs({ items: [ring] }), /equipped/);
@@ -383,28 +475,47 @@ test('S1: the ordinary-target contract refuses relay/boss/cap shapes and accepts
   assert.equal(simulateFight(plain, { ...melee, target: ordinary, traits: ['curbing'] }).cwsCapable, false);
 });
 
-test('Arcane Surge uses the live maximum magicka, including ExtraSpellPts', () => {
+test('Arcane Surge reads the LIVE maximum magicka; a declared base adds the ExtraSpellPts fold once', () => {
   const surge = { ...weapon(121, { material: 9 }), equipSlot: 20, rarity: 'legendary', legendary: 'shalidors-brand' };
-  assert.equal(liveMaxMagicka({ maxMagicka: 100, _enchantMods: { maxMagicka: 75 } }), 175);
-  const below = spellPowerInputs({ worn: [surge], magicka: 120, maxMagicka: 100, _enchantMods: { maxMagicka: 75 } });
+  const extra = { ...weapon(121, { material: 9 }), enchantments: [{ type: 3, param: 0 }] };
+  const surgeExtra = { ...surge, enchantments: [{ type: 3, param: 0 }] };
+
+  // A LIVE value is the accessor's number (what a save stores): the fold is already in it and is never added again.
+  assert.equal(liveMaxMagicka({ maxMagicka: 175, _enchantMods: { maxMagicka: 75 } }), 175);
+  assert.equal(
+    spellPowerInputs({ worn: [surge], magicka: 180, maxMagicka: 175, _enchantMods: { maxMagicka: 75 } }).potencyPct,
+    25,
+    '180 is above 75% of the live 175; adding the fold again (250) would read below the line',
+  );
+  // A DECLARED BASE is folded once.
+  assert.equal(liveMaxMagicka({ maxMagickaBase: 100, _enchantMods: { maxMagicka: 75 } }), 175);
+  assert.equal(liveMaxMagicka({ maxMagickaBase: 100 }), 100);
+  const below = spellPowerInputs({ worn: [surge], magicka: 120, maxMagickaBase: 100, _enchantMods: { maxMagicka: 75 } });
   assert.equal(below.potencyPct, 0, '120 is below 75% of the live 175');
-  const above = spellPowerInputs({ worn: [surge], magicka: 140, maxMagicka: 100, _enchantMods: { maxMagicka: 75 } });
+  const above = spellPowerInputs({ worn: [surge], magicka: 140, maxMagickaBase: 100, _enchantMods: { maxMagicka: 75 } });
   assert.equal(above.potencyPct, 25);
 
-  const base = spellPowerInputs({ worn: [surge], magicka: 75, maxMagicka: 100 });
-  assert.equal(base.potencyPct, 0, 'the threshold is strict');
-  const justAbove = spellPowerInputs({ worn: [surge], magicka: 76, maxMagicka: 100 });
-  assert.equal(justAbove.potencyPct, 25);
+  // An own getter is live (the game's accessor) and is not refused for lacking a fold.
+  const getter = { worn: [surgeExtra], magicka: 180, _enchantMods: { maxMagicka: 75 } };
+  Object.defineProperty(getter, 'maxMagicka', { get: () => 175 });
+  assert.equal(liveMaxMagicka(getter), 175);
+  assert.equal(spellPowerInputs(getter).potencyPct, 25);
 
-  // ExtraSpellPts feeds the live maximum magicka the SURGE threshold reads. With no surge power the fold is never
-  // read, so an unrelated ExtraSpellPts piece must not refuse the spell-power path.
-  const extra = { ...weapon(121, { material: 9 }), enchantments: [{ type: 3, param: 0 }] };
-  assert.equal(spellPowerInputs({ worn: [extra], maxMagicka: 100 }).potencyPct, 0);
-  const surgeExtra = { ...surge, enchantments: [{ type: 3, param: 0 }] };
-  assert.throws(() => spellPowerInputs({ worn: [surgeExtra], maxMagicka: 100 }), /ExtraSpellPts/);
+  // The threshold is strict, and reads the live number.
+  assert.equal(spellPowerInputs({ worn: [surge], magicka: 75, maxMagicka: 100 }).potencyPct, 0);
+  assert.equal(spellPowerInputs({ worn: [surge], magicka: 76, maxMagicka: 100 }).potencyPct, 25);
+
+  // ExtraSpellPts is required only where a Surge reads a DECLARED BASE.
+  assert.equal(spellPowerInputs({ worn: [extra], maxMagicka: 100 }).potencyPct, 0, 'no Surge: the fold is not read');
+  assert.throws(() => spellPowerInputs({ worn: [surgeExtra], maxMagickaBase: 100 }), /ExtraSpellPts/);
   assert.equal(
-    spellPowerInputs({ worn: [surgeExtra], maxMagicka: 100, magicka: 140, _enchantMods: { maxMagicka: 75 } }).potencyPct,
+    spellPowerInputs({ worn: [surgeExtra], maxMagickaBase: 100, magicka: 140, _enchantMods: { maxMagicka: 75 } }).potencyPct,
     25,
+  );
+  assert.equal(
+    spellPowerInputs({ worn: [surgeExtra], maxMagicka: 175, magicka: 140 }).potencyPct,
+    25,
+    'a live value needs no fold and is not refused',
   );
 });
 
@@ -418,17 +529,29 @@ test('C4: ExtraSpellPts gear alone does not refuse an ordinary fight', () => {
   assert.ok(r.blows > 0);
 });
 
-test('C4b: a Surge build carrying ExtraSpellPts without the live fold is still refused', () => {
+test('C4b: a declared-base Surge build without the fold is refused; a save-derived live value is not', () => {
   const item = {
     ...weapon(121, { material: 9 }), rarity: 'legendary', legendary: 'shalidors-brand',
     enchantments: [{ type: 3, param: 0 }, { type: 2, param: 1 }],
   };
-  const ch = simCharacter(BASIC(), item);
-  assert.equal(ch._enchantMods.maxMagicka, undefined, 'the rebuilt fold carries no max magicka');
-  assert.throws(() => simulateFight(ch, {
+  const args = {
     target: referenceFoe(30, 'tough'), health: 500, weapon: weaponOf(item), seed: 1, maxBlows: 5,
     standard: new Map([[1, spellOf([effect(4, 0, 10)])]]),
-  }), /ExtraSpellPts/);
+  };
+  // The lab fixture declares a BASE: the fold it needs is missing, so the threshold cannot be computed.
+  const base = characterFromSave(saveFor(BASIC(), { items: [item], maxMagickaBase: 100 }), { online: false });
+  assert.equal(base._enchantMods.maxMagicka, undefined, 'the rebuilt fold carries no max magicka');
+  assert.equal(base.maxMagickaBase, 100);
+  assert.throws(() => simulateFight(base, args), /ExtraSpellPts/);
+
+  // A save-derived character carries the LIVE value (the ExtraSpellPts channel is already in it): no fold is added
+  // and the fight runs.
+  const live = characterFromSave(saveFor(BASIC(), { items: [item], maxMagicka: 175 }), { online: false });
+  assert.equal(live.maxMagickaBase, undefined);
+  assert.equal(liveMaxMagicka(live), 175);
+  const run = simulateFight(live, args);
+  assert.equal(run.cwsCapable, true);
+  assert.ok(run.blows > 0);
 });
 
 test('the potency cap and the rounding are the upstream floors', () => {
