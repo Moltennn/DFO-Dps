@@ -6,6 +6,54 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage 3.5.3a - the swing schedule after a weapon breaks (2026-11-16)
+
+**What the game does.** A break does not cut the swing in flight. The vendored `PlayerWeapon` keeps stepping the strike to its
+last frame (`machineStep`, `characters/weaponStates.js:472-`) and, for an off-hand blow, through the whole ticks of its held
+burden (`_swing` sets `machine.hold`, `combat/playerWeapon.js:812-826`; `offHandHold`, `combat/twoHands/handsLaw.js:273-278`,
+the fraction carried between blows). Every one of those remaining steps reads the tick of the hand now in use - the survivor's
+(`swingCtx`/`getMeleeWeaponAnimTime`, `playerWeapon.js:838-840`, `:1123-1140`; `combat/swingLaw.js:26-47`). The hand change itself
+is only `followHeldHand` (`:443-452`). With one weapon left the hands mode is Single (`handsModeOf`, `handsLaw.js:63-70`), so
+the next strike is a fresh five-tick swing (`strikeHandOf`, `:144-150`), hit on frame 2. Recorded trace, equal weapons, in
+ticks: a main-hand break at hit 2 ends its swing at 5 and the lone hand hits at 7; an off-hand flurry blow breaking at hit 6
+ends at 9 and the lone hand hits at 11. Different ticks: 121 broken / 113 surviving, hit 0.398 s, swing done 0.9357 s = 0.398 +
+3 x 0.1792 (the survivor's tick).
+
+**What changed.** `src/simulateFight.js`: the schedule's events carry `tail` (`MELEE_NUM_FRAMES.StrikeDown - HIT_FRAME_MELEE`
+ticks left after the hit) and `holdTicks` (the off blow's integer hold, `offHandHold` replayed with its carry). The survivor
+promotion starts the new single-weapon schedule at `t + (tail + holdTicks) x survivor tick` instead of at the break hit's time
+(`t`), so the in-flight swing finishes first, at the survivor's tick, and the survivor's fresh swing hits two of its ticks later.
+Nothing else moved: the survivor's cadence, powers, health thresholds and the current blow's completed effects are as before.
+No hand-fitted offset: the tail and hold come from the vendored frame table and `offHandHold`.
+
+**Before and after** (next survivor hit; seconds). Single/dual main/off breaks, equal weapons: error -0.5492 -> 0.0000 (exact,
+`< 1e-9`). Mixed ticks (121/113, 113/121, 124/113, main and off breaks): -0.4943..-0.5938 -> -0.0001..-0.0002, the machine's
+whole-frame rounding at a 1/50000 s frame. Examples: dual main break at 0.3661: next hit 0.7322 -> 1.2814 (machine 1.2814); dual
+off break at 1.0984: 1.4645 -> 2.0137 (machine 2.0137). The full table is in the stage record, "Post-break
+schedule".
+
+**Outputs moved.** Only fights with `durability: true` in which a hand breaks and the other survives: every blow after the break
+lands 0.49-0.59 s (three of the survivor's ticks) later, so TTK and output DPS after a break move accordingly. Durability off, and
+durability on with no break, are unchanged: 250 seeded fights (single and dual, four weapon pairs, 25 seeds, both switches)
+are byte-identical to `634effb`.
+
+**Evidence.** `test/postBreakSchedule.test.js` (11): the machine's hands mode and recorded tick trace; main and off breaks with
+equal weapons exact; three mixed-tick pairs; a held off-hand burden (hold sequence 0, 0, 1 against the machine's own
+`machine.hold`); survivor powers/thresholds/cadence; the breaking blow still landing; durability on = off and equal to the
+machine with no break. The test fails before the change (every break case errs by the three survivor ticks above). Mutations
+caught in a throwaway copy: restart at the break hit (8 fail), one tick too many (8), one too few (8), survivor not switched to
+the lead hand (5), the broken weapon's tick (4), the survivor schedule built from the broken weapon (5), the held burden dropped
+(1), an averaged instead of integer hold (3), the burden carry dropped (1), the fresh swing's hit frame skipped (8). Full suite
+**647 tests, 647 pass**; vendor **289 vendored + 122 stubbed**; parity **1855/1855**.
+
+**Not changed / limits.** The pre-break pair timeline keeps the exchange's averaged held burden, so absolute pair times drift from
+the machine by the fraction of a tick not yet carried; only the swing in flight at the break uses the integer hold. A build
+carrying an off weapon but scheduled as a single weapon is not a state the game can be in (two one-handed weapons are the pair);
+it takes the pair's lead-swing-in-flight rule. No fist swing follows the last weapon (the fight stops and reports
+`endedByBreak`). G2-G8 of the Stage 3.5.3 audit (durability aggregates, kill-row bills, imprint semantics, the duplicate-id echo,
+the `procsBeforeBreak` label, the relay guard, the stale header) are not part of this change. `src/relayClaim.js` and `vendor/`
+are untouched.
+
 ## Stage 3.5.2 - ordinary weapon durability, the CWS condition bill and breakage (2026-11-16)
 
 **What the game does.** `damageEquipment` runs at the attack core's tail (`vendor:combat/formulas.js:569-597`,

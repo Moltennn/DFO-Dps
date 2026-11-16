@@ -33,9 +33,9 @@ import { cwsEligible, cwsRows, equipTableForFight, equippedForFight, resolveCwsC
 import { createRng } from './rng.js';
 import { blowWear, cloneItem, conditionPct, cwsBill, makeOwner, wearItem } from './durability.js';
 import { healthThresholds } from './fight.js';
-import { DUAL, FLURRY_TICKS } from './dualWield.js';
+import { DUAL, FLURRY_TICKS, offHandHold } from './dualWield.js';
 import {
-  HIT_FRAME_MELEE, HIT_FRAME_BOW, BOW_DRAWN_HOLD_FRAME, CLASSIC_UPDATE_INTERVAL,
+  HIT_FRAME_MELEE, HIT_FRAME_BOW, BOW_DRAWN_HOLD_FRAME, CLASSIC_UPDATE_INTERVAL, MELEE_NUM_FRAMES,
 } from '../vendor/upstream/a3eb1605/src/characters/weaponStates.js';
 import { EQUIP_SLOTS } from '../vendor/upstream/a3eb1605/src/characters/paperdoll/paperdoll.js';
 
@@ -54,6 +54,13 @@ function normalizeScenario(args) {
 
 /** The first-hit frame of a flurry: the hit frame reached from FLURRY_FROM_FRAME. */
 const FLURRY_HIT_FRAME = HIT_FRAME_MELEE - DUAL.FLURRY_FROM_FRAME;
+/**
+ * The ticks a melee swing still has to run after its hit frame: the strike's last frame is `MELEE_NUM_FRAMES.StrikeDown`
+ * and the hit is `HIT_FRAME_MELEE` (`characters/weaponStates.js:226-237`). It is the same for a fresh swing (starts on frame
+ * 0) and a flurry blow (starts on frame `DUAL.FLURRY_FROM_FRAME`): both reach the hit frame and end on the same last frame.
+ * An off-hand blow adds its held burden on top (`holdTicks`, whole ticks held on the last frame, `machineStep`).
+ */
+const TAIL_TICKS = MELEE_NUM_FRAMES.StrikeDown - HIT_FRAME_MELEE;
 /** The Thunderlock's shot lands on frame 1 (`characters/weaponStates.js:568-570`, the FIELD-GUN7 comment; the full
  *  checkout's `combat/gun/gunFeel.js` says "hit on frame 1", but its vendored binding is an inert stub). */
 const GUN_HIT_FRAME = 1;
@@ -112,7 +119,8 @@ export function createAttackSchedule(ch, args = {}) {
       next() {
         const t = first + i * cad.seconds;
         i += 1;
-        return { t, hand: 'main', start: t - first, fresh: true };
+        // `tail`: the ticks the swing in flight has left after this hit (melee only; a ranged build never breaks here)
+        return { t, hand: 'main', start: t - first, fresh: true, tail: gun || bow ? null : TAIL_TICKS, holdTicks: 0 };
       },
     };
   }
@@ -127,6 +135,13 @@ export function createAttackSchedule(ch, args = {}) {
   let start = 0;
   let hand = 'main';
   let first = true;
+  // The off hand pays its burden in WHOLE ticks held at its swing's end and carries the fraction to its next blow
+  // (`offHandHold`, combat/twoHands/handsLaw.js:273-278). The schedule's own off blow keeps the averaged hold the exchange
+  // is timed with (`offHandHoldTicks`); this integer is what the swing IN FLIGHT still owes if its weapon breaks at the hit.
+  // `probe.schedule.hold` is `(min(burden, slowest) - 1) x FLURRY_TICKS`, so the burden it was built from is recovered
+  // exactly and the same vendored function takes the carry.
+  const burden = 1 + offHandHoldTicks / FLURRY_TICKS;
+  let carry = 0;
   return {
     kind: 'dual', probe, target: probe.target, health,
     assumptions: {
@@ -141,14 +156,16 @@ export function createAttackSchedule(ch, args = {}) {
       if (hand === 'main') {
         const hit = start + (first ? HIT_FRAME_MELEE * mainTick : FLURRY_HIT_FRAME * mainTick);
         const duration = first ? 5 * mainTick : mainSeconds;
-        const ev = { t: hit, hand: 'main', start, fresh: first };
+        const ev = { t: hit, hand: 'main', start, fresh: first, tail: TAIL_TICKS, holdTicks: 0 };
         start += duration;
         first = false;
         hand = 'off';
         return ev;
       }
       const hit = start + FLURRY_HIT_FRAME * offTick;
-      const ev = { t: hit, hand: 'off', start, fresh: false };
+      const owed = offHandHold({ burden, ticks: FLURRY_TICKS, tick: offTick, carry });
+      carry = owed.carry;
+      const ev = { t: hit, hand: 'off', start, fresh: false, tail: TAIL_TICKS, holdTicks: owed.hold };
       start += offSeconds;
       hand = 'main';
       return ev;
@@ -530,7 +547,11 @@ export function simulateFight(ch, args = {}) {
       const single = createAttackSchedule(fightCh, { ...fightScenario, dual: false, weapon: weaponOf(survivor) });
       if (!single) { dur.endedByBreak = true; break; }
       scheduleNow = single;
-      clock = t;
+      // The swing in flight is not cut: upstream's machine keeps stepping it to its last frame (and, for an off-hand blow,
+      // through its held burden) before the next strike can begin, and every one of those remaining steps reads the tick of
+      // the hand now in use - the survivor's (`swingCtx`/`getMeleeWeaponAnimTime`, playerWeapon.js:838-840, :1123-1140). The
+      // next swing is then a fresh single-weapon swing (hands mode Single: `strikeHandOf` -> not a flurry), hit on frame 2.
+      clock = t + (next.tail + next.holdTicks) * single.assumptions.tick;
       next = single.next();
       dropItem(item);
       refresh();
