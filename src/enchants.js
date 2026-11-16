@@ -168,11 +168,37 @@ export function enchantDps(item, ch, target, {
   };
 }
 
-/** Procs a weapon's condition can pay for (10 per Cast When Strikes). */
-export function procsBeforeBreak(item) {
+/**
+ * How many Cast When Strikes BILLS an item's remaining condition can pay in full: `floor(condition / 10)`, 10 per row
+ * (`vendor:systems/enchantments.js:115`, `:585-602`).
+ *
+ * This is a BILL-ONLY figure. It ignores ordinary wear, which the same blow pays first (`damageEquipment`,
+ * `vendor:combat/formulas.js:569-597`: `trunc((10 * damage + 50) / 100)` of the damage that went through the core), so a
+ * hard-hitting weapon is worn out by blows well before its bills are. It is also not a cast count: the row walk casts first
+ * and bills after, so the cast that exhausts the item is real and is not in this number, and every later row of the same blow
+ * still casts and pays. Read it as "the most CWS bills this condition covers if nothing else wears the weapon", and take casts,
+ * breaks and weapon lifetime from `simulateFights({ durability: true })` (`durability.breakProbability`,
+ * `timeToFirstBreak`), which pays both. It is not a prediction of procs before the weapon breaks.
+ */
+export function cwsBillCapacity(item) {
   const cond = Number(item?.currentCondition);
   const max = Number(item?.maxCondition);
   if (!Number.isFinite(cond) || cond <= 0) return null;
   if (!Number.isFinite(max) || max <= 0) return null;
   return Math.floor(cond / 10);
+}
+
+/** What `procsBeforeBreak` counts - carried beside it so no consumer reads it as a cast or lifetime prediction. */
+export const PROCS_BEFORE_BREAK_BASIS = 'cws-bill-only';
+
+/** The CLI/report words for the bill-only figure; one home so every surface says the same thing. */
+export const billCapacityNote = (n) => `${n} CWS bills of 10 covered (bill-only; ordinary wear shortens it)`;
+
+/**
+ * Kept for API compatibility (CLI JSON, `analyze().procsBeforeBreak`): the SAME number as `cwsBillCapacity`, with its
+ * original name. The name is misleading - it is a bill-only bound, not procs before the weapon breaks; see
+ * `cwsBillCapacity` and `PROCS_BEFORE_BREAK_BASIS`.
+ */
+export function procsBeforeBreak(item) {
+  return cwsBillCapacity(item);
 }

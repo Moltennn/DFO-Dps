@@ -167,7 +167,9 @@ power is the same hit, an extra hit, another target, or utility.
 that budget. A single plan is cap-aware by default; `--uncapped` selects the
 theory setup; `--all` prints the per-weapon-type matrix. `--soul-gem` adds the
 5,000-point soul-gem channel to every piece. The weapon's condition also limits
-how many Cast When Strikes rows it can pay for; `procsBeforeBreak` is reported.
+how many Cast When Strikes bills it can pay in full; `procsBeforeBreak` reports `floor(condition / 10)` and is labelled
+`procsBeforeBreakBasis: "cws-bill-only"`. It ignores ordinary weapon wear (paid first, every blow) and is not a count of casts
+before the weapon breaks; take break odds and lifetimes from `simulateFights({ durability: true })`.
 
 ## 8. Firmament and real loadouts
 

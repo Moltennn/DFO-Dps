@@ -33,7 +33,7 @@ import { conditionPercentage } from '../vendor/upstream/a3eb1605/src/systems/ite
 import { CLICK_ATTACK_DIRECTIONS } from '../vendor/upstream/a3eb1605/src/characters/weaponStates.js';
 import { DIRECTION_TO_STRIKE } from '../vendor/upstream/a3eb1605/src/characters/anims.js';
 import { OFF_HAND_BLOW, dualSchedule, offHandBurden, offHandDamage, offHandToHit } from './dualWield.js';
-import { enchantDps, procsBeforeBreak } from './enchants.js';
+import { enchantDps, procsBeforeBreak, PROCS_BEFORE_BREAK_BASIS } from './enchants.js';
 import { bladeLines, weaponDamagePct as itemWeaponDamagePct } from './gearLines.js';
 import {
   bodyPartWeights, elementShare, enemyTypeBonusRange, enemyTypeBonusValues,
@@ -1441,7 +1441,7 @@ function analyzeCard(ch, {
     core, weapon: w, target: tgt, swing, swingDirections: swingKeys, swingMix, hit: hitOut, damage: displayDmg, cadence: cad,
     perSwing, perSwingMin, perSwingMax, dps, dpsMin, dpsMax,
     cappedPerSwing, cappedPerSwingMin, cappedPerSwingMax, cappedDps, cappedDpsMin, cappedDpsMax, cap, capSource, capLoss: dps > 0 ? 1 - cappedDps / dps : 0,
-    enchantPerSwing, enchantDps: enchantDpsValue, enchantDpsMin, enchantDpsMax, totalDps, totalDpsMin, totalDpsMax, totalTtk: gate?.totalTtk ?? totalTtk, enchantProcs: ench?.procs ?? [], procsBeforeBreak: procsBeforeBreak(w?.item ?? ch.wraps ?? ch.weapon),
+    enchantPerSwing, enchantDps: enchantDpsValue, enchantDpsMin, enchantDpsMax, totalDps, totalDpsMin, totalDpsMax, totalTtk: gate?.totalTtk ?? totalTtk, enchantProcs: ench?.procs ?? [], procsBeforeBreak: procsBeforeBreak(w?.item ?? ch.wraps ?? ch.weapon), procsBeforeBreakBasis: PROCS_BEFORE_BREAK_BASIS,
     resist, health: bossHealth || null, ward, shields, ttk: gate?.ttk ?? ttk, ttkCapOnly: ttk, totalTtkCapOnly: totalTtk, allowance: gate?.allowance ?? null, wrath, wrathAt: WRATH_AFTER_S,
     targetDefense,
     backstab: {

@@ -27,7 +27,7 @@ import { ENCOUNTERS, ENCOUNTER_IDS, encounterById } from './encounters.js';
 import { enchantmentName as enchantmentNameOf } from './enchantData.js';
 import { analyzeSpell, resolveSpells, spellCost, spellRotation, standardSpells } from './spells.js';
 import { chartTotals, probeConstants, summarizeProbe } from './probe.js';
-import { ENCHANTMENT_TYPES, enchantDps, procsBeforeBreak, strikeEnchantments } from './enchants.js';
+import { ENCHANTMENT_TYPES, billCapacityNote, enchantDps, procsBeforeBreak, strikeEnchantments } from './enchants.js';
 import { perfectSockets } from './sockets.js';
 import {
   DEFAULT_BLADE, GEAR_MASTERY_POINTS, LONG_BLADES,
@@ -479,7 +479,7 @@ function printBuild(ch, r, targetPreset, values) {
     ['Expected / swing', fmt(r.perSwing), 'hit chance and criticals included'],
     ['Swing time', `${fmt2(r.cadence.seconds)} s`, `${fmt2(r.cadence.aps)} swings/s`],
     ['DPS', fmt(r.dps), r.cap ? `per-hit-capped ${fmt(r.cappedDps)} (${pc(r.capLoss)} lost) - a ceiling${r.allowance ? ', not what the boss accepts' : ''}` : 'no per-hit cap'],
-    ...(r.enchantDps > 0 ? [['Enchant procs', fmt(r.enchantDps), `${fmt(r.enchantPerSwing)} per landed hit${r.procsBeforeBreak ? `; ${r.procsBeforeBreak} procs before break` : ''}`], ['Total DPS', fmt(r.totalDps), 'weapon + enchant procs']] : []),
+    ...(r.enchantDps > 0 ? [['Enchant procs', fmt(r.enchantDps), `${fmt(r.enchantPerSwing)} per landed hit${r.procsBeforeBreak ? `; ${billCapacityNote(r.procsBeforeBreak)}` : ''}`], ['Total DPS', fmt(r.totalDps), 'weapon + enchant procs']] : []),
     ...(r.allowance ? allowanceRows(r.allowance) : []),
     ['Time to kill', (r.totalTtk ?? r.ttk) ? `${fmt(r.totalTtk ?? r.ttk)} s` : '-', r.health ? `${r.health.toLocaleString()} HP${r.ward ? ` + ${r.ward} ward` : ''}${r.shields ? ` + ${r.shields}s shields` : ''}${r.enchantDps > 0 ? ' (weapon + procs)' : ''}${r.allowance ? ' - through the relay allowance' : ''}` : 'no boss health'],
   ], ['Metric', 'Value', 'Notes']));
@@ -643,10 +643,10 @@ export async function main(argv = process.argv.slice(2)) {
       ['Enchant per landed hit', `${fmt(strike.procDamage + strike.flat)}${strike.procDot ? ` + ${fmt(strike.procDot / 5)} DoT DPS` : ''}`],
       ['Enchant DPS', fmt(r.enchantDps)],
       ['Total DPS', fmt(r.totalDps)],
-      ['Procs before break', r.procsBeforeBreak ?? '-'],
+      ['CWS bills covered (bill-only)', r.procsBeforeBreak ?? '-'],
       ['Procs', strike.procs.map((p) => `${p.name} ${p.dotTick ? `DoT ${fmt(p.dotTick)}/round` : fmt(p.damage)}`).join(', ') || '-'],
     ], ['Metric', 'Value']));
-    if (values.json) console.log(JSON.stringify({ enchantments: rows, strike, result: { weaponDps: r.dps, enchantDps: r.enchantDps, totalDps: r.totalDps, procsBeforeBreak: r.procsBeforeBreak } }, null, 2));
+    if (values.json) console.log(JSON.stringify({ enchantments: rows, strike, result: { weaponDps: r.dps, enchantDps: r.enchantDps, totalDps: r.totalDps, procsBeforeBreak: r.procsBeforeBreak, procsBeforeBreakBasis: r.procsBeforeBreakBasis } }, null, 2));
     return;
   }
 

@@ -419,6 +419,9 @@ export function simulateFight(ch, args = {}) {
     let cwsDamage = 0;
     let cwsCastsThis = 0;
     let cwsKill = false;
+    // A break by a bill AFTER the killing cast (the row walk continues past a kill, see below). It is a break of the
+    // item, so it counts in `broke`/`breaks`, but the echo was already lost to the kill, not to this break.
+    let brokeAfterKill = false;
     if (cwsEligible({
       target, strikesPositive: outcome.strikesPositive === true, whole: outcome.whole === true, item, standard,
     })) {
@@ -426,8 +429,13 @@ export function simulateFight(ch, args = {}) {
         let rowBroke = false;
         let cast = null;
         let killed = false;
+        // The foe is already dead: upstream's row walk has no death test (`doItemEnchantmentPayloads`, enchantments.js:
+        // 1040-1085), and a row's `strikes` returns its 10-point bill whether or not the cast landed (`:585-602`) - but the
+        // host's `applySpellToTarget` finds no live foe and returns without casting (`scenes/hostEnchant.js:198-209`,
+        // `foes().find((x) => !x.dead && ...)`; no draw, no damage). So a later row is PROCESSED and BILLED but not CAST.
+        const afterKill = cwsKill;
         const rowPower = { potencyPct: cwsPower.potencyPct, pierce: cwsPower.pierce };
-        if (row.spell) {
+        if (row.spell && !afterKill) {
           // The sink is the host's landing: later effects still roll, but they stop being counted/applied at death.
           const hurt = (n) => { hp = Math.max(0, hp - n); return hp > 0; };
           cast = resolveCwsCast({
@@ -446,11 +454,17 @@ export function simulateFight(ch, args = {}) {
         if (durability) {
           bill = cwsBill(target);
           if (bill > 0) {
+            // `lowerCondition` reports a break every time it is applied to an item at 0 (it clamps and says so again), so a bill
+            // on an already-broken item is a REPEAT report of the same break, not another weapon lost.
+            const wasBroken = Number.isFinite(item.currentCondition) && item.currentCondition <= 0;
             const broke = wearItem(dur.owner, item, bill, null);
             if (broke) {
-              brokeNow = true;
+              if (afterKill) brokeAfterKill = true; else brokeNow = true;
               rowBroke = true;
-              dur.breaks.push({ t, hand, reason: 'cws', amount: bill, item: item.name ?? null });
+              dur.breaks.push({
+                t, hand, reason: 'cws', amount: bill, item: item.name ?? null,
+                ...(afterKill ? { afterKill: true } : {}), ...(wasBroken ? { again: true } : {}),
+              });
               // A later row on the same item still runs, but its caster's power is the equipment as it now stands.
               dropItem(item);
               refreshCwsPower();
@@ -469,12 +483,15 @@ export function simulateFight(ch, args = {}) {
             deferred: cast.deferred, effects: cast.effects,
           } : {}),
           kill: killed,
+          ...(afterKill ? { afterKill: true, cast: false } : {}),
           bill, broke: rowBroke,
           potencyPct: rowPower.potencyPct, pierce: rowPower.pierce,
           condition: durability ? (item?.currentCondition ?? null) : null,
           conditionPct: durability ? conditionPct(item) : null,
         });
-        if (killed) break; // the host's applySpellToTarget finds no live foe for a later row
+        // Durability off: a later row after a kill has no observable effect (no cast, no bill), so the walk stops here exactly
+        // as before. Durability on: it continues, because every later row still pays its bill.
+        if (killed && !durability) break;
       }
     }
     // Upstream order after the formula: the strike listener's echo lands as its own hit (`hurtFoe`) first; the host's
@@ -521,7 +538,7 @@ export function simulateFight(ch, args = {}) {
       blow: outcome.blow, claim: outcome.claim, cappedDamage: outcome.cappedDamage,
       echoHits: outcome.echoHits, remaining: Math.max(0, hp),
       ...(durability ? {
-        wear, broke: brokeNow, echoSuppressed,
+        wear, broke: brokeNow || brokeAfterKill, echoSuppressed,
         condition: item?.currentCondition ?? null,
         conditionPct: conditionPct(item),
         band, tierBand: dist.band,
@@ -563,6 +580,12 @@ export function simulateFight(ch, args = {}) {
   if (hp < 0) hp = 0;
   const remainingHealth = Math.max(0, hp);
   const kill = ttk !== null;
+  // Why this fight stopped - exclusive, in the loop's own priority: a kill, then no weapon left (a break the local model
+  // cannot continue past, no fist schedule), then the blow budget, then the time horizon.
+  const endReason = kill ? 'kill' : (dur?.endedByBreak ? 'noWeaponLeft' : (blows >= maxBlows ? 'blowBudget' : 'horizon'));
+  const weaponsBroken = dur
+    ? [dur.main, dur.off].filter((it) => it && (it.maxCondition ?? 0) > 0 && Number.isFinite(it.currentCondition) && it.currentCondition <= 0).length
+    : 0;
   if (kill && killSource == null) killSource = 'melee';
   return {
     seed,
@@ -581,6 +604,8 @@ export function simulateFight(ch, args = {}) {
     cwsKills,
     cwsCapable: castsCws,
     blows,
+    endReason,
+    weaponsBroken,
     damageMode,
     outputDps: t > 0 ? dealt / t : null,
     killDps: kill ? pool / ttk : null,
@@ -636,6 +661,66 @@ export function pairedFightSeeds(count, seed = 0) {
 }
 
 /**
+ * The durability statistics of a set of `durability: true` fights (Stage 3.5.3b). Every denominator is the number of
+ * TRIALS (`rows.length`) unless a field says "conditional".
+ *
+ *   fightsWithBreak / breakProbability   fights in which at least one weapon broke before the fight ended, over all trials
+ *                                        (Wilson interval). A fight that kills first, runs out of horizon or budget first, or
+ *                                        loses no weapon is a trial WITHOUT a break; the probability is of breaking within the
+ *                                        fight as it was run, not of an item's lifetime.
+ *   timeToFirstBreak                     summary of the first break's time over the fights that broke (CONDITIONAL on a break,
+ *                                        so biased low as a lifetime). The fights that ended unbroken are right-censored at
+ *                                        their own `time`; `timeAtRiskWithoutBreak` summarises those censoring times so the
+ *                                        bias is visible.
+ *   weaponsBroken                        distinct weapons (the build's main / off item) that reached 0 condition, per fight:
+ *                                        `counts[k]` fights lost k, `mean` over all trials.
+ *   breakEvents                          the break REPORTS: `distinct` (first break of an item, by `reason`: 'wear' or 'cws'),
+ *                                        `afterKill` (a CWS bill paid by a row AFTER the killing cast), `repeats` (a bill on an
+ *                                        item already at 0: `lowerCondition` reports it again, no new weapon lost).
+ *   noWeaponLeft                         fights stopped because no weapon remained (no fist schedule), over all trials.
+ *   endCondition                         per build hand, the raw and percent condition at the fight's end over the trials that
+ *                                        had an item in that hand. `main`/`off` are the BUILD's hands, not the slots after a
+ *                                        survivor is promoted.
+ */
+export function durabilityStats(rows) {
+  const trials = rows.length;
+  const first = rows.map((r) => r.breaks[0]?.t).filter((v) => Number.isFinite(v));
+  const withBreak = rows.filter((r) => r.breaks.length > 0);
+  const counts = [0, 0, 0];
+  for (const r of rows) counts[Math.min(2, r.weaponsBroken)] += 1;
+  const events = rows.flatMap((r) => r.breaks);
+  const distinct = events.filter((b) => !b.again);
+  const byReason = { wear: 0, cws: 0 };
+  for (const b of distinct) byReason[b.reason] = (byReason[b.reason] ?? 0) + 1;
+  const hand = (name) => {
+    const have = rows.filter((r) => r.condition[name] !== null && r.condition[name] !== undefined);
+    return {
+      n: have.length,
+      raw: summarize(have.map((r) => r.condition[name])),
+      pct: summarize(have.map((r) => r.conditionPct[name]).filter((v) => v !== null && v !== undefined)),
+      broken: have.filter((r) => r.condition[name] <= 0).length,
+    };
+  };
+  const stopped = rows.filter((r) => r.endReason === 'noWeaponLeft').length;
+  return {
+    trials,
+    fightsWithBreak: withBreak.length,
+    breakProbability: wilsonInterval(withBreak.length, trials),
+    timeToFirstBreak: summarize(first),
+    timeAtRiskWithoutBreak: summarize(rows.filter((r) => r.breaks.length === 0).map((r) => r.time)),
+    weaponsBroken: { counts, mean: trials ? (counts[1] + 2 * counts[2]) / trials : 0 },
+    breakEvents: {
+      distinct: distinct.length,
+      byReason,
+      afterKill: distinct.filter((b) => b.afterKill).length,
+      repeats: events.length - distinct.length,
+    },
+    noWeaponLeft: { count: stopped, probability: wilsonInterval(stopped, trials) },
+    endCondition: { main: hand('main'), off: hand('off') },
+  };
+}
+
+/**
  * Run `trials` independent fights. Pass `seeds` to reuse a fixed list (the paired form). Every result carries the
  * pool, the seed list, the number killed and the distributions of TTK, damage, overkill and blows. `ttk` (and its
  * alias `ttkConditional`) and `killDps` are CONDITIONAL on a kill: with censored fights they are biased low relative
@@ -643,6 +728,11 @@ export function pairedFightSeeds(count, seed = 0) {
  * `horizonSeconds`, with a Wilson interval. `outputDps`, `damageDealt`, remaining and overkill cover every trial,
  * including a censored one (its `outputDps` is over the time it actually ran, not the full horizon; a trial that
  * landed no blow has no rate and is left out of that summary, whose `n` says how many rows it has).
+ *
+ * `censored` is every fight with no observed kill, whatever stopped it. `outcomes` splits it: `noWeaponLeft` (a break left no
+ * weapon; the model has no fist schedule), `horizonCensored` (`maxSeconds`) and `blowBudgetCensored` (`maxBlows`) - read those,
+ * not the total. With `durability: true`, `durability` carries the break statistics (see `durabilityStats`; denominator =
+ * every trial). `simulatePairedFights` runs this once per build on shared seeds and does no pooling or paired differencing.
  */
 export function simulateFights(ch, args = {}) {
   const trials = Math.max(1, Math.floor(num(args.trials, Array.isArray(args.seeds) ? args.seeds.length : 1000)));
@@ -660,7 +750,17 @@ export function simulateFights(ch, args = {}) {
     seeds,
     health: pool,
     kills: kills.length,
+    // `censored` is every fight with NO observed kill, whatever stopped it: the sum of `outcomes.noWeaponLeft`,
+    // `outcomes.horizonCensored` and `outcomes.blowBudgetCensored`. The three are different things (a weapon-less fight is
+    // censored by the local model's missing fist schedule, a horizon fight by the clock) - read `outcomes`, not this total.
     censored: rows.length - kills.length,
+    outcomes: {
+      killed: kills.length,
+      noWeaponLeft: rows.filter((r) => r.endReason === 'noWeaponLeft').length,
+      horizonCensored: rows.filter((r) => r.endReason === 'horizon').length,
+      blowBudgetCensored: rows.filter((r) => r.endReason === 'blowBudget').length,
+    },
+    durability: args.durability === true ? durabilityStats(rows) : null,
     // `ttk`/`killDps` are CONDITIONAL on a kill; `killProbability` is the overall share of fights that kill inside the
     // horizon. With censored fights, the conditional mean is biased low relative to an unconditional TTK.
     ttk,

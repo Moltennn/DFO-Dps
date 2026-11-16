@@ -6,6 +6,54 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage 3.5.3b - durability accounting and aggregate metrics (2026-11-16)
+
+Closes G2, G3 and G6 of the Stage 3.5.3 audit. Full record: the stage record.
+
+**What the game does (G3).** `doItemEnchantmentPayloads` walks every row of the item with no death test
+(`vendor:systems/enchantments.js:1040-1085`); a Cast When Strikes row returns its 10-point bill whether or not its cast landed
+(`:585-602`) and `applyResults` bills it at once (`:1124-1133`, `:401-409`). The host's `applySpellToTarget` finds the foe with
+`!x.dead` and casts nothing when it is dead (`full:scenes/hostEnchant.js:198-209`). So after a killing cast the later rows are
+processed and billed but not cast; the melee blow and echo are not run.
+
+**What changed.** `src/simulateFight.js` (durability on): the row loop no longer stops at a kill; a later row skips the cast (no
+draw, no damage), pays its bill and is traced `afterKill: true, cast: false`; a break by such a bill carries `afterKill: true`,
+and a bill on an item already at 0 carries `again: true`. Durability off keeps the stop (nothing to bill). Each fight result gains
+`endReason` (`kill` / `noWeaponLeft` / `blowBudget` / `horizon`, exclusive) and `weaponsBroken`. `simulateFights` gains `outcomes`
+(killed / noWeaponLeft / horizonCensored / blowBudgetCensored, partitioning the trials; `censored` is unchanged and equals the
+last three) and, with `durability: true`, `durability` (break probability, time to first break, weapons broken, break events by
+reason, no-weapon-left, end condition per hand - denominators and censoring in the stage record). `src/enchants.js` adds
+`cwsBillCapacity`, `PROCS_BEFORE_BREAK_BASIS` and `billCapacityNote`; `procsBeforeBreak` keeps its name and value (G6) and
+`analyze()` / the CLI JSON carry `procsBeforeBreakBasis: "cws-bill-only"`; the CLI text now says bill-only.
+
+**Before and after (G3).** A three-row item whose first cast kills, ordinary wear 1: condition 45 -> final 34 (one bill) became 14
+(three bills); 25 -> 14 became 0 (breaks on the third row's bill); 15 -> 4 became 0 (breaks on the second row's bill, a repeat on the
+third); 5 -> 0 stays 0 but now reports three bills and two after-kill repeats. Kill, melee, echo and TTK are unchanged.
+
+**Outputs moved.** Only fights with `durability: true` in which a CWS cast kills while later CWS rows remain: the final
+`condition`, `breaks` and the new trace rows. Durability off, durability on with no kill-with-later-
+rows, and the post-break schedule are unchanged: 250 seeded pair/single fights (durability off and on, no break) and 120 CWS
+no-kill fights (40 with breaks) are byte-identical to `971e245`, and the 3.5.3a scheduling table is identical.
+
+**G6.** `procsBeforeBreak` is `floor(condition / 10)`: bills only. It is not a cast count (cond 25, one row: the vendored walk casts
+3 times, the figure says 2) and it ignores ordinary wear (a 400-point weapon, bound 40, casts 31-33 times before breaking in 24
+production fights, none reaching 40). No wear-aware estimate is offered.
+
+**Evidence.** `test/durabilityAccounting.test.js` (15): 16 production fights (4 conditions x 4 kill rows) equal the vendored walk
+with the host's live-foe gate; after-kill breaks, no melee/echo, controls, durability off, `spareGear`; the gate conservation law;
+hand-built aggregate rows; a 60-trial mixed set (11 killed / 28 no weapon / 21 horizon); a pair on paired seeds; the end-reason
+priority; the label and the two misleading readings. Mutations caught in a throwaway copy (15): skipping post-kill bills (2 fail),
+post-kill rows casting (1), a double bill on the killing row (3), bills on blows the gate would not walk (1; found as a gap and
+closed by the conservation test), break termination reported as horizon (4), no-weapon fights absorbed into the horizon count
+(1), a wrong break-probability denominator (2), the last instead of the first break time (1), the basis label dropped (1), the CLI
+saying "procs before break" again (1), repeat reports counted as weapons (1), the `afterKill` flag dropped (1), an after-kill break
+suppressing the echo (1), `weaponsBroken` counting events (1), and the durability aggregate dropped (2). Full suite
+**662 tests, 662 pass**; vendor **289 vendored + 122 stubbed**; parity **1855/1855**.
+
+**Not changed.** Post-break scheduling, Flow and Many Endings, relay CWS and durability, target gear wear, the fist fallback,
+event-level RNG, DoT and ward lifecycles, ranged support and the optimizer. G4, G5, G7 and G8 remain open. `src/relayClaim.js` and
+`vendor/` are untouched.
+
 ## Stage 3.5.3a - the swing schedule after a weapon breaks (2026-11-16)
 
 **What the game does.** A break does not cut the swing in flight. The vendored `PlayerWeapon` keeps stepping the strike to its
