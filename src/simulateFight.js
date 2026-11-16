@@ -21,11 +21,14 @@
  * runs several builds on the SAME seed list, which is the form a comparison should use. A Pistolet pair is refused:
  * its own machine and reload law are not part of this stage.
  *
- * Excluded: relay bucket/token/claim, CWS, DoTs, Flow, equipment wear/break, ward lifecycle, incoming damage, attacker
- * health/death and pair support. The simulation does not pretend those are present.
+ * Included since Stage 3.5.1: Cast When Strikes DIRECT DAMAGE on an ordinary foe, resolved before the melee blow with
+ * its own injectable stream. Excluded: relay bucket/token/claim, CWS condition costs and wear, DoTs, other spell
+ * families, Flow, ward lifecycle, ranged support, incoming damage, attacker health/death and pair support. The
+ * simulation does not pretend those are present.
  */
 import { analyze, weaponOf, weaponPowers } from './model.js';
 import { blowFightTier, createBlowSampler } from './blowOutcomes.js';
+import { cwsEligible, cwsRows, resolveCwsCast } from './cws.js';
 import { createRng } from './rng.js';
 import { healthThresholds } from './fight.js';
 import { DUAL, FLURRY_TICKS } from './dualWield.js';
@@ -181,6 +184,10 @@ export function simulateFight(ch, args = {}) {
   const seed = Number.isSafeInteger(scenario.seed) ? scenario.seed : 0;
   const rng = createRng(seed);
   const blowStream = rng.stream('blow');
+  const cwsStream = rng.stream('cws');
+  const cwsRolls = scenario.cwsRolls === undefined ? () => cwsStream.float() : scenario.cwsRolls;
+  if (typeof cwsRolls !== 'function') throw new TypeError('simulateFight: cwsRolls must be a function');
+  const standard = scenario.standard;
   const target = schedule.target;
   const probe = schedule.probe;
   const dual = schedule.kind === 'dual';
@@ -213,8 +220,12 @@ export function simulateFight(ch, args = {}) {
   let t = 0;
   let blows = 0;
   let dealt = 0;
+  let cwsDealt = 0;
+  let cwsCasts = 0;
+  let cwsKills = 0;
   let ttk = null;
   const trace = scenario.trace === true ? [] : null;
+  const cwsTrace = scenario.trace === true ? [] : null;
   const used = new Map();
   let next = schedule.next();
   while (hp > 0 && blows < maxBlows && next && next.t <= maxSeconds) {
@@ -223,18 +234,61 @@ export function simulateFight(ch, args = {}) {
     const hand = dual ? next.hand : 'main';
     const dist = distribution(index, hand);
     const outcome = dist.sampler.sample(blowStream);
-    const damage = damageOf(outcome);
+    const blowDamage = damageOf(outcome);
     t = next.t;
-    hp -= damage;
-    dealt += damage;
     blows += 1;
+    // CWS runs inside the blow's formula, before the host applies the melee damage. The row's trigger is the formula
+    // damage > 0 before Potent Vs (`formulaPositive`), the off-hand `whole` outcome, the item's enchantment list, and
+    // a target the relay has not warded. Each row is its own cast, in the item's order.
+    const item = hand === 'off' ? (probe.offHand?.weapon?.item ?? null) : (probe.weapon?.item ?? null);
+    let cwsDamage = 0;
+    let cwsCastsThis = 0;
+    let cwsKill = false;
+    if (cwsEligible({
+      target, damagePositive: outcome.formulaPositive === true, whole: outcome.whole === true, item, standard,
+    })) {
+      for (const row of cwsRows(item, standard)) {
+        if (!row.spell) {
+          cwsTrace?.push({
+            t, hand, swing: blows, row: row.param, spell: null, index: null, damage: 0, missing: true,
+          });
+          continue;
+        }
+        const cast = resolveCwsCast({
+          spell: row.spell, caster: { entity: ch }, casterLevel: num(ch.level, 1), target, rolls: cwsRolls,
+        });
+        cwsDamage += cast.damage;
+        cwsCastsThis += 1;
+        hp -= cast.damage;
+        const killed = hp <= 0;
+        if (killed) { hp = 0; cwsKill = true; cwsKills += 1; }
+        cwsTrace?.push({
+          t, hand, swing: blows, row: row.param, spell: row.spell.name ?? null, index: row.spell.index ?? null,
+          casterLevel: num(ch.level, 1), damage: cast.damage, absorbed: cast.absorbed, reflected: cast.reflected,
+          resisted: cast.resisted, deferred: cast.deferred, effects: cast.effects, kill: killed,
+        });
+        if (killed) break; // the host's applySpellToTarget finds no live foe for a later row
+      }
+    }
+    // A CWS kill means the host's damageFoe sees `foe.dead` and drops the melee blow. The swing still happened, so
+    // `blows` and the trace keep it; only its damage is not applied.
+    let meleeDamage = blowDamage;
+    if (cwsKill) meleeDamage = 0;
+    else hp -= meleeDamage;
+    if (hp < 0) hp = 0;
+    cwsDealt += cwsDamage;
+    cwsCasts += cwsCastsThis;
+    dealt += cwsDamage + meleeDamage;
     const key = `${index}|${hand}`;
-    const u = used.get(key) ?? { segment: index, hand, share: dist.mid, blows: 0, damage: 0 };
+    const u = used.get(key) ?? { segment: index, hand, share: dist.mid, blows: 0, damage: 0, cwsDamage: 0 };
     u.blows += 1;
-    u.damage += damage;
+    u.damage += cwsDamage + meleeDamage;
+    u.cwsDamage += cwsDamage;
     used.set(key, u);
     if (trace) trace.push({
-      t, hand, segment: index, share, damage, hit: outcome.hit, crit: outcome.crit,
+      t, hand, swing: blows, segment: index, share, damage: meleeDamage, blowDamage, cwsDamage, cwsCasts: cwsCastsThis,
+      cwsKill, meleeApplied: meleeDamage > 0, formulaPositive: outcome.formulaPositive === true,
+      whole: outcome.whole === true, hit: outcome.hit, crit: outcome.crit,
       blow: outcome.blow, claim: outcome.claim, cappedDamage: outcome.cappedDamage,
       echoHits: outcome.echoHits, remaining: Math.max(0, hp),
     });
@@ -253,6 +307,9 @@ export function simulateFight(ch, args = {}) {
     remainingHealth,
     overkill: Math.max(0, dealt - pool),
     damageDealt: dealt,
+    cwsDamage: cwsDealt,
+    cwsCasts,
+    cwsKills,
     blows,
     damageMode,
     outputDps: t > 0 ? dealt / t : null,
@@ -263,6 +320,7 @@ export function simulateFight(ch, args = {}) {
     bounds,
     target,
     trace,
+    cwsTrace,
     with: (edit = {}) => simulateFight(ch, { ...args, ...edit }),
   };
 }

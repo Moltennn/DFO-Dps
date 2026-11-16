@@ -697,6 +697,9 @@ export function makeTarget(fields = {}) {
     spareGear: true,
     health: 100,
     maxHealth: 100,
+    // Target-side spell state (Stage 3.5.1): the CWS resolver reads the same `activeEffects` shapes upstream's
+    // applySpell does (spellResistance / spellReflection / elementalResistance / spellAbsorption).
+    activeEffects: [],
     ...fields,
   };
   if (t.combatLevel == null) t.combatLevel = t.level ?? 1;

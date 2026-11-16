@@ -64,6 +64,8 @@ const MODULES = Object.freeze({
   fpsWeapon: 'combat/fpsWeapon.js',
   techniqueRoster: 'combat/technique/techniqueRoster.js',
   spellcast: 'systems/spellcast.js',
+  effects: 'systems/effects.js',
+  enchantments: 'systems/enchantments.js',
 });
 
 let _upstream = null;
