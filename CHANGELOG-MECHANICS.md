@@ -6,6 +6,49 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage 3.5.2 - ordinary weapon durability, the CWS condition bill and breakage (2026-11-16)
+
+**What the game does.** `damageEquipment` runs at the attack core's tail (`vendor:combat/formulas.js:569-597`,
+`:769`; the live overhaul's call `vendor:combat/pcaao.js:1847-1860`) and wears the attacker's striking weapon by
+`trunc((10 * damage + 50) / 100)`, where `damage` is what went through the core; a 0 amount draws one `dice100(20)`
+roll that can make it 1 (`:585`), and the port's wear scale/multiple of 1 draw no further roll (`systems/equip.js:555-568`).
+A `spareGear` target wears nothing (`:574`). `lowerCondition` (`systems/equip.js:570-608`) clamps at 0, unequips by
+IDENTITY, clears `owner.weapon`, and a piece with no `maxCondition` cannot break. A Cast When Strikes row casts and then
+bills 10 condition (`systems/enchantments.js:585-602`, `:115`), immediately through `applyResults`
+(`:1124-1133`), even for a resisted, absorbed, deferred, zero-damage or missing-record cast; `spareGear` zeroes the bill
+(`:1066-1072`). The row walk continues after a break. The current blow's damage was computed before the wear and lands;
+the broken hand is unequipped and the other hand becomes the lead (`combat/playerWeapon.js:443-452`, `:505-508`).
+Many Endings' echo and Flow's per-blow charge read `wornPowers` after the break and are lost; Flow's current-blow damage
+survives.
+
+**What changed.** `src/durability.js` holds the wear amount, the floor roll, the bill and the vendored break leaf over
+a fight-owned synthetic equip table. `src/simulateFight.js` takes `durability: true`: it clones the items (caller
+objects untouched), carries a named `condition` stream (`conditionRolls` injectable), wears the striking weapon from the
+PRE-payload `strikesDamage` before the CWS rows, bills every row after its cast, clamps/unequips/clears on a break,
+suppresses the Many Endings echo when the item broke, keeps the current blow, promotes the surviving hand as a single
+weapon with a fresh schedule and powers/bounds, and stops with `endedByBreak` when no weapon remains (the local model
+has no fist schedule). A condition-band crossing rebuilds the next blow's tier. The result adds `durability`,
+`condition` (raw), `conditionPct`, `breaks`, `wear` and `endedByBreak`; the traces add the wear/bill/band fields.
+
+**Outputs moved.** None by default: `durability` is off, so every Stage 3.1-3.5.1 number is unchanged. With
+`durability: true`, a fight's damage/TTK move as the weapon's condition crosses a band and stops (or continues on the
+other hand) when it breaks; the `condition`/`breaks`/`endedByBreak` fields are new.
+
+**Evidence.** `test/durability.test.js` (19). The wear, bill and break laws are compared directly with the vendored
+`damageEquipment`, `doItemEnchantmentPayloads` and `lowerCondition`; a production fight's whole wear/bill/break state is
+replayed through upstream on the fight's own `strikesDamage` sequence. Mutation checks in a throwaway copy caught wear
+rounding, the floor roll omitted/always drawn/at 19%, the bill at 9 or only on a damaging cast, echo suppression off, a
+break without unequip, no survivor promotion, content-based item removal, the current blow dropped on break, later rows
+skipped after a break, survivor powers not refreshed, the off slot left occupied, the schedule not swapped, the broken
+item kept in the spell-power table, `conditionRolls` ignored, the band missing from the tier key, post-payload wear and
+an extra condition draw. Full suite **625 tests, 625 pass**; vendor **289 vendored + 122 stubbed**; parity
+**1855/1855**.
+
+**Not changed.** `src/relayClaim.js` is untouched. Relay-boss durability, the target's shield/armour wear, the fist
+fallback (the fight stops and reports `endedByBreak`), CWS bills for rows after a kill, pack removal/repair and other
+condition sources (Cast When Held/Used, item deterioration, target blows) remain out of scope. DoTs, the ward
+lifecycle, ranged support and the optimizer are unchanged; the stage record is the stage record.
+
 ## Stage 3.5.1 - ordinary-enemy Cast When Strikes direct damage (2026-11-16)
 
 **What the game does.** A Cast When Strikes row is a `Strikes` payload at the tail of

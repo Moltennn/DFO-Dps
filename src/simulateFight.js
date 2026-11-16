@@ -27,15 +27,17 @@
  * families, Flow, ward lifecycle, ranged support, incoming damage, attacker health/death and pair support. The
  * simulation does not pretend those are present.
  */
-import { analyze, weaponOf, weaponPowers } from './model.js';
+import { analyze, conditionMultiplier, weaponOf, weaponPowers } from './model.js';
 import { blowFightTier, createBlowSampler } from './blowOutcomes.js';
 import { cwsEligible, cwsRows, equippedForFight, resolveCwsCast, spellPowerInputs } from './cws.js';
 import { createRng } from './rng.js';
+import { blowWear, cloneItem, conditionPct, cwsBill, makeOwner, wearItem } from './durability.js';
 import { healthThresholds } from './fight.js';
 import { DUAL, FLURRY_TICKS } from './dualWield.js';
 import {
   HIT_FRAME_MELEE, HIT_FRAME_BOW, BOW_DRAWN_HOLD_FRAME, CLASSIC_UPDATE_INTERVAL,
 } from '../vendor/upstream/a3eb1605/src/characters/weaponStates.js';
+import { EQUIP_SLOTS } from '../vendor/upstream/a3eb1605/src/characters/paperdoll/paperdoll.js';
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
@@ -164,6 +166,29 @@ export function healthSegment(bounds, share) {
   return bounds.length - 2;
 }
 
+/**
+ * The fight's own copies of the item state a wear/bill/break can mutate: the worn list, the two hand items and the
+ * wraps. The caller's character and items are never touched. The synthetic `owner` is what upstream's `lowerCondition`
+ * walks (the equip table and `owner.weapon`), so the break leaf is the game's own.
+ */
+function prepareDurability(ch, scenario) {
+  const originals = Array.isArray(ch.worn) ? ch.worn.filter(Boolean) : [];
+  const worn = originals.map(cloneItem);
+  const byOriginal = new Map(originals.map((it, i) => [it, worn[i]]));
+  const cloneRef = (it) => (it == null ? null : (byOriginal.get(it) ?? cloneItem(it)));
+  const weaponItem = scenario.weapon && typeof scenario.weapon === 'object' ? scenario.weapon.item : null;
+  const main = scenario.weapon !== undefined
+    ? (weaponItem ? cloneRef(weaponItem) : cloneRef(scenario.weapon))
+    : cloneRef(ch.weapon);
+  const off = cloneRef(ch.offWeapon);
+  const fightCh = { ...ch, worn, weapon: main, offWeapon: off, wraps: cloneRef(ch.wraps) };
+  const fightScenario = scenario.weapon !== undefined
+    ? { ...scenario, weapon: (weaponItem ? { ...scenario.weapon, item: main } : scenario.weapon) }
+    : { ...scenario };
+  const owner = makeOwner(main, off);
+  return { ch: fightCh, scenario: fightScenario, owner, main, off, effective: null, breaks: [], wear: 0, endedByBreak: false };
+}
+
 /** One seeded battle. The result is one of the samples `simulateFights` summarises. `seed` defaults to 0, so even an
  *  unseeded call is deterministic (the path never touches `Math.random`). */
 export function simulateFight(ch, args = {}) {
@@ -175,7 +200,13 @@ export function simulateFight(ch, args = {}) {
   if (mainWeapon?.ranged || offWeapon?.ranged) {
     throw new Error('simulateFight: bow and gun builds are not supported on either hand');
   }
-  const schedule = createAttackSchedule(ch, scenario);
+  // Stage 3.5.2: ordinary durability is an explicit scenario switch. Off (the default) is the Stage 3.1-3.5.1 path,
+  // unchanged. On, the fight owns clones of the items and a synthetic equip table (src/durability.js).
+  const durability = scenario.durability === true;
+  const dur = durability ? prepareDurability(ch, scenario) : null;
+  const fightCh = dur ? dur.ch : ch;
+  const fightScenario = dur ? dur.scenario : scenario;
+  const schedule = createAttackSchedule(fightCh, fightScenario);
   if (!schedule) return null;
   const pool = schedule.health;
   if (!(pool > 0)) return null;
@@ -186,8 +217,13 @@ export function simulateFight(ch, args = {}) {
   const rng = createRng(seed);
   const blowStream = rng.stream('blow');
   const cwsStream = rng.stream('cws');
+  const conditionStream = durability ? rng.stream('condition') : null;
   const cwsRolls = scenario.cwsRolls === undefined ? () => cwsStream.float() : scenario.cwsRolls;
   if (typeof cwsRolls !== 'function') throw new TypeError('simulateFight: cwsRolls must be a function');
+  const conditionRolls = scenario.conditionRolls === undefined
+    ? (durability ? () => conditionStream.float() : null)
+    : scenario.conditionRolls;
+  if (durability && typeof conditionRolls !== 'function') throw new TypeError('simulateFight: conditionRolls must be a function');
   const standard = scenario.standard;
   const target = schedule.target;
   const probe = schedule.probe;
@@ -224,35 +260,68 @@ export function simulateFight(ch, args = {}) {
       throw new Error('simulateFight: boss `traits` are not supported with Cast When Strikes (the cast ignores them)');
     }
   }
-  const cwsPower = castsCws
-    ? spellPowerInputs(ch, {
+  // The effective equip table (spell power) the fight starts with. Durability keeps its own mutable copy; a break
+  // removes the broken item from it by identity (upstream's lowerCondition unequips by identity).
+  let effective = null;
+  if (durability && Array.isArray(fightCh.worn)) {
+    effective = equippedForFight(fightCh, [probe.weapon?.item ?? null, probe.offHand?.weapon?.item ?? null]);
+    dur.effective = effective;
+  }
+  let cwsPower = castsCws
+    ? spellPowerInputs(fightCh, {
       potencyPct: scenario.potencyPct, pierce: scenario.pierce,
-      worn: equippedForFight(ch, [probe.weapon?.item ?? null, probe.offHand?.weapon?.item ?? null]),
+      worn: durability ? effective : equippedForFight(fightCh, [probe.weapon?.item ?? null, probe.offHand?.weapon?.item ?? null]),
     })
     : { potencyPct: 0, pierce: 0 };
-  const dual = schedule.kind === 'dual';
-  const powers = [
-    ...weaponPowers(probe.weapon, scenario),
-    ...(dual && probe.offHand?.weapon ? weaponPowers(probe.offHand.weapon, scenario) : []),
+  let dual = schedule.kind === 'dual';
+  let powers = [
+    ...weaponPowers(probe.weapon, fightScenario),
+    ...(dual && probe.offHand?.weapon ? weaponPowers(probe.offHand.weapon, fightScenario) : []),
   ];
-  const bounds = healthThresholds(powers);
+  let bounds = healthThresholds(powers);
   const maxSeconds = num(scenario.maxSeconds, 3600);
   const maxBlows = Math.max(1, Math.floor(num(scenario.maxBlows, 1000000)));
   const damageMode = scenario.damageMode === 'capped' ? 'capped' : 'uncapped';
 
+  const slotItem = (hand) => (dur
+    ? (dur.owner.equip.slots[hand === 'off' ? EQUIP_SLOTS.LeftHand : EQUIP_SLOTS.RightHand] ?? null)
+    : (hand === 'off' ? (probe.offHand?.weapon?.item ?? null) : (probe.weapon?.item ?? null)));
+  const itemIds = new WeakMap();
+  let nextItemId = 1;
+  const idOf = (it) => {
+    if (!it) return 0;
+    let id = itemIds.get(it);
+    if (!id) { id = nextItemId; nextItemId += 1; itemIds.set(it, id); }
+    return id;
+  };
   const cache = new Map();
-  const distribution = (index, hand) => {
-    const key = `${index}|${hand}`;
+  // The live tier for one hand. A wear/bill can cross a condition band, so the cache key carries the item (identity)
+  // and the band's damage multiplier; within a band the tier is unchanged (conditionMultiplier, src/model.js:636-666).
+  const bandOf = (item) => (durability && item ? conditionMultiplier(weaponOf(item)) : 1);
+  const distribution = (index, hand, item, isDual, band) => {
+    const key = durability ? `${index}|${hand}|${idOf(item)}|${band}` : `${index}|${hand}`;
     let s = cache.get(key);
     if (s) return s;
     const mid = (bounds[index] + bounds[index + 1]) / 2;
-    const tier = blowFightTier(ch, {
-      ...scenario, target, health: pool, healthShare: mid, hand,
-      ...(dual && !scenario.dual ? { dual: true } : {}),
+    const tier = blowFightTier(fightCh, {
+      ...fightScenario, target, health: pool, healthShare: mid, hand,
+      ...(isDual && !fightScenario.dual ? { dual: true } : {}),
+      ...(durability && hand === 'main' && item ? { weapon: weaponOf(item) } : {}),
     });
-    s = { tier, sampler: createBlowSampler(tier), mid };
+    s = { tier, sampler: createBlowSampler(tier), mid, band };
     cache.set(key, s);
     return s;
+  };
+  // After a break/promotion the surviving hand's powers (and so its health thresholds) are the table's.
+  const refresh = () => {
+    const main = slotItem('main');
+    const off = slotItem('off');
+    powers = [
+      ...(main ? weaponPowers(weaponOf(main), fightScenario) : []),
+      ...(dual && off ? weaponPowers(weaponOf(off), fightScenario) : []),
+    ];
+    bounds = healthThresholds(powers);
+    cache.clear();
   };
 
   let hp = pool;
@@ -269,20 +338,46 @@ export function simulateFight(ch, args = {}) {
   const trace = scenario.trace === true ? [] : null;
   const cwsTrace = scenario.trace === true ? [] : null;
   const used = new Map();
-  let next = schedule.next();
-  while (hp > 0 && blows < maxBlows && next && next.t <= maxSeconds) {
+  let scheduleNow = schedule;
+  let clock = 0;
+  let next = scheduleNow.next();
+  while (hp > 0 && blows < maxBlows && next && clock + next.t <= maxSeconds) {
+    const tNow = clock + next.t;
+    const hand = dual ? next.hand : 'main';
+    const item = slotItem(hand);
+    if (durability && !item) { dur.endedByBreak = true; break; }
     const share = clamp(hp / pool, 0, 1);
     const index = healthSegment(bounds, share);
-    const hand = dual ? next.hand : 'main';
-    const dist = distribution(index, hand);
+    const band = bandOf(item);
+    const dist = distribution(index, hand, item, dual, band);
     const outcome = dist.sampler.sample(blowStream);
     const blowDamage = damageMode === 'capped' ? outcome.claim : outcome.blow; // the host's melee blow
-    const echoDamage = num(outcome.echoDamage, 0); // the strike listener's separate hit, before the host's blow
-    t = next.t;
+    let echoDamage = num(outcome.echoDamage, 0); // the strike listener's separate hit, before the host's blow
+    t = tNow;
     blows += 1;
+    // Ordinary wear: damageEquipment at the core's tail, BEFORE the whole draw and the Strikes payload
+    // (formulas.js:769, :826-836). The damage is what went through the core (`strikesDamage`), not the post-payload
+    // blow; a spareGear target wears nothing; a weapon with no condition to lower cannot break.
+    let wear = 0;
+    let brokeNow = false;
+    let brokeItem = null;
+    if (durability && item && !target?.spareGear && outcome.strikesDamage > 0) {
+      wear = blowWear(outcome.strikesDamage, conditionRolls);
+      if (wear > 0) {
+        const beforeCond = Number.isFinite(item.currentCondition) ? item.currentCondition : (item.maxCondition ?? null);
+        const broke = wearItem(dur.owner, item, wear, null);
+        const applied = beforeCond == null ? wear : Math.max(0, beforeCond - (item.currentCondition ?? 0));
+        wear = applied;
+        dur.wear += applied;
+        if (broke) {
+          brokeNow = true;
+          brokeItem = item;
+          dur.breaks.push({ t, hand, reason: 'wear', amount: wear, item: item.name ?? null });
+        }
+      }
+    }
     // CWS runs inside the blow's formula, before the strike listener (echo) and the host's melee blow. Its guard is the
     // PRE-payload damage (`strikesPositive`), not the post-Potent-Vs `formulaPositive` Flow/echo read.
-    const item = hand === 'off' ? (probe.offHand?.weapon?.item ?? null) : (probe.weapon?.item ?? null);
     let cwsDamage = 0;
     let cwsCastsThis = 0;
     let cwsKill = false;
@@ -290,26 +385,52 @@ export function simulateFight(ch, args = {}) {
       target, strikesPositive: outcome.strikesPositive === true, whole: outcome.whole === true, item, standard,
     })) {
       for (const row of cwsRows(item, standard)) {
-        if (!row.spell) {
-          cwsTrace?.push({
-            t, hand, swing: blows, row: row.param, spell: null, index: null, damage: 0, missing: true,
+        let rowBroke = false;
+        let cast = null;
+        let killed = false;
+        if (row.spell) {
+          // The sink is the host's landing: later effects still roll, but they stop being counted/applied at death.
+          const hurt = (n) => { hp = Math.max(0, hp - n); return hp > 0; };
+          cast = resolveCwsCast({
+            spell: row.spell, caster: { entity: fightCh }, casterLevel: num(fightCh.level, 1), target, rolls: cwsRolls,
+            pierce: cwsPower.pierce, potencyPct: cwsPower.potencyPct, hurt,
           });
-          continue;
+          cwsDamage += cast.damage;
+          cwsCastsThis += 1;
+          killed = hp <= 0;
+          if (killed) { hp = 0; cwsKill = true; cwsKills += 1; }
         }
-        // The sink is the host's landing: later effects still roll, but they stop being counted/applied at death.
-        const hurt = (n) => { hp = Math.max(0, hp - n); return hp > 0; };
-        const cast = resolveCwsCast({
-          spell: row.spell, caster: { entity: ch }, casterLevel: num(ch.level, 1), target, rolls: cwsRolls,
-          pierce: cwsPower.pierce, potencyPct: cwsPower.potencyPct, hurt,
-        });
-        cwsDamage += cast.damage;
-        cwsCastsThis += 1;
-        const killed = hp <= 0;
-        if (killed) { hp = 0; cwsKill = true; cwsKills += 1; }
+        // The bill is INSIDE the row's applyResults, immediately after the cast (enchantments.js:1124-1133): it is paid
+        // for a resisted, absorbed, deferred or missing-record cast, and a spareGear target zeroes it. The walk
+        // continues after a break: upstream's row guard has no condition test, so a later row still casts and pays.
+        let bill = 0;
+        if (durability) {
+          bill = cwsBill(target);
+          if (bill > 0) {
+            const broke = wearItem(dur.owner, item, bill, null);
+            if (broke) {
+              brokeNow = true;
+              brokeItem = item;
+              rowBroke = true;
+              dur.breaks.push({ t, hand, reason: 'cws', amount: bill, item: item.name ?? null });
+            }
+          }
+        }
         cwsTrace?.push({
-          t, hand, swing: blows, row: row.param, spell: row.spell.name ?? null, index: row.spell.index ?? null,
-          casterLevel: num(ch.level, 1), damage: cast.damage, absorbed: cast.absorbed, reflected: cast.reflected,
-          resisted: cast.resisted, deferred: cast.deferred, effects: cast.effects, kill: killed,
+          t, hand, swing: blows, row: row.param,
+          spell: row.spell ? (row.spell.name ?? null) : null,
+          index: row.spell ? (row.spell.index ?? null) : null,
+          missing: !row.spell,
+          casterLevel: num(fightCh.level, 1),
+          damage: cast ? cast.damage : 0,
+          ...(cast ? {
+            absorbed: cast.absorbed, reflected: cast.reflected, resisted: cast.resisted,
+            deferred: cast.deferred, effects: cast.effects,
+          } : {}),
+          kill: killed,
+          bill, broke: rowBroke,
+          condition: durability ? (item?.currentCondition ?? null) : null,
+          conditionPct: durability ? conditionPct(item) : null,
         });
         if (killed) break; // the host's applySpellToTarget finds no live foe for a later row
       }
@@ -320,6 +441,10 @@ export function simulateFight(ch, args = {}) {
     let echoApplied = 0;
     let echoKill = false;
     let meleeDamage = 0;
+    // A broken weapon is no longer in wornPowers when the strike listener runs, so its Many Endings echo does not roll;
+    // Flow's current-blow damage was already read before the wear and survives.
+    const echoSuppressed = durability && brokeNow && echoDamage > 0;
+    if (echoSuppressed) echoDamage = 0;
     if (!cwsKill && echoDamage > 0) {
       echoApplied = echoDamage;
       hp = Math.max(0, hp - echoApplied);
@@ -338,22 +463,63 @@ export function simulateFight(ch, args = {}) {
     cwsCasts += cwsCastsThis;
     dealt += cwsDamage + echoApplied + meleeDamage;
     const key = `${index}|${hand}`;
-    const u = used.get(key) ?? { segment: index, hand, share: dist.mid, blows: 0, damage: 0, cwsDamage: 0, echoDamage: 0 };
+    const u = used.get(key) ?? { segment: index, hand, share: dist.mid, blows: 0, damage: 0, cwsDamage: 0, echoDamage: 0, wear: 0 };
     u.blows += 1;
     u.damage += cwsDamage + echoApplied + meleeDamage;
     u.cwsDamage += cwsDamage;
     u.echoDamage += echoApplied;
+    u.wear += wear;
     used.set(key, u);
     if (trace) trace.push({
       t, hand, swing: blows, segment: index, share, damage: meleeDamage, blowDamage, echoDamage, echoApplied,
       cwsDamage, cwsCasts: cwsCastsThis, cwsKill, echoKill, meleeApplied: meleeDamage > 0,
-      strikesPositive: outcome.strikesPositive === true, formulaPositive: outcome.formulaPositive === true,
+      strikesPositive: outcome.strikesPositive === true, strikesDamage: outcome.strikesDamage ?? 0,
+      formulaPositive: outcome.formulaPositive === true,
       whole: outcome.whole === true, hit: outcome.hit, crit: outcome.crit,
       blow: outcome.blow, claim: outcome.claim, cappedDamage: outcome.cappedDamage,
       echoHits: outcome.echoHits, remaining: Math.max(0, hp),
+      ...(durability ? {
+        wear, broke: brokeNow, echoSuppressed,
+        condition: item?.currentCondition ?? null,
+        conditionPct: conditionPct(item),
+        band, tierBand: dist.band,
+        equippedAfter: { main: !!dur.owner.equip.slots[EQUIP_SLOTS.RightHand], off: !!dur.owner.equip.slots[EQUIP_SLOTS.LeftHand] },
+      } : {}),
     });
     if (hp <= 0) { ttk = t; break; }
-    next = schedule.next();
+    if (durability && brokeNow) {
+      // Upstream follows the hand that still holds a weapon (playerWeapon.js:443-452): the survivor becomes the lead,
+      // and the next swing is a single-weapon swing. With no weapon left the local model has no fist schedule
+      // (Stage 3.2 refuses unarmed cadence), so the fight stops at this blow and says so.
+      const survivor = slotItem(hand === 'main' ? 'off' : 'main');
+      if (brokeItem && effective) {
+        effective = effective.filter((it) => it !== brokeItem);
+        dur.effective = effective;
+      }
+      if (!survivor) { dur.endedByBreak = true; break; }
+      const owner = dur.owner;
+      owner.equip.slots[EQUIP_SLOTS.RightHand] = survivor;
+      owner.equip.slots[EQUIP_SLOTS.LeftHand] = null;
+      owner.weapon = survivor;
+      survivor.equipSlot = EQUIP_SLOTS.RightHand;
+      fightCh.weapon = survivor;
+      fightCh.offWeapon = null;
+      fightCh._dual = false;
+      dual = false;
+      const single = createAttackSchedule(fightCh, { ...fightScenario, dual: false, weapon: weaponOf(survivor) });
+      if (!single) { dur.endedByBreak = true; break; }
+      scheduleNow = single;
+      clock = t;
+      next = single.next();
+      refresh();
+      if (castsCws) {
+        cwsPower = spellPowerInputs(fightCh, {
+          potencyPct: scenario.potencyPct, pierce: scenario.pierce, worn: effective ?? undefined,
+        });
+      }
+    } else {
+      next = scheduleNow.next();
+    }
   }
   if (hp < 0) hp = 0;
   const remainingHealth = Math.max(0, hp);
@@ -386,6 +552,14 @@ export function simulateFight(ch, args = {}) {
     target,
     trace,
     cwsTrace,
+    ...(durability ? {
+      durability: true,
+      condition: { main: dur.main?.currentCondition ?? null, off: dur.off?.currentCondition ?? null },
+      conditionPct: { main: conditionPct(dur.main), off: conditionPct(dur.off) },
+      breaks: dur.breaks,
+      wear: dur.wear,
+      endedByBreak: dur.endedByBreak,
+    } : { durability: false, condition: null, breaks: [], wear: 0, endedByBreak: false }),
     with: (edit = {}) => simulateFight(ch, { ...args, ...edit }),
   };
 }
