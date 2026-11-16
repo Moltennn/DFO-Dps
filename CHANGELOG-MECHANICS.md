@@ -51,7 +51,15 @@ now keeps the FULL pre-dedup equip table (`equipTableForFight`), removes exactly
 `spellPowerInputs` apply `countedPieces` to the current table on every read. A surviving higher-slot Legendary copy, a
 hand-slot shield and all non-hand pieces stay; potency, pierce and Arcane Surge refresh from the rebuilt current
 equipment before the next cast. No-break numbers are unchanged. The stage record is
-the stage record; Stage 3.5.2 remains pending an independent closure audit.
+the stage record.
+
+**Closure.** Stage 3.5.2 is **CLOSED — PASS WITH DOCUMENTED LIMITATIONS**. The independent closure audit at `c8eb31b`
+against pinned upstream `a3eb1605` made no code or test changes and confirmed **636/636 tests**, vendor
+**289 vendored + 122 stubbed**, and parity **1855/1855 identical**; `src/relayClaim.js` and `vendor/` are untouched, and
+no Stage 3.5.3 work exists. The audit independently reproduced both reconstruction regressions above as fixed. The
+remaining test gaps (lower-slot duplicate survival, a what-if main break with the worn original present, two breaks in
+one blow, a direct `equipTableForFight` unit, a no-break side-by-side against `6199a07`, and a `simulateFights`
+own-worn break) are coverage gaps, not runtime defects; the limitations in the stage record stand.
 
 **Evidence.** `test/durability.test.js` (30). The wear, bill and break laws are compared directly with the vendored
 `damageEquipment`, `doItemEnchantmentPayloads` and `lowerCondition`; a production fight's whole wear/bill/break state is
