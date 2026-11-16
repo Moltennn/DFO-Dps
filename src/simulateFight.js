@@ -38,9 +38,11 @@ import {
   HIT_FRAME_MELEE, HIT_FRAME_BOW, BOW_DRAWN_HOLD_FRAME, CLASSIC_UPDATE_INTERVAL, MELEE_NUM_FRAMES,
 } from '../vendor/upstream/a3eb1605/src/characters/weaponStates.js';
 import { EQUIP_SLOTS } from '../vendor/upstream/a3eb1605/src/characters/paperdoll/paperdoll.js';
+import { powerIdsOf } from '../vendor/upstream/a3eb1605/src/systems/loot/lootRarity.js';
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+const popcount = (n) => { let c = 0; for (let v = n >>> 0; v; v &= v - 1) c += 1; return c; };
 
 /** `with({ imprint })` is the same shorthand `fight()` takes: the power rides the item for the probe and the walk. */
 function normalizeScenario(args) {
@@ -521,11 +523,34 @@ export function simulateFight(ch, args = {}) {
     let echoApplied = 0;
     let echoKill = false;
     let meleeDamage = 0;
-    // A broken weapon is no longer in wornPowers when the strike listener runs, so its Many Endings echo does not roll;
-    // Flow's current-blow damage was already read before the wear and survives. The listener runs after the whole Strikes
-    // payload, so a break by a bill AFTER the killing cast has unequipped the weapon by then too (`brokeAfterKill`). Applied
-    // damage is unchanged either way: a CWS kill already stops the echo (`!cwsKill` below).
-    const echoSuppressed = durability && (brokeNow || brokeAfterKill) && echoDamage > 0;
+    // A broken weapon is no longer in wornPowers when the strike listener runs; Flow's current-blow damage was already read
+    // before the wear and survives. The listener runs after the whole Strikes payload, so a break by a bill AFTER the killing
+    // cast has unequipped the weapon by then too (`brokeAfterKill`; preserved below - the fight ends at the kill).
+    //
+    // On an ordinary break the echo is not simply "gone": upstream `blowPowers` keeps a worn item's power when its ID is also
+    // on the striking weapon (`systems/loot/lootPowers.js:262-268`), so a surviving weapon carrying the SAME echo ID still
+    // answers the breaking blow. The tier carries `meta.echoPowers` aligned with `echoMask` (item ID or what-if source); keep
+    // only the sampled hits whose ITEM ID the surviving hand also wears. A what-if-only echo is never resurrected.
+    let echoSuppressed = false;
+    let echoHits = outcome.echoHits;
+    if (durability && brokeAfterKill) {
+      // preserve the existing post-kill-break behaviour: the weapon is unequipped before the listener and the fight is over
+      if (echoDamage > 0) { echoSuppressed = true; echoDamage = 0; }
+    } else if (durability && brokeNow) {
+      const other = slotItem(hand === 'main' ? 'off' : 'main');
+      const otherIds = new Set((other ? powerIdsOf(other) : []).filter((id) => typeof id === 'string'));
+      const powers = dist.tier.meta.echoPowers ?? [];
+      let eligibleMask = 0;
+      for (let i = 0; i < powers.length; i += 1) {
+        const p = powers[i];
+        if (p?.source === 'item' && p.id && otherIds.has(p.id)) eligibleMask |= 1 << i;
+      }
+      const perHit = outcome.echoHits > 0 ? outcome.echoDamage / outcome.echoHits : 0;
+      const hits = popcount((outcome.echoMask ?? 0) & eligibleMask);
+      echoHits = hits;
+      echoDamage = hits * perHit;
+      echoSuppressed = eligibleMask === 0;
+    }
     if (echoSuppressed) echoDamage = 0;
     if (!cwsKill && echoDamage > 0) {
       echoApplied = echoDamage;
@@ -559,7 +584,7 @@ export function simulateFight(ch, args = {}) {
       formulaPositive: outcome.formulaPositive === true,
       whole: outcome.whole === true, hit: outcome.hit, crit: outcome.crit,
       blow: outcome.blow, claim: outcome.claim, cappedDamage: outcome.cappedDamage,
-      echoHits: outcome.echoHits, remaining: Math.max(0, hp),
+      echoHits, remaining: Math.max(0, hp),
       ...(durability ? {
         wear, broke: brokeNow || brokeAfterKill, echoSuppressed,
         condition: item?.currentCondition ?? null,

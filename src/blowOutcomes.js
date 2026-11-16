@@ -49,6 +49,7 @@ import {
   strikesNet, weaponOf, referenceFoe,
 } from './model.js';
 import { CURB_SHARE, RRI_WEAPON_DAMAGE, WEAPONS } from './data.js';
+import { powerIdsOf, powerOf } from '../vendor/upstream/a3eb1605/src/systems/loot/lootRarity.js';
 import {
   bodyPartWeights, hasWornEquipment, intrinsicDamage, materialRequirementMultiplier, targetPartOutcomes,
 } from './target.js';
@@ -143,6 +144,18 @@ export function blowOutcomes(ch, args = {}) {
   const bow = bowOf(w, opts);
   const strikes = num(opts.potentVs, 0) + strikesNet((w ?? wraps)?.item ?? null, tgt);
   const echoes = echoChances([...heldPowers, ...powerAdditions]);
+  // The echo powers ALIGNED with `echoes`, each with the equipped power ID it came from (or `null` for a what-if addition).
+  // `afterShare`'s `echoMask` bit i is this list's entry i; a break can then keep only the IDs a surviving item still wears
+  // (upstream `blowPowers`' same-ID clause, lootPowers.js:262-268) instead of keeping or dropping the whole aggregate.
+  const heldItem = (w ?? wraps)?.item ?? null;
+  const heldEchoPowers = heldItem
+    ? [...new Set(powerIdsOf(heldItem))].filter((id) => typeof id === 'string' && (powerOf(id)?.chance ?? 0) > 0 && powerOf(id)?.kind === 'echo')
+      .map((id) => ({ id, chance: powerOf(id).chance, source: 'item' }))
+    : [];
+  const whatIfEchoPowers = powerAdditions
+    .filter((p) => p?.kind === 'echo' && (p.chance ?? 0) > 0)
+    .map((p) => ({ id: null, chance: p.chance, source: 'what-if' }));
+  const echoPowers = [...heldEchoPowers, ...whatIfEchoPowers];
   const geared = core === 'overhaul' && hasWornEquipment(tgt);
   const weights = bodyPartWeights(core);
   const relay = !!tgt.relayBody;
@@ -231,7 +244,7 @@ export function blowOutcomes(ch, args = {}) {
     directions: swingKeys,
     outcomes, total,
     meta: {
-      geared, relay, offHand, echoes: [...echoes], potentVs: strikes, bow: !!bow,
+      geared, relay, offHand, echoes: [...echoes], echoPowers, potentVs: strikes, bow: !!bow,
       hand,
       // the value the tier's loot percentage actually read; null when no Flow power rides this hand
       flowStacks: flowPower ? num(simOpts.flowStacks, num(flowPower.max, 1)) : null,

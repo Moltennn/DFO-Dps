@@ -6,6 +6,41 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage 3.5.3f - Many Endings after a weapon break (same-ID survivor)
+
+**What the game does.** `blowPowers` keeps a worn weapon's power when it is the striking weapon **or when the striking weapon
+carries the same power ID** (`vendor:systems/loot/lootPowers.js:262-268`). `wornPowers` is read fresh (`:244-258`), and the
+strike listener runs after the core's wear (`vendor:combat/formulas.js:769`, `:869-877`; `lootStrike` `:351-387`, registered at
+`:860`). A breaking blow therefore still rolls the echo from a surviving weapon carrying the same ID; no survivor, a different
+power, or a what-if-only striker does not. Main/off are symmetric; the echo repeats the blow's final damage
+(`again`, `:444-454`).
+
+**What changed.** `src/blowOutcomes.js` carries `meta.echoPowers` aligned with `echoMask`: each echo is the equipped item's own
+ID (`powerIdsOf`/`powerOf`) or a what-if source. `src/simulateFight.js` masks a `brokeNow` blow's sampled echo bits to the
+surviving hand's own same IDs, keeps only eligible hits, and reports `echoSuppressed` true only when nothing eligible remains;
+a what-if-only echo is never resurrected. `brokeAfterKill` keeps its previous suppression (the kill ends the fight). The
+trace's `echoHits`/`echoDamage` are the eligible hits on a break, 0 when none (the local sample is not presented as an
+upstream event); on a no-break they remain the local sample (item echoes upstream, what-if additions pricing). The lone-weapon
+test now asserts `echoHits: 0`.
+
+**Before and after (production, main breaks on blow 1, seed 0, `warp-edge` both hands).** Before: `echoHits: 1`,
+`echoSuppressed: true`, `echoDamage: 0`, `echoApplied: 0`. After: `echoHits: 1`, `echoSuppressed: false`, `echoDamage: 4`,
+`echoApplied: 4`; upstream echo event 1. Controls: off plain / off `eye-of-magnus` / striker plain with an off-hand duplicate
+all no echo (upstream 0); no break applies; the mirrored off-hand break applies.
+
+**Evidence.** `test/echoDuplicate.test.js` (8): the seven-case upstream differential and production table; what-if-only;
+two echo powers where only the matching item echo remains; no-break duplicate/single controls. Mutations caught (12): broad
+suppression (6 fail), unconditional retention (6), whole aggregate retained (1), suppress on any match (6), the striking hand
+instead of the survivor (4), a what-if source as eligible (2), the trace local sample on a no-eligible break (4), per-hit
+using the aggregate (1), the item ID dropped (4), after-kill suppression removed (1), echo order reversed (1), no-break
+suppression (2). Parity: durability-off and no-break behaviour unchanged; the earlier durability/imprint/CWS/scheduling
+suites pass. Full suite **689 tests, 689 pass**; vendor **289 vendored + 122 stubbed**; parity **1855/1855**.
+
+**Not changed / limits.** The pinned data has one echo item (`warp-edge`), so the multiple case uses an item echo plus a
+what-if echo; the mask logic is generic for multiple item IDs. A what-if echo on a no-break fight remains a local pricing
+sample. `brokeAfterKill` keeps its prior trace. The same-ID exception for other power kinds (Flow charge, leech, chain, ...)
+is outside this ordinary fight's echo listener. `vendor/` and `src/relayClaim.js` are untouched.
+
 ## Stage 3.5.3e - what-if edits ride their carrier (2026-11-16)
 
 **What the game does.** An imprint is a field on the item (`systems/loot/lootRarity.js:1271`), and every reader takes the

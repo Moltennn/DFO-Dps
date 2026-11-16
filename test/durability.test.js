@@ -781,20 +781,22 @@ test('the fight\'s wear/bill/break state matches upstream replayed on its own da
   assert.equal(run.endedByBreak, !owner.equip.slots[19] && twin.currentCondition === 0);
 });
 
-test('a broken weapon loses its Many Endings echo but the current blow\'s damage (and Flow) survives', () => {
-  // Many Endings: an echo rolled on the breaking blow is suppressed.
+test('a lone broken weapon has no Many Endings echo (no surviving same-ID piece); the current blow\'s damage (and Flow) survives', () => {
+  // Many Endings: the striking item broke and no other worn item carries its echo ID. Upstream's blowPowers would keep only a
+  // surviving same-ID power; with none the echo does not roll, so the local sample is not presented as an event.
   const echoItem = cws(10, [1], { rarity: 'rare', imprint: 'warp-edge' });
   const ch = simCharacter(DESC(), echoItem);
   const standard = new Map([[1, spellOf(1)]]);
   const found = findRun(
     (seed) => fight(ch, echoItem, { seed, maxBlows: 20, standard }),
-    (r) => r.trace.some((e) => e.broke && e.echoHits > 0),
+    (r) => r.trace.some((e) => e.broke && e.strikesDamage > 0),
   );
-  assert.ok(found, 'a break blow where the echo rolled');
-  const breaking = found.run.trace.find((e) => e.broke && e.echoHits > 0);
+  assert.ok(found, 'a landed breaking blow');
+  const breaking = found.run.trace.find((e) => e.broke && e.strikesDamage > 0);
   assert.equal(breaking.echoSuppressed, true);
   assert.equal(breaking.echoApplied, 0);
-  assert.ok(breaking.echoHits > 0, 'the roll happened; the power was no longer worn');
+  assert.equal(breaking.echoHits, 0, 'no eligible surviving same-ID echo: the local sample is not an upstream roll');
+  assert.equal(breaking.echoDamage, 0);
 
   // Flow: the same blow's sampled damage is identical with the wear/break and without it. The blow stream is
   // independent of the condition stream, so the same seed samples the same outcome.
