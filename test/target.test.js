@@ -47,7 +47,7 @@ test('reference foe keeps its previous shape and adds the target fields', () => 
   assert.equal(t.careerIndex, -1);
   assert.equal(t.career, null);
   assert.equal(t.minMetalToHit, -1);
-  assert.equal(t.spareGear, true);
+  assert.equal(t.spareGear, false, 'an ordinary reference foe wears gear; spareGear is the relay flag');
   assert.equal(t.armorValues.length, 7);
   assert.equal(intrinsicDamage(t, 100, { weapon: { skillId: SKILLS.LongBlade } }), 100, 'no hide, no natural resistance');
   assert.equal(naturalDamageResistance(t), 0);
@@ -117,7 +117,7 @@ test('enemy rows resolve identity: mobile, career, affinity, group, metal and ar
   assert.equal(lord.isClass, false);
   assert.equal(lord.affinity, 'Daedra');
   assert.equal(lord.group, 'daedra');
-  assert.equal(lord.spareGear, true);
+  assert.equal(lord.spareGear, false, 'an ordinary enemyTarget wears gear');
   assert.equal(lord.levelSource, 'mint');
 
   const atronach = enemyTarget(36);

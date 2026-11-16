@@ -28,7 +28,7 @@
  */
 import { analyze, weaponOf, weaponPowers } from './model.js';
 import { blowFightTier, createBlowSampler } from './blowOutcomes.js';
-import { cwsEligible, cwsRows, resolveCwsCast, spellPowerInputs } from './cws.js';
+import { cwsEligible, cwsRows, equippedForFight, resolveCwsCast, spellPowerInputs } from './cws.js';
 import { createRng } from './rng.js';
 import { healthThresholds } from './fight.js';
 import { DUAL, FLURRY_TICKS } from './dualWield.js';
@@ -190,12 +190,25 @@ export function simulateFight(ch, args = {}) {
   const standard = scenario.standard;
   const target = schedule.target;
   const probe = schedule.probe;
-  if (ch?.firmamentSpellPower != null || ch?.firmamentSpellPierce != null || ch?.spellPower != null || ch?.spellPierce != null) {
-    throw new Error('simulateFight: firmament spell power/pierce is not modelled; pass potencyPct/pierce explicitly');
+  // The ordinary-enemy boundary. Upstream sends spareGear/relay bodies to the relay's own spell door
+  // (hostEnchant.js:215) and its boss/shield/revenant/bout/companion arms are host additions; this simulator supports a
+  // plain ordinary foe only (no `spareGear`, no relay body, no boss traits/caps/phase shields/shield pool, no revenant
+  // last stand, no bout/companion).
+  if (target) {
+    if (target.relayBody === true || target.spareGear === true) {
+      throw new Error('simulateFight: relay stand-ins and spareGear targets are not ordinary targets');
+    }
+    if (
+      target.isBoss === true || (target.bossTraits?.length ?? 0) > 0
+      || (target.phaseShields ?? 0) > 0 || target.shieldPool != null
+      || target.revenant != null || target.bout != null || target.companion != null
+    ) {
+      throw new Error('simulateFight: the supported target contract is a plain ordinary foe (no boss traits/caps/phase shields/shield pool/revenant/bout/companion)');
+    }
   }
   const cwsPower = spellPowerInputs(ch, {
     potencyPct: scenario.potencyPct, pierce: scenario.pierce,
-    items: [probe.weapon?.item, probe.offHand?.weapon?.item].filter(Boolean),
+    worn: equippedForFight(ch, [probe.weapon?.item, probe.offHand?.weapon?.item].filter(Boolean)),
   });
   const dual = schedule.kind === 'dual';
   const powers = [

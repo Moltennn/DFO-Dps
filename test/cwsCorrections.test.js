@@ -14,8 +14,9 @@ import assert from 'node:assert/strict';
 import { character, simCharacter, weapon } from './harness/fixtures.mjs';
 import { referenceFoe, weaponOf, strikesNet } from '../src/model.js';
 import { blowFightTier } from '../src/blowOutcomes.js';
-import { cwsEligible, cwsRows, resolveCwsCast, spellPowerInputs, schoolPotencyFor } from '../src/cws.js';
+import { cwsEligible, cwsRows, equippedForFight, liveMaxMagicka, resolveCwsCast, spellPowerInputs, schoolPotencyFor } from '../src/cws.js';
 import { payloadRows } from '../src/enchants.js';
+import { standInTarget } from '../src/target.js';
 import { simulateFight } from '../src/simulateFight.js';
 
 const WEAK = () => character({
@@ -146,12 +147,14 @@ test('online school potency, spell power and pierce are applied in the resolver'
     skills: { 22: 150 }, masterSkills: true, mastered: [22], online: false,
   });
   assert.equal(schoolPotencyFor(simCharacter(offline, itemWith([])), 22), 1, 'school potency is online only');
+  const ambiguous = { ...simCharacter(offline, itemWith([])), online: undefined };
+  assert.equal(schoolPotencyFor(ambiguous, 22), 1, 'a missing online flag is offline, not an implicit online');
 });
 
 test('gear potency, Arcane Surge and Magnus\'s Gaze feed the resolver inputs', () => {
   const potency = itemWith([], 121);
   potency.affixes = [{ id: 'potency', value: 10 }];
-  const surge = { ...weapon(121, { material: 9 }), rarity: 'legendary', legendary: 'shalidors-brand' };
+  const surge = { ...weapon(121, { material: 9 }), equipSlot: 20, rarity: 'legendary', legendary: 'shalidors-brand' };
   const pierce = { ...weapon(121, { material: 9 }), rarity: 'legendary', legendary: 'eye-of-magnus' };
 
   const withSurge = spellPowerInputs({ worn: [potency, surge], magicka: 90, maxMagicka: 100 });
@@ -193,4 +196,148 @@ test('F5: an echo kill suppresses the melee blow and its accounting', () => {
   assert.equal(r.overkill, 3);
   assert.equal(r.kill, true);
   assert.equal(r.ttk, r.trace[0].t);
+});
+
+
+test('D1: the equipped list is read once, by slot/content, not by object identity', () => {
+  const potency = itemWith([{ type: 2, param: 1 }]);
+  potency.affixes = [{ id: 'potency', value: 10 }];
+  const ch = simCharacter(BASIC(), potency);
+  assert.equal(ch.worn.length, 1);
+  assert.notEqual(ch.worn[0], potency, 'characterFromSave clones the item');
+  const effective = equippedForFight(ch, [weaponOf(potency).item]);
+  assert.equal(effective.length, 1, 'the scenario weapon replaces the worn clone in its slot');
+  assert.equal(spellPowerInputs(ch, { worn: effective }).potencyPct, 10);
+  assert.equal(spellPowerInputs(ch, { worn: [ch.worn[0], potency] }).potencyPct, 10, 'clones in one slot count once');
+
+  const standard = new Map([[1, spellOf([effect(4, 0, 10)])]]);
+  const run = simulateFight(ch, {
+    target: daedraTarget(), health: 100000, weapon: weaponOf(potency), seed: 0, trace: true, maxBlows: 1,
+    standard, cwsRolls: () => 0.5,
+  });
+  assert.equal(run.cwsTrace[0].damage, 9, '8 x 1.1 (round 8.8), not 8 x 1.2');
+});
+
+test('D1b: a scenario weapon not on the worn clone still contributes its spell power', () => {
+  const base = itemWith([{ type: 2, param: 1 }]); // worn item, no potency
+  const scenario = weapon(121, { material: 9 });
+  scenario.affixes = [{ id: 'potency', value: 10 }];
+  scenario.enchantments = [{ type: 2, param: 1 }];
+  const ch = simCharacter(BASIC(), base);
+  const standard = new Map([[1, spellOf([effect(4, 0, 10)])]]);
+  const run = simulateFight(ch, {
+    target: daedraTarget(), health: 100000, weapon: weaponOf(scenario), seed: 0, trace: true, maxBlows: 1,
+    standard, cwsRolls: () => 0.5,
+  });
+  assert.equal(run.cwsTrace[0].damage, 9, 'the scenario weapon potency reaches the cast');
+});
+
+test('D2: a build without `worn` is rejected instead of reading the whole inventory', () => {
+  const ring = { group: 'Jewellery', templateIndex: 135, name: 'ring', affixes: [{ id: 'potency', value: 10 }] };
+  assert.throws(() => spellPowerInputs({ items: [ring] }), /equipped/);
+  const item = itemWith([{ type: 2, param: 1 }]);
+  const ch = simCharacter(WEAK(), item);
+  const noWorn = { ...ch };
+  delete noWorn.worn;
+  assert.throws(() => simulateFight(noWorn, {
+    target: daedraTarget(), health: 1000, weapon: weaponOf(item), seed: 0, maxBlows: 1,
+  }), /equipped/);
+});
+
+test('S1: relay stand-ins and spareGear targets are refused, not simulated as ordinary foes', () => {
+  const item = itemWith([{ type: 2, param: 1 }]);
+  const ch = simCharacter(WEAK(), item);
+  const ordinary = referenceFoe(30, 'tough');
+  assert.equal(ordinary.spareGear, false);
+  assert.throws(() => simulateFight(ch, {
+    target: { ...ordinary, spareGear: true }, health: 1000, weapon: weaponOf(item), seed: 0, maxBlows: 1,
+  }), /spareGear/);
+  assert.throws(() => simulateFight(ch, {
+    target: standInTarget(31), health: 1000, weapon: weaponOf(item), seed: 0, maxBlows: 1,
+  }), /relay|spareGear/);
+});
+
+test('Arcane Surge uses the live maximum magicka, including ExtraSpellPts', () => {
+  const surge = { ...weapon(121, { material: 9 }), equipSlot: 20, rarity: 'legendary', legendary: 'shalidors-brand' };
+  assert.equal(liveMaxMagicka({ maxMagicka: 100, _enchantMods: { maxMagicka: 75 } }), 175);
+  const below = spellPowerInputs({ worn: [surge], magicka: 120, maxMagicka: 100, _enchantMods: { maxMagicka: 75 } });
+  assert.equal(below.potencyPct, 0, '120 is below 75% of the live 175');
+  const above = spellPowerInputs({ worn: [surge], magicka: 140, maxMagicka: 100, _enchantMods: { maxMagicka: 75 } });
+  assert.equal(above.potencyPct, 25);
+
+  const base = spellPowerInputs({ worn: [surge], magicka: 75, maxMagicka: 100 });
+  assert.equal(base.potencyPct, 0, 'the threshold is strict');
+  const justAbove = spellPowerInputs({ worn: [surge], magicka: 76, maxMagicka: 100 });
+  assert.equal(justAbove.potencyPct, 25);
+
+  const extra = { ...weapon(121, { material: 9 }), enchantments: [{ type: 3, param: 0 }] };
+  assert.throws(() => spellPowerInputs({ worn: [extra], maxMagicka: 100 }), /ExtraSpellPts/);
+  assert.doesNotThrow(() => spellPowerInputs({ worn: [extra], maxMagicka: 100, _enchantMods: { maxMagicka: 75 } }));
+});
+
+test('the potency cap and the rounding are the upstream floors', () => {
+  const triple = itemWith([{ type: 2, param: 1 }]);
+  triple.affixes = [
+    { id: 'potency', value: 15 }, { id: 'potency', value: 15 }, { id: 'potency', value: 15 },
+  ];
+  assert.equal(spellPowerInputs({ worn: [triple] }).potencyPct, 30, 'POTENCY_CAP 30, not 45');
+  const ten = itemWith([{ type: 2, param: 1 }]);
+  ten.affixes = [{ id: 'potency', value: 10 }];
+  const ch = simCharacter(BASIC(), ten);
+  const standard = new Map([[1, spellOf([effect(4, 0, 10)])]]);
+  const run = simulateFight(ch, {
+    target: daedraTarget(), health: 100000, weapon: weaponOf(ten), seed: 0, trace: true, maxBlows: 1,
+    standard, cwsRolls: () => 0.5,
+  });
+  assert.equal(run.cwsTrace[0].damage, 9, '8.8 rounds to 9; floor would be 8');
+});
+
+test('the caster level reaches the CWS magnitude', () => {
+  const levelScaling = effect(4, 0, 10);
+  levelScaling.magnitudeLevelBase = 2;
+  levelScaling.magnitudeLevelHigh = 2;
+  levelScaling.magnitudePerLevel = 10;
+  const item = itemWith([{ type: 2, param: 1 }]);
+  const ch = simCharacter(BASIC(), item);
+  const standard = new Map([[1, spellOf([levelScaling])]]);
+  const run = simulateFight(ch, {
+    target: daedraTarget(), health: 100000, weapon: weaponOf(item), seed: 0, trace: true, maxBlows: 1,
+    standard, cwsRolls: () => 0.5,
+  });
+  assert.equal(run.cwsTrace[0].damage, 12, '10 + 2 x floor(30/10) = 16, save 80% -> 12');
+});
+
+test('a killing CWS row stops later rows', () => {
+  const item = itemWith([{ type: 2, param: 1 }, { type: 2, param: 2 }]);
+  const standard = new Map([
+    [1, spellOf([effect(4, 0, 100)], { index: 1, name: 'first' })],
+    [2, spellOf([effect(4, 0, 100)], { index: 2, name: 'second' })],
+  ]);
+  const ch = simCharacter(BASIC(), item);
+  const run = simulateFight(ch, {
+    target: daedraTarget(5), health: 5, weapon: weaponOf(item), seed: 0, trace: true, maxBlows: 1,
+    standard, cwsRolls: () => 0.5,
+  });
+  assert.equal(run.cwsTrace.length, 1, 'the second row finds no live foe');
+  assert.equal(run.cwsCasts, 1);
+});
+
+test('a CWS kill suppresses the echo as well as the melee', () => {
+  const item = { ...weapon(121, { material: 9 }), rarity: 'rare', imprint: 'warp-edge' };
+  item.enchantments = [{ type: 2, param: 1 }];
+  const standard = new Map([[1, spellOf([effect(4, 0, 100)])]]);
+  const ch = simCharacter(BASIC(), item);
+  let run = null;
+  for (let seed = 0; seed < 100 && !run; seed += 1) {
+    const r = simulateFight(ch, {
+      target: daedraTarget(5), health: 5, weapon: weaponOf(item), seed, trace: true, maxBlows: 1,
+      standard, cwsRolls: () => 0.5,
+    });
+    if (r.trace[0]?.cwsKill && r.trace[0]?.echoHits > 0) run = r;
+  }
+  assert.ok(run, 'a seed with a CWS hit and an echo roll');
+  assert.equal(run.trace[0].cwsKill, true);
+  assert.equal(run.trace[0].echoApplied, 0, 'the echo is after the killing CWS and does not run');
+  assert.equal(run.trace[0].meleeApplied, false);
+  assert.equal(run.damageDealt, run.cwsDamage);
 });

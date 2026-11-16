@@ -694,7 +694,8 @@ export function makeTarget(fields = {}) {
     armorValues: new Array(7).fill(0),
     equip: { slots: {} },
     minMetalToHit: -1,
-    spareGear: true,
+    // spareGear is upstream's RELAY stand-in flag (world/gate/gateBoss.js:161), not the ordinary-foe default.
+    spareGear: false,
     health: 100,
     maxHealth: 100,
     // Target-side spell state (Stage 3.5.1): the CWS resolver reads the same `activeEffects` shapes upstream's
@@ -750,7 +751,7 @@ export function enemyTarget(mobileType, {
     levelSource: isClass ? 'player' : override ? 'override' : 'mint',
     skills: override ? skillsAtLevel(lvl) : body.skills,
     armorValues: armorValues ?? body.armorValues,
-    spareGear: true,
+    spareGear: false, // an ordinary enemy wears its gear; only a relay stand-in sets the flag
     health,
     maxHealth: maxHealth ?? health,
   });

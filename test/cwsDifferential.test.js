@@ -16,14 +16,16 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { upstream, referenceFoe, weaponItem, playerEntity } from './harness/upstream.mjs';
+import { upstream, referenceFoe, referenceFoe as upstreamReferenceFoe, weaponItem, playerEntity } from './harness/upstream.mjs';
 import { upstreamEntity, character, simCharacter, weapon } from './harness/fixtures.mjs';
 import { makeTarget, EFFECT_FLAGS } from '../src/target.js';
 import { referenceFoe as localReferenceFoe, weaponOf, strikesNet } from '../src/model.js';
 import { resolveCwsCast, cwsEligible, isDamageHealth, cwsRows, spellPowerInputs } from '../src/cws.js';
 import { payloadRows } from '../src/enchants.js';
 import { blowFightTier } from '../src/blowOutcomes.js';
-import { simulateFight } from '../src/simulateFight.js';
+import { createAttackSchedule, simulateFight, simulateFights, summarize } from '../src/simulateFight.js';
+import { oracleEntity } from './harness/upstreamBodies.mjs';
+import { oracleItem, upstreamFight } from './harness/fightOracle.mjs';
 import { setPlayerDoor } from '../vendor/upstream/a3eb1605/src/systems/playerDoor.js';
 import { _resetLootPowersForTests, _setLootPowersRandForTests } from '../vendor/upstream/a3eb1605/src/systems/loot/lootPowers.js';
 import { registerSpellPowerMod, registerSpellPierceMod } from '../vendor/upstream/a3eb1605/src/systems/spell/spellPower.js';
@@ -76,12 +78,14 @@ const localBody = (over = {}) => makeTarget({
 
 const itemWith = (params, templateIndex = 113) => {
   const item = weaponItem(templateIndex, { material: 9, condition: 1 });
+  item.equipSlot = 19;
   item.enchantments = params.map((param) => ({ type: 2, param }));
   return item;
 };
 /** An item with explicit enchantment rows (type/param objects), not CWS params. */
 const enchItem = (rows, templateIndex = 113) => {
   const item = weaponItem(templateIndex, { material: 9, condition: 1 });
+  item.equipSlot = 19;
   item.enchantments = rows.map((row) => ({ ...row }));
   return item;
 };
@@ -536,4 +540,43 @@ test('echo kill: upstream hurtFoe and the local fight both drop the melee blow',
   assert.equal(localRun.trace[0].meleeApplied, false);
   assert.equal(localRun.damageDealt, 23);
   assert.equal(localRun.overkill, 3);
+});
+
+
+test('fight-level CWS: local simulateFights and the upstream host fight agree on damage, TTK and overkill', async () => {
+  const u = await upstream();
+  const spell = spellOf([eff(4, 0, 10)]);
+  const spells = new Map([[1, spell]]);
+  const item = enchItem([{ type: 2, param: 1 }], 121);
+  const ch = simCharacter(BASIC(), item);
+  const target = localReferenceFoe(30, 'tough');
+  const args = { target, health: 12000, weapon: weaponOf(item) };
+  const schedule = createAttackSchedule(ch, args);
+  assert.ok(schedule);
+  const events = Array.from({ length: 20000 }, () => schedule.next());
+  const local = simulateFights(ch, { ...args, trials: 240, seed: 0x3510, standard: spells });
+  assert.ok(local && local.ttk);
+
+  const upRows = local.seeds.map((seed) => upstreamFight(u, {
+    desc: BASIC(),
+    item: oracleItem(item),
+    body: oracleEntity({ ...upstreamReferenceFoe(u, 30, 'tough'), health: 12000, maxHealth: 12000 }),
+    events,
+    seed,
+    cws: spells,
+  }));
+  const upDamage = summarize(upRows.map((r) => r.damageDealt));
+  const upOver = summarize(upRows.map((r) => r.overkill));
+  const upTtk = summarize(upRows.filter((r) => r.ttk != null).map((r) => r.ttk));
+  assert.ok(upDamage && upOver && upTtk, 'the upstream fights killed');
+  assert.equal(local.ttk.n, upTtk.n, 'the same number of kills');
+  const rel = (a, b) => Math.abs(a - b) / Math.max(1, Math.abs(b));
+  assert.ok(rel(local.damageDealt.mean, upDamage.mean) <= 0.01,
+    `damage mean ${local.damageDealt.mean} vs ${upDamage.mean}`);
+  assert.ok(Math.abs(local.overkill.mean - upOver.mean) <= 1,
+    `overkill mean ${local.overkill.mean} vs ${upOver.mean}`);
+  assert.ok(rel(local.ttk.mean, upTtk.mean) <= 0.01, `ttk mean ${local.ttk.mean} vs ${upTtk.mean}`);
+  for (const q of ['median', 'p10', 'p90']) {
+    assert.ok(rel(local.ttk[q], upTtk[q]) <= 0.05, `ttk ${q} ${local.ttk[q]} vs ${upTtk[q]}`);
+  }
 });

@@ -34,7 +34,7 @@ import { POTENCY_CAP, SPELL_POWER_MOST } from '../vendor/upstream/a3eb1605/src/s
 import { EFFECT_FLAGS, ELEMENT_FLAG_BY_INDEX } from './target.js';
 import { fightingClimb } from '../vendor/upstream/a3eb1605/src/systems/spell/spellPower.js';
 import { effectSchool, savingChanceOutcome, standardSpells } from './spells.js';
-import { ENCHANTMENT_TYPES, payloadRows } from './enchants.js';
+import { ENCHANTMENT_TYPES, enchantmentRows, payloadRows } from './enchants.js';
 import { validItemLines } from './gearLines.js';
 
 /** systems/effects.js:440 - `e.type === 4 && e.subType === 0`. NOT the broader local DAMAGE_HEALTH set. */
@@ -85,36 +85,89 @@ export function savingThrow(element, effectFlags, target, rolls, pierce = 0) {
 }
 
 /** spellPower.js:56-65 - the school past 100, online only. `fightingClimb` is upstream's own (master-capped and
- *  mentored); the local build's `online` flag stands in for `isOnlinePage()`, as in src/spells.js:357-359. */
+ *  mentored). The online branch is explicit: the build's `online === true` is online, anything else offline. This is the
+ *  local stand-in for `isOnlinePage()` (full host page state); src/spells.js uses `online !== false`, a looser branch. */
 export function schoolPotencyFor(caster, school) {
-  if (caster?.online === false) return 1;
+  if (caster?.online !== true) return 1;
   // The local build is the PLAYER (characterFromSave does not carry `isPlayer`); masterCappedSkill's player
   // gate and master-skill cap are upstream's.
   const climb = fightingClimb({ ...caster, isPlayer: true }, school);
   return climb > 100 ? 1 + (climb - 100) * 0.01 : 1;
 }
 
+/** vendor:systems/enchantments.js:1322-1326 - the live maximum magicka: a getter wins; otherwise the base plus the
+ *  enchantment fold (ExtraSpellPts). The fold is the game's own `_enchantMods.maxMagicka`; a hand-built character that
+ *  carries an ExtraSpellPts row without it is rejected below rather than guessed. */
+export function liveMaxMagicka(ch) {
+  const desc = ch ? Object.getOwnPropertyDescriptor(ch, 'maxMagicka') : null;
+  if (desc?.get) return ch.maxMagicka;
+  return (ch?.maxMagicka ?? 0) + (ch?._enchantMods?.maxMagicka ?? 0);
+}
+
+/** The semantic identity of one equipped piece: its slot, or its content for a hand-built piece with no slot. Object
+ *  identity is NOT it: characterFromSave clones every item (src/save.js:244) while analyze keeps the original. */
+function equippedKey(it) {
+  if (Number.isInteger(it?.equipSlot)) return `slot:${it.equipSlot}`;
+  const affixes = JSON.stringify(it?.affixes ?? []);
+  return `content:${it?.group ?? ''}|${it?.templateIndex ?? ''}|${it?.name ?? ''}|${it?.rarity ?? ''}|${it?.legendary ?? ''}|${it?.imprint ?? ''}|${affixes}`;
+}
+
+/**
+ * The effective equipped list for a fight: the build's worn pieces, with the scenario's striking weapons overlaid by
+ * semantic identity. A weapon with a slot replaces the worn clone in that slot instead of being counted twice. A build
+ * with no `worn` list but an inventory is ambiguous and is rejected; upstream reads only the equip table.
+ */
+export function equippedForFight(ch, weapons = []) {
+  const base = ch?.worn;
+  if (!Array.isArray(base)) {
+    if (ch?.items != null) {
+      throw new Error('simulateFight: the build has no equipped (`worn`) list; inventory items are not equipped gear');
+    }
+    return [...new Map(weapons.filter(Boolean).map((it) => [equippedKey(it), it])).values()];
+  }
+  const byKey = new Map();
+  for (const it of base) if (it) byKey.set(equippedKey(it), it);
+  for (const it of weapons) if (it) byKey.set(equippedKey(it), it);
+  return [...byKey.values()];
+}
+
 /**
  * The registered spell-power and pierce inputs the supported build model can carry:
- *   - `potency` lines on worn pieces, summed under POTENCY_CAP (lootPowers.js:747-758);
- *   - Arcane Surge while the wearer's magicka stands above its line (:750-757);
+ *   - `potency` lines on EQUIPPED pieces, summed under POTENCY_CAP (lootPowers.js:747-758);
+ *   - Arcane Surge while the wearer's magicka stands above its line, against the LIVE maximum magicka (:750-757);
  *   - a `pierce` power's points (Magnus's Gaze, :762);
- *   - the caller's explicit `potencyPct` / `pierce` scenario inputs (the card's own options).
- * The cap is SPELL_POWER_MOST. Firmament spell power/pierce is not a field of the `simulateFight` build model, so a
- * caller that has one must pass it explicitly; this function does not invent it.
+ *   - the caller's explicit `potencyPct` / `pierce` scenario inputs.
+ * `worn` is the effective equip list (`equippedForFight`); when omitted, `ch.worn` is used. A build with no `worn`
+ * list but an inventory is rejected. An ExtraSpellPts row requires the live `_enchantMods.maxMagicka` fold; without it
+ * the threshold cannot be faithful. The cap is SPELL_POWER_MOST.
  */
-export function spellPowerInputs(ch, { potencyPct = 0, pierce = 0, items = [] } = {}) {
+export function spellPowerInputs(ch, { potencyPct = 0, pierce = 0, worn = null } = {}) {
+  let list = worn ?? ch?.worn;
+  if (list == null) {
+    if (ch?.items != null) {
+      throw new Error('spellPowerInputs: the build has no equipped (`worn`) list; inventory items are not equipped gear');
+    }
+    list = [];
+  }
+  if (!Array.isArray(list)) throw new TypeError('spellPowerInputs: the equipped list must be an array');
   const seenItems = new Set();
-  const worn = [...(ch?.worn ?? ch?.items ?? []), ...items].filter((it) => {
-    if (!it || seenItems.has(it)) return false;
-    seenItems.add(it);
-    return true;
-  });
+  const equipped = [];
+  for (const it of list) {
+    if (!it) continue;
+    const key = equippedKey(it);
+    if (seenItems.has(key)) continue;
+    seenItems.add(key);
+    equipped.push(it);
+  }
+  if (equipped.some((it) => enchantmentRows(it).some((e) => e.type === ENCHANTMENT_TYPES.ExtraSpellPts))
+    && ch?._enchantMods?.maxMagicka == null) {
+    throw new Error('spellPowerInputs: ExtraSpellPts max-magicka requires ch._enchantMods.maxMagicka (the live fold)');
+  }
   let potency = 0;
   let surge = null;
   let piercePower = null;
   const seen = new Set(); // wornPowers counts a power ONCE by id (lootPowers.js:247-253)
-  for (const it of worn) {
+  for (const it of equipped) {
     for (const a of validItemLines(it)) if (a.id === 'potency') potency += a.value | 0;
     for (const id of powerIdsOf(it)) {
       if (seen.has(id)) continue;
@@ -126,11 +179,12 @@ export function spellPowerInputs(ch, { potencyPct = 0, pierce = 0, items = [] } 
     }
   }
   potency = Math.min(POTENCY_CAP, potency);
+  const maxMagicka = liveMaxMagicka(ch);
   if (
     surge &&
-    ch?.maxMagicka > 0 &&
+    maxMagicka > 0 &&
     Number.isFinite(ch.magicka) &&
-    ch.magicka > (ch.maxMagicka * (surge.above ?? 0)) / 100
+    ch.magicka > (maxMagicka * (surge.above ?? 0)) / 100
   ) potency += surge.pct ?? 0;
   return {
     potencyPct: Math.min(SPELL_POWER_MOST, potency + Math.max(0, Number(potencyPct) || 0)),

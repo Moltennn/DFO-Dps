@@ -37,7 +37,9 @@ swing trace. `src/target.js` defaults `activeEffects: []`.
 no longer carries the melee blow in `damageDealt`/`overkill`. Builds without CWS are unchanged. The analytical
 `analyze`/`enchantDps` card is unchanged.
 
-**Evidence.** `test/cws.test.js` (10), `test/cwsCorrections.test.js` (6) and `test/cwsDifferential.test.js` (14).
+**Final-audit corrections.** The gear spell-power list is the effective equipped list (`equippedForFight`): the scenario weapons are overlaid on `ch.worn` by equip slot (or content for a hand-built piece), never added as a second copy, and `spellPowerInputs` requires `worn` rather than falling back to the inventory. Arcane Surge uses `liveMaxMagicka` (base + the ExtraSpellPts `_enchantMods.maxMagicka`), and an ExtraSpellPts row without that fold is rejected. The school branch is explicit (`online === true`). `simulateFight` now refuses relay/`spareGear` targets and the unsupported boss/shield/revenant/bout/companion contract; `makeTarget`/`enemyTarget` default `spareGear: false`, with `standInTarget` keeping true. The fake firmament field guard was removed. A fight-level CWS comparison (240 local/upstream trials) checks `damageDealt`, TTK and overkill; the upstream CWS door and host death gate are isolated in `test/harness/fightOracle.mjs`.
+
+**Evidence.** `test/cws.test.js` (10), `test/cwsCorrections.test.js` (15) and `test/cwsDifferential.test.js` (15).
 The differential drives the pinned `calculateAttackDamage` with an enchantCtx whose `applySpellToTarget` calls the
 vendored `applySpell`, then compares the local resolver on the same seeded draws: direct damage and draw counts;
 career tolerance, immunity, spell resistance and elemental resistance; absorption; reflection; the 4,0/1,0/11,8
@@ -47,18 +49,22 @@ with the vendored payload walk, compare registered spell power/pierce and online
 gear inputs with `lootSpellPower`/`lootSpellPierce`, compare multi-effect death with the host hurt sink, and compare
 the echo-kill gate with the host `lootStrike`/`hurtFoe` path. Absorption reuses the vendored `tryAbsorption` law, so
 the differential verifies its integration rather than a second absorption implementation. Full suite
-**581 tests, 581 pass**; vendor **289 vendored + 122 stubbed**; parity **1855/1855**.
+**591 tests, 591 pass**; vendor **289 vendored + 122 stubbed**; parity **1855/1855**.
 
-**Mutation checks.** In a throwaway copy of this tree (30 CWS tests): using `formulaPositive` for the CWS gate, disabling
-the `payloadRows` abort, dropping pierce/school/power, counting later effects after death, and applying the melee after
-an echo kill each gives **28 pass / 2 fail**. Each mutation is detected by the corrected trigger, abort, scaling or
-accounting test named above.
+**Mutation checks.** In a throwaway copy of this tree (40 CWS tests) every audited mutation is now detected: A zero
+spell-power/pierce wiring **37/3**, B items argument dropped **39/1**, C rows after a kill **39/1**, D echo after a CWS
+kill **39/1**, E dedupe disabled **39/1**, F school without `isPlayer` **39/1**, G off hand reading the main item
+**39/1**, H caster level 1 **39/1**, I potency cap removed **39/1**, J Surge threshold `>=` **39/1**, K floor instead of
+`max(1, round)` **37/3**. (The earlier five mutations - `formulaPositive` gate, no payload abort, no pierce/power,
+counting after death, melee after an echo kill - remain detected.)
 
 **Not changed.** `src/relayClaim.js` is untouched. Relay-boss CWS, condition costs, ordinary wear, condition bands and
 break, Continuous Damage and the other spell families, the reflected bundle's caster-side landing, absorption's
 magicka refund, the ward lifecycle, ranged support and the optimizer are not modelled. A static `target.warded` gates
 CWS only; the melee blow is not refused. Firmament spell power/pierce is not a `simulateFight` build field; a caller
-that has one must pass `potencyPct`/`pierce`, and a build carrying a firmament spell-channel field is refused. No event-level RNG equivalence with the game's default `Math.random`
+that has one must pass `potencyPct`/`pierce`. There is no producer field, so there is no refusal guard. `simulateFight`
+accepted only a plain ordinary foe: relay/`spareGear` targets and the boss/shield/revenant/bout/companion contract are
+refused. No event-level RNG equivalence with the game's default `Math.random`
 path is claimed.
 
 ---

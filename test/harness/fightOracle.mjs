@@ -21,23 +21,32 @@ import {
  * @param {object} o desc, item, offItem, body (upstream-minted), events [{t,hand}], seed, uptime, traits
  * @returns {{ttk:number|null, damageDealt:number, blows:number, remainingHealth:number, overkill:number, trace:Array}}
  */
-export function upstreamFight(u, { desc, item, offItem = null, body, events, seed, uptime = 0, traits = [] }) {
+export function upstreamFight(u, { desc, item, offItem = null, body, events, seed, uptime = 0, traits = [], cws = null }) {
   const rng = generator(seed);
   const attacker = upstreamEntity(desc);
   const slots = u.equip.equipTableOf(attacker);
   const slotFor = (hand) => (hand === 'off' ? u.equip.EQUIP_SLOTS.LeftHand : u.equip.EQUIP_SLOTS.RightHand);
   const backSkill = desc.skills[19];
+  const initial = body.health;
+  const foe = { entity: body, dead: false };
+  let hp = initial;
+  let dead = false;
   let own = 0;
+  let cwsDealt = 0;
   _resetLootPowersForTests();
   _setLootPowersRandForTests(() => rng());
   setPlayerDoor({
-    foes: () => [{ entity: body, dead: false }],
+    foes: () => [foe],
     feet: () => [0, 0, 0],
-    hurtFoe: (_f, n) => { own += n; },
+    hurtFoe: (f, n) => {
+      if (f.dead || !(hp > 0)) return;
+      own += n;
+      hp = Math.max(0, hp - n);
+      body.health = hp;
+      if (hp <= 0) { f.dead = true; dead = true; }
+    },
     castOnPlayer: () => {},
   });
-  const initial = body.health;
-  let hp = initial;
   let dealt = 0;
   let ttk = null;
   let t = 0;
@@ -61,26 +70,49 @@ export function upstreamFight(u, { desc, item, offItem = null, body, events, see
         opts.toHitMod += u.handsLaw.offHandToHit(attacker.stats.agility);
         Object.assign(opts, u.handsLaw.OFF_HAND_BLOW);
       }
+      // The ordinary host's CWS landing (hostEnchant.js:198-225, without the spareGear branch): the cast is inside the
+      // formula, before the strike listener. It is null when this scenario has no CWS item. This is the ISOLATED host
+      // branch: the full host files are full-only and not imported, and hostMagic.applySpellToFoe's blowTaken/feud
+      // ledger and damageFoe's boss/shield/party arms are omitted; the fight-level test uses a plain ordinary target.
+      const enchantCtx = cws ? {
+        spellsByIndex: () => cws,
+        applySpellToTarget: (record, att) => {
+          if (dead || !(hp > 0)) return;
+          u.effects.applySpell(record, att.level ?? 1, body, {
+            hurt: (n) => {
+              if (dead || !(hp > 0)) return;
+              cwsDealt += n;
+              hp = Math.max(0, hp - n);
+              body.health = hp;
+              if (hp <= 0) { dead = true; foe.dead = true; }
+            },
+          }, rng, { entity: att });
+        },
+      } : undefined;
+      if (enchantCtx) opts.enchantCtx = enchantCtx;
       own = 0;
+      cwsDealt = 0;
+      dead = false;
+      foe.dead = false;
       body.health = Math.max(0, hp); // the share the formula reads is the pool that stands at this hit
       const raw = u.formulas.calculateAttackDamage(attacker, body, opts);
       const owed = takeOwed(body); // relay-only; zero for an ordinary body
       const struck = (d, kind) => (traits.length && d > 0
         ? u.bossTraits.bossStrike({ bossTraits: traits }, d, { kind, weapon: w }).damage : d);
       // The strike listener's echo is its own ordinary-foe hit (`door.hurtFoe`) inside the formula, before the host
-      // applies the melee blow. If the echo kills, `damageFoe` sees `foe.dead` and drops the melee (and any owed
-      // echo the melee claim would have carried). This is the host order the local fight now reproduces.
+      // applies the melee blow. The door below already subtracted it from `hp`; if it (or CWS) killed, `damageFoe`
+      // sees `foe.dead` and drops the melee.
       const echo = own;
-      const afterEcho = Math.max(0, hp - echo);
-      const melee = afterEcho > 0
+      const melee = hp > 0
         ? struck(raw, w?.group === 'Weapons' && w?.templateIndex === 129 ? 'arrow' : 'melee')
           + (owed > 0 ? struck(owed, 'melee') : 0)
         : 0;
-      const damage = echo + melee;
+      const damage = cwsDealt + echo + melee;
       t = ev.t;
-      hp = Math.max(0, afterEcho - melee);
+      hp = Math.max(0, hp - melee);
+      if (hp <= 0) { dead = true; foe.dead = true; }
       dealt += damage;
-      trace.push({ t, hand: ev.hand, damage, hit: damage > 0, remaining: hp });
+      trace.push({ t, hand: ev.hand, damage, hit: damage > 0, remaining: hp, cws: cwsDealt });
       if (hp <= 0) { ttk = t; break; }
     }
   } finally {
