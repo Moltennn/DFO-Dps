@@ -84,7 +84,7 @@ importers ask for.
 
 The harness measures the **offline, un-modded client**, which is what every stub
 assumes: mod settings read their defaults, UI preferences read nothing, sigil
-sets and the online lane are asleep. the assumptions register lists this.
+sets and the online lane are asleep.
 
 Foe bodies are the one place the boot itself matters: the shipped defaults load
 Daggerfall Enemy Expansion with MUDEX (`scenes/shared.js:1518`), which owns the
@@ -121,7 +121,7 @@ the test.
    the wrong commit.
 4. `node tools/vendor-parity.mjs --from <checkout>` — must be 0 diverged.
 5. Re-derive the golden fixtures in `test/golden-upstream.test.js` from the
-   new commit's tests; update the assumptions register and the waiver table.
+   new commit's tests; update the waiver table.
 6. `npm test`, then record the re-pin and any behaviour change in
    `CHANGELOG-MECHANICS.md`.
 

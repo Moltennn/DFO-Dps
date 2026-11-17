@@ -201,8 +201,8 @@ golden fixtures. The live card is a useful comparison, not the oracle.
 The project names its metrics rather than treating every “DPS” as one number:
 **snapshot** (full-health card), **fight** (whole-fight kill rate),
 **relay** (allowance applied), and **relay-ceiling** (capped offered rate).
-See [`METHOD.md`](METHOD.md) for formulas and
-the verification notes for what is and is not verified.
+See [`METHOD.md`](METHOD.md) for formulas and the limitations below for what is
+not verified.
 
 ## Limitations and known gaps
 
@@ -218,9 +218,8 @@ These are recorded as waivers or assumptions, not hidden:
 - Spells, procs, the Firmament application and the planners do not all have
   differential stages yet.
 
-Read the assumptions register and
-the verification notes before treating a number as a
-game measurement.
+Treat a number as a game measurement only where the differential and golden
+suites cover it.
 
 ## Development
 
@@ -244,19 +243,10 @@ subset with the full pinned checkout.
 
 - [`docs/USAGE.md`](docs/USAGE.md) — complete command workflows and examples.
 - [`METHOD.md`](METHOD.md) — combat formulas, cadence, planners and theory.
-- the assumptions register — modelling choices, waivers and
-  open questions.
-- the verification notes — what is tested, how, and
-  what remains unverified.
 - [`docs/SOURCES.md`](docs/SOURCES.md) — the upstream pin and provenance.
-- the stage record — stochastic-engine design
-  and the source audit behind `src/rng.js`, `src/blowOutcomes.js`,
-  `src/simulateFight.js`, `src/relayClaim.js`, `src/relayFight.js` and `src/flowState.js`.
 - [`docs/LOADOUT-BENCHMARK.md`](docs/LOADOUT-BENCHMARK.md) — the reproducible
   loadout benchmark, with charts in `docs/charts/` and machine-readable results
   in `docs/benchmark/` (`npm run benchmark`).
-- the documentation index — the full documentation index, including
-  the engineering stage audits.
 
 ## License and credits
 

@@ -391,4 +391,4 @@ Use `--out <file>` to override. Many table commands accept `--json`; use
   effects and a different gear state; use a fresh snapshot and compare the
   same target/uptime.
 - **A planner or spell number is unverified**: check
-  the verification notes before relying on it for a decision.
+  the waivers before relying on it for a decision.

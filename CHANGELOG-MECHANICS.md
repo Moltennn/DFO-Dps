@@ -317,7 +317,7 @@ worn-list clone. Full suite
 **Not changed.** `src/relayClaim.js` is untouched. Relay-boss durability, the target's shield/armour wear, the fist
 fallback (the fight stops and reports `endedByBreak`), CWS bills for rows after a kill, pack removal/repair and other
 condition sources (Cast When Held/Used, item deterioration, target blows) remain out of scope. DoTs, the ward
-lifecycle, ranged support and the optimizer are unchanged; the stage record is the stage record.
+lifecycle, ranged support and the optimizer are unchanged.
 
 ## Stage 3.5.1 - ordinary-enemy Cast When Strikes direct damage (2026-11-16)
 
@@ -1705,8 +1705,7 @@ Added:
 - `test/vendor-manifest.test.js` - hash/manifest integrity and load checks.
 - `test/harness.test.js` - the harness's own correctness, including an injected
   2% drift that the comparator catches.
-- the project rules, `docs/SOURCES.md`, the verification notes,
-  the assumptions register, this file.
+- `docs/SOURCES.md`, this file.
 
 Recorded as known and **not fixed** (each asserted as still broken):
 
