@@ -70,12 +70,21 @@ export function spellsByIndexMap(records) {
 }
 
 let _standard = null;
-/** Every standard spell from the user's ARENA2/SPELLS.STD (cached). */
-export function standardSpells(dir = arena2Dir()) {
+/**
+ * Every standard spell from the user's ARENA2/SPELLS.STD (cached).
+ *
+ * The default argument must not be `arena2Dir()`: a default expression is evaluated on EVERY call, before the cache is
+ * consulted, and `arena2Dir()` reads the launcher's config file. `standardSpells()` is called per blow on the Cast When
+ * Strikes path (`src/cws.js`), so that read would be the hot path's filesystem cost. Resolve the default only on a
+ * cache miss. Everything else is unchanged: an explicit `dir` still costs one load at most, the cache is still returned
+ * for a later default call whatever `dir` filled it, and a missing directory still falls back to a fresh empty map.
+ */
+export function standardSpells(dir) {
   if (_standard) return _standard;
-  if (!dir) return new Map();
+  const resolved = dir === undefined ? arena2Dir() : dir;
+  if (!resolved) return new Map();
   try {
-    const bytes = fs.readFileSync(path.join(dir, 'SPELLS.STD'));
+    const bytes = fs.readFileSync(path.join(resolved, 'SPELLS.STD'));
     _standard = spellsByIndexMap(readSpellsStd(new Uint8Array(bytes)));
   } catch {
     _standard = new Map();

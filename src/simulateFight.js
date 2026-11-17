@@ -239,10 +239,40 @@ function prepareDurability(ch, scenario) {
   return { ch: fightCh, scenario: fightScenario, owner, main, off, suppliedBroken, effective: null, breaks: [], wear: 0, endedByBreak: false };
 }
 
+/**
+ * The blow-tier tables a BATCH (`simulateFights`) may share across its trials. A tier is a pure function of the build,
+ * the scenario, the health segment, the hand and the item's condition band; the seed enters only at draw time
+ * (`createBlowSampler`), so rebuilding the same table for every seed is pure setup cost. `simulateFight` keeps its own
+ * cache when called standalone, so nothing is shared outside one `simulateFights` call.
+ *
+ * `idOf` is item IDENTITY (weak), never a per-fight ordinal: a durability fight clones its items, and identity keeps
+ * two fights' copies apart rather than letting a clone inherit another clone's table.
+ */
+export function createTierCache() {
+  const tiers = new Map();
+  const itemIds = new WeakMap();
+  let nextItemId = 1;
+  return {
+    tiers,
+    idOf(item) {
+      if (!item) return 0;
+      let id = itemIds.get(item);
+      if (!id) { id = nextItemId; nextItemId += 1; itemIds.set(item, id); }
+      return id;
+    },
+  };
+}
+
 /** One seeded battle. The result is one of the samples `simulateFights` summarises. `seed` defaults to 0, so even an
  *  unseeded call is deterministic (the path never touches `Math.random`). */
 export function simulateFight(ch, args = {}) {
   const scenario = normalizeScenario(args);
+  // `_tierCache` is the batch's shared table set (`simulateFights`); a standalone call gets its own. It never reaches
+  // `blowFightTier` (deleted here) and `.with()` must not inherit it: its edit can change the very inputs a tier reads.
+  const tierCache = scenario._tierCache ?? createTierCache();
+  delete scenario._tierCache;
+  const withArgs = { ...args };
+  delete withArgs._tierCache;
   if (scenario.pair || ch._pair) throw new Error('simulateFight: Pistolet pair is not supported in Stage 3.2');
   // Refuse ranged/gun on either hand before the schedule; a mixed melee + Pistolet pair must not fall through to melee.
   const mainWeapon = scenario.weapon === undefined ? (ch.weapon ? weaponOf(ch.weapon) : null) : scenario.weapon;
@@ -352,20 +382,15 @@ export function simulateFight(ch, args = {}) {
       potencyPct: scenario.potencyPct, pierce: scenario.pierce, worn: fightTable ?? undefined,
     });
   };
-  const itemIds = new WeakMap();
-  let nextItemId = 1;
-  const idOf = (it) => {
-    if (!it) return 0;
-    let id = itemIds.get(it);
-    if (!id) { id = nextItemId; nextItemId += 1; itemIds.set(it, id); }
-    return id;
-  };
-  const cache = new Map();
+  const cache = tierCache.tiers;
+  // The health thresholds a tier was built under. A break/promotion changes them, and the segment index alone does not
+  // say which threshold set it belongs to, so the epoch is part of the key (and a batch's other fights keep theirs).
+  let epoch = 0;
   // The live tier for one hand. A wear/bill can cross a condition band, so the cache key carries the item (identity)
   // and the band's damage multiplier; within a band the tier is unchanged (conditionMultiplier, src/model.js:636-666).
   const bandOf = (item) => (durability && item ? conditionMultiplier(weaponOf(item)) : 1);
   const distribution = (index, hand, item, isDual, band) => {
-    const key = durability ? `${index}|${hand}|${idOf(item)}|${band}` : `${index}|${hand}`;
+    const key = durability ? `${epoch}|${index}|${hand}|${tierCache.idOf(item)}|${band}` : `${index}|${hand}`;
     let s = cache.get(key);
     if (s) return s;
     const mid = (bounds[index] + bounds[index + 1]) / 2;
@@ -387,7 +412,7 @@ export function simulateFight(ch, args = {}) {
       ...(dual && off ? weaponPowers(weaponOf(off), fightScenario) : []),
     ];
     bounds = healthThresholds(powers);
-    cache.clear();
+    epoch += 1; // every tier built under the old thresholds is stale; a new epoch keeps the batch's other entries
   };
 
   let hp = pool;
@@ -688,7 +713,7 @@ export function simulateFight(ch, args = {}) {
       wear: dur.wear,
       endedByBreak: dur.endedByBreak,
     } : { durability: false, condition: null, breaks: [], wear: 0, endedByBreak: false }),
-    with: (edit = {}) => simulateFight(ch, { ...args, ...edit }),
+    with: (edit = {}) => simulateFight(ch, { ...withArgs, ...edit }),
   };
 }
 
@@ -806,7 +831,10 @@ export function simulateFights(ch, args = {}) {
   const trials = Math.max(1, Math.floor(num(args.trials, Array.isArray(args.seeds) ? args.seeds.length : 1000)));
   const seeds = Array.isArray(args.seeds) ? [...args.seeds] : pairedFightSeeds(trials, num(args.seed, 0));
   if (!seeds.length) throw new RangeError('simulateFights: at least one seed is required');
-  const rows = seeds.map((seed) => simulateFight(ch, { ...args, seed }));
+  // One table set for the whole batch: every trial shares the same build, scenario, target and condition bands, and
+  // only the seed's draws differ. `simulateFight` treats `_tierCache` as internal and strips it from `.with()`.
+  const tierCache = createTierCache();
+  const rows = seeds.map((seed) => simulateFight(ch, { ...args, seed, _tierCache: tierCache }));
   if (rows.some((r) => !r)) return null;
   const kills = rows.filter((r) => r.kill);
   const pool = rows[0].health;
