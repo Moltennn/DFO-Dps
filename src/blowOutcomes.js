@@ -267,12 +267,21 @@ function finish(outcome, o, cap) {
   const blow = o.v;
   const echoDamage = o.x ?? 0;
   const claim = cap > 0 ? Math.min(blow, cap) : blow;
-  return Object.assign(outcome, {
-    blow, echoDamage, damage: blow + echoDamage, claim, cappedDamage: claim + echoDamage,
-    echoMask: o.echoMask ?? 0, echoHits: o.echoHits ?? 0, echoEligible: o.echoEligible === true,
-    formulaPositive: o.formulaPositive === true,
-    strikesDamage: o.strikesDamage ?? 0, strikesPositive: o.strikesPositive === true,
-  });
+  // Explicit assignments, same order as the Object.assign source it replaces: the keys land after the caller's
+  // p/common/hit/roll/preFinish/card fields exactly as before, and the 11 values are primitives so there is no
+  // shared-reference difference.
+  outcome.blow = blow;
+  outcome.echoDamage = echoDamage;
+  outcome.damage = blow + echoDamage;
+  outcome.claim = claim;
+  outcome.cappedDamage = claim + echoDamage;
+  outcome.echoMask = o.echoMask ?? 0;
+  outcome.echoHits = o.echoHits ?? 0;
+  outcome.echoEligible = o.echoEligible === true;
+  outcome.formulaPositive = o.formulaPositive === true;
+  outcome.strikesDamage = o.strikesDamage ?? 0;
+  outcome.strikesPositive = o.strikesPositive === true;
+  return outcome;
 }
 
 const keyOf = (o) => [

@@ -131,6 +131,34 @@ test('3b. every fight-tier field is either preserved or derivable from the merge
   }
 });
 
+test('3c. full outcomes keep the finish() shape: the same keys in the same order, all primitive values', () => {
+  // finish() fills the damage/echo fields onto the caller's outcome object. This pins its observable shape (the 11
+  // appended fields, their order and their primitive types), since the insertion order is what JSON/`Object.keys`
+  // readers see and a change here silently alters serialised tiers.
+  const appended = [
+    'blow', 'echoDamage', 'damage', 'claim', 'cappedDamage',
+    'echoMask', 'echoHits', 'echoEligible', 'formulaPositive', 'strikesDamage', 'strikesPositive',
+  ];
+  const base = ['p', 'direction', 'directionIndex', 'facing', 'backstab', 'crit', 'part', 'whole', 'hit', 'roll', 'preFinish', 'card'];
+  const { ch, args, hand } = localSide(CONFIGS[1]);
+  const full = blowOutcomes(ch, { ...args, hand });
+  assert.ok(full.outcomes.length > 0);
+  for (const o of full.outcomes) {
+    assert.deepEqual(Object.keys(o), [...base, ...appended], 'the outcome keys and their insertion order');
+    assert.equal(Object.keys(o).length, base.length + appended.length, 'no extra field sneaks in');
+    for (const k of ['blow', 'echoDamage', 'damage', 'claim', 'cappedDamage', 'strikesDamage']) {
+      assert.equal(typeof o[k], 'number', `${k} is a number`);
+    }
+    for (const k of ['echoMask', 'echoHits']) assert.ok(Number.isInteger(o[k]), `${k} is an integer`);
+    for (const k of ['echoEligible', 'formulaPositive', 'strikesPositive']) {
+      assert.equal(typeof o[k], 'boolean', `${k} is a boolean`);
+    }
+    assert.equal(o.damage, o.blow + o.echoDamage, 'damage is blow + echoDamage');
+    assert.equal(o.claim, full.cap > 0 ? Math.min(o.blow, full.cap) : o.blow, 'claim is blow under the cap');
+    assert.equal(o.cappedDamage, o.claim + o.echoDamage, 'cappedDamage is claim + echoDamage');
+  }
+});
+
 test('3. the merge keeps every distinction the fight needs: nothing is merged only because damage matches', () => {
   // an off-hand blow with no Strikes payload: whole and not-whole deal the SAME damage and must stay two outcomes
   const desc = character({ level: 30, raceId: 1, stats: { strength: 70, agility: 60, speed: 60, luck: 50 }, skills: 0, skillOverride: { 29: 70, 34: 40 } });
