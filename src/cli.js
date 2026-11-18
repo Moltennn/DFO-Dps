@@ -433,9 +433,9 @@ function summary(ch, r, extra = {}) {
       // the held item's long-run mean (exact carried percentages); pricing reads these, the card above floors
       carriedPerSwing: r.carriedPerSwing, carriedDps: r.carriedDps, carriedCappedDps: r.carriedCappedDps,
       enchantDps: r.enchantDps, enchantDpsMin: r.enchantDpsMin, enchantDpsMax: r.enchantDpsMax, totalDps: r.totalDps, totalDpsMin: r.totalDpsMin, totalDpsMax: r.totalDpsMax, enchantPerSwing: r.enchantPerSwing, enchantProcs: r.enchantProcs, procsBeforeBreak: r.procsBeforeBreak, procsBeforeBreakBasis: r.procsBeforeBreakBasis,
-      ward: r.ward, ttk: r.ttk, totalTtk: r.totalTtk, wrath: r.wrath,
-      // M44: the ceiling's own names, and the claim-based run's (null when the target declares no allowance)
-      ceilingTotalDps: r.ceilingTotalDps, ceilingTotalTtk: r.ceilingTotalTtk, claimTotalTtk: r.claimTotalTtk, claimSustainedDps: r.claimSustainedDps,
+      ward: r.ward, ttk: r.ttk, totalTtk: r.totalTtk, totalTtkCapOnly: r.totalTtkCapOnly, wrath: r.wrath,
+      ceilingTotalDps: r.ceilingTotalDps, ceilingTotalDpsMin: r.ceilingTotalDpsMin, ceilingTotalDpsMax: r.ceilingTotalDpsMax,
+      ceilingTotalTtk: r.ceilingTotalTtk, claimTotalTtk: r.claimTotalTtk, claimSustainedDps: r.claimSustainedDps,
       terms: r.damage.parts,
     },
     ...extra,
@@ -475,13 +475,11 @@ function printBuild(ch, r, targetPreset, values) {
   console.log(`${weaponLabel(w)}${r.dual ? ' / dual' : ''}${r.pair ? ' / pair' : ''}  |  ${r.core}${ch.online ? ' / online' : ' / offline'}${ch.martialPath ? ` / ${MARTIAL_PATHS[ch.martialPath]?.name ?? ch.martialPath}` : ''}`);
   console.log(`target: ${targetPreset}${r.target.isClass ? ' (class)' : ''}, level ${r.target.level}${r.health ? `, ${r.health.toLocaleString()} HP` : ''}${traits.length ? `, traits: ${traits.join(', ')}` : ''}`);
   console.log('');
-  // M44: with an allowance the kill time shown is the allowance-sustained run's own, with the per-hit-capped ceiling
-  // named beside it. Without one it IS the ceiling (rule 7). A run that cannot kill says so, never '-'.
-  const ttk = r.allowance ? r.claimTotalTtk : (r.totalTtk ?? r.ttk);
-  const ttkLine = ttk ? `${fmt(ttk)} s` : r.allowance ? 'no kill' : '-';
-  const ttkLabel = r.allowance ? 'Time to kill' : 'Time to kill (per-hit-capped ceiling)';
+  const hasAllowance = !!r.target.allowance;
+  const ttkLine = r.totalTtk != null ? `${fmt(r.totalTtk)} s` : r.allowance ? 'no kill' : hasAllowance ? 'no allowance run' : '-';
+  const ttkLabel = hasAllowance ? 'Time to kill (allowance-sustained)' : 'Time to kill (per-hit-capped ceiling)';
   const ttkNote = r.health
-    ? `${r.health.toLocaleString()} HP${r.ward ? ` + ${r.ward} ward` : ''}${r.shields ? ` + ${r.shields}s shields` : ''}${r.allowance ? `; allowance-sustained - ceiling: ${fmt(r.ceilingTotalTtk)} s` : r.enchantDps > 0 ? ' (weapon + procs)' : ''}`
+    ? `${r.health.toLocaleString()} HP${r.ward ? ` + ${r.ward} ward` : ''}${hasAllowance ? `; ceiling: ${r.ceilingTotalTtk != null ? `${fmt(r.ceilingTotalTtk)} s` : '-'}` : r.enchantDps > 0 ? ' (weapon + procs)' : ''}`
     : 'no boss health';
   console.log(table([
     ['Hit chance', pc(r.hit.hit), `${pc(r.hit.crit.chance)} critical, x${fmt2(r.hit.crit.damageMult)}`],
@@ -490,8 +488,8 @@ function printBuild(ch, r, targetPreset, values) {
     ...(r.backstab?.chance > 0 ? [['Backstab hit', `${r.backstab.min}-${r.backstab.max}`, `crit ${r.backstab.critMin}-${r.backstab.critMax}`]] : []),
     ['Expected / swing', fmt(r.perSwing), 'hit chance and criticals included'],
     ['Swing time', `${fmt2(r.cadence.seconds)} s`, `${fmt2(r.cadence.aps)} swings/s`],
-    ['DPS', fmt(r.dps), r.cap ? `per-hit-capped ${fmt(r.cappedDps)} (${pc(r.capLoss)} lost) - a ceiling${r.allowance ? ', not what the boss accepts' : ''}` : 'no per-hit cap'],
-    ...(r.enchantDps > 0 ? [['Enchant procs', fmt(r.enchantDps), `${fmt(r.enchantPerSwing)} per landed hit${r.procsBeforeBreak ? `; ${billCapacityNote(r.procsBeforeBreak)}` : ''}`], ['Total (per-hit-capped ceiling)', fmt(r.totalDps), 'capped weapon + uncapped proc sum - a ceiling']] : []),
+    ['Uncapped weapon DPS', fmt(r.dps), r.cap ? `per-hit-capped ${fmt(r.cappedDps)} (${pc(r.capLoss)} lost) - a ceiling${hasAllowance ? ', not what the boss accepts' : ''}` : 'no per-hit cap'],
+    ...(r.enchantDps > 0 ? [['Enchant procs (ceiling component)', fmt(r.enchantDps), `${fmt(r.enchantPerSwing)} per landed hit${r.procsBeforeBreak ? `; ${billCapacityNote(r.procsBeforeBreak)}` : ''}`], ['Total (per-hit-capped ceiling)', fmt(r.ceilingTotalDps), 'capped weapon + proc estimate before allowance']] : []),
     ...(r.allowance ? allowanceRows(r.allowance) : []),
     [ttkLabel, ttkLine, ttkNote],
   ], ['Metric', 'Value', 'Notes']));
@@ -506,7 +504,7 @@ function printBuild(ch, r, targetPreset, values) {
     console.log(`\nCeiling vs allowance: ${figures}.`);
   }
   if (r.cap) console.log(`\n${r.capSource === 'hit cap' ? 'Per-hit hit cap' : 'Curbing cap'}: ${r.cap} per hit${r.capSource === 'curbing' ? ` (5% of ${r.health.toLocaleString()} HP)` : ''}.`);
-  if (r.target?.phaseShields) console.log(`Phase shields: ${r.target.phaseShields} x ${r.target.shieldSeconds}s (${r.shields}s added to TTK).`);
+  if (r.target?.phaseShields) console.log(`Phase shields: ${r.target.phaseShields} x ${r.target.shieldSeconds}s (${r.shields}s added to ceiling TTK).`);
   if (r.wrath) console.log(`Wrathful: enrages at ${r.wrathAt}s.`);
   console.log('\nWhere the damage comes from');
   const p = r.damage.parts;
@@ -652,28 +650,28 @@ export async function main(argv = process.argv.slice(2)) {
       console.log('No weapon equipped. Pass --weapon or load a save with a weapon.');
       return;
     }
-    const target = values.target === 'armoured' ? gateTarget(n(values.level, ch.level), { traits }) : target;
+    const enchantTarget = values.target === 'armoured' ? gateTarget(n(values.level, ch.level), { traits }) : target;
     const opts = { level: n(values.level, ch.level), potencyPct: n(values.potency, 0), pierce: n(values.pierce, 0) };
     const rows = (item.enchantments ?? []).filter((e) => e && e.type >= 0);
     const names = Object.fromEntries(Object.entries(ENCHANTMENT_TYPES).map(([k, v]) => [v, k]));
-    const strike = strikeEnchantments(item, ch, target, opts);
-    const r = analyze(ch, { ...scenario, target, health: target.isBoss ? target.maxHealth : 0, potencyPct: opts.potencyPct, pierce: opts.pierce });
+    const strike = strikeEnchantments(item, ch, enchantTarget, opts);
+    const r = analyze(ch, { ...scenario, target: enchantTarget, health: enchantTarget.isBoss ? enchantTarget.maxHealth : 0, potencyPct: opts.potencyPct, pierce: opts.pierce });
     console.log(`${characterLabel(ch)}  |  ${item.name ?? 'weapon'}`);
     console.log(table(rows.map((e) => [names[e.type] ?? e.type, e.param ?? '-', e.type === 2 ? (strike.procs.find((p) => p.index === Number(e.param))?.name ?? 'spell') : '-']), ['Enchantment', 'Param', 'Spell'], ['left', 'right', 'left']));
     console.log(table([
-      ['Weapon DPS', fmt(r.dps)],
+      ['Uncapped weapon DPS', fmt(r.dps)],
       ['Enchant per landed hit', `${fmt(strike.procDamage + strike.flat)}${strike.procDot ? ` + ${fmt(strike.procDot / 5)} DoT DPS` : ''}`],
-      ['Enchant DPS', fmt(r.enchantDps)],
-      ['Total (per-hit-capped ceiling)', fmt(r.totalDps)],
-      ...(r.allowance ? [
+      ['Enchant DPS (ceiling component)', fmt(r.enchantDps)],
+      ['Total (per-hit-capped ceiling)', fmt(r.ceilingTotalDps)],
+      ...(r.target.allowance ? [
         ['Allowance-sustained DPS', fmt(r.claimSustainedDps)],
-        ['Time to kill (allowance-sustained)', r.claimTotalTtk ? `${fmt(r.claimTotalTtk)} s` : 'no kill'],
+        ['Time to kill (allowance-sustained)', r.totalTtk != null ? `${fmt(r.totalTtk)} s` : r.allowance ? 'no kill' : 'no allowance run'],
         ['Time to kill (per-hit-capped ceiling)', r.ceilingTotalTtk ? `${fmt(r.ceilingTotalTtk)} s` : '-'],
       ] : []),
       ['CWS bills covered (bill-only)', r.procsBeforeBreak ?? '-'],
       ['Procs', strike.procs.map((p) => `${p.name} ${p.dotTick ? `DoT ${fmt(p.dotTick)}/round` : fmt(p.damage)}`).join(', ') || '-'],
     ], ['Metric', 'Value']));
-    if (values.json) console.log(JSON.stringify({ enchantments: rows, strike, result: { weaponDps: r.dps, enchantDps: r.enchantDps, totalDps: r.totalDps, ceilingTotalDps: r.ceilingTotalDps, ceilingTotalTtk: r.ceilingTotalTtk, claimTotalTtk: r.claimTotalTtk, claimSustainedDps: r.claimSustainedDps, procsBeforeBreak: r.procsBeforeBreak, procsBeforeBreakBasis: r.procsBeforeBreakBasis } }, null, 2));
+    if (values.json) console.log(JSON.stringify({ enchantments: rows, strike, result: { weaponDps: r.dps, enchantDps: r.enchantDps, totalDps: r.totalDps, totalTtk: r.totalTtk, ceilingTotalDps: r.ceilingTotalDps, ceilingTotalTtk: r.ceilingTotalTtk, claimTotalTtk: r.claimTotalTtk, claimSustainedDps: r.claimSustainedDps, procsBeforeBreak: r.procsBeforeBreak, procsBeforeBreakBasis: r.procsBeforeBreakBasis } }, null, 2));
     return;
   }
 
@@ -939,7 +937,7 @@ export async function main(argv = process.argv.slice(2)) {
     });
     const summaryHtml = (summary, modeKey) => {
       const cap = modeKey === 'cap';
-      const head = `<tr><th>Family</th><th>Best weapon</th><th>Weapon skill pieces</th><th>CS pieces</th><th>Procs</th><th>Repairs</th><th>Weapon DPS (carried)</th>${cap ? '<th>Gate plan (card)</th><th>No-cap plan (card)</th>' : '<th>Plan DPS (card)</th>'}<th>Spent</th><th>Left</th></tr>`;
+      const head = `<tr><th>Family</th><th>Best weapon</th><th>Weapon skill pieces</th><th>CS pieces</th><th>Procs</th><th>Repairs</th><th>Weapon DPS (carried)</th>${cap ? '<th>Gate plan (card ceiling)</th><th>No-cap plan (card)</th>' : '<th>Uncapped plan DPS (card)</th>'}<th>Spent</th><th>Left</th></tr>`;
       return `<div class="table"><table><thead>${head}</thead><tbody>${summary.map((x) => `<tr><td class="k">${x.family}</td><td>${x.weapon}</td><td>${x.skillPieces}</td><td>${x.csPieces}</td><td>${x.procs}</td><td>${x.repairs}</td><td>${fmt(x.carriedBase)}</td>${cap ? `<td>${fmt(x.cardDps)}</td><td>${fmt(x.cardFutureDps)}</td>` : `<td>${fmt(x.cardDps)}</td>`}<td>${x.spent}</td><td>${x.left}</td></tr>`).join('')}</tbody></table></div>`;
     };
     const canonical = (matrix, modeKey) => {
@@ -958,7 +956,7 @@ export async function main(argv = process.argv.slice(2)) {
           console.log(`
 Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem +${SOUL_GEM_POINTS}` : 'template points only'}`);
           const cap = r.key === 'cap';
-          console.log(table(r.summary.map((x) => [x.family, x.weapon, x.skillPieces, x.csPieces, x.procs, x.repairs, fmt(x.carriedBase), ...(cap ? [fmt(x.cardDps), fmt(x.cardFutureDps)] : [fmt(x.cardDps)]), x.spent, x.left]), ['Family', 'Best', 'Weapon skill', 'CS', 'Procs', 'Repairs', 'Weapon DPS (carried)', ...(cap ? ['Gate plan (card)', 'No-cap plan (card)'] : ['Plan DPS (card)']), 'Spent', 'Left'], ['left', 'left', 'right', 'right', 'right', 'right', 'right', ...(cap ? ['right', 'right'] : ['right']), 'right', 'right']));
+          console.log(table(r.summary.map((x) => [x.family, x.weapon, x.skillPieces, x.csPieces, x.procs, x.repairs, fmt(x.carriedBase), ...(cap ? [fmt(x.cardDps), fmt(x.cardFutureDps)] : [fmt(x.cardDps)]), x.spent, x.left]), ['Family', 'Best', 'Weapon skill', 'CS', 'Procs', 'Repairs', 'Weapon DPS (carried)', ...(cap ? ['Gate plan (card ceiling)', 'No-cap plan (card)'] : ['Uncapped plan DPS (card)']), 'Spent', 'Left'], ['left', 'left', 'right', 'right', 'right', 'right', 'right', ...(cap ? ['right', 'right'] : ['right']), 'right', 'right']));
           if (r.melee?.plan) {
             console.log(`\nCanonical melee layout (${r.melee.family} - ${r.melee.weapon})`);
             console.log(table(r.melee.plan.rows.map((row) => [row.slot, row.item, row.effects.map((e) => effectLine(e)).join('; ') || '-']), ['Slot', 'Item', 'Enchantments'], ['left', 'left', 'left']));

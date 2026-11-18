@@ -60,10 +60,9 @@ whole fights and report distributions.
 |---|---|---|
 | uncapped | `dps`, `perSwing` | the blow at full foe health, before the per-hit cap: the Combat Stats card's rate |
 | per-hit-capped | `cappedDps`, `cappedPerSwing` | the same blow after the cap; a **ceiling**, not what a relay accepts |
-| ceiling (card total) | `ceilingTotalDps`, `ceilingTotalTtk` | the per-hit-capped weapon figure plus the **uncapped** proc sum: an upper bound, never a relay verdict. Aliases of `totalDps` / `totalTtkCapOnly` (same values; those keys are unchanged) |
-| allowance-sustained | `allowance.sustainedDps` | the relay's refill once the purse/bucket limit binds |
-| allowance-sustained TTK | `claimTotalTtk` | the allowance run's own time to kill (`allowance.ttk`), null when the target declares no allowance or the run cannot kill inside the horizon; it is the figure `totalTtk` carries when the run KILLS (when it cannot, `totalTtk` falls back to the ceiling) |
-| claim-based sustained DPS | `claimSustainedDps` | alias of `allowance.sustainedDps`, null without an allowance spec |
+| ceiling (card total) | `ceilingTotalDps`, `ceilingTotalTtk` | capped weapon rate plus the proc estimate before the shared budget; the ceiling TTK is also `totalTtkCapOnly` |
+| allowance-sustained | `claimSustainedDps` | `allowance.sustainedDps`: the existing steady-state estimate, refill-limited when saturated; null without a run |
+| allowance-sustained TTK | `claimTotalTtk` | `allowance.ttk`: time to kill on the expected claim schedule; null without a run or kill inside the horizon |
 | opening burst | `allowance.burst5Dps` | the first 5 s while the relay purse is full |
 | carried sustained mean | `carriedDps`, `carriedCappedDps` | a held item's long-run mean of a percentage line (the exact share, not the card's per-blow floor); pricing reads this |
 | sampled fight | `stochastic-ttk`, `kill-probability` | seeded `simulateFight` trials: kill rate with a mean-TTK interval, or the share that kills inside the horizon (Wilson) |
@@ -75,8 +74,10 @@ and the HTML report print both when the target has an allowance, each labelled
 more than 1% - the note says the ceiling can promise a kill the allowance
 refuses only when the claim figure is null or longer; otherwise it states the
 percentage. Without an allowance the kill time is labelled as the per-hit-capped
-ceiling. The gap is relative to the claim figure; when the run cannot kill the
-claim figure is null and the pre-existing `totalTtk` falls back to the ceiling.
+ceiling. On an allowance target `totalTtk` is `claimTotalTtk`, even when null.
+`totalDps` uses `claimSustainedDps` when the run exists and the ceiling otherwise.
+When sustained, the default has no band (`totalDpsMin`/`totalDpsMax` are null);
+the pre-budget band is always available as `ceilingTotalDpsMin`/`ceilingTotalDpsMax`.
 
 Below the refill the claim TTK can be ~0.5% SHORTER than the ceiling, and that
 is the claim schedule's discretisation, not a proc effect:
@@ -93,12 +94,17 @@ is the claim schedule's discretisation, not a proc effect:
 Difference = 6 - 8 x 0.6154 - 6.25 / 65.032 = 0.9807 s, exactly the
 190.5241 -> 189.5434 s measured there (refused-claim damage / offered DPS is
 the same quantity on a multi-stream build). `W-PROC-BUDGET` records what
-remains: the ceiling is still an uncapped-proc upper bound until procs are
-priced as capped claims.
+remains: the explicit ceiling applies the per-hit cap to procs and the merged
+round, but sums their rates without the shared blow tokens or purse.
 
 `fight` and `fightRelay` are deterministic walks of the same health-dependent
 model; `snapshot`, `fight`, `relay` and `relay-ceiling` are the four
-deterministic ranking objectives. The sampled objectives start at 1,000 trials
+deterministic ranking objectives; these keep their own metrics. In particular
+`fightRelay` and the `relay`/`relay-ceiling` objectives use weapon-only claims,
+not the card's proc-inclusive totals. Pricing/loadout card baselines and the
+benchmark's `cardDps` selector keep the pre-budget ceiling. The separate
+loadout purse summary (including its weapon-TTK fallback) is unchanged.
+The sampled objectives start at 1,000 trials
 (the audit's first pass; 10,000 for a reported mean) and rank on the same seeds;
 a censored trial is reported as kill probability, never folded into the mean.
 See the [README](README.md) and [docs/USAGE.md](docs/USAGE.md) for the

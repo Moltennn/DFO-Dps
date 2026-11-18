@@ -159,7 +159,7 @@ const ITEM_ENCHANT_ID = Object.freeze({
   PotentVs: ENCHANTMENT_TYPES.PotentVs,
 });
 
-/** Apply a plan's skill lines and weapon procs, then read the resulting DPS. */
+/** Apply a plan's skill lines and weapon procs, then read the card ceiling. */
 function applyPlanDps(ch, plan, target) {
   const c = JSON.parse(JSON.stringify(ch));
   const item = c.weapon ?? c.wraps;
@@ -177,7 +177,7 @@ function applyPlanDps(ch, plan, target) {
     item.currentCondition = item.maxCondition = Math.max(1, Number(item.maxCondition) || 800);
   }
   const r = maxRun(c, { target });
-  return { dps: r.totalDps, cappedDps: r.cappedDps, procDps: r.enchantDps, weaponDps: r.cappedDps };
+  return { dps: r.ceilingTotalDps, cappedDps: r.cappedDps, procDps: r.enchantDps, weaponDps: r.cappedDps };
 }
 
 export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, skill = null, group = 'humanoid', repairs = 1, regen = 0, forceSkills = false, target = gateTarget(THEORY_LEVEL) } = {}) {
@@ -311,7 +311,7 @@ export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, s
   return {
     weapon: w.template, weaponName: w.item, shield: pieces.find((p) => /Shield|Buckler/.test(p.slot))?.template ?? null,
     soulGem: !!soulGem, soulPoints: soulGem ? SOUL_GEM_POINTS : 0,
-    // The baseline is the CARRIED weapon figure; the plan totals are the card's (`applyPlanDps` re-runs the card).
+    // The baseline is the CARRIED weapon figure; the plan totals are the card's pre-allowance ceilings.
     group, carriedBaseDps: base.carriedCappedDps, carriedUncappedDps: rawBase.carriedDps, cardPlanDps: applied.dps, cardUncappedPlanDps: future.dps, procDps: applied.procDps, skillId, rows, imprint, swings, maxProcs, forceSkills,
     repairs: Math.max(0, Math.trunc(Number(repairs) || 0)), regen: Math.max(0, Math.trunc(Number(regen) || 0)),
     ratings: { weapon: weaponRatings, skills: skillRatings, utility: utilityRatings },

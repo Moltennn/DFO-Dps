@@ -1056,7 +1056,7 @@ export function damageModel(ch, w, target, swingKey, core, opts = {}) {
  * the relay's law over time (allowance.js). Returns null for any other target,
  * so ordinary foes and curbing bosses are untouched.
  *
- *   ttk       the weapon's blows alone; totalTtk adds Cast When Strikes procs and
+ *   ttk       the weapon's blows alone; allowance.ttk adds Cast When Strikes procs and
  *             their damage-over-time rounds, each its own claim.
  *   ttkCapOnly / totalTtkCapOnly (set by the caller) keep the old ceiling figure -
  *             health / per-hit-capped DPS, which ignores the allowance.
@@ -1085,7 +1085,6 @@ function allowancePatch(tgt, health, { cappedPerSwing, hit, aps, procs, cap, str
       },
     },
     ttk: weaponLane.run.ttk,
-    totalTtk: totalLane.run.ttk,
   };
 }
 
@@ -1112,9 +1111,9 @@ function allowancePatch(tgt, health, { cappedPerSwing, hit, aps, procs, cap, str
  * (src/model.js `carriedPct`) and exposed as `carriedPerSwing` / `carriedCappedPerSwing` / `carriedDps` /
  * `carriedCappedDps` - the metric pricing deltas use. The fight streams still floor (W-LOOT-CARRY).
  *
- * The card's `totalDps` / `totalTtkCapOnly` are the CEILING (the per-hit-capped weapon figure plus the uncapped proc
- * sum, an upper bound); they are also named `ceilingTotalDps` / `ceilingTotalTtk`, and a target that declares an
- * allowance carries the run's own `claimTotalTtk` / `claimSustainedDps` (null otherwise) - ASSUMPTION M44.
+ * On allowance targets `totalTtk` is the claim result even if null; `totalDps` is allowance-sustained when a run
+ * exists. The old capped-weapon + proc sum and its band are named `ceilingTotalDps[Min|Max]` and its kill time
+ * `ceilingTotalTtk` (= `totalTtkCapOnly`). Ordinary foes retain the ceiling defaults (ASSUMPTION M44).
  */
 export function analyze(ch, args = {}) {
   const r = analyzeCard(ch, args);
@@ -1123,13 +1122,18 @@ export function analyze(ch, args = {}) {
   r.carriedCappedPerSwing = carried.cappedPerSwing;
   r.carriedDps = carried.dps;
   r.carriedCappedDps = carried.cappedDps;
-  // M44: the same numbers, named for what they are. The CEILING sums the procs (direct + DoT) uncapped on top of the
-  // per-hit-capped weapon figure (an upper bound, before the relay); the CLAIM-based figures are the allowance run's
-  // own verdict and are null when the target declares no allowance. No number is recomputed here.
   r.ceilingTotalDps = r.totalDps;
+  r.ceilingTotalDpsMin = r.totalDpsMin;
+  r.ceilingTotalDpsMax = r.totalDpsMax;
   r.ceilingTotalTtk = r.totalTtkCapOnly;
   r.claimTotalTtk = r.allowance?.ttk ?? null;
   r.claimSustainedDps = r.allowance?.sustainedDps ?? null;
+  r.totalTtk = r.target.allowance ? r.claimTotalTtk : r.ceilingTotalTtk;
+  if (r.allowance) {
+    r.totalDps = r.claimSustainedDps;
+    // The existing run estimates a point, not a sustained DPS band.
+    r.totalDpsMin = r.totalDpsMax = null;
+  }
   Object.defineProperty(r, 'with', {
     value: (edit = {}) => {
       const { imprint, ...rest } = edit;
@@ -1243,7 +1247,7 @@ function analyzeCard(ch, {
       ...main, dual: true, offHand: off, schedule,
       perSwing, perSwingMin, perSwingMax, cappedPerSwing, cappedPerSwingMin, cappedPerSwingMax, dps, dpsMin, dpsMax, cappedDps, cappedDpsMin, cappedDpsMax,
       enchantPerSwing, enchantDps: enchantDpsValue, enchantDpsMin, enchantDpsMax,
-      totalDps, totalDpsMin, totalDpsMax, ttk: gate?.ttk ?? ttk, totalTtk: gate?.totalTtk ?? totalTtk, ttkCapOnly: ttk, totalTtkCapOnly: totalTtk, allowance: gate?.allowance ?? null, capLoss: dps > 0 ? 1 - cappedDps / dps : 0,
+      totalDps, totalDpsMin, totalDpsMax, ttk: gate?.ttk ?? ttk, ttkCapOnly: ttk, totalTtkCapOnly: totalTtk, allowance: gate?.allowance ?? null, capLoss: dps > 0 ? 1 - cappedDps / dps : 0,
       cadence: { ...main.cadence, seconds: schedule.period / 2, aps, dual: true, period: schedule.period, mainSeconds: schedule.mainSeconds, offSeconds: schedule.offSeconds },
     };
   }
@@ -1292,7 +1296,6 @@ function analyzeCard(ch, {
       enchantDps: enchantDpsValue,
       enchantDpsMin, enchantDpsMax,
       totalDps, totalDpsMin, totalDpsMax,
-      totalTtk: gate?.totalTtk ?? totalTtk,
       cadence: { ...main.cadence, seconds: main.cadence.seconds / 2, aps, pair: true },
       ttk: gate?.ttk ?? ttk,
       ttkCapOnly: ttk, totalTtkCapOnly: totalTtk, allowance: gate?.allowance ?? null,
@@ -1580,7 +1583,7 @@ function analyzeCard(ch, {
     core, weapon: w, target: tgt, swing, swingDirections: swingKeys, swingMix, hit: hitOut, damage: displayDmg, cadence: cad,
     perSwing, perSwingMin, perSwingMax, dps, dpsMin, dpsMax,
     cappedPerSwing, cappedPerSwingMin, cappedPerSwingMax, cappedDps, cappedDpsMin, cappedDpsMax, cap, capSource, capLoss: dps > 0 ? 1 - cappedDps / dps : 0,
-    enchantPerSwing, enchantDps: enchantDpsValue, enchantDpsMin, enchantDpsMax, totalDps, totalDpsMin, totalDpsMax, totalTtk: gate?.totalTtk ?? totalTtk, enchantProcs: ench?.procs ?? [], enchantDotDps: ench?.dotDps ?? 0, enchantDotDpsMin: ench?.dotDpsMin ?? 0, enchantDotDpsMax: ench?.dotDpsMax ?? 0, procsBeforeBreak: procsBeforeBreak(w?.item ?? ch.wraps ?? ch.weapon), procsBeforeBreakBasis: PROCS_BEFORE_BREAK_BASIS,
+    enchantPerSwing, enchantDps: enchantDpsValue, enchantDpsMin, enchantDpsMax, totalDps, totalDpsMin, totalDpsMax, enchantProcs: ench?.procs ?? [], enchantDotDps: ench?.dotDps ?? 0, enchantDotDpsMin: ench?.dotDpsMin ?? 0, enchantDotDpsMax: ench?.dotDpsMax ?? 0, procsBeforeBreak: procsBeforeBreak(w?.item ?? ch.wraps ?? ch.weapon), procsBeforeBreakBasis: PROCS_BEFORE_BREAK_BASIS,
     resist, health: bossHealth || null, ward, shields, ttk: gate?.ttk ?? ttk, ttkCapOnly: ttk, totalTtkCapOnly: totalTtk, allowance: gate?.allowance ?? null, wrath, wrathAt: WRATH_AFTER_S,
     targetDefense,
     backstab: {

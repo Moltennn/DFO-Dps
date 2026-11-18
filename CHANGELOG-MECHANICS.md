@@ -6,6 +6,32 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Phase 2 (M44) - allowance totals use the existing claim estimate (2026-11-18)
+
+**Source.** `net/gate/gateBrain.js:1298-1335@a3eb1605` spends a shared blow
+token and damage purse for every accepted submission. The card's ceiling
+(`src/enchants.js:137-172`) applies per-claim caps but sums the proc rates
+before that shared budget. No claim, carry, or fight rules change here.
+
+**Red → green.** `node --test --test-name-pattern='Phase 2' test/procBudget.test.js`
+first failed on both changed defaults. Replaying the card's fixed proc schedule
+through the vendored `applyHit` measured 150 DPS after the bucket drained;
+raw `totalDps` was 710.08698005698 and is now 150. The finite kill agrees before
+and after (75.69429833789175 s vs vendored 75.69429833789185 s; the ceiling is
+22.90 s). With a 100,000,000 HP pool, raw `totalTtk` was 1283880.52643776 s and
+is now null; the finite estimate remains available as `ceilingTotalTtk`.
+Ordinary totals and bands still match the pre-budget formula.
+
+**Outputs moved.** `src/model.js:1128-1139` selects the existing claim fields
+for allowance totals; no TTK fallback, and DPS keeps its ceiling fallback when
+there is no run. The legacy DPS band is null only for a sustained default; the
+unchanged ceiling band is explicitly named and exported by `build --json`.
+The CLI and HTML distinguish censored and missing runs. Enchant-plan,
+real-build and benchmark ceiling baselines and the explicit fight objectives
+retain their metrics. `W-PROC-BUDGET` remains for the pre-budget proc estimate;
+the vendored replay verifies the fixed schedule's billing, not sampled proc
+lifecycle parity for the card.
+
 ## Turned relay DoT rounds tick without sending a claim (2026-11-18)
 
 **Source.** At `a3eb1605`, `scenes/gate/standInSpell.js:137-150` runs the tick and
