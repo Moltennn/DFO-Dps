@@ -32,7 +32,8 @@ import {
 import { skillsLevel, KNIGHT_CITYWATCH_ID } from '../vendor/upstream/a3eb1605/src/characters/enemy/enemyEntity.js';
 import { applyMeanerMonsters, MEANER_MONSTERS_VENDOR } from '../vendor/upstream/a3eb1605/src/characters/meanerMonsters.js';
 import { meanerMonstersRow as pcaaoMeanerMonstersRow } from '../vendor/upstream/a3eb1605/src/combat/pcaaoMeanerMonsters.js';
-import { dexClassicRow, DEX_VENDOR } from '../vendor/upstream/a3eb1605/src/systems/enemyExpansion/dexInstall.js';
+import { dexClassicRow, DEX_VENDOR, dexRead } from '../vendor/upstream/a3eb1605/src/systems/enemyExpansion/dexInstall.js';
+import { createDexEquipmentAssigner } from '../vendor/upstream/a3eb1605/src/systems/enemyExpansion/dexEquipment.js';
 import { MOD_SETTINGS } from '../vendor/upstream/a3eb1605/src/systems/modSettings.js';
 import { BOSS_ARMOR } from '../vendor/upstream/a3eb1605/src/world/gate/gateBoss.js';
 import {
@@ -44,7 +45,7 @@ import {
 } from '../vendor/upstream/a3eb1605/src/systems/armorMaterials.js';
 import { EQUIP_SLOTS, slotForBodyPart, armorBodyParts } from '../vendor/upstream/a3eb1605/src/systems/equip.js';
 import {
-  armorOfMaterial, enemyArmorValues, equipmentVariantFor, assignEnemyStartingEquipment,
+  armorOfMaterial, enemyArmorValues, equipmentVariantFor, assignEnemyEquipment,
 } from '../vendor/upstream/a3eb1605/src/combat/enemyEquipment.js';
 import { conditionPercentage } from '../vendor/upstream/a3eb1605/src/systems/item/itemTemplates.js';
 import { PCAAO_REDUCTION_ROWS, SILVER_DOUBLED_CAREERS } from '../vendor/upstream/a3eb1605/src/combat/pcaao.js';
@@ -514,19 +515,44 @@ export function equipArmour(target, pieces = [], { armorValues = false } = {}) {
 }
 
 /**
+ * The equipment delegate the client's boot installs: Enemy Expansion's copy of Roleplay & Realism's class
+ * arm (systems/enemyExpansion/dexInstall.js:246-247 `setEnemyEquipmentAssigner(createDexEquipmentAssigner)`;
+ * combat/enemyEquipment.js:346 consults it first). Read, never installed: installEnemyExpansion rewrites
+ * ENEMY_BASICS in place (dexInstall.js:211-220) while this module's rows are already `dexClassicRow` over
+ * the pristine table, so a global install would make every later mint order-dependent. `dexRead` only reads
+ * the mod's tables (dexInstall.js:89-99); the props are `dexProperties`' mod-loaded answer (dexInstall.js:121-126).
+ * ASSUMPTION M40: the posture is the boot's - UPSTREAM_BOOT (Enemy Expansion and Meaner Monsters at their
+ * shipped defaults, so MUDEX's tables are read too: dexInstall.js:190) and Roleplay & Realism: Items'
+ * realisticEnemyEquipment at its shipped default (true), the arm's own live gate
+ * (combat/rriEnemyEquipment.js:246). The target carries no boot field; a posture other than the shipped
+ * defaults is not modelled.
+ */
+function bootedEquipmentAssigner() {
+  const mudex = UPSTREAM_BOOT.enemyExpansion === true && UPSTREAM_BOOT.meanerMonsters === true;
+  const read = dexRead({ mudex, log: () => {} }); // the oracle's own read (upstreamBodyWorker.mjs:34 logs nothing)
+  const propsOf = (id) => read.classic.get(Number(id))?.props ?? read.enemies.get(Number(id))?.props ?? null;
+  return createDexEquipmentAssigner(propsOf);
+}
+
+/**
  * Roll the game's own enemy loadout and wear its armour/shield (`equipmentVariantFor` +
  * `assignEnemyStartingEquipment`), the pair `scenes/hostCombat.js` `equipEnemy` performs at a
- * spawn. A monster outside the game's orc/centaur table, or a class the variant roll declines,
- * stays bare - it gets no invented gear. The ArmorValues pass is the game's
- * (`enemyArmorValues`), so the hit-chance half comes with it. The right-hand weapon a class rolls
- * is not placed: the target model's attacker is the player, and only worn defence reads it.
+ * spawn. The delegate is the one the client's boot installs (Enemy Expansion's copy of Roleplay &
+ * Realism's class arm, `bootedEquipmentAssigner` above), taken per call: the registry the game sets
+ * stays untouched, so no other mint changes. A monster outside the game's orc/centaur table, or a
+ * class the variant roll declines, stays bare - it gets no invented gear. The ArmorValues pass is
+ * the game's (`enemyArmorValues`), so the hit-chance half comes with it. The right-hand weapon a
+ * class rolls is not placed: the target model's attacker is the player, and only worn defence reads it.
  */
 export function gearEnemy(target, { playerLevel = target?.level ?? 1, rolls = Math.random } = {}) {
   if (!target) return target;
   const variant = equipmentVariantFor(target.careerIndex, !!target.isClass, rolls);
   if (variant == null) return target;
   const entity = { ...target, armor: target.armorValues?.[0] ?? 0 };
-  const eq = assignEnemyStartingEquipment(entity, variant, playerLevel, { rolls });
+  // assignEnemyStartingEquipment's own order (enemyEquipment.js:346-347): the registered delegate's
+  // answer, else ItemHelper's arm.
+  const delegate = UPSTREAM_BOOT.enemyExpansion === true ? bootedEquipmentAssigner() : null;
+  const eq = delegate?.(entity, variant, playerLevel, { rolls }) ?? assignEnemyEquipment(entity, variant, playerLevel, rolls);
   equipArmour(target, eq.armorPieces.map((a) => ({ templateIndex: a.piece, material: a.material })));
   target.armorValues = eq.armorValues;
   return target;

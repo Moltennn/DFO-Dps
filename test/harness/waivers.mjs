@@ -34,13 +34,6 @@ export const WAIVERS = Object.freeze({
     evidence: 'test/pricing.test.js section 5 (250,000 blows of one held item); lootPowers.js:176-181; model.js applyPct',
     fix: 'A later stage: the blow as a distribution over the carried remainder (a state the card does not have).',
   },
-  'W-DEX-LOADOUT': {
-    title: 'A class foe\'s rolled kit is the stock delegate\'s, not Enemy Expansion\'s',
-    detail:
-      'The client boots Daggerfall Enemy Expansion (scenes/shared.js:1518), and its install replaces the enemy-equipment delegate (systems/enemyExpansion/dexInstall.js:246-247 setEnemyEquipmentAssigner(createDexEquipmentAssigner)), which assignEnemyStartingEquipment consults first (combat/enemyEquipment.js:346). For a class foe the booted roll gives a different kit on the same dice (128 at level 45, seeds 0x52-0x54: the stock roll wears 1-5 pieces, the booted one none or a cuirass); monsters are unchanged. gearEnemy rolls the stock delegate. Found by the Stage 2.8 oracle, which rolls in a booted realm; before it, the oracle rolled the same unbooted delegate as the simulator.',
-    evidence: 'test/differential.test.js "the game\'s own enemy loadout"; tools/vendor-parity.mjs "booted class loadout" (vendored = full checkout)',
-    fix: 'A later equipment stage: gearEnemy rolls through the booted delegate (systems/enemyExpansion/dexEquipment.js).',
-  },
 });
 
 export const waiverIds = () => Object.keys(WAIVERS);

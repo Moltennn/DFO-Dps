@@ -216,7 +216,6 @@ These are recorded as waivers or assumptions, not hidden:
   `warded` TRAIT's own pool does not suppress them, and DoT rounds are not ward-gated.
 - `W-LOOT-CARRY`: percentage lines floor each blow instead of carrying the
   fraction.
-- `W-DEX-LOADOUT`: class foes under the booted client can use a different kit.
 - Phase-ward duration, Wrath termination and some encounter windows are model
   parameters or uncalibrated.
 - Spells, procs, the Firmament application and the planners do not all have

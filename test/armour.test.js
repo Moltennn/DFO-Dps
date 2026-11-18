@@ -27,6 +27,7 @@ import { resistBlow } from '../src/bossTraits.js';
 import { EQUIP_SLOTS } from '../vendor/upstream/a3eb1605/src/systems/equip.js';
 import { character, simCharacter, weapon } from './harness/fixtures.mjs';
 import { generator } from './harness/prng.mjs';
+import { upstreamBody } from './harness/upstreamBodies.mjs';
 
 const near = (a, b, eps = 1e-9) => Math.abs(a - b) <= eps;
 const mean = (a) => a.reduce((s, v) => s + v, 0) / a.length;
@@ -41,6 +42,12 @@ function piece(templateIndex, material, condition = 1) {
 
 const EDGED = Object.freeze({ skillId: SKILLS.LongBlade });
 const BLUNT = Object.freeze({ skillId: SKILLS.BluntWeapon });
+
+/** A class career of 50s: the booted loadout reads its hit-point step and its forbidden-armour bits. */
+const CLASS_CAREER = Object.freeze({
+  strength: 50, intelligence: 50, willpower: 50, agility: 50, endurance: 50,
+  personality: 50, speed: 50, luck: 50, hitPointsPerLevel: 8,
+});
 
 /** Every body part wears the same daedric piece. */
 const ALL_PARTS = Object.freeze([
@@ -94,13 +101,26 @@ test('armour: armorValues stays a separate, fixed hit-chance field', () => {
 });
 
 // ── material and condition ────────────────────────────────────────
-test('armour: a class foe wears the game\'s own rolled loadout', () => {
-  const t = enemyTarget(128, { level: 45 });
+test('armour: a class foe wears the game\'s own rolled loadout', async () => {
+  const seed = 0xabc + 128;
+  // Upstream's own booted roll for the same dice: the kit the client's delegate gives (expected, not loosened).
+  const { body } = await upstreamBody({ kind: 'loadout', mobile: 128, seed, playerLevel: 45, career: CLASS_CAREER });
+  assert.ok(body.pieces.length > 0, 'this seed rolls a kit: a bare one would make the comparison vacuous');
+  const t = enemyTarget(128, { level: 45, career: CLASS_CAREER });
   const before = [...t.armorValues];
-  gearEnemy(t, { playerLevel: 45, rolls: generator(0xabc + 128) });
-  assert.ok(hasWornEquipment(t));
+  gearEnemy(t, { playerLevel: 45, rolls: generator(seed) });
+  assert.deepEqual(t.armorValues, body.armorValues, 'the booted kit\'s own ArmorValues pass');
+  // Every worn piece, template and material (the differential's "worn" comparison): a class foe's ArmorValues
+  // clamp at 60, so different kits can read the same seven numbers.
+  const worn = (slots) => Object.values(slots ?? {}).filter(Boolean)
+    .map((it) => [it.templateIndex, it.material]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  assert.deepEqual(worn(t.equip?.slots), body.pieces.map((a) => [a.piece, a.material]).sort((a, b) => a[0] - b[0] || a[1] - b[1]), 'every worn piece');
+  assert.equal(
+    leftHandShield(t)?.templateIndex ?? null,
+    body.pieces.find((a) => a.shield)?.piece ?? null,
+    'the shield the booted kit rolls',
+  );
   assert.notDeepEqual(t.armorValues, before, 'the class ArmorValues pass ran');
-  assert.equal(leftHandShield(t)?.templateIndex, 110, 'this seed rolls a round shield');
   // A monster outside the game's orc/centaur equipment table gets no invented gear.
   const gargoyle = enemyTarget(22, { level: 45 });
   gearEnemy(gargoyle, { playerLevel: 45, rolls: generator(0xabc + 22) });

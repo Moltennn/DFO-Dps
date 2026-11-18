@@ -688,9 +688,9 @@ test('stage: the game\'s own enemy loadout is worn by the target', async () => {
   const u = await upstream();
   const cases = [];
   for (const mobile of [7, 128, 22]) {
-    // Under the client's boot Enemy Expansion's equipment delegate rolls a class foe's kit
-    // (dexInstall.js:246-247); the project's gearEnemy rolls the stock one (W-DEX-LOADOUT).
-    for (const seed of [1, 2, 3]) cases.push({ id: `m${mobile}-s${seed}`, input: { mobile, seed }, ...(mobile >= 128 ? { waived: 'W-DEX-LOADOUT' } : {}) });
+    // Under the client's boot Enemy Expansion's equipment delegate rolls the kit (dexInstall.js:246-247),
+    // and the project's gearEnemy now rolls through that same delegate (src/target.js bootedEquipmentAssigner).
+    for (const seed of [1, 2, 3]) cases.push({ id: `m${mobile}-s${seed}`, input: { mobile, seed } });
   }
   const { bodies: loadouts } = await upstreamBodies(cases.map(({ input: { mobile, seed } }) => ({
     kind: 'loadout', mobile, seed: 0x51 + seed, playerLevel: 45, ...(mobile >= 128 ? { career: CLASS_CAREER } : {}),

@@ -6,6 +6,94 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Equipment delegate - a class foe's kit is Enemy Expansion's (W-DEX-LOADOUT closed)
+
+**What the game does.** The client boots Daggerfall Enemy Expansion at every load (`scenes/shared.js:1518`), and its
+install takes EnemyEntity's equipment delegate: `systems/enemyExpansion/dexInstall.js:246-247`
+`setEnemyEquipmentAssigner(createDexEquipmentAssigner(dexProperties))`, which `combat/enemyEquipment.js:346` consults
+before ItemHelper's arm. The delegate is Roleplay & Realism's class arm (`combat/rriEnemyEquipment.js:240-425`) behind
+its own live gate `realisticEnemyEquipment` (`:246`; shipped default true, `systems/modSettings.js:1470-1477`), reading
+the class through the mod's property table (`systems/enemyExpansion/dexEquipment.js:39-45`, `:104-108`) - so a class
+foe's worn pieces, its seven ArmorValues and its shield come from that roll.
+
+**What changed.** `src/target.js` `gearEnemy` (`:547-559`) now rolls through that delegate instead of
+`assignEnemyStartingEquipment` with an empty registry: new `bootedEquipmentAssigner` (`src/target.js:530-535`) reads the
+mod's tables with `dexRead` (`dexInstall.js:89-99`) with the mod-loaded props (`dexInstall.js:121-126`) and calls
+`createDexEquipmentAssigner` per roll, falling back to `assignEnemyEquipment` exactly as the seam does
+(`enemyEquipment.js:346-347`). Nothing is installed: `installEnemyExpansion` rewrites `ENEMY_BASICS` in place
+(`dexInstall.js:211-220`) and this module's rows are already pristine-table `dexClassicRow`s, so a global install would
+make a later test's mint order-dependent. Posture (ASSUMPTION M40): `UPSTREAM_BOOT` and RRI's shipped
+`realisticEnemyEquipment`; the target carries no boot field.
+
+**Before/after, mobile 128 at player level 45** (differential cases m128-s1..s3, `CLASS_CAREER` of 50s):
+- m128-s1 (seed 0x52): ArmorValues `[60,55,60,45,60,60,60]` -> `[60,60,60,60,60,60,60]`: the RightArm and Chest
+  deductions the stock kit's pieces left are gone (a class foe's values clamp at 60, so anything at or above 60 reads 60).
+- m128-s2 (seed 0x53): the stock kit's first worn piece 104 (greaves) -> 102 (cuirass).
+- m128-s3 (seed 0x54): the stock kit wore a chain right pauldron `[106,256]` -> the booted kit wears nothing.
+- shield: `test/armour.test.js`'s fixture (mobile 128, player level 45, seed 0xb3c) was pinned to the stock roll's round
+  shield **110**; the booted kit wears a leather cuirass (102) and greaves (104) and **no shield** (null).
+- hit chance: a class foe's overhaul hit law reads a flat 60 (`src/model.js:563`), so the displayed hit chance does not
+  move on these fixtures (a level-45 LongBlade-60 attacker: 0.5225 plain per part before and after on m128-s1's body);
+  what moved is the ArmorValues field (the hit-chance term upstream reads per part) and the worn kit. A class foe's
+  seven values also clamp at 60 (`enemyEquipment.js:318-319`), which is why several seeds read all-60 both ways and the
+  piece list is compared too.
+
+**Red, before the fix** (waiver tag removed from the three class-foe cases, stock delegate still in place):
+
+```
+✗ stage: the game's own enemy loadout is worn by the target (4.6ms)
+  AssertionError [ERR_ASSERTION]:
+  ✗ enemy loadout: m128-s1
+      input:     {"mobile":128,"seed":1}
+      upstream:  60   <- expected
+      simulator: 55   <- actual
+      diverged at: armorValues[1]  (delta -5)
+  ✗ enemy loadout: m128-s2
+      input:     {"mobile":128,"seed":2}
+      upstream:  102   <- expected
+      simulator: 104   <- actual
+      diverged at: worn[0][0]  (delta 2)
+  ✗ enemy loadout: m128-s3
+      input:     {"mobile":128,"seed":3}
+      upstream:  undefined   <- expected
+      simulator: [106,256]   <- actual
+      diverged at: worn[0]
+
+  3 failing, 0 stale waiver(s) of 9 case(s).
+```
+
+**Green, after** (no waiver tag):
+
+```
+✔ stage: the game's own enemy loadout is worn by the target (4.8ms)
+ℹ tests 46   ℹ pass 46   ℹ fail 0
+```
+
+and `npm test` reports `ℹ tests 762  ℹ pass 762  ℹ fail 0`; `npm run vendor:verify` OK.
+
+**Outputs moved: class foes only.** A `gearEnemy`-dressed class target now wears the booted kit; monsters keep theirs -
+the same file's m7 (an Orc, career 7, variant 0) and m22 cases pass with unchanged answers, because both sides already
+rolled `rollEnemyEquipment` and now both take the delegate's monster path (`rriEnemyEquipment.js:248-256`, whose poison
+draw and `ConvertOrcish` roll consume the same seeded stream). No report, CLI or allowance path calls `gearEnemy`, so
+the card, fight and relay numbers are unchanged.
+
+**Evidence.** `test/differential.test.js` "the game's own enemy loadout is worn by the target" (9 seeded rolls against
+the booted realm, `test/harness/upstreamBodyWorker.mjs:61-72`), with the `W-DEX-LOADOUT` tag removed; `test/armour.test.js`
+"a class foe wears the game's own rolled loadout" now takes its expected ArmorValues, its every-piece list (template and
+material) and its shield from the booted realm (`upstreamBody({ kind: 'loadout' })`), asserts that seed's kit is not empty,
+and no longer pins the stock kit's shield 110 (expected now null); the monster case's bare body is compared as before.
+`W-DEX-LOADOUT` was deleted from `test/harness/waivers.mjs` after those three cases passed without it.
+
+**Limits.** The shipped posture only (M40): RRI's `realisticEnemyEquipment` off, or DEX off, gives the stock arm and is
+not modelled by `gearEnemy`; `enemyTarget(m, { boot })` does not carry `boot` to the delegate. Classic class ids are
+exercised through mobile 128 (`isClassicEnemyId` true, `enemyBasics.js:103`; class at `:111`, and the oracle realm latches
+`dexLoaded()` true at `dexInstall.js:209`, pinned in `test/targetBody.test.js:65` and `test/differential.test.js:1624`);
+a non-booted posture (mod not loaded) is not modelled (the local delegate is gated by `UPSTREAM_BOOT.enemyExpansion`).
+The local props read skips `dexProperties`' own `dexLoaded()` test (`dexInstall.js:124`) because that gate already answers
+the same switch. The delegate's answer is used for worn armour and the shield only (right-hand weapon, poison and corpse
+items are ignored, as before). A class foe's displayed hit chance reads the overhaul's flat 60 (`src/model.js:563`), so
+this change is proven on the ArmorValues field and the kit list, not on a hit percentage.
+
 ## Stage 3.7f/3.7g - The relay compositor's CWS/DoT claims, differential and distributed
 
 **What the game does.** In a relay fight a Cast When Strikes row is resolved INSIDE the blow's formula: the vendored
