@@ -47,6 +47,7 @@ export const markedOf = inert("markedOf");
 export const markedVerdict = inert("markedVerdict");
 export const poolUnder = inert("poolUnder");
 export const savedShare = inert("savedShare");
+export const segmentDistance = inert("segmentDistance");
 export const spokeLanes = inert("spokeLanes");
 export const strikeDamage = inert("strikeDamage");
 export const strikeVerdict = inert("strikeVerdict");
