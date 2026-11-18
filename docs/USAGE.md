@@ -191,6 +191,8 @@ long-run mean (the line's exact share); the plain card floors each blow.
 ./dfo-dps loadout --cap-aware
 ./dfo-dps loadout --cap-aware --encounter skyketch
 ./dfo-dps loadout --cap-aware --all-encounters
+./dfo-dps loadout --uncapped --shortlist 5 --trials 1000 --seed 0
+./dfo-dps loadout --cap-aware --encounter breach --shortlist 5 --json
 ```
 
 `firmament` plans the real star tree for `longblade`, `shortblade`, `axe`,
@@ -203,6 +205,33 @@ imprint. The capped side applies the encounter purse: depth `15 × ref`, refill
 `3 × ref` per second, a `12 × ref` per-blow cap and a four-claims-a-second
 hand. `ref = 5 + level`. The content names are **Breach**, **Sky-ketch** and
 **Abyss**; the Abyss is marked uncalibrated.
+
+`--shortlist K` takes the K highest deterministic **total-DPS** melee rows
+per target (no bows, guns or fists). It keeps each row's enchant plan and
+imprint, then reranks the candidates on the same seed list. Uncapped uses the
+level-45 tough reference foe (100 HP) and defaults to `stochastic-ttk`; use
+`--objective kill-probability` to rank by the fraction of trials that kill.
+Capped uses the selected encounter's relay body and only `stochastic-relay`.
+With both modes on, each uses its own default and is ranked separately;
+select one mode when passing `--objective` explicitly.
+
+Sampled kill rate is pool / mean TTK **of kills only**. The table shows kill
+probability and a 95% interval for mean TTK (seconds) or kill probability,
+depending on the objective. Paired separation compares adjacent rows (TTK on
+seeds both kill, or kill indicators for `kill-probability`). If Wilson
+intervals for kill probability don't overlap, kill rate is a tiebreaker
+behind kill probability. `--trials` defaults to 1000 (the minimum), `--seed`
+to 0, `--max-seconds` to 900 and `--max-blows` to 6000. An invalid K, trial
+count or mode/objective pairing exits with status 2. `--shortlist 0` (default)
+keeps the original table and HTML; a shortlist prints results only. `--json`
+returns an array with one ranking per target; add `--samples` for per-seed data.
+
+Both samplers include the melee blows and eligible Cast When Strikes direct
+damage and supported Continuous Damage rounds. The relay applies its
+allowance to those claims and tracks live Flow. The shortlist doesn't model
+wear or phase-ward timing. Deterministic total DPS includes modeled proc DPS
+(shown separately); in relay mode that figure is before the allowance. It's
+not a prediction of sampled kill rate.
 
 ## 9. Spells and weapon enchantments
 
@@ -249,10 +278,37 @@ unless `--uncapped` is passed.
 `--old` reads `captures/old/`; the default reads only the live capture folder.
 See `METHOD.md` for the capture fields and the estimate rules.
 
-## 11. Stochastic fight simulation (library)
+## 11. Score one build with `objective`
 
-Stage 3.2 adds a seeded, blow-by-blow simulation over the Stage 3.1 per-blow
-distribution. It is a library API, not a CLI command.
+```bash
+./dfo-dps objective --theory --target soft
+./dfo-dps objective --theory --target boss --health 12000 --objective stochastic-ttk --seed 7
+./dfo-dps objective --theory --target breach --players 3 --health 36000 --objective stochastic-relay --json --samples
+```
+
+Choose `snapshot` (default), `fight`, `relay`, `relay-ceiling`,
+`stochastic-ttk`, `kill-probability` or `stochastic-relay`. The three relay
+objectives require a relay target (`breach` or `gate`); use `stochastic-relay`
+to sample that target. `--health` is the **total** pool for this command, not a
+per-player amount: `--players` does not multiply an explicit `--health`.
+Without an override, the command uses the target's default pool.
+With `--theory` the default target is `gate`; explicitly select a non-relay
+target such as `soft` or `boss` for `stochastic-ttk` or `kill-probability`.
+
+Sampled objectives default to `--trials 1000` (the minimum), `--seed 0`,
+`--max-seconds 900` and `--max-blows 6000` per trial. `--seconds` is for
+spell sustain, not fight simulation. The text reports kill probability with
+a Wilson 95% interval and mean time to kill (TTK) with a 95% interval over
+the trials that kill. The sampled kill-rate score is pool divided by that
+conditional mean, not an unconditional fight rate. If no trial kills, there
+is no mean TTK to report. `--json` includes the
+summary and target assumptions; add `--samples` for the per-seed rows.
+Carry is on by default; `--no-carry` selects the stateless floor sampler.
+
+### Stochastic fight simulation (library)
+
+The library API also exposes the seeded, blow-by-blow simulation over the
+Stage 3.1 per-blow distribution.
 
 ```js
 import { simulateFight, simulateFights, simulatePairedFights, pairedFightSeeds } from './src/simulateFight.js';
@@ -298,8 +354,10 @@ const paired = simulatePairedFights([{ id: 'a', ch: a }, { id: 'b', ch: b }], { 
 - Axe/blunt mastery, venom and execute rebuild the blow table when the foe's
   health crosses 0.5 or an execute threshold.
 - Dual builds follow `dualSchedule`; a Pistolet pair throws instead of being
-  approximated. Wear, CWS, DoTs, Flow, the relay bucket/ward and incoming
-  damage are outside this stage (the assumptions register M29).
+  approximated. The ordinary sampler includes eligible Cast When Strikes
+  direct damage and supported Continuous Damage; CWS with a target per-hit
+  cap or scenario boss traits is refused. Ordinary wear is opt-in; live Flow,
+  the relay bucket/ward and incoming damage are outside this simulator.
 - 1,000 fights at a 12,000 pool take about 3 seconds in Node 22.
 
 ## 12. Relay claim engine (library)

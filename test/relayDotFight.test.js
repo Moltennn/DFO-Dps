@@ -104,6 +104,22 @@ test('3.7d: a CWS cast is its own claim, submitted before the blow claim at the 
   await replay(r);
 });
 
+test('relay tier cache: CWS and DoT claim state stays local to each seed', () => {
+  const item = sword([1]);
+  const ch = simCharacter(BASIC(), item);
+  const args = {
+    target: gateTarget(45, { health: 4000 }), health: 4000, weapon: weaponOf(item),
+    seeds: [7, 1, 11], trace: true, traceAll: true,
+    standard: new Map([[1, spell({ direct: 30 })]]),
+  };
+  const batch = simulateRelayFights(ch, args);
+  for (const [i, seed] of args.seeds.entries()) {
+    assert.deepEqual(strip(batch.rows[i]), strip(simulateRelayFight(ch, { ...args, seed })), `seed ${seed}`);
+  }
+  assert.ok(batch.claimsByKind.proc > 0);
+  assert.ok(batch.claimsByKind.dot > 0);
+});
+
 test('3.7d: a cast inside a shield is refused - the ward is the relay clock, not target.warded', async () => {
   const item = sword([1]);
   const ch = simCharacter(BASIC(), item);
@@ -358,8 +374,8 @@ test('3.7d: no CWS rows ignores spell records and preserves the historical floor
 });
 
 test('3.7d/M38(4): caller-set target.warded blocks relay casts, blow powers and DoT submissions', () => {
-  // M38(4) is a caller-set flag on a relay body, not the relay's own shield clock. The gateway here is the ordinary
-  // `weaponBlow` ward gate keeps suppressing the blow powers; the host also suppresses round submissions, not ticks.
+  // M38(4) uses the caller-set ward flag, not the relay shield clock. `weaponBlow` suppresses blow powers, and the
+  // host skips DoT round submissions without skipping the ticks.
   const item = sword([1]);
   item.affixes = [{ id: 'slayer', param: 'daedra', value: 20 }];
   const ch = simCharacter(BASIC(), item);

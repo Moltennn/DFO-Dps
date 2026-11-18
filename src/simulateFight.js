@@ -1,5 +1,5 @@
 /*
- * dfo-dps - seeded, blow-only stochastic fight simulation (Stage 3.2).
+ * dfo-dps - seeded ordinary fight simulation (Stage 3.2 and later).
  *
  * A fight is a sequence of sampled blows from the Stage 3.1 fight-tier distribution. There is NO second damage formula:
  * each blow is one draw from `blowFightTier` (src/blowOutcomes.js), built with the same `analyze`/`hitModel`/`damageModel`
@@ -21,9 +21,9 @@
  * runs several builds on the SAME seed list, which is the form a comparison should use. A Pistolet pair is refused:
  * its own machine and reload law are not part of this stage.
  *
- * Included since Stage 3.5.1: Cast When Strikes DIRECT DAMAGE on an ordinary foe, resolved before the melee blow with
- * its own injectable stream. A CWS fight takes no per-hit cap and no scenario boss traits (the cast path knows neither;
- * a melee-only fight supports both).
+ * Cast When Strikes direct damage (Stage 3.5.1) and supported Continuous Damage (Stage 3.6b) are sampled on an ordinary
+ * foe from their own injectable stream. Cast-time damage resolves before the melee blow and later rounds tick on the
+ * fight clock. A CWS fight takes no per-hit cap and no scenario boss traits (a melee-only fight supports both).
  *
  * Durability is opt-in (`durability: true`, Stage 3.5.2): ordinary weapon wear (the core's `damageEquipment`), the Cast
  * When Strikes condition bill, the break/unequip leaf and the surviving hand's promotion are modelled. The default
@@ -31,7 +31,7 @@
  * this ordinary simulator refuses relay targets outright, and `simulateRelayFight` rejects `durability: true`
  * (Stage 3.5.3g).
  *
- * Excluded: relay bucket/token/claim and relay durability, DoTs, other spell families, dynamic Flow stack increments,
+ * Excluded: relay bucket/token/claim and relay durability, other spell families, dynamic Flow stack increments,
  * ward lifecycle, ranged support, incoming damage, attacker health/death and pair support. The simulation does not
  * pretend those are present.
  */
@@ -269,8 +269,8 @@ export function createTierCache() {
 export function simulateFight(ch, args = {}) {
   const scenario = normalizeScenario(args);
   scenario.carry ??= true;
-  // `_tierCache` is the batch's shared table set (`simulateFights`); a standalone call gets its own. It never reaches
-  // `blowFightTier` (deleted here) and `.with()` must not inherit it: its edit can change the very inputs a tier reads.
+  // `_tierCache` is shared by a batch; a standalone call gets its own. Strip the option before calling `blowFightTier`
+  // or replaying via `.with()`, whose edits can change the inputs a tier reads.
   const tierCache = scenario._tierCache ?? createTierCache();
   delete scenario._tierCache;
   const withArgs = { ...args };

@@ -164,7 +164,7 @@ test('pin: a single-hand DoT card and a no-DoT pair price the round once (unchan
   assert.equal(bareDual.enchantDps, 0, 'no enchantment, no enchant damage');
 });
 
-test('3.7 band: the dual DoT pair\'s enchant and total DPS bands bracket the central value', () => {
+test('3.7 band: the dual DoT pair has bracketing enchant and ceiling total DPS bands, but no sustained band', () => {
   const { ch, main, standard } = dotPair();
   const gate = gateTarget(30);
   const dual = analyze(ch, { target: gate, health: gate.maxHealth, weapon: weaponOf(main), dual: true, standard });
@@ -176,7 +176,7 @@ test('3.7 band: the dual DoT pair\'s enchant and total DPS bands bracket the cen
   assert.equal(dual.totalDpsMax, null);
 });
 
-test('3.7 band: a Pistolet pair claims one merged DoT round and its band brackets it', () => {
+test('3.7 band: a Pistolet pair claims one merged DoT round and has enchant and ceiling total DPS bands, but no sustained band', () => {
   const gun = weapon(562, { material: 4 });
   gun.equipSlot = 19;
   gun.enchantments = [{ type: 2, param: 1 }];
@@ -265,16 +265,15 @@ test('Phase 2: declared allowance without a run still has no total kill time', (
 });
 
 test('waiver pin (W-PROC-BUDGET): the ceiling still prices CWS procs on top of the capped weapon figure', () => {
-  // Three big instant procs at the gate saturate the allowance: the ceiling (ttkCapOnly) prices their full summed rate
-  // on top of the capped weapon figure, while the allowance can only pay the refill, so the ceiling promises a kill the
-  // allowance refuses.
+  // Three big instant procs at the gate saturate the allowance: totalTtkCapOnly prices their full summed rate on top
+  // of the capped weapon figure, while the allowance can only sustain the refill rate.
   const { ch, item, standard } = heavyProcs();
   const gate = gateTarget(45);
   const card = analyze(ch, { target: gate, health: gate.maxHealth, weapon: weaponOf(item), standard });
   assert.ok(card.enchantDps > 0, 'the procs price');
   // `ttkCapOnly` is the WEAPON-only ceiling; `totalTtkCapOnly` is the ceiling with the procs summed on top, and
   // `claimTotalTtk` is what the allowance itself grants. The ceiling promises the shorter kill.
-  assert.ok(card.allowance?.sustainedDps !== null, 'the fixture runs through the allowance');
+  assert.equal(typeof card.allowance?.sustainedDps, 'number', 'the fixture runs through the allowance');
   expectKnownDiscrepancy(assert, 'W-PROC-BUDGET', card.totalTtkCapOnly < card.claimTotalTtk, {
     ceilingWithProcsTtk: card.totalTtkCapOnly, allowanceWithProcsTtk: card.claimTotalTtk, enchantDps: card.enchantDps,
     sustainedDps: card.allowance?.sustainedDps ?? null,

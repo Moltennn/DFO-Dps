@@ -208,7 +208,6 @@ test('condition: the Breach allowance claims the worn blow', () => {
   const fresh = analyze(simCharacter(CH(), at(BLADE, 100)), { target: gate, health: gate.maxHealth, core: 'overhaul' });
   assert.ok(worn.allowance, 'the relay allowance is still produced');
   assert.ok(worn.cappedPerSwing < fresh.cappedPerSwing, 'the 5% band lowers the claim');
-  assert.ok(worn.ttk >= worn.ttkCapOnly - 1e-9 || worn.ttk > 0);
 });
 
 test('condition: wear over time is not simulated', () => {

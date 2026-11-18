@@ -23,7 +23,9 @@ import { FIRMAMENT_NODES, buildById, buildIds, firmamentSection, planBuild, plan
 import { imprintFamilyById, rankAll } from './imprints.js';
 import { effectLine, planEnchants, planMatrix, SOUL_GEM_POINTS } from './enchantPlan.js';
 import { applyTree, realWeaponLoadouts } from './realBuild.js';
+import { shortlistLoadouts } from './loadoutShortlist.js';
 import { ENCOUNTERS, ENCOUNTER_IDS, encounterById } from './encounters.js';
+import { evaluateObjective, MIN_STOCHASTIC_TRIALS, OBJECTIVE_IDS, STOCHASTIC_OBJECTIVE_IDS } from './objectives.js';
 import { enchantmentName as enchantmentNameOf } from './enchantData.js';
 import { analyzeSpell, resolveSpells, spellCost, spellRotation, standardSpells } from './spells.js';
 import { chartTotals, probeConstants, summarizeProbe } from './probe.js';
@@ -44,10 +46,13 @@ import {
   skillName, skillValue,
 } from './save.js';
 
+const CLI_OBJECTIVE_IDS = [...OBJECTIVE_IDS, ...STOCHASTIC_OBJECTIVE_IDS];
+
 const HELP = `dfo-dps - DFO Online combat DPS and build lab
 
 Usage:
   dfo-dps build  [options]            one build against one target (default)
+  dfo-dps objective [options]         score one build on a named objective
   dfo-dps rank weapons [options]      rank every melee template/material
   dfo-dps report [options]            write a single-file HTML report
   dfo-dps compare [options]           baseline vs one change
@@ -104,6 +109,7 @@ Common options:
   --cap-aware                         enchant-plan/loadout: cap-aware setup; imprints: rank by boss DPS
   --encounter <id>                    loadout: breach, skyketch or abyss (default breach)
   --all-encounters                    loadout: one cap-aware section per content
+  --shortlist <K>                     loadout: sample the top K melee rows per target (0 = off)
   --old                               probe: read the newest capture in captures/old
   --pair                              paired Pistolets (2 shots per cycle, off hand x0.8)
   --dual                              dual wield the left-hand weapon (off hand x0.8, -5 hit)
@@ -150,6 +156,18 @@ Common options:
   --top <n>                           rows in a ranking (default: 20)
   --out <file>                        report output (default: dfo-dps-report.html)
   -h, --help
+
+Objective options:
+  --objective <id>                    ${CLI_OBJECTIVE_IDS.join(', ')} (objective command default: snapshot)
+                                      shortlist: stochastic-ttk (default) or kill-probability with --uncapped;
+                                      stochastic-relay with --cap-aware (default for capped rankings)
+  --health <n>                        total target pool, not multiplied by --players
+  --trials <n>                        sampled trials (default and minimum: ${MIN_STOCHASTIC_TRIALS})
+  --seed <int>                        sampled seed (default: 0)
+  --max-seconds <n>                   sampled horizon in seconds (default: 900)
+  --max-blows <n>                     sampled blow limit per trial (default: 6000)
+  --no-carry                         use the stateless floor sampler (carry is on by default)
+  --samples                          include per-seed rows with --json (off by default)
 `;
 
 const optsSpec = {
@@ -191,6 +209,14 @@ const optsSpec = {
   'cap-aware': { type: 'boolean', default: false },
   encounter: { type: 'string', default: 'breach' },
   'all-encounters': { type: 'boolean', default: false },
+  shortlist: { type: 'string', default: '0' },
+  objective: { type: 'string' },
+  trials: { type: 'string', default: String(MIN_STOCHASTIC_TRIALS) },
+  seed: { type: 'string', default: '0' },
+  'max-seconds': { type: 'string', default: '900' },
+  'max-blows': { type: 'string', default: '6000' },
+  'no-carry': { type: 'boolean' },
+  samples: { type: 'boolean' },
   old: { type: 'boolean', default: false },
   pair: { type: 'boolean', default: false },
   dual: { type: 'boolean', default: false },
@@ -398,6 +424,95 @@ function scenarioOf(ch, values, traits, target) {
     pierce: n(values.pierce, 0),
     weapon: values.theory ? undefined : weaponOverride(values),
   };
+}
+
+function sampledOptions(values) {
+  const trials = Number(values.trials);
+  if (!Number.isSafeInteger(trials) || !values.trials.trim()) throw new Error('--trials must be an integer');
+  if (trials < MIN_STOCHASTIC_TRIALS) throw new Error(`--trials: at least ${MIN_STOCHASTIC_TRIALS} trials are required`);
+  const seed = Number(values.seed);
+  if (!Number.isSafeInteger(seed) || !values.seed.trim()) throw new Error('--seed must be a safe integer');
+  const maxSeconds = Number(values['max-seconds']);
+  const maxBlows = Number(values['max-blows']);
+  if (!Number.isFinite(maxSeconds) || maxSeconds <= 0) throw new Error('--max-seconds must be positive');
+  if (!Number.isSafeInteger(maxBlows) || maxBlows <= 0) throw new Error('--max-blows must be a positive integer');
+  return { trials, seed, maxSeconds, maxBlows };
+}
+
+function printObjective(values) {
+  const { objective = 'snapshot' } = values;
+  if (!CLI_OBJECTIVE_IDS.includes(objective)) {
+    throw new Error(`unknown objective: ${objective} (choose ${CLI_OBJECTIVE_IDS.join(', ')})`);
+  }
+  const sampling = sampledOptions(values);
+  const { seed } = sampling;
+  const pool = values.health === undefined ? null : Number(values.health);
+  if (pool !== null && (!Number.isFinite(pool) || pool <= 0)) throw new Error('a positive target pool is required (set --health)');
+
+  const { ch } = loadCharacter(values);
+  const traits = traitsOf(values);
+  // Legacy gate setup treats --health as per-player; this command scores the declared total.
+  const target = targetOf(ch, { ...values, health: undefined }, traits);
+  if (pool !== null && target.isBoss) target.health = target.maxHealth = pool;
+  if (traits.length) target.bossTraits = traits;
+  const health = pool ?? target.maxHealth;
+  if (!(health > 0)) throw new Error('a positive target pool is required (set --health)');
+  const carry = !values['no-carry'];
+  const r = evaluateObjective(ch, {
+    ...scenarioOf(ch, values, traits, target), objective, health, ...sampling, carry,
+  });
+  const { unit, value, n = null, horizonSeconds = null, killProbability = null, ci = null, assumptions, detail } = r;
+  const metric = r.metric ?? ({ snapshot: 'snapshot-dps', 'relay-ceiling': 'ceiling-dps' }[objective] ?? 'kill-rate');
+  const damageMode = r.damageMode ?? (target.allowance && objective !== 'snapshot' && objective !== 'fight' ? 'relay' : 'uncapped');
+  if (values.json) {
+    if (!values.samples) {
+      delete detail.samples;
+      delete detail.seeds;
+    }
+    console.log(JSON.stringify({ objective, metric, unit, value, n, horizonSeconds, damageMode, carry, seed, killProbability, ci, assumptions, detail }, null, 2));
+    return;
+  }
+  const { p, lo, hi } = killProbability ?? {};
+  const pct = (v) => `${fmt2(v * 100)}%`;
+  const { ttk } = detail;
+  console.log(`Objective: ${objective} | Metric: ${metric} | Value: ${fmt2(value)} ${unit}`);
+  console.log(`n: ${n ?? 'n/a'} | Kills: ${detail.kills ?? 'n/a'} | Censored: ${detail.censored ?? 'n/a'}`);
+  console.log(`Kill probability (Wilson 95%): ${killProbability ? `${pct(p)} [${pct(lo)}, ${pct(hi)}]` : 'n/a'}`);
+  console.log(`Mean TTK (95% CI, kills only): ${ttk?.mean == null ? 'n/a' : `${fmt2(ttk.mean)} s [${fmt2(ttk.mean - ttk.ci95)}, ${fmt2(ttk.mean + ttk.ci95)}]`}`);
+  console.log(`Horizon: ${horizonSeconds === null ? 'n/a' : `${horizonSeconds} s`} | Damage mode: ${damageMode} | Carry: ${carry ? 'on' : 'off'} | Seed: ${seed}`);
+  console.log(`Target assumptions: ${JSON.stringify(assumptions.target)} | Total pool: ${health}`);
+  console.log(`Basis: ${assumptions.basis}`);
+}
+
+function printLoadoutShortlist(values, modes, encounters, k) {
+  if (values.objective !== undefined && modes.length > 1) {
+    throw new Error('--objective requires one shortlist mode: --uncapped for stochastic-ttk or kill-probability; --cap-aware for stochastic-relay');
+  }
+  const opts = { ...sampledOptions(values), k, objective: values.objective, vampire: !!values.vampire };
+  const rankings = modes.flatMap((mode) => (mode === 'cap' ? encounters : [undefined])
+    .map((encounter) => shortlistLoadouts({ ...opts, mode, encounter })));
+  if (values.json) {
+    if (!values.samples) for (const ranking of rankings) for (const row of ranking.rows) delete row.detail;
+    console.log(JSON.stringify(rankings, null, 2));
+    return;
+  }
+  for (const r of rankings) {
+    const { rows } = r;
+    const top = rows[0];
+    const probability = r.objective === 'kill-probability';
+    const pct = (v) => `${fmt2(v * 100)}%`;
+    console.log(`\nLoadout shortlist | ${r.encounter ? ENCOUNTERS[r.encounter].name : 'level-45 tough reference foe'} | ${r.objective} | pool ${r.health}`);
+    console.log(`n: ${opts.trials} | Horizon: ${opts.maxSeconds} s / ${r.maxBlows} blows | Damage mode: ${top.damageMode} | Seed: ${r.seed}`);
+    console.log(top.damageNote);
+    console.log(table(rows.map((row) => [
+      row.rank ?? '-', row.deterministicRank, `${row.category} · ${row.weapon}`, row.imprint ?? '-',
+      fmt2(row.deterministicTotalDps), fmt2(row.deterministicProcDps), row.error ?? (probability ? pct(row.value) : fmt2(row.value)),
+      row.killProbability ? pct(row.killProbability.p) : '-',
+      row.ci ? `[${probability ? pct(row.ci.lo) : fmt2(row.ci.lo)}, ${probability ? pct(row.ci.hi) : fmt2(row.ci.hi)}]` : '-',
+      row.ttkSeparated ?? '-', row.censoringDiffers ?? '-',
+    ]), ['Rank', 'DPS rank', 'Weapon', 'Imprint', 'Det. DPS', 'Proc DPS', probability ? 'Value (%)' : 'Kill rate (DPS)',
+      'Kill %', probability ? 'Wilson 95% CI' : 'Mean TTK 95% CI (s)', 'Separated', 'Censoring differs']));
+  }
 }
 
 function summary(ch, r, extra = {}) {
@@ -611,6 +726,16 @@ export async function main(argv = process.argv.slice(2)) {
   const cmd = parsed.positionals[0] ?? 'build';
   if (cmd === 'theory' || cmd === 'weapons' || cmd === 'skills') values.theory = true;
 
+  if (cmd === 'objective') {
+    try {
+      printObjective(values);
+    } catch (e) {
+      console.error(e.message);
+      process.exit(2);
+    }
+    return;
+  }
+
   if (cmd === 'saves') {
     const saves = listSaves();
     if (!saves.length) { console.log('No saves found.'); return; }
@@ -803,6 +928,17 @@ export async function main(argv = process.argv.slice(2)) {
     if (unknown.length) {
       console.error(`unknown encounter: ${unknown.join(', ')} (choose ${ENCOUNTER_IDS.join(', ')})`);
       process.exit(2);
+    }
+    const k = Number(values.shortlist);
+    if (k !== 0 || !values.shortlist.trim()) {
+      try {
+        if (!Number.isSafeInteger(k) || k < 1) throw new Error('--shortlist must be a positive integer (0 disables it)');
+        printLoadoutShortlist(values, modes, requested, k);
+      } catch (e) {
+        console.error(e.message);
+        process.exitCode = 2;
+      }
+      return;
     }
     const wantsUncapped = modes.includes('uncapped');
     const wantsCap = modes.includes('cap');

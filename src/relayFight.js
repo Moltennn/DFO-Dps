@@ -71,6 +71,10 @@ function normalizeScenario(args) {
  * @returns {null|object} null when the target is not a relay body or the schedule cannot run
  */
 export function simulateRelayFight(ch, args = {}) {
+  return runRelayFight(ch, args);
+}
+
+function runRelayFight(ch, args, batchTiers) {
   const scenario = normalizeScenario(args);
   scenario.carry ??= true;
   const target = scenario.target ?? null;
@@ -174,10 +178,15 @@ export function simulateRelayFight(ch, args = {}) {
     throw new Error('simulateRelayFight: events is a test-only option (use test/harness/relayEventSeam.mjs)');
   }
 
-  const cache = new Map();
+  // Caller-owned carry remainders and spell hooks can change tier inputs between trials.
+  const sharedTiers = batchTiers && !scenario.carryState && scenario.cwsRolls === undefined
+    && (typeof standard?.get !== 'function' || standard.get === Map.prototype.get) ? batchTiers : null;
+  const cache = sharedTiers ?? new Map();
   // The carried stream's remainders: one state per fight (ASSUMPTION M43).
   const carryState = scenario.carry === true ? createCarryState() : null;
   const distribution = (index, hand, stacks) => {
+    // The batch fixes build, target (including relay/ward flags), health, carry mode and other scenario options.
+    // Live claim/DoT/ward state stays in the fight loop; only the health segment and Flow stacks feed back into tiers.
     const key = `${index}|${hand}|${stacks}`;
     let d = cache.get(key);
     if (d) return d;
@@ -419,6 +428,7 @@ export function simulateRelayFight(ch, args = {}) {
     : termination === 'horizon' ? maxSeconds
       : Math.max(lastAttackAt, lastBilledAt);
   const outputDps = time > 0 ? s.dealt / time : null;
+  if (!sharedTiers) cache.clear();
   return {
     seed,
     kill: s.killed,
@@ -489,7 +499,13 @@ export function simulateRelayFights(ch, args = {}) {
   const trials = Math.max(1, Math.floor(num(args.trials, Array.isArray(args.seeds) ? args.seeds.length : 1000)));
   const seeds = Array.isArray(args.seeds) ? [...args.seeds] : pairedFightSeeds(trials, num(args.seed, 0));
   if (!seeds.length) throw new RangeError('simulateRelayFights: at least one seed is required');
-  const rows = seeds.map((seed) => simulateRelayFight(ch, { ...args, seed }));
+  const tiers = new Map();
+  let rows;
+  try {
+    rows = seeds.map((seed) => runRelayFight(ch, { ...args, seed }, tiers));
+  } finally {
+    tiers.clear();
+  }
   if (rows.some((r) => !r)) return null;
   const kills = rows.filter((r) => r.kill);
   const ttk = summarize(kills.map((r) => r.ttk));

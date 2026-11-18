@@ -1,5 +1,5 @@
 /*
- * test/wardSuppression.test.js - Stage 3.6c: a WARD turns every per-blow power, and only those.
+ * test/wardSuppression.test.js - Stage 3.6c: caller-set `target.warded` gates per-blow powers; the boss `warded` trait is a health pool.
  *
  * Upstream gates each per-blow channel on the target's `warded` flag (the host copies the Warden's/court's word onto the
  * body; the relay's own clock is `shieldUntil`, a different field the claim engine reads):
@@ -54,7 +54,7 @@ const SLASH = [{ id: 'slayer', param: 'humanoid', value: 20 }, { id: 'elemental'
 /** A weapon item both sides read: the upstream shape, with the two loot lines. */
 const linedItem = () => ({ ...weaponItem(121, { material: 9 }), affixes: SLASH.map((a) => ({ ...a })) });
 
-test('A ward: lootBlow adds no slayer percent and no elemental flat to a warded foe', async () => {
+test('A: target.warded gates slayer percent and elemental flat in lootBlow', async () => {
   const u = await upstream();
   const item = linedItem();
   const attacker = playerEntity({ level: 30 });
@@ -70,7 +70,7 @@ test('A ward: lootBlow adds no slayer percent and no elemental flat to a warded 
   assert.equal(weaponBlow(ch, w, 100, localBody({ warded: true }), {}), upWarded);
 });
 
-test('B ward: weaponMasteryBlow adds nothing to a warded foe', async () => {
+test('B: target.warded gates weaponMasteryBlow', async () => {
   const u = await upstream();
   const item = weaponItem(121, { material: 9 });
   const desc = character({
@@ -102,7 +102,7 @@ test('B ward: weaponMasteryBlow adds nothing to a warded foe', async () => {
   assert.equal(weaponBlow(ch, w, 100, localBody({ warded: true }), {}), upWarded);
 });
 
-test('C ward: the martial blow channel adds nothing to a warded foe', async () => {
+test('C: target.warded gates the martial blow channel', async () => {
   const u = await upstream();
   const item = weaponItem(121, { material: 9 });
   const path = u.martialPaths.MARTIAL_BY_ID.cutthroat;
@@ -125,7 +125,7 @@ test('C ward: the martial blow channel adds nothing to a warded foe', async () =
   assert.equal(weaponBlow(ch, w, 100, localBody({ warded: true }), { unaware: true }), upWarded);
 });
 
-test('D ward: lootStrike answers a warded foe with nothing - no echo, no leech, no chain', async () => {
+test('D: target.warded gates lootStrike - no echo, no leech, no chain', async () => {
   const u = await upstream();
   const item = { ...weaponItem(121, { material: 9 }), rarity: 'rare', imprint: 'warp-edge' };
   const attacker = playerEntity({ level: 30 });
@@ -165,7 +165,7 @@ test('D ward: lootStrike answers a warded foe with nothing - no echo, no leech, 
   assert.equal(echoDelta(true), 0, 'a warded target: the card carries no echo');
 });
 
-test('GREEN GUARD: Potent Vs survives a ward - the Strikes payload is not a blow power', async () => {
+test('GREEN GUARD: target.warded does not gate Potent Vs - the Strikes payload is not a blow power', async () => {
   const u = await upstream();
   const item = { ...weaponItem(121, { material: 9 }), equipSlot: 19, enchantments: [{ type: 4, param: 1 }] };
   const attacker = playerEntity({ level: 30 });
@@ -178,7 +178,7 @@ test('GREEN GUARD: Potent Vs survives a ward - the Strikes payload is not a blow
   assert.equal(strikesNet(item, local), upRaw);
 });
 
-test('GREEN GUARD: Cast When Strikes is refused by a ward - no cast, no bill', async () => {
+test('GREEN GUARD: target.warded gates Cast When Strikes - no cast, no bill', async () => {
   const u = await upstream();
   const spell = {
     name: 'Ward Probe', index: 1, element: 4, rangeType: 1,
@@ -252,7 +252,7 @@ test('the boss `warded` TRAIT is a health pool the owner takes first, not `targe
   }
 });
 
-test('blowDistribution: a warded target draws no echo', () => {
+test('blowDistribution: target.warded suppresses echo draws', () => {
   const w = weaponOf(weapon(121, { material: 9 }));
   const mean = (m) => [...m].reduce((a, [v, p]) => a + v * p, 0);
   // The same rolls with and without a 100% echo: a ward must leave the two identical.

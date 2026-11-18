@@ -6,6 +6,34 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage 3.8: sampled loadout shortlist (2026-11-19)
+
+**Source.** `src/realBuild.js` supplies the deterministic candidates, enchant
+plans and imprints. `src/loadoutShortlist.js` keeps those builds and reranks a
+melee shortlist on common seeds through `src/objectives.js`, separately for
+the ordinary foe and each relay body. The sampled damage note names the
+existing Cast When Strikes direct-damage and Continuous Damage paths rather
+than describing the fights as blow-only.
+
+**Evidence.** `test/loadoutShortlist.test.js` covers opt-out output bytes,
+mode and trial validation, unchanged build shape, the retained imprint,
+seed pairing and both sampler modes. No damage formulas changed.
+
+## Stage 3.8: expose sampled objectives in the CLI (2026-11-19)
+
+**Source.** `src/objectives.js` supplies the scores and intervals. `dfo-dps
+objective` applies it to a single CLI build. The command uses an explicit
+`--health` as the total pool and samples with carry on unless `--no-carry`
+is passed.
+
+**Red → green.** `test/objectiveCli.test.js` first failed on the missing
+command and flags, then verified library parity, repeatability, carry and
+sample reporting, total relay health, and input errors.
+
+**Outputs moved: none.** Compared complete before/after stdout for `build
+--theory --target soft` and `loadout --theory --top 1`. No scoring or
+benchmark code changed; sampled objective assumptions now record carry.
+
 ## Sampled fights carry held-item fractions by default (2026-11-18)
 
 **Source.** `systems/loot/lootPowers.js:169-181@a3eb1605` keeps a fractional

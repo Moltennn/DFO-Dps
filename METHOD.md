@@ -104,12 +104,16 @@ deterministic ranking objectives; these keep their own metrics. In particular
 not the card's proc-inclusive totals. Pricing/loadout card baselines and the
 benchmark's `cardDps` selector keep the pre-budget ceiling. The separate
 loadout purse summary (including its weapon-TTK fallback) is unchanged.
+`dfo-dps objective` scores one build on any of these objectives or on
+`stochastic-ttk`, `kill-probability` or `stochastic-relay`. An explicit
+`--health` is the total pool, not multiplied by `--players`.
 The sampled objectives start at 1,000 trials
 (the audit's first pass; 10,000 for a reported mean) and rank on the same seeds;
 a censored trial is reported as kill probability, never folded into the mean.
 The sampled fights use live held-item percentage remainders starting at zero
-per fight; `carry: false` preserves the old floor sampler. The deterministic
-objectives and plain card do not track live remainders.
+per fight; `--no-carry` (`carry: false` in the library) preserves the old
+floor sampler. The deterministic objectives and plain card do not track
+live remainders.
 See the [README](README.md) and [docs/USAGE.md](docs/USAGE.md) for the
 commands and target flags.
 
@@ -213,6 +217,28 @@ template in every hold configuration per mode, and shows Family, weapon,
 imprint, Total DPS, Burst 5s, Avg DPS, TTK and Purse kept. Monster-type
 damage imprints are excluded from loadout selection. It also carries the
 shared enchant template, imprint ratings and Firmament plans.
+
+`loadout --shortlist K` is a second pass, not a search over all builds or
+imprints. It caches the deterministic universe per setup, filters to the
+melee rows supported by the benchmark, and keeps the top K by `totalDps`.
+It reconstructs each enchanted character with `realBuildStages` and passes the
+same deterministic imprint as a scenario power. `rankBuilds` uses common
+random numbers on one target per ranking: the level-45 tough reference foe or
+the selected encounter relay. Deterministic DPS adds expected proc DPS to the
+carried blow figure; sampled kill rate walks health and hit timing, rolls
+Cast When Strikes direct damage and supported Continuous Damage, and (on the
+relay) bills those claims through caps, tokens and the refill bucket. Neither
+sampler rerolls the enchant plan or imprint. The output gives both ranks so
+changes in order are visible, not credited to a different build.
+
+Example (uncapped, K=5, seed 0, 1,000 trials): the dual Wakizashi ranked
+second by deterministic DPS (4,700.35, including 604.30 proc DPS), ahead of
+the dual Katana (4,629.51, including 421.80 proc DPS). Their carried blow
+rates alone were 4,096.05 and 4,207.71, respectively. The sampled scores were
+529.10 and 398.86 kill DPS. Removing only Cast When Strikes from those same
+five builds, without changing the seeds or target, left the sampled scores
+and order unchanged at that precision. The proc term changes the deterministic
+comparison, but does not explain the sampled order on this 100 HP target.
 
 The capped side applies the boss purse (`net/gate/gateBrain.js`,
 `bossBody`): depth `15 * ref`, refill `3 * ref` a second, per-blow cap

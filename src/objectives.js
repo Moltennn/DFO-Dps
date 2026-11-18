@@ -180,7 +180,7 @@ function evaluateStochastic(objective, def, ch, scenario, target, pool) {
     horizonSeconds: sim.horizonSeconds,
     damageMode: sim.damageMode ?? null,
     killProbability: kp,
-    assumptions: { objective, target: targetAssumptions(target), health: pool, basis: def.basis },
+    assumptions: { objective, target: targetAssumptions(target), health: pool, basis: def.basis, carry: (scenario.carry ?? true) === true },
     detail: {
       trials: sim.trials,
       kills: sim.kills,

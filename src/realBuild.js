@@ -189,3 +189,6 @@ export function realWeaponLoadouts({ modes = ['uncapped', 'cap'], vampire = fals
   }
   return out;
 }
+
+/** The sampled fight schedule supports melee weapon rows only. */
+export const isSampledLoadout = (row) => row.family !== 'Archery' && row.category !== 'Fists' && !WEAPONS[row.template]?.ranged;

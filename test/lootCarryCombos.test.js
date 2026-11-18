@@ -141,7 +141,7 @@ test('1. dual wield: each hand keeps its OWN remainder (per item), checked blow 
 // 2. BACKSTAB
 // ---------------------------------------------------------------------------------------------------------------------
 
-test('2. backstab: the x3 is taken after the percentage channels and advances the remainder once; carry on = carry off with no percentage line', () => {
+test('2. backstab: x3 follows the percentage channels; carried and floor tiers match mean damage and backstab share with no percentage line', () => {
   // LOCAL. The order is the one src/model.js damageModel (`values` = weaponBlow, then `finish(d * 3)`) and
   // src/blowOutcomes.js carryResolve (weaponBlow, `card *= 3`, finishBlow, resolveOne) both use.
   // LOCAL check A: a backstab draw and a plain draw each advance the loot remainder EXACTLY as weaponBlow on the base
@@ -184,7 +184,7 @@ test('2. backstab: the x3 is taken after the percentage channels and advances th
   // for that base with the live remainder. `resolveOne` (the defence and payload stage after the card) is not exported,
   // so the pre-defence card cannot be read from carryResolve's output. Not asserted here.
 
-  // LOCAL differential: with NO percentage line the carried stream is the floor stream draw for draw, backstab included.
+  // LOCAL differential: with NO percentage line, compare the carried and floor distributions.
   // Weapon bare, so weaponBlow is the identity; any reordering of the x3 against crit/material/condition would show here
   // only through rounding, so this checks that the carry path leaves the x3 and finish stages alone.
   const bare = weapon(121, { material: 9 });

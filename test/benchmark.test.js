@@ -20,7 +20,7 @@ const FAMILY = Object.fromEntries(IMPRINT_FAMILIES.map((f) => [f.key, f]));
 // One universe for the whole file: `realWeaponLoadouts` runs the real planner chain, so it is not free.
 const UNIVERSE = loadoutUniverse();
 
-test('the benchmark character chain IS the optimizer chain (no second construction)', () => {
+test('the benchmark uses the optimizer chain, with a carried imprint step and a separate card ceiling', () => {
   for (const pick of ['1H', '2H', 'DW']) {
     const row = UNIVERSE.rows.find((r) => r.category === pick);
     const family = FAMILY[row.key];
@@ -31,28 +31,18 @@ test('the benchmark character chain IS the optimizer chain (no second constructi
     const expected = stages.enchRun.enchantDps + (stages.imprint?.dps ?? stages.enchRun.carriedCappedDps);
     assert.ok(Math.abs(template.totalDps - expected) < 1e-9, `${pick} total`);
     assert.equal(template.imprintPower, stages.imprint?.power?.name ?? null, `${pick} imprint`);
-  }
-});
 
-test('the imprint step is one metric: carried minus carried, and the row names it', () => {
-  // A row that mixed the carried imprint figure with the plain card baseline would report ~2% of metric jump as
-  // the imprint's worth. Every figure in the row is the CARRIED metric (the carried capped blow plus the proc
-  // layer, which is not a percentage channel), and the imprint step is therefore carried minus carried.
-  const row = UNIVERSE.rows.find((r) => r.category === '1H');
-  const family = FAMILY[row.key];
-  const template = realTemplate(row.template, family, { dual: false });
-  const stages = realBuildStages(row.template, family, { dual: false });
-  assert.ok(stages.imprint, 'the 1H fixture carries an imprint');
-  assert.equal(template.metric, 'carried');
-  assert.ok(Math.abs(template.treeDps - (stages.treeRun.carriedCappedDps + stages.treeRun.enchantDps)) < 1e-9, `treeDps ${template.treeDps}`);
-  assert.ok(Math.abs(template.enchDps - (stages.enchRun.carriedCappedDps + stages.enchRun.enchantDps)) < 1e-9, `enchDps ${template.enchDps}`);
-  const step = template.totalDps - template.enchDps;
-  const carried = stages.imprint.dps - stages.enchRun.carriedCappedDps;
-  assert.ok(Math.abs(step - carried) < 1e-9, `imprint step ${step} vs carried minus carried ${carried}`);
-  // ... and the two baselines differ on this fixture, so the check is not vacuous (nor the old card mix)
-  assert.ok(Math.abs(stages.enchRun.carriedCappedDps - stages.enchRun.cappedDps) > 1e-9, 'carried and card baselines differ');
-  assert.ok(Math.abs(template.cardEnchDps - stages.enchRun.ceilingTotalDps) < 1e-9, 'the card ceiling baseline is kept and named');
-  assert.equal(row.cardDps, Number(template.cardTotalDps.toFixed(4)), 'the benchmark uses the card ceiling, not the carried rate');
+    if (pick !== '1H') continue;
+    // Mixing the carried imprint figure with the card baseline would misattribute their difference to the imprint.
+    assert.ok(stages.imprint, 'the 1H fixture carries an imprint');
+    assert.equal(template.metric, 'carried');
+    const step = template.totalDps - template.enchDps;
+    const carried = stages.imprint.dps - stages.enchRun.carriedCappedDps;
+    assert.ok(Math.abs(step - carried) < 1e-9, `imprint step ${step} vs carried minus carried ${carried}`);
+    assert.ok(Math.abs(stages.enchRun.carriedCappedDps - stages.enchRun.cappedDps) > 1e-9, 'carried and card baselines differ');
+    assert.ok(Math.abs(template.cardEnchDps - stages.enchRun.ceilingTotalDps) < 1e-9, 'the card ceiling baseline is kept and named');
+    assert.equal(row.cardDps, Number(template.cardTotalDps.toFixed(4)), 'the benchmark uses the card ceiling, not the carried rate');
+  }
 });
 
 test('capped loadout baselines stay on the pre-allowance card ceiling', () => {

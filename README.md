@@ -74,6 +74,7 @@ generic boss with the health, armour and traits you pass.
 | Command | Purpose |
 |---|---|
 | `build` | One build against one target; the default command. |
+| `objective` | Score one build on a named deterministic or sampled objective. |
 | `rank weapons` | Rank melee templates and materials. |
 | `report` | HTML report for one build and target. |
 | `compare` | Baseline versus one stat, skill or weapon change. |
@@ -83,7 +84,7 @@ generic boss with the health, armour and traits you pass.
 | `weapons`, `skills` | HTML weapon ceiling page; `skills` is an alias. |
 | `imprints` | Rank Rare imprints by weapon family. |
 | `enchant-plan` | Per-piece enchant budget and priority plan. |
-| `loadout` | Tree + enchants + best imprint, per weapon/hold. |
+| `loadout` | Tree + enchants + best imprint, per weapon/hold; `--shortlist K` reranks the top melee builds on shared fight seeds. |
 | `firmament` | Star-tree plans for the supported builds. |
 | `spell`, `spells` | One spell, or an HTML page of damaging spells. |
 | `graph` | Standalone SVG line chart of stats, skills or stars. |
@@ -190,6 +191,32 @@ Use `./dfo-dps --help` for every flag, or see
 - Per-blow ward suppression and the full proc/DoT budget.
 - Elite Breach, and non-English boss-trait seeding.
 - Exact reproduction of a live client's frame timing or RNG sequence.
+
+### Unverified mechanics
+
+The pinned source shows the rules below, but live-client parity is unverified.
+Source paths are relative to `vendor/upstream/a3eb1605/src/` unless noted.
+
+- **Missed-frame catch-up:** `scenes/gate/standInSpell.js:122-150` resets the
+  clock on idle or backwards frames and bundles due DoT ticks into one claim
+  per body per frame. The local relay bills one claim per round. See
+  [`test/standInSpellCatchUp.test.js`](test/standInSpellCatchUp.test.js) for the
+  oracle cases and the known difference; actual frame delivery is unvendored.
+- **Round phase and ties:** `scenes/gate/standInSpell.js:115,122` uses
+  `Math.floor(now() / COURT_ROUND_MS)` on a 5-second grid
+  (`scenes/gate/gateCourt.js:159`, `net/wire.js:240`). The simulator anchors
+  rounds at fight `t = 0` (`src/simulateFight.js:447-452`, M35); the unvendored
+  host determines the order of a blow and a round due at the same time.
+- **Stun:** Breaking Dagon's Reckoning sets an 8-second stun; the relay applies
+  a 1.5× pre-cap hit multiplier to the stunned whole Warden
+  (`net/gate/gateBrain.js:929-930,1331,2106-2109`). The model omits it; the host
+  code that times client actions and claim delivery is not vendored.
+- **Geometry:** `scenes/gate/gateCourt.js:889-894,1163` checks the player's feet
+  against the boss's court. `net/gate/gateBrain.js:1313-1320` checks the incoming
+  pose, floor, court and melee reach. The model omits geometry; the live host
+  that supplies player positions and detects contact is not vendored.
+
+`docs/ASSUMPTIONS.md` is cited by the project but absent from this tree.
 
 ## Data, outputs and rules
 
