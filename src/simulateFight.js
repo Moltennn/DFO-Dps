@@ -908,6 +908,8 @@ export function simulateFights(ch, args = {}) {
   // only the seed's draws differ. `simulateFight` treats `_tierCache` as internal and strips it from `.with()`.
   const tierCache = createTierCache();
   const rows = seeds.map((seed) => simulateFight(ch, { ...args, seed, _tierCache: tierCache }));
+  // Row closures keep this cache alive; carried tables are large, so release them once the batch is sampled.
+  tierCache.tiers.clear();
   if (rows.some((r) => !r)) return null;
   const kills = rows.filter((r) => r.kill);
   const pool = rows[0].health;

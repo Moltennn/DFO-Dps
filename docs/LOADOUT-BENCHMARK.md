@@ -56,9 +56,9 @@ condition bill and breaks (Stage 3.5.2). The sampler is the project's own; it is
 of the game's RNG, and no chart here claims that.
 
 New runs inherit `simulateFights`' live percentage carry, reset at the start
-of each trial. The checked-in `docs/benchmark/` results are from the previous
-floor default; they have not been regenerated. The optimizer and card ceiling
-baselines are unchanged.
+of each trial. The checked-in `docs/benchmark/` results were regenerated under
+that default (mean DPS moves about +0.7-0.9% on long dual-wield cells). The
+optimizer and card ceiling baselines are unchanged.
 
 | Field | Definition |
 |---|---|
