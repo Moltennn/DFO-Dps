@@ -11,7 +11,8 @@
  * Distribution comparison is on integer blow counts (a two-sample Pearson chi-square over fixed 10-blow bins, plus a
  * bin-free two-sample Kolmogorov-Smirnov distance), and on TTK/damage means and quantiles. Thresholds are fixed here:
  * blow-count chi z <= 3.5, KS <= 1.95*sqrt(2/n) (alpha 0.001), mean z <= 4, and median/p10/p90 inside 5% of the
- * upstream sample. They were chosen before the runs and are not adjusted to a result.
+ * upstream sample. They were chosen before the runs and are not adjusted to a result. The local runs pass `carry: false`
+ * explicitly: the oracle is upstream's fresh-item damage, which carries no held percentage remainder.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -130,7 +131,7 @@ async function compareScenario({ id, desc, ch, item, offItem = null, pool, trial
     target, health: pool, weapon: weaponOf(item), seed, trials,
     ...(offItem ? { dual: true } : {}),
   };
-  const local = simulateFights(ch, args);
+  const local = simulateFights(ch, { ...args, carry: false });
   const events = eventsOf(ch, args);
   const upstreamRows = [];
   const upItem = oracleItem(item);
@@ -181,7 +182,7 @@ test('3. a venom half-health fight rebuilds at half and matches upstream', async
   const item = { ...weapon(121, { material: 9 }), rarity: 'rare', imprint: 'tsaesci-fang' };
   const ch = simCharacter(BASIC(), item);
   await compareScenario({ id: 'venom half-health', desc: BASIC(), ch, item, pool: 2000, trials: 800, seed: 0x3203 });
-  const local = simulateFights(ch, { target: referenceFoe(30, 'tough'), health: 2000, weapon: weaponOf(item), trials: 50, seed: 0x3203 });
+  const local = simulateFights(ch, { target: referenceFoe(30, 'tough'), health: 2000, weapon: weaponOf(item), trials: 50, seed: 0x3203, carry: false });
   const crossed = local.rows.filter((r) => r.segments.length > 1);
   assert.ok(crossed.length > 0, 'the local fights cross the half-health segment');
   const seg = crossed[0].segments;

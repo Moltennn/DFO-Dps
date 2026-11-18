@@ -153,15 +153,17 @@ test('5. a fixed shield and a wounded-boss join change the claim state, not the 
   const item = sword();
   const ch = build();
   const target = gateTarget(45, { health: 2000 });
-  const before = simulateRelayFight(ch, { target, health: 2000, weapon: weaponOf(item), seed: 3 });
+  const before = simulateRelayFight(ch, { target, health: 2000, weapon: weaponOf(item), seed: 3, trace: true });
   const shielded = simulateRelayFight(ch, { target, health: 2000, weapon: weaponOf(item), seed: 3, shieldUntil: 0.5 });
-  const wounded = simulateRelayFight(ch, { target, health: 2000, weapon: weaponOf(item), seed: 3, fresh: false });
+  const wounded = simulateRelayFight(ch, { target, health: 2000, weapon: weaponOf(item), seed: 3, fresh: false, trace: true });
   assert.ok(before.attacks > 0 && before.kill);
+  assert.equal(before.wardedAttacks ?? 0, 0, 'the unshielded fight is never turned by a ward');
   assert.ok(shielded.wardedAttacks > 0, 'the first attacks are turned by the ward');
   if (shielded.trace) assert.ok(shielded.trace[0].t >= 0.5, 'no claim is sent while warded');
-  assert.ok(shielded.bucketClip >= 0);
-  assert.ok(wounded.noToken >= 0);
-  assert.ok(wounded.bucket <= before.bucket + 1e-9 || wounded.kill);
+  const state = (r) => [r.attacks, r.kill, r.bucket, r.noToken, r.bucketClip];
+  assert.notDeepEqual(state(shielded), state(before), 'the shield changes what the claim state records');
+  // A wounded join starts the damage bucket empty: its first accepted claim sees almost none of the fresh bucket.
+  assert.ok(wounded.trace[0].bucket < before.trace[0].bucket / 10, `first claim bucket ${wounded.trace[0].bucket} vs fresh ${before.trace[0].bucket}`);
 });
 
 test('6. a group fight uses one player\'s share as the relay pool', () => {
