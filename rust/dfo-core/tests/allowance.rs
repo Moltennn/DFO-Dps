@@ -86,6 +86,7 @@ fn allowance_matches_js_vectors() {
     let mut seen: BTreeMap<String, usize> = BTreeMap::new();
     let mut nulls = 0;
     let mut kills = 0;
+    let mut boundary_hits = 0;
     for mut c in common::load("allowance") {
         let kind = c.kind.clone();
         match kind.as_str() {
@@ -203,7 +204,7 @@ fn allowance_matches_js_vectors() {
                 let e = c.bool();
                 c.check_eq("saturated", e, s.saturated);
             }
-            "simulate" => {
+            "simulate" | "simulate_shield_end" => {
                 let share = c.f64();
                 let law = Law {
                     reference: None,
@@ -250,6 +251,13 @@ fn allowance_matches_js_vectors() {
                     m => c.fail(&format!("unknown mode {m}")),
                 };
                 let run = simulate_allowance(&p);
+                if kind == "simulate_shield_end" {
+                    let r = run.as_ref().unwrap();
+                    // the boundary must really be exercised: a phase shield was raised and later claims landed
+                    if r.shielded_seconds > 0.0 && r.claims_accepted > 0 {
+                        boundary_hits += 1;
+                    }
+                }
                 if run.is_none() {
                     nulls += 1;
                 }
@@ -327,6 +335,10 @@ fn allowance_matches_js_vectors() {
         nulls >= 4,
         "allowance.txt: only {nulls} null simulate results"
     );
+    assert!(
+        boundary_hits >= 8,
+        "allowance.txt: only {boundary_hits} shield-end boundary cases ran a shield"
+    );
     assert!(kills >= 50, "allowance.txt: only {kills} simulated kills");
     for (kind, min) in [
         ("ref_of", 90),
@@ -335,6 +347,7 @@ fn allowance_matches_js_vectors() {
         ("streams", 150),
         ("steady", 150),
         ("simulate", 150),
+        ("simulate_shield_end", 8),
         ("run", 100),
     ] {
         let n = seen.get(kind).copied().unwrap_or(0);

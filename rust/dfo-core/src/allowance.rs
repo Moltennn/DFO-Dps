@@ -351,8 +351,10 @@ pub fn simulate_allowance(p: &SimParams) -> Option<Run> {
         };
         offered += claim;
         claims += 1;
-        if t <= shield_until {
-            // refused before a token is spent (gateBrain.js:1308)
+        if t < shield_until {
+            // refused before a token is spent; the law is strict (src/allowance.js:180;
+            // vendor/upstream/a3eb1605/src/net/gate/gateBrain.js:1308@a3eb1605 `now < B.shieldUntil`),
+            // so a claim at exactly the shield's end is accepted
             refused += 1;
             continue;
         }

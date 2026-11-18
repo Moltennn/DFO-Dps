@@ -436,7 +436,7 @@ function randomBuild(R) {
 }
 
 function genAllowance() {
-  const out = new Out('allowance', 'kinds: ref_of level r | law level ref depth rate cap hitHz share | spec level players openingS immunity(opt) nphases (at shieldS)* => level players openingS immunity(opt) nphases (at shieldS)* | streams cappedPerSwing hit aps cap withProcs nprocs (name(-|name) damage dotTick)* => nstreams (kind(b|p|d) name perClaim interval start)* | steady depth rate cap hitHz nstreams (perClaim interval start)* => offeredDps claimsPerSecond claimLimitedDps refill sustainedDps saturated | simulate share depth rate cap hitHz fresh openingS immunity(opt) splitPenaltyS maxSeconds burstWindowS mode nphases (at shieldS)* nstreams (perClaim interval start(opt))* => null | killed ttk fightSeconds shieldedSeconds activeSeconds claimsOffered claimsAccepted claimsRefused offered claimed landed clipped landedShare burst5 dryAt immunityShare openingS splitPenaltyS | run level share hasSpec openingS immunity(opt) nphases (at shieldS)* nstreams (perClaim interval start)* fresh splitPenaltyS => null | law(ref depth rate cap hitHz share) share run-fields... ceilingDps sustainedDps saturated claimsPerSecond burst5Dps averageDps(opt). simulate modes: 0 none, 1 perClaim*(0.5+hp/share), 2 -1, 3 NaN, 4 t<10 ? perClaim : perClaim*2');
+  const out = new Out('allowance', 'kinds: ref_of level r | law level ref depth rate cap hitHz share | spec level players openingS immunity(opt) nphases (at shieldS)* => level players openingS immunity(opt) nphases (at shieldS)* | streams cappedPerSwing hit aps cap withProcs nprocs (name(-|name) damage dotTick)* => nstreams (kind(b|p|d) name perClaim interval start)* | steady depth rate cap hitHz nstreams (perClaim interval start)* => offeredDps claimsPerSecond claimLimitedDps refill sustainedDps saturated | simulate|simulate_shield_end share depth rate cap hitHz fresh openingS immunity(opt) splitPenaltyS maxSeconds burstWindowS mode nphases (at shieldS)* nstreams (perClaim interval start(opt))* => null | killed ttk fightSeconds shieldedSeconds activeSeconds claimsOffered claimsAccepted claimsRefused offered claimed landed clipped landedShare burst5 dryAt immunityShare openingS splitPenaltyS | run level share hasSpec openingS immunity(opt) nphases (at shieldS)* nstreams (perClaim interval start)* fresh splitPenaltyS => null | law(ref depth rate cap hitHz share) share run-fields... ceilingDps sustainedDps saturated claimsPerSecond burst5Dps averageDps(opt). simulate modes: 0 none, 1 perClaim*(0.5+hp/share), 2 -1, 3 NaN, 4 t<10 ? perClaim : perClaim*2');
   const R = makeLcg(0x4004);
 
   const levels = [-5, 0, 0.5, 1, 1.9, 2, 10, 59.5, 59.99, 60, 61, 1000, NaN, Infinity, -Infinity, -0];
@@ -521,6 +521,22 @@ function genAllowance() {
   simCases.push(base({ streams: [{ perClaim: 10, interval: NaN, start: 1 }] }));
   simCases.push(base({ streams: [{ perClaim: 70, interval: 1, start: 1 }], share: 60 })); // dies on the first claim
   for (const mode of [1, 2, 3, 4]) simCases.push(base({ mode, streams: [{ perClaim: 100, interval: 0.7, start: 0.7 }], share: 2500 }));
+  // Shield ending exactly on a claim time (src/allowance.js:180, strict `t < shieldUntil`; gateBrain.js:1308). Interval 1 and
+  // start 1 are binary-exact, so the claim at t = until falls exactly on the shield's end and must be accepted. Emitted as
+  // the named kind `simulate_shield_end`.
+  const wide = { depth: 1000, rate: 100, cap: 100, hitHz: 4 };
+  const boundary = [];
+  for (const shieldS of [1, 3]) {
+    // 100 hp, 10 a claim: hp <= 66 after claim 4 (t=4), <= 33 after claim 7 (t=7)
+    boundary.push(base({ share: 100, law: wide, streams: [{ perClaim: 10, interval: 1, start: 1 }], phases: [{ at: 0.66, shieldS }, { at: 0.33, shieldS }] }));
+    boundary.push(base({ share: 100, law: wide, streams: [{ perClaim: 10, interval: 1, start: 1 }], phases: [{ at: 0.5, shieldS }] }));
+    // unsorted phases, and a second stream whose claims also fall inside and at the end of the shield
+    boundary.push(base({ share: 100, law: wide, streams: [{ perClaim: 10, interval: 1, start: 1 }, { perClaim: 1, interval: 0.5, start: 0.5 }], phases: [{ at: 0.33, shieldS }, { at: 0.66, shieldS }] }));
+  }
+  boundary.push(base({ share: 100, law: wide, streams: [{ perClaim: 10, interval: 1, start: 1 }], phases: [{ at: 0.66, shieldS: 1 }, { at: 0.66, shieldS: 0 }] }));
+  boundary.push(base({ share: 100, law: wide, streams: [{ perClaim: 10, interval: 0.25, start: 0.25 }], phases: [{ at: 0.5, shieldS: 1 }] }));
+  for (const c of boundary) { c.kind = 'simulate_shield_end'; simCases.push(c); }
+
   for (let i = 0; i < 160; i++) {
     const b = randomBuild(R);
     const law = allowanceLaw(b.level);
@@ -560,7 +576,7 @@ function genAllowance() {
       burstWindowS: c.burstWindowS,
       perClaimAt: perClaimAtOf(c.mode, c.share),
     });
-    out.add('simulate', F(c.share), F(c.law.depth), F(c.law.rate), F(c.law.cap), F(c.law.hitHz), B(c.fresh), F(c.openingS), O(c.immunityShare), F(c.splitPenaltyS), F(c.maxSeconds), F(c.burstWindowS), I(c.mode),
+    out.add(c.kind ?? 'simulate', F(c.share), F(c.law.depth), F(c.law.rate), F(c.law.cap), F(c.law.hitHz), B(c.fresh), F(c.openingS), O(c.immunityShare), F(c.splitPenaltyS), F(c.maxSeconds), F(c.burstWindowS), I(c.mode),
       ...phaseTokens(c.phases), ...streamTokens(c.streams), '=>', ...runTokens(run));
   }
 

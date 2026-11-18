@@ -64,7 +64,9 @@ edge cases listed in the generator) the Rust output equals the JS output bit for
 compared as "both NaN" (JS NaN payloads are not meaningful). That covers ties at .5, `-0`,
 `1e-9` boundary of `apply_pct`, values near 2^53, negative and limit seeds, multi-byte, astral and
 lone-surrogate names, 0- and 64-unit names, 10 000-draw sequences, snapshot/restore traces,
-shield/token/bucket/health clipping and kills in the claim engine.
+shield/token/bucket/health clipping and kills in the claim engine, and a shield ending exactly on
+a claim time (`simulate_shield_end`; the claim at the end is accepted, `t < shieldUntil`, as in
+upstream `gateBrain.js:1308`; `src/allowance.js` was made strict on main and the port follows it).
 
 Not proven: any input outside the vectors; the all-zero-state fix of `rng` (a fixed point no
 (seed, name) is known to reach, so it is unreachable by vector); stream names that are not
