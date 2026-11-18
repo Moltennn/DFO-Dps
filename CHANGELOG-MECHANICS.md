@@ -31,8 +31,10 @@ command and flags, then verified library parity, repeatability, carry and
 sample reporting, total relay health, and input errors.
 
 **Outputs moved: none.** Compared complete before/after stdout for `build
---theory --target soft` and `loadout --theory --top 1`. No scoring or
-benchmark code changed; sampled objective assumptions now record carry.
+--theory --target soft` and `loadout --theory --top 1`. The benchmark file
+(`tools/benchmark-loadouts.mjs`) had only a refactor: the Archery/Fists filter
+moved into `isSampledLoadout` in `src/realBuild.js`, with identical rows. No
+scoring code changed; sampled objective assumptions now record carry.
 
 ## Sampled fights carry held-item fractions by default (2026-11-18)
 

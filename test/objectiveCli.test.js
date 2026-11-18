@@ -52,6 +52,20 @@ test('objective CLI treats relay --health as the total pool, independent of play
   assert.equal(row.assumptions.target.allowance.players, 3);
 });
 
+test('relay text labels the simulated pool as the per-player share, and the kill count beside the TTK interval', () => {
+  const text = run('--objective', 'stochastic-relay', '--target', 'gate', '--health', '500', '--players', '3', '--trials', '1000', '--max-seconds', '10');
+  assert.match(text, /Pool per player \(simulated share\): 166\.67 \(total 500 \/ 3 players\)/);
+  assert.doesNotMatch(text, /Total pool/);
+  assert.match(text, /Mean TTK \(95% CI, kills only\): .* from \d+ kills/);
+});
+
+test('deterministic text prints Carry n/a; sampled text keeps on/off', () => {
+  assert.match(run('--target', 'soft'), /Carry: n\/a/);
+  const sampled = run('--objective', 'stochastic-ttk', '--target', 'soft', '--health', '5000', '--max-seconds', '10');
+  assert.match(sampled, /Carry: on/);
+  assert.doesNotMatch(sampled, /Carry: n\/a/);
+});
+
 test('sampled objective CLI is reproducible, with opt-in samples and carry', () => {
   const args = ['--objective', 'stochastic-ttk', '--target', 'soft', '--health', '5000', '--seed', '7', '--max-seconds', '10', '--max-blows', '12', '--star-damage', '17'];
   const first = run(...args, '--json', '--samples');

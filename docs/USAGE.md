@@ -252,7 +252,7 @@ as solved unless `--mana-limit` is passed.
 
 `enchant` shows the equipped weapon's Cast When Strikes, Potent Vs and related
 rows. CWS is an expected-value model, not a full proc scheduler; the ceiling and
-the allowance-sustained figures are printed labelled apart (M44). See the
+the allowance-sustained figures are printed labelled apart. See the
 limitations in the README and the `W-PROC-BUDGET` waiver.
 
 ## 10. Graphs and the Combat Probe
@@ -291,6 +291,8 @@ Choose `snapshot` (default), `fight`, `relay`, `relay-ceiling`,
 objectives require a relay target (`breach` or `gate`); use `stochastic-relay`
 to sample that target. `--health` is the **total** pool for this command, not a
 per-player amount: `--players` does not multiply an explicit `--health`.
+For `stochastic-relay` the sampled pool is one player's share, `--health`
+divided by `--players`; the text output prints that share beside the total.
 Without an override, the command uses the target's default pool.
 With `--theory` the default target is `gate`; explicitly select a non-relay
 target such as `soft` or `boss` for `stochastic-ttk` or `kill-probability`.
@@ -301,9 +303,13 @@ spell sustain, not fight simulation. The text reports kill probability with
 a Wilson 95% interval and mean time to kill (TTK) with a 95% interval over
 the trials that kill. The sampled kill-rate score is pool divided by that
 conditional mean, not an unconditional fight rate. If no trial kills, there
-is no mean TTK to report. `--json` includes the
+is no mean TTK to report. The interval is a normal approximation (1.96 standard
+errors): with fewer than 30 kills treat it as a rough guide only, since one kill
+gives a zero-width interval. The text prints the kill count beside it. `--json` includes the
 summary and target assumptions; add `--samples` for the per-seed rows.
-Carry is on by default; `--no-carry` selects the stateless floor sampler.
+Carry is on by default; `--no-carry` selects the stateless floor sampler. The
+shortlist (`loadout --shortlist`) always samples with carry, so `--no-carry`
+there exits with status 2. Deterministic objectives print `Carry: n/a`.
 
 ### Stochastic fight simulation (library)
 
@@ -455,7 +461,7 @@ Use `--out <file>` to override. Many table commands accept `--json`; use
 `--help` for the exact command.
 
 `build --json` and `enchant --json` carry the **ceiling vs claim** split in
-`result` (ASSUMPTION M44). These commands use the plain card and its deterministic
+`result`. These commands use the plain card and its deterministic
 claim estimate, not seeded fights. On a target with an allowance, `totalTtk` is
 `claimTotalTtk`: null if the run cannot kill or was unavailable, never a
 ceiling fallback. `totalDps` is `claimSustainedDps` if there is a run, even on a

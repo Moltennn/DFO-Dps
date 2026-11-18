@@ -7,8 +7,8 @@ import { join } from 'node:path';
 import { WEAPONS } from '../src/data.js';
 import { IMPRINT_FAMILIES } from '../src/imprints.js';
 import { shortlistLoadouts } from '../src/loadoutShortlist.js';
-import { realTemplate, realWeaponLoadouts } from '../src/realBuild.js';
-import { pairedFightSeeds } from '../src/simulateFight.js';
+import { isSampledLoadout, realBuildStages, realTemplate, realWeaponLoadouts } from '../src/realBuild.js';
+import { pairedFightSeeds, simulateFights } from '../src/simulateFight.js';
 
 const cli = (...args) => spawnSync(process.execPath, ['bin/dfo-dps.js', 'loadout', ...args], { encoding: 'utf8' });
 
@@ -22,6 +22,7 @@ test('invalid shortlist options exit 2', () => {
     [['--shortlist', '1', '--trials', '999'], /1000/],
     [['--shortlist', '1', '--cap-aware', '--health', '100'], /--health does not apply/],
     [['--shortlist', '1', '--health', '0'], /--health must be a positive/],
+    [['--shortlist', '1', '--no-carry'], /--no-carry does not apply to --shortlist/],
   ]) {
     const result = cli(...args);
     assert.equal(result.status, 2, result.stderr);
@@ -75,6 +76,21 @@ test('shortlist preserves the build and imprint, and samples candidates on commo
     assert.deepEqual(row.detail.seeds, pairedFightSeeds(1000, 71));
     assert.deepEqual(row.detail.samples.map(({ seed }) => seed), row.detail.seeds);
   }
+});
+
+test('a sampled row runs under the same swing law as its deterministic row (rri, overhaul core)', () => {
+  const opts = { mode: 'uncapped', seed: 71, maxBlows: 20, trials: 1000, k: 1, health: 5000 };
+  const { rows: [row] } = shortlistLoadouts(opts);
+  const [top] = realWeaponLoadouts({ modes: ['uncapped'] }).filter(isSampledLoadout).sort((a, b) => b.totalDps - a.totalDps);
+  const { enchCh, imprint, target } = realBuildStages(top.template, IMPRINT_FAMILIES.find((f) => f.key === top.key), { mode: 'uncapped', dual: top.dual });
+  const direct = (rri) => simulateFights(enchCh, {
+    target, health: 5000, seeds: pairedFightSeeds(1000, 71), maxBlows: 20, imprint: imprint?.power,
+    core: 'overhaul', rri, passiveOn: true, stacks: 5,
+  });
+  const rate = (r) => 5000 / r.ttk.mean;
+  assert.equal(row.value, rate(direct(true)), 'the sampled score is the RRI fight, draw for draw');
+  // The vanilla swing law is a different fight, so the fixture can tell the two apart.
+  assert.notEqual(rate(direct(true)), rate(direct(false)), 'fixture must distinguish RRI from vanilla');
 });
 
 test('capped CLI shortlist uses the relay target and keeps its sampling metadata', () => {

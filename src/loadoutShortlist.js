@@ -5,6 +5,10 @@ import { pairedFightSeeds } from './simulateFight.js';
 
 const universeCache = new Map();
 
+// The scenario `maxRun` (src/maxprofile.js) prices the deterministic row under. The sampled fight must use the same
+// swing law (RRI cadence and weapon damage), core, passive and Flow stacks, or the two columns describe different builds.
+const MAX_RUN_SCENARIO = Object.freeze({ core: 'overhaul', rri: true, passiveOn: true, stacks: 5 });
+
 /** Rerank the top k eligible deterministic loadouts on one target; keep their chosen imprints. */
 export function shortlistLoadouts({
   k, mode = 'uncapped', encounter = 'breach', vampire = false,
@@ -35,10 +39,10 @@ export function shortlistLoadouts({
   const seeds = pairedFightSeeds(trials, seed);
   const ranking = rankBuilds(stages.map(({ enchCh, imprint }, id) => ({
     id, ch: enchCh, scenario: { imprint: imprint?.power },
-  })), { objective, target: stages[0].target, health, seeds, maxSeconds, maxBlows });
+  })), { ...MAX_RUN_SCENARIO, objective, target: stages[0].target, health, seeds, maxSeconds, maxBlows });
   const damageNote = mode === 'cap'
-    ? 'Sampled melee and Cast When Strikes (direct and supported Continuous Damage) go through the relay allowance; live Flow, no wear. Deterministic DPS is a ceiling plus modeled proc DPS, before the allowance.'
-    : 'Sampled melee and Cast When Strikes (direct and supported Continuous Damage) damage the ordinary foe; no wear or live Flow. Deterministic DPS includes modeled proc DPS.';
+    ? 'Sampled melee and Cast When Strikes (direct and supported Continuous Damage) go through the relay allowance; live Flow, no wear; phase-ward timing is not modelled. Deterministic DPS is a ceiling plus modeled proc DPS, before the allowance.'
+    : 'Sampled melee and Cast When Strikes (direct and supported Continuous Damage) damage the ordinary foe; no wear, and Flow held at its steady-state maximum stacks. Deterministic DPS includes modeled proc DPS.';
 
   return { ...ranking, mode, encounter: mode === 'cap' ? encounter : null, seed, maxBlows, rows: ranking.rows.map((row) => {
     const { key, family, weapon, template, category, dual, imprint, totalDps } = candidates[row.id];

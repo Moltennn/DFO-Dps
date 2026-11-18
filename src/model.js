@@ -637,7 +637,7 @@ function applyPct(damage, pct) {
  * The live carry state of ONE carried stream: `channel -> (item -> remainder)`, created fresh per fight. Upstream keys
  * its remainders by the held item (a WeakMap), one per channel - mastery (`weaponMastery.js:132`), the loot step
  * (`lootPowers.js:171`), the martial path (`martialPowers.js:106`) and the Firmament (`firmamentPowers.js:104`).
- * `createCarryState` is the fight's per-fight reset (ASSUMPTION M43: a fight starts with a zero remainder).
+ * `createCarryState` is the fight's per-fight reset (a fight starts with a zero remainder).
  */
 export function createCarryState() {
   return new Map();
@@ -1113,7 +1113,7 @@ function allowancePatch(tgt, health, { cappedPerSwing, hit, aps, procs, cap, str
  *
  * On allowance targets `totalTtk` is the claim result even if null; `totalDps` is allowance-sustained when a run
  * exists. The old capped-weapon + proc sum and its band are named `ceilingTotalDps[Min|Max]` and its kill time
- * `ceilingTotalTtk` (= `totalTtkCapOnly`). Ordinary foes retain the ceiling defaults (ASSUMPTION M44).
+ * `ceilingTotalTtk` (= `totalTtkCapOnly`). Ordinary foes retain the ceiling defaults.
  */
 export function analyze(ch, args = {}) {
   const r = analyzeCard(ch, args);

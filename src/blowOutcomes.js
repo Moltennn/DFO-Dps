@@ -218,7 +218,7 @@ export function blowOutcomes(ch, args = {}) {
       core, critMult, matReq: num(simOpts.matReqMulti, 1), conditionMult, hasWeapon: !!w,
     }, draw.crit);
     const o = resolveOne(card, draw.part, draw.whole, draw.branch);
-    // The resolve list's shape is damage-independent except at the `damage > 0` gate (ASSUMPTION M43); should a branch
+    // The resolve list's shape is damage-independent except at the `damage > 0` gate; should a branch
     // ever be gone, keep the enumerated (floor) outcome rather than crash. Not observed on the shipped fixtures.
     return o ? finish({ ...draw }, o, cap) : draw;
   } : null;

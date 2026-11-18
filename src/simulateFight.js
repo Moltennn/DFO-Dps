@@ -392,7 +392,7 @@ export function simulateFight(ch, args = {}) {
   };
   const cache = tierCache.tiers;
   // The carried stream's remainders: one state per fight, reset at its start
-  // (ASSUMPTION M43), keyed per channel and held item inside `weaponBlow`.
+  // Keyed per channel and held item inside `weaponBlow`.
   const carryState = scenario.carry === true ? createCarryState() : null;
   // The health thresholds a tier was built under. A break/promotion changes them, and the segment index alone does not
   // say which threshold set it belongs to, so the epoch is part of the key (and a batch's other fights keep theirs).
@@ -445,7 +445,7 @@ export function simulateFight(ch, args = {}) {
   let clock = 0;
   let next = scheduleNow.next();
   // Stage 3.6b, the DoT round clock: rounds fall at k * MAGIC_ROUND_SECONDS on the FIGHT clock from t=0. That phase is an
-  // ASSUMPTION (M35; the record of this choice is the Stage 3.6 changelog entry) - the cast's own first round is billed
+  // ASSUMPTION (the record of this choice is the Stage 3.6 changelog entry) - the cast's own first round is billed
   // inside the cast, at the cast's time. At an
   // equal timestamp the BLOW resolves first and the round after it. A round bills the same
   // health path a cast does, and kills like one.
@@ -692,7 +692,7 @@ export function simulateFight(ch, args = {}) {
       } : {}),
     });
     if (hp <= 0) { ttk = t; break; }
-    // The round on this blow's own timestamp resolves AFTER the blow (the tie rule, M35) - and only while the foe lives.
+    // The round on this blow's own timestamp resolves AFTER the blow (the tie rule) - and only while the foe lives.
     while (nextRoundT <= t && hp > 0) { tickRound(nextRoundT); nextRoundT += MAGIC_ROUND_SECONDS; }
     if (hp <= 0) break;
     if (durability && brokeNow) {

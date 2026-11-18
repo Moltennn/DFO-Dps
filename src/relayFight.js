@@ -23,11 +23,11 @@
  * (`vendor:combat/formulas.js:826-836`), so a cast kill suppresses the blow claim; a proc is its own claim
  * (`vendor:scenes/gate/standInSpell.js:198-217`) and the cast's first DoT round rides it. Later rounds are ONE claim per
  * round carrying the sum of the live entries' ticks (`standInSpell.js:131-151`), at `k x MAGIC_ROUND_SECONDS` from t=0,
- * after the blow at an equal timestamp (M35); the entry itself is one like-kind entry per body (renewal,
+ * after the blow at an equal timestamp; the entry itself is one like-kind entry per body (renewal,
  * `vendor:systems/effects.js:1091-1103`). A DoT round ticks even when the body is turned, but the host sends no claim
  * during `t < shieldUntil` or an explicit `target.warded` (`standInSpell.js:219-236`, `gateCourt.js:1159-1168` @ a3eb1605).
  *
- * Excluded by this stage (the assumptions register M30/M31/M38): wear, phase-ward lifecycle, geometry, the Sundered
+ * Excluded by this stage: wear, phase-ward lifecycle, geometry, the Sundered
  * halves, stun/profile hit multipliers, Wrath, host/crystal hits and the multi-body `spendBlow` sequence. A build with
  * fists is refused by the Stage 3.2 schedule (the unarmed StrikeLeft frame list is not in the analytical cadence).
  * Relay durability is not a gap: a relay body is a `spareGear` stand-in (`vendor:world/gate/gateBoss.js:161`), and the
@@ -182,7 +182,7 @@ function runRelayFight(ch, args, batchTiers) {
   const sharedTiers = batchTiers && !scenario.carryState && scenario.cwsRolls === undefined
     && (typeof standard?.get !== 'function' || standard.get === Map.prototype.get) ? batchTiers : null;
   const cache = sharedTiers ?? new Map();
-  // The carried stream's remainders: one state per fight (ASSUMPTION M43).
+  // The carried stream's remainders: one state per fight, starting at zero.
   const carryState = scenario.carry === true ? createCarryState() : null;
   const distribution = (index, hand, stacks) => {
     // The batch fixes build, target (including relay/ward flags), health, carry mode and other scenario options.
@@ -235,7 +235,7 @@ function runRelayFight(ch, args, batchTiers) {
     if (engine.killed && killSource === null) killSource = kind === 'proc' ? 'cws' : kind;
     return { claim, result };
   };
-  // STAGE 3.7d, the round clock: rounds at k x MAGIC_ROUND_SECONDS from t=0 (M35), billed AFTER the blow at an equal
+  // STAGE 3.7d, the round clock: rounds at k x MAGIC_ROUND_SECONDS from t=0, billed AFTER the blow at an equal
   // timestamp. A turned round still ticks and counts down (standInSpell.js:137-150,219-236@a3eb1605). The clock and
   // the drain run only when the fight can hold an entry - it casts, or the caller's target arrived with a live
   // continuousDamage entry (the target's own state, cloned like the ordinary fight's, and billed the same way).
@@ -256,7 +256,7 @@ function runRelayFight(ch, args, batchTiers) {
     while (holdsEntries && nextRoundT <= at && !engine.killed) { dotRound(nextRoundT); nextRoundT += MAGIC_ROUND_SECONDS; }
     return engine.killed;
   };
-  /** Rounds due strictly before `at`: the blow at an equal timestamp lands first (M35). */
+  /** Rounds due strictly before `at`: the blow at an equal timestamp lands first. */
   const roundsBefore = (at) => {
     while (holdsEntries && nextRoundT < at && !engine.killed) { dotRound(nextRoundT); nextRoundT += MAGIC_ROUND_SECONDS; }
     return engine.killed;
@@ -270,7 +270,7 @@ function runRelayFight(ch, args, batchTiers) {
     if (!provided && !next) { termination = 'schedule'; break; }
     const t = provided ? event.t : next.t;
     if (t > maxSeconds) { termination = 'horizon'; break; }
-    // Rounds due strictly before this attack's time; the round at an equal timestamp comes after the blow (M35).
+    // Rounds due strictly before this attack's time; the round at an equal timestamp comes after the blow.
     if (roundsBefore(t) && engine.killed) { termination = 'kill'; break; }
     attacks += 1;
     lastAttackAt = t;
@@ -319,7 +319,7 @@ function runRelayFight(ch, args, batchTiers) {
     // STAGE 3.7d: the Strikes payload runs inside the blow's formula, so the cast's claim lands BEFORE the blow's
     // (formulas.js:826-836; the ordinary fight's order is simulateFight.js:557-562). The cast is one claim - its direct
     // damage and its first round together - and a killing cast suppresses the blow claim. The ward is the relay's own
-    // clock (ASSUMPTION M38); nothing sets target.warded here.
+    // clock; nothing sets target.warded here.
     if (castsCws) {
       const rowItem = hand === 'off' ? (probe.offHand?.weapon?.item ?? null) : (probe.weapon?.item ?? null);
       if (cwsEligible({

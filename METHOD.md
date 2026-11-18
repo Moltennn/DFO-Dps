@@ -107,8 +107,8 @@ loadout purse summary (including its weapon-TTK fallback) is unchanged.
 `dfo-dps objective` scores one build on any of these objectives or on
 `stochastic-ttk`, `kill-probability` or `stochastic-relay`. An explicit
 `--health` is the total pool, not multiplied by `--players`.
-The sampled objectives start at 1,000 trials
-(the audit's first pass; 10,000 for a reported mean) and rank on the same seeds;
+The sampled objectives start at 1,000 trials, the only
+count the code enforces (the audit's first pass); 10,000 is a recommendation for a reported mean. They rank on the same seeds;
 a censored trial is reported as kill probability, never folded into the mean.
 The sampled fights use live held-item percentage remainders starting at zero
 per fight; `--no-carry` (`carry: false` in the library) preserves the old

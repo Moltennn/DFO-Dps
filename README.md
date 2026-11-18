@@ -111,9 +111,9 @@ Use `./dfo-dps --help` for every flag, or see
   does not terminate the modelled fight.
 - Snapshot, whole-fight, relay, relay-ceiling, carried and sampled
   (`stochastic-ttk`, `kill-probability`, `stochastic-relay`) metrics, with
-  explicitly named targets. The sampled three use seeded fights at the audit's
-  1,000-trial first-pass floor (10,000 for a reported mean, 100,000 for a close
-  ranking), carry their horizon and a 95% interval on the **mean TTK** (not on
+  explicitly named targets. The sampled three use seeded fights at the code's
+  1,000-trial floor (the only count enforced; 10,000 is a recommendation for a
+  reported mean and 100,000 for a close ranking), carry their horizon and a 95% interval on the **mean TTK** (not on
   the kill-rate score), and rank with paired seeds, a censoring guard and a
   separation flag rather than independent noise. Carried is a held item's
   long-run mean: the percentage lines (mastery, slayer/loot powers, the martial
@@ -205,7 +205,7 @@ Source paths are relative to `vendor/upstream/a3eb1605/src/` unless noted.
 - **Round phase and ties:** `scenes/gate/standInSpell.js:115,122` uses
   `Math.floor(now() / COURT_ROUND_MS)` on a 5-second grid
   (`scenes/gate/gateCourt.js:159`, `net/wire.js:240`). The simulator anchors
-  rounds at fight `t = 0` (`src/simulateFight.js:447-452`, M35); the unvendored
+  rounds at fight `t = 0` (`src/simulateFight.js:447-452`); the unvendored
   host determines the order of a blow and a round due at the same time.
 - **Stun:** Breaking Dagon's Reckoning sets an 8-second stun; the relay applies
   a 1.5× pre-cap hit multiplier to the stunned whole Warden

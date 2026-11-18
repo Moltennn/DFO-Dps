@@ -166,7 +166,7 @@ Objective options:
   --seed <int>                        sampled seed (default: 0)
   --max-seconds <n>                   sampled horizon in seconds (default: 900)
   --max-blows <n>                     sampled blow limit per trial (default: 6000)
-  --no-carry                         use the stateless floor sampler (carry is on by default)
+  --no-carry                          use the stateless floor sampler (carry is on by default)
   --samples                          include per-seed rows with --json (off by default)
 `;
 
@@ -458,6 +458,8 @@ function printObjective(values) {
   const health = pool ?? target.maxHealth;
   if (!(health > 0)) throw new Error('a positive target pool is required (set --health)');
   const carry = !values['no-carry'];
+  // A stochastic-relay body simulates one player's share of the pool (relayFight.js: health / players).
+  const relayPlayers = objective === 'stochastic-relay' ? Math.max(1, Number(target.allowance?.players) || 1) : null;
   const r = evaluateObjective(ch, {
     ...scenarioOf(ch, values, traits, target), objective, health, ...sampling, carry,
   });
@@ -478,9 +480,13 @@ function printObjective(values) {
   console.log(`Objective: ${objective} | Metric: ${metric} | Value: ${fmt2(value)} ${unit}`);
   console.log(`n: ${n ?? 'n/a'} | Kills: ${detail.kills ?? 'n/a'} | Censored: ${detail.censored ?? 'n/a'}`);
   console.log(`Kill probability (Wilson 95%): ${killProbability ? `${pct(p)} [${pct(lo)}, ${pct(hi)}]` : 'n/a'}`);
-  console.log(`Mean TTK (95% CI, kills only): ${ttk?.mean == null ? 'n/a' : `${fmt2(ttk.mean)} s [${fmt2(ttk.mean - ttk.ci95)}, ${fmt2(ttk.mean + ttk.ci95)}]`}`);
-  console.log(`Horizon: ${horizonSeconds === null ? 'n/a' : `${horizonSeconds} s`} | Damage mode: ${damageMode} | Carry: ${carry ? 'on' : 'off'} | Seed: ${seed}`);
-  console.log(`Target assumptions: ${JSON.stringify(assumptions.target)} | Total pool: ${health}`);
+  console.log(`Mean TTK (95% CI, kills only): ${ttk?.mean == null ? 'n/a' : `${fmt2(ttk.mean)} s [${fmt2(ttk.mean - ttk.ci95)}, ${fmt2(ttk.mean + ttk.ci95)}] from ${detail.kills ?? 'n/a'} kills`}`);
+  const deterministic = !STOCHASTIC_OBJECTIVE_IDS.includes(objective);
+  console.log(`Horizon: ${horizonSeconds === null ? 'n/a' : `${horizonSeconds} s`} | Damage mode: ${damageMode} | Carry: ${deterministic ? 'n/a' : carry ? 'on' : 'off'} | Seed: ${seed}`);
+  const poolLabel = relayPlayers === null
+    ? `Total pool: ${health}`
+    : `Pool per player (simulated share): ${fmt2(health / relayPlayers)} (total ${health} / ${relayPlayers} players)`;
+  console.log(`Target assumptions: ${JSON.stringify(assumptions.target)} | ${poolLabel}`);
   console.log(`Basis: ${assumptions.basis}`);
 }
 
@@ -503,7 +509,9 @@ function printLoadoutShortlist(values, modes, encounters, k) {
     const top = rows[0];
     const probability = r.objective === 'kill-probability';
     const pct = (v) => `${fmt2(v * 100)}%`;
-    console.log(`\nLoadout shortlist | ${r.encounter ? ENCOUNTERS[r.encounter].name : 'level-45 tough reference foe'} | ${r.objective} | pool ${r.health}`);
+    // A relay shortlist runs one player (no --players), so its pool is that player's share.
+    const poolText = r.mode === 'cap' ? `per-player pool ${r.health}` : `pool ${r.health}`;
+    console.log(`\nLoadout shortlist | ${r.encounter ? ENCOUNTERS[r.encounter].name : 'level-45 tough reference foe'} | ${r.objective} | ${poolText}`);
     console.log(`n: ${opts.trials} | Horizon: ${opts.maxSeconds} s / ${r.maxBlows} blows | Damage mode: ${top.damageMode} | Seed: ${r.seed}`);
     console.log(top.damageNote);
     console.log(table(rows.map((row) => [
@@ -512,7 +520,7 @@ function printLoadoutShortlist(values, modes, encounters, k) {
       row.killProbability ? pct(row.killProbability.p) : '-',
       row.ci ? `[${probability ? pct(row.ci.lo) : fmt2(row.ci.lo)}, ${probability ? pct(row.ci.hi) : fmt2(row.ci.hi)}]` : '-',
       row.ttkSeparated ?? '-', row.censoringDiffers ?? '-',
-    ]), ['Rank', 'DPS rank', 'Weapon', 'Imprint', 'Det. DPS', 'Proc DPS', probability ? 'Value (%)' : 'Kill rate (DPS)',
+    ]), ['Rank', 'Det. rank (melee)', 'Weapon', 'Imprint', 'Det. DPS', 'Proc DPS', probability ? 'Value (%)' : 'Kill rate (DPS)',
       'Kill %', probability ? 'Wilson 95% CI' : 'Mean TTK 95% CI (s)', 'Separated', 'Censoring differs']));
   }
 }
@@ -935,6 +943,7 @@ export async function main(argv = process.argv.slice(2)) {
     if (k !== 0 || !values.shortlist.trim()) {
       try {
         if (!Number.isSafeInteger(k) || k < 1) throw new Error('--shortlist must be a positive integer (0 disables it)');
+        if (values['no-carry']) throw new Error('--no-carry does not apply to --shortlist: shortlist sampling always uses carry');
         printLoadoutShortlist(values, modes, requested, k);
       } catch (e) {
         console.error(e.message);

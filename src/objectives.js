@@ -29,8 +29,8 @@ const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 
 /**
  * Below this many both-kill pairs a paired TTK difference is reported but NOT called separated: the normal/t
- * interval is too wide to be a ranking claim. The audit's own floor for a reported mean is 1,000 trials
- *; this is only a guard against a pathological sample.
+ * interval is too wide to be a ranking claim. This is only a guard against a pathological sample; the trial floor
+ * for a reported mean is MIN_STOCHASTIC_TRIALS.
  */
 const MIN_PAIRED_PAIRS = 8;
 
@@ -200,7 +200,7 @@ function evaluateStochastic(objective, def, ch, scenario, target, pool) {
       ci: { metric: 'kill-probability', method: 'wilson', p: kp.p, lo: kp.lo, hi: kp.hi, level: 0.95, n: kp.n },
     };
   }
-  // ASSUMPTION M42: the score is a kill rate, because TTK is a minimum and the ranking is max-only. With no kill in
+  // The score is a kill rate, because TTK is a minimum and the ranking is max-only. With no kill in
   // the horizon there is no mean TTK; the score is 0 and the censoring stays visible in killProbability.
   return {
     ...common,
@@ -381,7 +381,7 @@ export function rankBuilds(entries, { objective = 'snapshot', target = null, hea
   failed.forEach((r) => { r.rank = null; });
   if (stochastic) {
     // flags only: the rows keep their score order, even when the paired interval cannot separate them. `ttkSeparated`
-    // compares per-seed TTK over the seeds BOTH kill, while the score uses each row's own killers (ASSUMPTION M42);
+    // compares per-seed TTK over the seeds BOTH kill, while the score uses each row's own killers;
     // the paired kill-indicator difference is carried beside it so the two readings cannot be confused.
     for (let i = 1; i < ok.length; i += 1) {
       try {
