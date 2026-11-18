@@ -6,6 +6,22 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Relay spell claims respect the boss's element-proof trait (2026-11-18)
+
+**Source.** At `a3eb1605`, `scenes/gate/standInSpell.js:198-217` sums the cast's
+direct damage and first tick, then applies `bossStrike` once. Later rounds
+resist each tick before summing (`:51-58`, `:137-150`). The shared clock's
+period is 5,000 ms (`gateCourt.js:159`, `net/wire.js:240`); its phase relative
+to the fight start is not established by this comparison.
+
+**Change and evidence.** `src/relayFight.js` applies the existing `resistSpell`
+helper at those two points. `test/standInSpellDifferential.test.js` drives the
+vendored `createStandInSpell` with scripted rolls: on a flameproof boss the
+local fire claims were `[210, 200, 10, 160, 160]` (red) and are now
+`[53, 50, 3, 40, 40]` (green), matching the game. The no-trait and mismatched
+element controls agree without scaling. This changes seeded relay-fight spell
+claims, damage and potentially TTK; it does not change the card or ordinary fights.
+
 ## Ward correction - `W-WARD` was recorded as a divergence that the source does not show (2026-11-18)
 
 **What the game does.** The boss `warded` trait is a health pool: "a ward of WARD_SHARE of its health takes every blow

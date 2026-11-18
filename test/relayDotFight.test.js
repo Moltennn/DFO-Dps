@@ -9,11 +9,10 @@
  *     resolved inside the blow's formula, before the host's blow claim (`vendor:combat/formulas.js:826-836`);
  *   - a DoT round's ticks are ONE claim per round (`standInSpell.js:131-151`), one round = 5 s
  *     (`src/spells.js:21`), and the continuousDamage entry keeps ONE per body (renewal, `effects.js:1091-1103`);
- *   - a claim made while the boss is shielded is refused by the engine before any token
- *     (`vendor:net/gate/gateBrain.js:1308`; `src/relayClaim.js:149`), which is how a warded DoT round loses its damage
- *     while the entry still ticks (M36);
- *   - the host rounds the claim boundary and sends nothing under 1 (`Math.round`, ASSUMPTION M38 - gateCourt is
- *     unvendored).
+ *   - the model submits shielded DoT rounds; the engine refuses the claim before any token
+ *     (`vendor:net/gate/gateBrain.js:1308`; `src/relayClaim.js:149`). The real host instead sends no claim for a turned
+ *     body (`vendor:scenes/gate/standInSpell.js:219-236`), checked in standInSpellDifferential.test.js;
+ *   - the host rounds the claim boundary and sends nothing under 1 (`vendor:scenes/gate/gateCourt.js:1164-1165`).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -183,7 +182,7 @@ test('3.7d: a renewal re-cast bills nothing (one entry, one first round)', async
 test('3.7d: a DoT round can kill, and the kill names the DoT', async () => {
   const item = sword([1]);
   const ch = simCharacter(BASIC(), item);
-  const target = gateTarget(45, { health: 1000 });
+  const target = gateTarget(45, { health: 1000, traits: [] }); // Isolate DoT kill attribution from resistance.
   const r = simulateRelayFight(ch, {
     target, health: 1000, weapon: weaponOf(item), seed: 7, trace: true, maxBlows: 1, maxSeconds: 40,
     standard: new Map([[1, spell({ mag: 1000, rounds: 5 })]]),
@@ -236,7 +235,7 @@ test('3.7d: the cast\'s claim equals the vendored applySpell for the same script
   const u = await upstream();
   const item = sword([1]);
   const ch = simCharacter(BASIC(), item);
-  const target = gateTarget(45, { health: 4000 });
+  const target = gateTarget(45, { health: 4000, traits: [] }); // Raw applySpell doesn't include the boss-trait layer.
   const theSpell = spell({ mag: 200, rounds: 5, direct: 150 });
   // Six draws for one cast of (dot + direct): magnitude x2 and one throw per effect.
   const values = [0.1, 0.9, 0.4, 0.2, 0.8, 0.6];

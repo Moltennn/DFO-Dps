@@ -21,7 +21,7 @@
  * Included since Stage 3.7d: Cast When Strikes procs and Continuous Damage rounds are claims of their own on the relay
  * body. A blow that carries a CWS row resolves the cast INSIDE the blow's formula, before the host's blow claim
  * (`vendor:combat/formulas.js:826-836`), so a cast kill suppresses the blow claim; a proc is its own claim
- * (`full:scenes/gate/standInSpell.js:198-217`) and the cast's first DoT round rides it. Later rounds are ONE claim per
+ * (`vendor:scenes/gate/standInSpell.js:198-217`) and the cast's first DoT round rides it. Later rounds are ONE claim per
  * round carrying the sum of the live entries' ticks (`standInSpell.js:131-151`), at `k x MAGIC_ROUND_SECONDS` from t=0,
  * after the blow at an equal timestamp (M35); the entry itself is one like-kind entry per body (renewal,
  * `vendor:systems/effects.js:1091-1103`). The ward for a cast is the relay's own clock - `t < shieldUntil`, nothing sets
@@ -48,6 +48,7 @@ import { createRelayClaimEngine } from './relayClaim.js';
 import { createFlowState } from './flowState.js';
 import { cwsEligible, cwsRows, equippedForFight, resolveCwsCast, spellPowerInputs, tickActiveEffects } from './cws.js';
 import { MAGIC_ROUND_SECONDS } from './spells.js';
+import { resistSpell } from './bossTraits.js';
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 
@@ -140,6 +141,10 @@ export function simulateRelayFight(ch, args = {}) {
   const fightTarget = baseTarget
     ? { ...baseTarget, activeEffects: (baseTarget.activeEffects ?? []).map((a) => ({ ...a })) }
     : null;
+  // The boss's traits for a SPELL, read as a blow reads them (`scenario.traits ?? target.bossTraits`, blowOutcomes.js). A
+  // relay body's element-proof trait cuts a Cast When Strikes cast and each carried round
+  // (vendor:scenes/gate/standInSpell.js:51-58, :204-205; test/standInSpellDifferential.test.js).
+  const bossTraits = scenario.traits ?? fightTarget?.bossTraits ?? [];
   const standard = scenario.standard;
   const strikeItems = [probe.weapon?.item, probe.offHand?.weapon?.item].filter(Boolean);
   const castsCws = strikeItems.some((it) => cwsRows(it, standard).length > 0);
@@ -203,7 +208,7 @@ export function simulateRelayFight(ch, args = {}) {
   let killSource = null;
   let lastBilledAt = 0;
   const claimLog = scenario.trace === true ? [] : null;
-  /** One claim at the host's wire boundary (rounded, nothing under 1: `Math.round`, ASSUMPTION M38), with its accounting. */
+  /** One claim at the host's wire boundary (round, then drop under 1: gateCourt.js:1164-1165@a3eb1605). */
   const send = (t, kind, damage, hand = null) => {
     const claim = Math.round(damage);
     if (!(claim >= 1)) return null;
@@ -232,7 +237,10 @@ export function simulateRelayFight(ch, args = {}) {
   let nextRoundT = MAGIC_ROUND_SECONDS;
   const dotRound = (at) => {
     let total = 0;
-    tickActiveEffects(fightTarget, { hurt: (n) => { total += n; } }, cwsRolls);
+    // each tick is resisted by its own element as it lands, then summed (standInSpell.js:51-58 `counting(got, resist)`)
+    tickActiveEffects(fightTarget, {
+      hurt: (n, info) => { total += Math.max(0, n > 0 ? resistSpell(bossTraits, n, info?.element ?? null) : n); },
+    }, cwsRolls);
     if (total > 0) send(at, 'dot', total);
   };
   /** Rounds due at or before `at` (the ones strictly before it ran at the loop's head). True when the boss fell. */
@@ -317,6 +325,9 @@ export function simulateRelayFight(ch, args = {}) {
             pierce: cwsPower.pierce, potencyPct: cwsPower.potencyPct,
             hurt: (n) => { castDamage += n; },
           });
+          // the cast's hurts are summed, then the element-proof trait cuts the SUM once; under one point it is sent as
+          // it is (standInSpell.js:204-206)
+          if (castDamage >= 1) castDamage = resistSpell(bossTraits, castDamage, Number.isInteger(row.spell.element) ? row.spell.element : null);
           if (castDamage > 0) send(t, 'proc', castDamage, hand);
         }
       }

@@ -9,15 +9,16 @@
  * STAGE 3.7f adds the CWS + Continuous Damage path, composed the way the host composes it:
  *   - a Cast When Strikes row is resolved INSIDE calculateAttackDamage by the vendored
  *     `systems/enchantments.js` doItemEnchantmentPayloads, whose `enchantCtx.applySpellToTarget` calls the vendored
- *     `effects.applySpell` (`full:scenes/gate/standInSpell.js:198-217`, `combat/formulas.js:826-836`); its DIRECT damage
- *     and its first round are submitted as ONE claim BEFORE the blow's claim, at the same timestamp;
+ *     `effects.applySpell` (`scenes/gate/standInSpell.js:198-217`, `combat/formulas.js:826-836`); its DIRECT damage
+ *     and first round are summed, resisted once and submitted as ONE claim BEFORE the blow's claim;
  *   - later rounds are the vendored `effects.tickActiveEffects` at `k * 5 s` from t=0 (`src/spells.js:21`), ONE claim
- *     per round carrying the live entries' tick sum (`full:scenes/gate/standInSpell.js:131-151`); a round at a blow's
+ *     per round summing individually resisted ticks (`standInSpell.js:51-58,131-151`); a round at a blow's
  *     own timestamp comes AFTER the blow's claim (the M35/M38 ordering rule, an ASSUMPTION - upstream has no tie to
  *     read), and rounds still due after the last event are drained while an entry lives and the boss lives;
  *   - a warded blow (`now*1000 < f.shieldUntil`) sets `body.warded`, so the vendored CastWhenStrikes refuses the cast
- *     itself (`systems/enchantments.js:597`); a round always ticks and its CLAIM is left to the engine, which refuses
- *     it while shielded (`net/gate/gateBrain.js:1308`);
+ *     itself (`systems/enchantments.js:597`); this compositor ticks a round and submits it to the engine, which refuses
+ *     it while shielded (`net/gate/gateBrain.js:1308`). The real host's turned-body no-send is a separate rule
+ *     (`standInSpell.js:219-236`), not modelled here;
  *   - a blow that casts and is KILLED by the cast sends no blow claim (the host's live-foe gate, `hostEnchant.js:198-209`).
  * `cwsRolls` is a separate seeded draw function for the cast and the rounds (the local fight keeps its own `cws` stream),
  * so both sides consume the same script. Everything still goes through the one vendored `applyHit`.
@@ -79,11 +80,13 @@ export async function upstreamRelayEvents(u, {
     return got;
   };
   const liveEntry = () => (body.activeEffects ?? []).some((a) => a?.kind === 'continuousDamage' && (a.roundsRemaining ?? 0) > 0);
-  // The vendored magic round: every live entry's tick sums into ONE claim (`standInSpell.js:131-151`).
+  // Each tick is resisted before summing into ONE claim (`standInSpell.js:51-58,131-151` @ a3eb1605).
   const roundClaim = (t) => {
     let total = 0;
-    u.effects.tickActiveEffects(body, { hurt: (n) => { total += n; } }, castRolls);
-    if (total > 0) submit(t, 'dot', total);
+    u.effects.tickActiveEffects(body, { hurt: (n, o) => {
+      if (n > 0) total += Math.max(0, u.bossTraits.bossStrike(body, n, { kind: 'spell', element: o?.element ?? null }).damage);
+    } }, castRolls);
+    if (total >= 1) submit(t, 'dot', total);
   };
   let nextRoundT = MAGIC_ROUND_SECONDS;
   // The round clock advances with the FIGHT's clock, not the entry's life: an anchor that passes with no live entry is
@@ -102,8 +105,12 @@ export async function upstreamRelayEvents(u, {
     applySpellToTarget: (record, caster) => {
       if (!(f.hp > 0)) return undefined;
       let total = 0;
-      const out = u.effects.applySpell(record, level, body, { hurt: (n) => { total += n; } }, castRolls, { entity: caster });
-      submit(now, 'proc', total);
+      const out = u.effects.applySpell(record, level, body, { hurt: (n) => { total += Math.max(0, n); } }, castRolls, { entity: caster });
+      // Resist the whole cast once, after counting its hurts (`standInSpell.js:198-206` @ a3eb1605).
+      if (total >= 1) {
+        const dealt = u.bossTraits.bossStrike(body, total, { kind: 'spell', element: record.element ?? null }).damage;
+        if (dealt >= 1) submit(now, 'proc', dealt);
+      }
       return out;
     },
   } : undefined;

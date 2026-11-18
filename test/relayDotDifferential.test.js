@@ -10,7 +10,8 @@
  *
  * Ordering (ASSUMPTION, the same rule as M35 and M38 - upstream has no tie to read): a cast's claim lands before the
  * blow's claim at one timestamp; a round at a blow's own timestamp lands after the blow; rounds fall at k * 5 s from
- * t=0 (`src/spells.js:21`); a shield (`t < shieldUntil`) refuses a cast outright and is left to the engine for a round.
+ * t=0 (`src/spells.js:21`); for this engine check, a shield (`t < shieldUntil`) stops the cast and the round is still
+ * submitted to the engine. The host's turned-body no-send is tested separately in standInSpellDifferential.test.js.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -84,6 +85,7 @@ async function compare({
   const attacker = upstreamEntity(desc);
   const upBody = oracleEntity(body);
   upBody.activeEffects = [];
+  const target = gateTarget(level, { health: pool });
   const script = draws ?? [];
   let localEntry = null;
   let used = 0;
@@ -92,7 +94,7 @@ async function compare({
     // takes its draws from the same script, and the fight's own cast stream starts after them.
     u.effects.applySpell(prime, level, upBody, { hurt: () => {} }, scripted([...script]), { entity: attacker });
     const primed = upBody.activeEffects.length;
-    const scratch = { ...gateTarget(level, { health: pool }), activeEffects: [] };
+    const scratch = { ...target, activeEffects: [] };
     const localRolls = scripted([...script]);
     resolveCwsCast({
       spell: prime, caster: { entity: { isPlayer: true, level, online: false } }, casterLevel: level,
@@ -105,12 +107,11 @@ async function compare({
   }
   const up = await upstreamRelayEvents(u, {
     desc, item: oracleItem(item), body: upBody, level, pool, events, seed, shieldUntil, standard,
-    cwsRolls: scripted(script.slice(used)), maxSeconds,
+    traits: target.bossTraits, cwsRolls: scripted(script.slice(used)), maxSeconds,
   });
-  const target = { ...gateTarget(level, { health: pool }), activeEffects: localEntry ? [{ ...localEntry }] : [] };
   const ch = simCharacter(desc, item);
   const local = simulateRelayFight(ch, {
-    target, health: pool, weapon: weaponOf(item),
+    target: { ...target, activeEffects: localEntry ? [{ ...localEntry }] : [] }, health: pool, weapon: weaponOf(item),
     ...relayEventArgs(events.map((e, i) => ({ t: e.t, hand: e.hand, outcome: up.rows[i].outcome }))),
     trace: true, seed, shieldUntil, standard, maxSeconds,
     cwsRolls: scripted((localDraws ?? script).slice(used)),
