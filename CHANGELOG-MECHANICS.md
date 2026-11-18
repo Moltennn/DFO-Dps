@@ -6,6 +6,30 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Sampled fights carry held-item fractions by default (2026-11-18)
+
+**Source.** `systems/loot/lootPowers.js:169-181@a3eb1605` keeps a fractional
+share on the held item except during the estimate. Separate remainders are
+kept by `systems/weaponMastery.js:132,148-150`, `systems/martialPowers.js:106,232-235`
+and `systems/firmamentPowers.js:104,111-115` at the same pin. M43's local reset
+to zero for each fight is unchanged.
+
+**Red → green.** `node --test test/lootCarry.test.js` with the existing held-item
+differentials changed to omit `carry` failed before the default flip and passed
+after. At 240 seeds the 25% slayer's mean TTK went from 282.258 s to 277.094 s
+(vendored 277.204 s); damage/blow went from 16.2478 to 16.5499 (vendored 16.5406).
+At 64 relay seeds and 400 attacks per fight, damage/attack went from 20.59914 to
+20.97586 (vendored 21.04320, z from −6.90 to −1.09). Explicit floor is still
+outside the held-item bounds and the original seeded floor trace is unchanged.
+
+**Outputs moved.** `src/simulateFight.js` and `src/relayFight.js` enable the
+existing carried sampler when `carry` is omitted. The sampled objectives and
+benchmark CLI inherit it; ordinary CLI builds and deterministic objectives
+still use the card or its deterministic estimate. `carry: false` retains the
+old sampled floor stream. `W-LOOT-CARRY` remains for the stateless estimates
+and explicit floor, not the default sampled fights. Pricing, `ceilingTotalDps` /
+`ceilingTotalTtk`, the optimizer and benchmark artifacts are unchanged.
+
 ## Phase 2 (M44) - allowance totals use the existing claim estimate (2026-11-18)
 
 **Source.** `net/gate/gateBrain.js:1298-1335@a3eb1605` spends a shared blow

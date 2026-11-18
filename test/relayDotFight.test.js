@@ -334,7 +334,7 @@ test('3.7e: the batch summary carries the per-kind totals and the kill tally', (
   assert.equal(r.killSource.blow + r.killSource.cws + r.killSource.dot, r.kills, 'the kill tally covers every kill');
 });
 
-test('3.7d: a build with no CWS rows is bit-identical to the same fight before the payload existed', () => {
+test('3.7d: no CWS rows ignores spell records and preserves the historical floor result', () => {
   const item = sword();
   const ch = simCharacter(BASIC(), item);
   const target = gateTarget(45, { health: 2000 });
@@ -348,13 +348,13 @@ test('3.7d: a build with no CWS rows is bit-identical to the same fight before t
   assert.equal(plain.claimsByKind.proc, 0);
   assert.equal(plain.claimsByKind.dot, 0);
   assert.equal(plain.claimLog.length, plain.claims);
-  // The seeded no-CWS fight's figures, pinned as literals. Verified at 19f7529 (the commit before this payload): this
-  // same fixture, run there with the new-field assertions above removed, gives these exact figures.
-  assert.equal(plain.ttk, null, 'the fight is censored at the horizon');
-  assert.equal(plain.damageDealt, 524);
-  assert.equal(plain.claims, 32);
-  assert.equal(plain.time, 30);
-  assert.equal(plain.trace.length, 32);
+  // Keep the historical no-CWS literals from 19f7529 on the matching floor sampler.
+  const floor = simulateRelayFight(ch, { ...args, carry: false });
+  assert.equal(floor.ttk, null, 'the fight is censored at the horizon');
+  assert.equal(floor.damageDealt, 524);
+  assert.equal(floor.claims, 32);
+  assert.equal(floor.time, 30);
+  assert.equal(floor.trace.length, 32);
 });
 
 test('3.7d/M38(4): caller-set target.warded blocks relay casts, blow powers and DoT submissions', () => {

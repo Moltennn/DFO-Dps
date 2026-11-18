@@ -540,8 +540,9 @@ test('echo kill: upstream hurtFoe and the local fight both drop the melee blow',
 
   const localItem = { ...weapon(121, { material: 9 }), rarity: 'rare', imprint: 'warp-edge' };
   const localCh = simCharacter(BASIC(), localItem);
+  // Select the same 23-point killing echo as the scripted oracle, using the original floor-tier draw.
   const localRun = simulateFight(localCh, {
-    target: localReferenceFoe(30, 'tough'), health: 20, weapon: weaponOf(localItem), seed: 19, trace: true, maxBlows: 1,
+    target: localReferenceFoe(30, 'tough'), health: 20, weapon: weaponOf(localItem), seed: 19, trace: true, maxBlows: 1, carry: false,
   });
   assert.equal(localRun.trace[0].echoKill, true);
   assert.equal(localRun.trace[0].meleeApplied, false);

@@ -276,6 +276,12 @@ const paired = simulatePairedFights([{ id: 'a', ch: a }, { id: 'b', ch: b }], { 
 
 - `damageMode: 'capped'` samples the per-hit-capped blow; the default is
   `uncapped`, matching `fight()`.
+- Seeded ordinary and relay fights carry percentage remainders per item and
+  channel, starting each fight at zero. The sampled objectives forward the
+  same scenario: use `carry: false` for the old floor stream. The deterministic
+  `fight()` and `fightRelay()` estimates do not track a live remainder. The
+  carried tier can map the same seed to a different trace, even on a build
+  without a percentage bonus.
 - `simulateFight` reports `killDps = health / ttk` and
   `outputDps = damageDealt / time`; a run that reaches `maxSeconds` (or
   `maxBlows`) with the pool alive is **censored** (`ttk: null`).
@@ -391,7 +397,8 @@ Use `--out <file>` to override. Many table commands accept `--json`; use
 `--help` for the exact command.
 
 `build --json` and `enchant --json` carry the **ceiling vs claim** split in
-`result` (ASSUMPTION M44). On a target with an allowance, `totalTtk` is
+`result` (ASSUMPTION M44). These commands use the plain card and its deterministic
+claim estimate, not seeded fights. On a target with an allowance, `totalTtk` is
 `claimTotalTtk`: null if the run cannot kill or was unavailable, never a
 ceiling fallback. `totalDps` is `claimSustainedDps` if there is a run, even on a
 no-kill result; otherwise DPS stays on the ceiling. Ordinary foes retain the

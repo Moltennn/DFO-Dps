@@ -1,5 +1,5 @@
 /*
- * test/lootCarryCombos.test.js - W-LOOT-CARRY, the four combinations of the opt-in `carry: true` fight stream that
+ * test/lootCarryCombos.test.js - W-LOOT-CARRY, four combinations of the carried fight stream that
  * test/lootCarry.test.js does not cover: dual wield, a x3 backstab, a weapon that breaks mid-fight, and a Cast When
  * Strikes row beside the carried percentage lines.
  *
@@ -128,7 +128,7 @@ test('1. dual wield: each hand keeps its OWN remainder (per item), checked blow 
   const args = { target: FIGHT_TGT(), health: 1e7, weapon: weaponOf(fightMain), dual: true, seed: 0x7001, trace: true, maxBlows: 60 };
   const on = simulateFight(dualCh, { ...args, carry: true });
   const again = simulateFight(dualCh, { ...args, carry: true });
-  const off = simulateFight(dualCh, args);
+  const off = simulateFight(dualCh, { ...args, carry: false });
   assert.ok(on.trace.some((r) => r.hand === 'off') && on.trace.some((r) => r.hand === 'main'), 'the fight swings both hands');
   assert.deepEqual(on.trace.map((r) => r.blowDamage), again.trace.map((r) => r.blowDamage), 'the carried dual fight is deterministic');
   assert.notDeepEqual(on.trace.map((r) => r.blowDamage), off.trace.map((r) => r.blowDamage), 'carry changes the dual fight stream');
@@ -243,7 +243,7 @@ test('3. durability break: the broken hand is unequipped, the survivor leads wit
   const tgt = FIGHT_TGT();
   const run = (seed, carry) => simulateFight(ch, {
     target: tgt, health: 1e7, weapon: weaponOf(main), dual: true, durability: true, trace: true,
-    maxBlows: 40, seed, standard, cwsRolls: () => 0.5, ...(carry ? { carry: true } : {}),
+    maxBlows: 40, seed, standard, cwsRolls: () => 0.5, carry,
   });
   let found = null;
   for (let s = 0; s < 40 && !found; s += 1) {

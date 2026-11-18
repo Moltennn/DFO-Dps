@@ -5,14 +5,14 @@
  * (systems/loot/lootPowers.js:176-181 shareOf; weaponMastery.js:148-150; martialPowers.js:232-235;
  * firmamentPowers.js:111-115 with whole = floor for a price / ceil for a loss, remainder unclamped and the blow never
  * below 1 at :181). A held item's long-run mean of a percentage line is therefore its EXACT share, which PRICING
- * already reads (`carriedPerSwing`, ASSUMPTION M41). The plain card and the seeded fight streams used to floor every
- * blow; with the opt-in scenario flag `carry: true` the fight streams now keep the remainder per (channel, held item)
+ * already reads (`carriedPerSwing`, ASSUMPTION M41). The plain card still floors every blow; the default seeded
+ * streams keep the remainder per (channel, held item)
  * for the length of one fight (ASSUMPTION M43: a fight starts at zero; upstream persists it across fights, so the
  * stationary mean is the same but a fight's first blows differ).
  *
  * The oracle is the vendored game, either the channel functions themselves on ONE reused item (the sequence tests) or
- * `calculateAttackDamage` through `test/harness/fightOracle.mjs` with `reuseItem: true` (the mean tests). The default
- * `carry: false` path is bit-identical: the recorded fight literal below was captured BEFORE the change.
+ * `calculateAttackDamage` through the ordinary/relay fight oracles on a held item (the mean tests). Explicit
+ * `carry: false` remains bit-identical to the recorded floor fight literal below.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -184,7 +184,7 @@ const eventsOf = (ch, args, n = 2000) => {
   return Array.from({ length: n }, () => s.next());
 };
 
-/** One fight differential: the local sampled stream on `carry` vs the held-item oracle. */
+/** One fight differential: the default sampled stream vs the held-item oracle. */
 async function fightDifferential({ desc, ch, item, group = null, attacker = null, unaware = false, trials = 240 }) {
   const u = await upstream();
   const pool = 5000;
@@ -200,7 +200,7 @@ async function fightDifferential({ desc, ch, item, group = null, attacker = null
     desc, item: upHeld, body: oracleEntity(bodyBase), events, seed: s, uptime: 0, reuseItem: true, unaware,
     ...(attacker ? { attacker } : {}),
   }));
-  const carried = simulateFights(ch, { ...args, carry: true });
+  const carried = simulateFights(ch, args);
   const rows = oracleRows(carried);
   const upTtk = summarize(rows.filter((r) => r.ttk != null).map((r) => r.ttk));
   const upPer = summarize(rows.map((r) => r.damageDealt / r.blows));
@@ -219,9 +219,10 @@ async function fightDifferential({ desc, ch, item, group = null, attacker = null
   return { carried, floor, upTtk, upPer };
 }
 
-test('5. seeded fights with carry:true match the held-item oracle; carry:false still floors', async () => {
+test('5. default seeded fights match the held-item oracle; carry:false still floors', async (t) => {
   const basicItem = { ...weapon(121, { material: 9 }), affixes: [{ id: 'slayer', param: 'humanoid', value: 25 }] };
   const slayer = await fightDifferential({ desc: BASIC(), ch: simCharacter(BASIC(), basicItem), item: basicItem, group: 'humanoid' });
+  t.diagnostic(`slayer mean TTK: default ${slayer.carried.ttk.mean.toFixed(3)} s, held ${slayer.upTtk.mean.toFixed(3)} s, floor ${slayer.floor.ttk.mean.toFixed(3)} s; damage/blow: default ${slayer.carried.expectedPerSwing.mean.toFixed(4)}, held ${slayer.upPer.mean.toFixed(4)}, floor ${slayer.floor.expectedPerSwing.mean.toFixed(4)}`);
   assert.ok(slayer.carried.ttk.mean < slayer.floor.ttk.mean, 'the carried stream kills sooner than the floor stream');
 
   const masteryDesc = character({ level: 30, raceId: 1, skills: 40, skillOverride: { 29: 150 }, online: true, mastered: [29], masterSkills: true });
@@ -243,7 +244,7 @@ test('5. seeded fights with carry:true match the held-item oracle; carry:false s
   });
 });
 
-test('6. the default (carry off) path is bit-identical: the fight literal captured before the change', () => {
+test('6. explicit carry:false preserves the original seeded floor stream', () => {
   // Captured from the same call BEFORE this change (seed 0x77, one 25% slayer line, trace: true).
   const LITERAL = {
     seed: 119, ttk: 269.4661224489796, kills: true, blows: 295, damageDealt: 5017, meleeDamage: 5017, echoDamage: 0,
@@ -258,13 +259,13 @@ test('6. the default (carry off) path is bit-identical: the fight literal captur
     damageDealt: r.damageDealt, meleeDamage: r.meleeDamage, echoDamage: r.echoDamage,
     blow: r.trace.map((x) => x.blow),
   });
-  assert.deepEqual(compact(simulateFight(ch, args)), LITERAL);
   assert.deepEqual(compact(simulateFight(ch, { ...args, carry: false })), LITERAL);
-  // Opt-in: the flag does move the stream.
-  assert.notDeepEqual(compact(simulateFight(ch, { ...args, carry: true })), LITERAL);
+  const carried = compact(simulateFight(ch, args));
+  assert.deepEqual(carried, compact(simulateFight(ch, { ...args, carry: true })));
+  assert.notDeepEqual(carried, LITERAL);
 });
 
-test('7. sampled relay carry matches the vendored held-item damage per scheduled attack', async (t) => {
+test('7. default sampled relay matches the vendored held-item damage per scheduled attack', async (t) => {
   // ORACLE: calculateAttackDamage keeps the same item throughout each upstreamRelayEvents run
   // (lootPowers.js:171,176-181@a3eb1605), then gateBrain.applyHit admits each host claim.
   const u = await upstream();
@@ -280,7 +281,7 @@ test('7. sampled relay carry matches the vendored held-item damage per scheduled
   const args = { target, health: pool, weapon: weaponOf(item), swing: 'StrikeLeft', trials: 64, seed: 0x6600, maxBlows, maxSeconds: 600 };
   const events = eventsOf(ch, args, maxBlows);
   const off = simulateRelayFights(ch, { ...args, carry: false });
-  const on = simulateRelayFights(ch, { ...args, carry: true });
+  const on = simulateRelayFights(ch, args);
   assert.ok(off && on, 'both runs return a summary');
   assert.equal(on.terminations.maxBlows, args.trials);
   assert.equal(off.terminations.maxBlows, args.trials);
@@ -296,10 +297,10 @@ test('7. sampled relay carry matches the vendored held-item damage per scheduled
   const floorZ = meanZ(held, off.damageDealt);
   // Same fixed attack count: per-fight damage and damage per scheduled attack have the same z statistic.
   // Different seeded samplers; use the existing carry differential's 3.5 pooled-SE bound.
-  const means = `damage per attack: carried ${(on.damageDealt.mean / maxBlows).toFixed(5)}, held ${(held.mean / maxBlows).toFixed(5)}, floor ${(off.damageDealt.mean / maxBlows).toFixed(5)}`;
-  assert.ok(Math.abs(z) < 3.5, `${means}; carried vs held z=${z.toFixed(2)}`);
+  const means = `damage per attack: default ${(on.damageDealt.mean / maxBlows).toFixed(5)}, held ${(held.mean / maxBlows).toFixed(5)}, floor ${(off.damageDealt.mean / maxBlows).toFixed(5)}`;
+  assert.ok(Math.abs(z) < 3.5, `${means}; default vs held z=${z.toFixed(2)}`);
   assert.ok(floorZ > 3.5, `${means}; held vs floor z=${floorZ.toFixed(2)}`);
-  t.diagnostic(`${means}; carried vs held z=${z.toFixed(2)}, held vs floor z=${floorZ.toFixed(2)}`);
+  t.diagnostic(`${means}; default vs held z=${z.toFixed(2)}, held vs floor z=${floorZ.toFixed(2)}`);
 });
 
 test('8. a base of 0 stays 0 under carry:true: the elemental flat is not added on a damage <= 0 blow', async () => {

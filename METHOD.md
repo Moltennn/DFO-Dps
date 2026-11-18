@@ -107,6 +107,9 @@ loadout purse summary (including its weapon-TTK fallback) is unchanged.
 The sampled objectives start at 1,000 trials
 (the audit's first pass; 10,000 for a reported mean) and rank on the same seeds;
 a censored trial is reported as kill probability, never folded into the mean.
+The sampled fights use live held-item percentage remainders starting at zero
+per fight; `carry: false` preserves the old floor sampler. The deterministic
+objectives and plain card do not track live remainders.
 See the [README](README.md) and [docs/USAGE.md](docs/USAGE.md) for the
 commands and target flags.
 

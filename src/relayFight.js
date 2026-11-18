@@ -67,11 +67,12 @@ function normalizeScenario(args) {
  * @param {object} args `analyze`/`simulateFight` args plus `target` (must carry `allowance`), `health`, `seed`,
  *   `fresh` (false: a wounded boss, empty damage bucket), `shieldUntil` (seconds), `maxSeconds`, `maxBlows`, `trace`.
  *   `durability: true` is refused (a relay body is `spareGear` and the game wears nothing on it);
- *   `durability: false`/omitted is unchanged.
+ *   Use `carry: false` for the stateless floor stream.
  * @returns {null|object} null when the target is not a relay body or the schedule cannot run
  */
 export function simulateRelayFight(ch, args = {}) {
   const scenario = normalizeScenario(args);
+  scenario.carry ??= true;
   const target = scenario.target ?? null;
   const spec = target?.allowance ?? null;
   if (!spec) return null;
@@ -174,7 +175,7 @@ export function simulateRelayFight(ch, args = {}) {
   }
 
   const cache = new Map();
-  // The carried stream's per-fight remainders (scenario `carry: true`): one state per fight (ASSUMPTION M43).
+  // The carried stream's remainders: one state per fight (ASSUMPTION M43).
   const carryState = scenario.carry === true ? createCarryState() : null;
   const distribution = (index, hand, stacks) => {
     const key = `${index}|${hand}|${stacks}`;

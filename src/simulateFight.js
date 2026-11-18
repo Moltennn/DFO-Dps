@@ -265,9 +265,10 @@ export function createTierCache() {
 }
 
 /** One seeded battle. The result is one of the samples `simulateFights` summarises. `seed` defaults to 0, so even an
- *  unseeded call is deterministic (the path never touches `Math.random`). */
+ *  unseeded call is deterministic. Use `carry: false` for the stateless floor stream. */
 export function simulateFight(ch, args = {}) {
   const scenario = normalizeScenario(args);
+  scenario.carry ??= true;
   // `_tierCache` is the batch's shared table set (`simulateFights`); a standalone call gets its own. It never reaches
   // `blowFightTier` (deleted here) and `.with()` must not inherit it: its edit can change the very inputs a tier reads.
   const tierCache = scenario._tierCache ?? createTierCache();
@@ -390,7 +391,7 @@ export function simulateFight(ch, args = {}) {
     });
   };
   const cache = tierCache.tiers;
-  // The carried stream's per-fight remainders (scenario `carry: true`): one state per fight, reset at its start
+  // The carried stream's remainders: one state per fight, reset at its start
   // (ASSUMPTION M43), keyed per channel and held item inside `weaponBlow`.
   const carryState = scenario.carry === true ? createCarryState() : null;
   // The health thresholds a tier was built under. A break/promotion changes them, and the segment index alone does not

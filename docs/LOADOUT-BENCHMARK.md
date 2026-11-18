@@ -55,6 +55,11 @@ segment (Stage 3.2), Cast When Strikes resolved per blow (Stage 3.5.1) and, when
 condition bill and breaks (Stage 3.5.2). The sampler is the project's own; it is **not** an event-level reproduction
 of the game's RNG, and no chart here claims that.
 
+New runs inherit `simulateFights`' live percentage carry, reset at the start
+of each trial. The checked-in `docs/benchmark/` results are from the previous
+floor default; they have not been regenerated. The optimizer and card ceiling
+baselines are unchanged.
+
 | Field | Definition |
 |---|---|
 | **Mean DPS** | Mean of `outputDps` over **all** trials. A trial that did not kill is measured over the time it actually ran, so a break or horizon shows up as a lower rate. |

@@ -1109,7 +1109,7 @@ function allowancePatch(tgt, health, { cappedPerSwing, hit, aps, procs, cap, str
  * (info.estimate reads the carry and never writes it). A HELD item carries the fraction between blows, and the
  * stream's long-run mean is the exact share, so the same pipeline is run once more with `carried: true`
  * (src/model.js `carriedPct`) and exposed as `carriedPerSwing` / `carriedCappedPerSwing` / `carriedDps` /
- * `carriedCappedDps` - the metric pricing deltas use. The fight streams still floor (W-LOOT-CARRY).
+ * `carriedCappedDps` - the metric pricing deltas use. Sampled fights track the live remainder instead.
  *
  * On allowance targets `totalTtk` is the claim result even if null; `totalDps` is allowance-sustained when a run
  * exists. The old capped-weapon + proc sum and its band are named `ceilingTotalDps[Min|Max]` and its kill time

@@ -385,11 +385,11 @@ test('14. the Flow charge is independent of the relay claim verdict', () => {
   assert.equal(engine.bucket, 746, 'the no-token claim does not move the purse');
 });
 
-test('15. a build with neither mechanic remains bit-identical to Stage 3.3', () => {
+test('15. with carry:false a build with neither mechanic remains bit-identical to Stage 3.3', () => {
   const item = sword();
   const ch = build(BASIC(), item);
   const r = simulateRelayFight(ch, {
-    target: gateTarget(45, { health: 2000 }), health: 2000, weapon: weaponOf(item), seed: 7,
+    target: gateTarget(45, { health: 2000 }), health: 2000, weapon: weaponOf(item), seed: 7, carry: false,
   });
   // recorded from the Stage 3.3 implementation (9f23c47) before this stage
   assert.deepEqual({
@@ -408,7 +408,7 @@ test('durability is refused on a relay fight; omitted and false are unchanged', 
   const ch = build();
   const target = gateTarget(45, { health: 2000 });
   const args = { target, health: 2000, weapon: weaponOf(item), seed: 11 };
-  // Omitted and explicit false keep the exact Stage 3.3 result (same claims, same engine trace).
+  // Omitted and explicit false durability keep the same result and engine trace.
   const omitted = simulateRelayFight(ch, args);
   const off = simulateRelayFight(ch, { ...args, durability: false });
   assert.deepEqual(strip(off), strip(omitted), 'durability: false is the omitted path');

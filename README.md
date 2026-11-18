@@ -242,12 +242,11 @@ These are recorded as waivers or assumptions, not hidden:
   suppresses the blow powers when a caller sets it. No known divergence is waived here.
   Open and unverified: whether the unvendored host ever copies the trait ward onto
   `target.warded`, and the Firmament's gate (its sky law is a vendored stub).
-- `W-LOOT-CARRY`: the DEFAULT seeded fight streams and the plain card estimate
-  floor each blow; the game carries a percentage line's fraction between blows.
-  Pricing (imprints, enchant deltas) reads the carried mean instead, and the
-  seeded fight streams carry when called with the opt-in scenario flag
-  `carry: true` (`simulateFight` / `simulateFights` / `simulateRelayFight(s)`);
-  the shipped callers still run the floor default.
+- `W-LOOT-CARRY`: the plain card and its deterministic estimates, including
+  the CLI ceiling, omit the held item's percentage remainders. Pricing reads
+  the carried mean; sampled ordinary and relay fights (including sampled
+  objectives and new benchmark runs) track live remainders by default, starting
+  at zero for each fight. Pass `carry: false` to replay the old floor stream.
 - Phase-ward duration, Wrath termination and some encounter windows are model
   parameters or uncalibrated.
 - Spells, procs, the Firmament application and the planners do not all have
