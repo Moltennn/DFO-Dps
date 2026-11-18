@@ -221,7 +221,7 @@ function runCell(row, health, durability, condition = 'minted') {
   return { res, st };
 }
 
-/** The best row per family and hold configuration, by the optimizer's card DPS. */
+/** The best row per family and hold configuration, by the optimizer's pre-allowance card DPS. */
 function bestByArchetype(rows) {
   const out = {};
   for (const row of rows) {

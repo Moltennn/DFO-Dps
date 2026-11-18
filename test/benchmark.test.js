@@ -51,7 +51,20 @@ test('the imprint step is one metric: carried minus carried, and the row names i
   assert.ok(Math.abs(step - carried) < 1e-9, `imprint step ${step} vs carried minus carried ${carried}`);
   // ... and the two baselines differ on this fixture, so the check is not vacuous (nor the old card mix)
   assert.ok(Math.abs(stages.enchRun.carriedCappedDps - stages.enchRun.cappedDps) > 1e-9, 'carried and card baselines differ');
-  assert.ok(Math.abs(template.cardEnchDps - stages.enchRun.totalDps) < 1e-9, 'the card baseline is kept and named');
+  assert.ok(Math.abs(template.cardEnchDps - stages.enchRun.ceilingTotalDps) < 1e-9, 'the card ceiling baseline is kept and named');
+  assert.equal(row.cardDps, Number(template.cardTotalDps.toFixed(4)), 'the benchmark uses the card ceiling, not the carried rate');
+});
+
+test('capped loadout baselines stay on the pre-allowance card ceiling', () => {
+  // Local contract: this fixture must actually separate the card ceiling from the new default.
+  const row = UNIVERSE.rows.find((r) => r.category === '1H');
+  const family = FAMILY[row.key];
+  const opts = { mode: 'cap' };
+  const template = realTemplate(row.template, family, opts);
+  const stages = realBuildStages(row.template, family, opts);
+  assert.ok(stages.enchRun.totalDps < stages.enchRun.ceilingTotalDps);
+  assert.equal(template.cardTreeDps, stages.treeRun.ceilingTotalDps);
+  assert.equal(template.cardEnchDps, stages.enchRun.ceilingTotalDps);
 });
 
 test('every melee optimizer row is benchmarked, and the refused archetypes are named', () => {

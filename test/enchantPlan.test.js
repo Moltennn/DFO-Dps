@@ -90,6 +90,7 @@ test('the plan names the carried baseline beside the card plan figures', () => {
   assert.ok(Object.hasOwn(plan, 'carriedUncappedDps'), 'carried uncapped baseline is named');
   assert.ok(Object.hasOwn(plan, 'cardPlanDps') && Object.hasOwn(plan, 'cardUncappedPlanDps'), 'card plan totals are named');
   assert.ok(plan.cardPlanDps > 0 && plan.cardUncappedPlanDps > 0);
+  assert.ok(plan.cardPlanDps > base.allowance.law.rate, 'the plan reports the ceiling, not allowance-sustained DPS');
 });
 
 test('the weapon-type matrix prices every family on its best weapon', () => {

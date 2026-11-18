@@ -276,6 +276,12 @@ const paired = simulatePairedFights([{ id: 'a', ch: a }, { id: 'b', ch: b }], { 
 
 - `damageMode: 'capped'` samples the per-hit-capped blow; the default is
   `uncapped`, matching `fight()`.
+- Seeded ordinary and relay fights carry percentage remainders per item and
+  channel, starting each fight at zero. The sampled objectives forward the
+  same scenario: use `carry: false` for the old floor stream. The deterministic
+  `fight()` and `fightRelay()` estimates do not track a live remainder. The
+  carried tier can map the same seed to a different trace, even on a build
+  without a percentage bonus.
 - `simulateFight` reports `killDps = health / ttk` and
   `outputDps = damageDealt / time`; a run that reaches `maxSeconds` (or
   `maxBlows`) with the pool alive is **censored** (`ttk: null`).
@@ -391,17 +397,20 @@ Use `--out <file>` to override. Many table commands accept `--json`; use
 `--help` for the exact command.
 
 `build --json` and `enchant --json` carry the **ceiling vs claim** split in
-`result` (ASSUMPTION M44): `ceilingTotalDps` (= `totalDps`, the per-hit-capped
-weapon figure plus the uncapped proc sum), `ceilingTotalTtk` (=
-`totalTtkCapOnly`), and the allowance run's own `claimTotalTtk` and
-`claimSustainedDps`: `claimSustainedDps` is `null` without an allowance, and
-`claimTotalTtk` is also `null` when the run cannot kill. Every existing key
-keeps its value, with one caveat: `totalTtk` falls back to the ceiling when the
-allowance cannot kill, so read `claimTotalTtk` (null then). On a target with an
-allowance, `build` prints the allowance-sustained kill time (`no kill` when
-there is none), names the ceiling beside it, and adds a `Ceiling vs allowance`
-note when the two differ by more than 1%, naming the direction. Without an
-allowance the row is labelled `Time to kill (per-hit-capped ceiling)`.
+`result` (ASSUMPTION M44). These commands use the plain card and its deterministic
+claim estimate, not seeded fights. On a target with an allowance, `totalTtk` is
+`claimTotalTtk`: null if the run cannot kill or was unavailable, never a
+ceiling fallback. `totalDps` is `claimSustainedDps` if there is a run, even on a
+no-kill result; otherwise DPS stays on the ceiling. Ordinary foes retain the
+old totals. Use `ceilingTotalDps` and `ceilingTotalTtk` for the pre-budget
+figures (`build` also exports the `totalTtkCapOnly` alias). `build` exports the
+unchanged band as `ceilingTotalDpsMin`/`ceilingTotalDpsMax`; its default
+`totalDpsMin`/`totalDpsMax` are null when the default is sustained.
+
+The text distinguishes `no kill` (censored run) from `no allowance run`.
+`build` names the ceiling beside the allowance TTK and shows a direction-aware
+`Ceiling vs allowance` note for gaps over 1% or when only the ceiling has a kill.
+Without an allowance the row is labelled `Time to kill (per-hit-capped ceiling)`.
 
 ## 15. First-run troubleshooting
 

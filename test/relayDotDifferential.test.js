@@ -10,7 +10,8 @@
  *
  * Ordering (ASSUMPTION, the same rule as M35 and M38 - upstream has no tie to read): a cast's claim lands before the
  * blow's claim at one timestamp; a round at a blow's own timestamp lands after the blow; rounds fall at k * 5 s from
- * t=0 (`src/spells.js:21`); a shield (`t < shieldUntil`) refuses a cast outright and is left to the engine for a round.
+ * t=0 (`src/spells.js:21`); a shield (`t < shieldUntil`) stops the cast and turns the round without sending it
+ * (`standInSpell.js:219-236@a3eb1605`, independently checked in standInSpellDifferential.test.js).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -84,6 +85,7 @@ async function compare({
   const attacker = upstreamEntity(desc);
   const upBody = oracleEntity(body);
   upBody.activeEffects = [];
+  const target = gateTarget(level, { health: pool });
   const script = draws ?? [];
   let localEntry = null;
   let used = 0;
@@ -92,7 +94,7 @@ async function compare({
     // takes its draws from the same script, and the fight's own cast stream starts after them.
     u.effects.applySpell(prime, level, upBody, { hurt: () => {} }, scripted([...script]), { entity: attacker });
     const primed = upBody.activeEffects.length;
-    const scratch = { ...gateTarget(level, { health: pool }), activeEffects: [] };
+    const scratch = { ...target, activeEffects: [] };
     const localRolls = scripted([...script]);
     resolveCwsCast({
       spell: prime, caster: { entity: { isPlayer: true, level, online: false } }, casterLevel: level,
@@ -105,12 +107,11 @@ async function compare({
   }
   const up = await upstreamRelayEvents(u, {
     desc, item: oracleItem(item), body: upBody, level, pool, events, seed, shieldUntil, standard,
-    cwsRolls: scripted(script.slice(used)), maxSeconds,
+    traits: target.bossTraits, cwsRolls: scripted(script.slice(used)), maxSeconds,
   });
-  const target = { ...gateTarget(level, { health: pool }), activeEffects: localEntry ? [{ ...localEntry }] : [] };
   const ch = simCharacter(desc, item);
   const local = simulateRelayFight(ch, {
-    target, health: pool, weapon: weaponOf(item),
+    target: { ...target, activeEffects: localEntry ? [{ ...localEntry }] : [] }, health: pool, weapon: weaponOf(item),
     ...relayEventArgs(events.map((e, i) => ({ t: e.t, hand: e.hand, outcome: up.rows[i].outcome }))),
     trace: true, seed, shieldUntil, standard, maxSeconds,
     cwsRolls: scripted((localDraws ?? script).slice(used)),
@@ -244,15 +245,15 @@ test('4. a cast inside a shield: the oracle refuses it at the CastWhenStrikes ga
   assertSameClaims(up, local);
 });
 
-test('5. a DoT round inside a shield: the entry ticks, the engine refuses the claim', async () => {
+test('5. a shielded DoT round ticks but does not send; the round at shield end sends', async () => {
   const prime = spell({ mag: 40, rounds: 6 });
   const { up, local } = await compare({
-    item: sword(), events: [{ t: 0.5, hand: 'main' }], prime, draws: roundDraws(40), shieldUntil: 7, maxSeconds: 40,
+    item: sword(), events: [{ t: 0.5, hand: 'main' }], prime, shieldUntil: 10, maxSeconds: 40,
   });
   const dots = up.claims.filter((c) => c.kind === 'dot');
   assert.ok(dots.length >= 2, 'the primed entry keeps ticking');
-  assert.equal(dots[0].t, MAGIC_ROUND_SECONDS);
-  assert.equal(dots[0].got, 0, 'the shielded round is refused by the engine');
+  assert.equal(dots[0].t, 2 * MAGIC_ROUND_SECONDS, 'no submission at the first anchor');
+  assert.ok(dots[0].got > 0, 'the round on the boundary is paid');
   assert.ok(dots[1].got > 0, 'the next round is paid');
   assertSameClaims(up, local);
 });

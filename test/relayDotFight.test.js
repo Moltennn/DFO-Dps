@@ -9,11 +9,9 @@
  *     resolved inside the blow's formula, before the host's blow claim (`vendor:combat/formulas.js:826-836`);
  *   - a DoT round's ticks are ONE claim per round (`standInSpell.js:131-151`), one round = 5 s
  *     (`src/spells.js:21`), and the continuousDamage entry keeps ONE per body (renewal, `effects.js:1091-1103`);
- *   - a claim made while the boss is shielded is refused by the engine before any token
- *     (`vendor:net/gate/gateBrain.js:1308`; `src/relayClaim.js:149`), which is how a warded DoT round loses its damage
- *     while the entry still ticks (M36);
- *   - the host rounds the claim boundary and sends nothing under 1 (`Math.round`, ASSUMPTION M38 - gateCourt is
- *     unvendored).
+ *   - a turned DoT round ticks but sends no claim (`vendor:scenes/gate/standInSpell.js:219-236`), checked in
+ *     standInSpellDifferential.test.js; engine refusal is checked separately in relayClaimDifferential.test.js;
+ *   - the host rounds the claim boundary and sends nothing under 1 (`vendor:scenes/gate/gateCourt.js:1164-1165`).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -121,7 +119,7 @@ test('3.7d: a cast inside a shield is refused - the ward is the relay clock, not
   await replay(r, { shieldUntil: 2 });
 });
 
-test('3.7d: a shielded DoT round is refused by the engine while the entry keeps ticking', async () => {
+test('3.7d: a shielded DoT round does not count as a claim or reach the engine', async () => {
   const item = sword();
   const ch = simCharacter(BASIC(), item);
   const target = gateTarget(45, { health: 4000 });
@@ -133,18 +131,21 @@ test('3.7d: a shielded DoT round is refused by the engine while the entry keeps 
   const primed = { ...target, activeEffects: scratch.activeEffects.map((a) => ({ ...a })) };
   const rounds = primed.activeEffects[0].roundsRemaining;
   assert.ok(rounds > 0);
-  const r = simulateRelayFight(ch, {
-    target: primed, health: 4000, weapon: weaponOf(item), seed: 7, trace: true, shieldUntil: 6, maxBlows: 1, maxSeconds: 40,
-  });
+  const args = { target: primed, health: 4000, weapon: weaponOf(item), seed: 7, trace: true, shieldUntil: 10, maxBlows: 1 };
+  const r = simulateRelayFight(ch, { ...args, maxSeconds: 40 });
   const dots = r.claimLog.filter((c) => c.kind === 'dot');
-  assert.ok(dots.length >= 2, `the entry keeps ticking through the shield (${dots.length} rounds)`);
-  assert.equal(dots[0].t, 5);
-  assert.equal(dots[0].got, 0, 'the shielded round lands nothing');
-  assert.equal(dots[0].reason, 'shielded');
-  assert.ok(dots[1].got > 0, 'the next round, after the shield, is paid');
-  // The round count is consumed by the ticks, shield or not: `roundsRemaining` rounds all fire.
-  assert.ok(dots.length <= rounds);
-  await replay(r, { shieldUntil: 6 });
+  assert.equal(dots.length, rounds - 1, 'the turned tick spends one round without a claim');
+  assert.equal(dots[0].t, 10);
+  assert.ok(dots[0].got > 0, 'the round at shield end is paid');
+  assert.equal(r.refused, 0);
+  assert.equal(r.shielded, 0);
+  assert.equal(r.refusedDamage, 0);
+  assert.equal(r.offered, dots.reduce((total, c) => total + c.claim, 0));
+  const stopped = simulateRelayFight(ch, { ...args, maxSeconds: 5 });
+  assert.deepEqual(stopped.claimLog, [], 'the only due round never sends');
+  assert.equal(stopped.claimTime, 0);
+  assert.equal(stopped.time, stopped.lastAttackAt, 'a turned tick does not extend elapsed time');
+  await replay(r, { shieldUntil: 10 });
 });
 
 test('3.7d: a cast kill suppresses the blow claim and names the cast', async () => {
@@ -183,7 +184,7 @@ test('3.7d: a renewal re-cast bills nothing (one entry, one first round)', async
 test('3.7d: a DoT round can kill, and the kill names the DoT', async () => {
   const item = sword([1]);
   const ch = simCharacter(BASIC(), item);
-  const target = gateTarget(45, { health: 1000 });
+  const target = gateTarget(45, { health: 1000, traits: [] }); // Isolate DoT kill attribution from resistance.
   const r = simulateRelayFight(ch, {
     target, health: 1000, weapon: weaponOf(item), seed: 7, trace: true, maxBlows: 1, maxSeconds: 40,
     standard: new Map([[1, spell({ mag: 1000, rounds: 5 })]]),
@@ -236,7 +237,7 @@ test('3.7d: the cast\'s claim equals the vendored applySpell for the same script
   const u = await upstream();
   const item = sword([1]);
   const ch = simCharacter(BASIC(), item);
-  const target = gateTarget(45, { health: 4000 });
+  const target = gateTarget(45, { health: 4000, traits: [] }); // Raw applySpell doesn't include the boss-trait layer.
   const theSpell = spell({ mag: 200, rounds: 5, direct: 150 });
   // Six draws for one cast of (dot + direct): magnitude x2 and one throw per effect.
   const values = [0.1, 0.9, 0.4, 0.2, 0.8, 0.6];
@@ -333,7 +334,7 @@ test('3.7e: the batch summary carries the per-kind totals and the kill tally', (
   assert.equal(r.killSource.blow + r.killSource.cws + r.killSource.dot, r.kills, 'the kill tally covers every kill');
 });
 
-test('3.7d: a build with no CWS rows is bit-identical to the same fight before the payload existed', () => {
+test('3.7d: no CWS rows ignores spell records and preserves the historical floor result', () => {
   const item = sword();
   const ch = simCharacter(BASIC(), item);
   const target = gateTarget(45, { health: 2000 });
@@ -347,20 +348,18 @@ test('3.7d: a build with no CWS rows is bit-identical to the same fight before t
   assert.equal(plain.claimsByKind.proc, 0);
   assert.equal(plain.claimsByKind.dot, 0);
   assert.equal(plain.claimLog.length, plain.claims);
-  // The seeded no-CWS fight's figures, pinned as literals. Verified at 19f7529 (the commit before this payload): this
-  // same fixture, run there with the new-field assertions above removed, gives these exact figures.
-  assert.equal(plain.ttk, null, 'the fight is censored at the horizon');
-  assert.equal(plain.damageDealt, 524);
-  assert.equal(plain.claims, 32);
-  assert.equal(plain.time, 30);
-  assert.equal(plain.trace.length, 32);
+  // Keep the historical no-CWS literals from 19f7529 on the matching floor sampler.
+  const floor = simulateRelayFight(ch, { ...args, carry: false });
+  assert.equal(floor.ttk, null, 'the fight is censored at the horizon');
+  assert.equal(floor.damageDealt, 524);
+  assert.equal(floor.claims, 32);
+  assert.equal(floor.time, 30);
+  assert.equal(floor.trace.length, 32);
 });
 
-test('3.7d/M38(4) GREEN GUARD: caller-set target.warded blocks relay casts and blow powers, not DoT rounds', () => {
+test('3.7d/M38(4): caller-set target.warded blocks relay casts, blow powers and DoT submissions', () => {
   // M38(4) is a caller-set flag on a relay body, not the relay's own shield clock. The gateway here is the ordinary
-  // `weaponBlow` ward gate: casts (`cwsEligible`), the four blow power channels and the echo are suppressed; rounds
-  // keep ticking. A green guard because the code already behaves this way; it fails only if a future edit makes the
-  // relay's `target.warded` inert on blows or starts gating rounds.
+  // `weaponBlow` ward gate keeps suppressing the blow powers; the host also suppresses round submissions, not ticks.
   const item = sword([1]);
   item.affixes = [{ id: 'slayer', param: 'daedra', value: 20 }];
   const ch = simCharacter(BASIC(), item);
@@ -380,8 +379,8 @@ test('3.7d/M38(4) GREEN GUARD: caller-set target.warded blocks relay casts and b
   assert.ok(plain.claimsByKind.proc > 0, 'the control casts');
   assert.equal(warded.claimsByKind.proc, 0, 'target.warded suppresses the cast');
   assert.ok(plain.claimsByKind.dot > 0, 'the primed entry ticks on the control');
-  assert.ok(warded.claimsByKind.dot > 0, 'DoT rounds are not ward-gated');
-  assert.ok(warded.claimLog.some((c) => c.kind === 'dot'), 'a primed round is still a dot claim');
+  assert.equal(warded.claimsByKind.dot, 0, 'no DoT round sends on a turned body');
+  assert.ok(warded.claimLog.every((c) => c.kind !== 'dot'));
   const meanBlow = (r) => {
     const rows = r.claimLog.filter((c) => c.kind === 'blow');
     return rows.reduce((a, c) => a + c.claim, 0) / rows.length;

@@ -6,6 +6,95 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Sampled fights carry held-item fractions by default (2026-11-18)
+
+**Source.** `systems/loot/lootPowers.js:169-181@a3eb1605` keeps a fractional
+share on the held item except during the estimate. Separate remainders are
+kept by `systems/weaponMastery.js:132,148-150`, `systems/martialPowers.js:106,232-235`
+and `systems/firmamentPowers.js:104,111-115` at the same pin. M43's local reset
+to zero for each fight is unchanged.
+
+**Red → green.** `node --test test/lootCarry.test.js` with the existing held-item
+differentials changed to omit `carry` failed before the default flip and passed
+after. At 240 seeds the 25% slayer's mean TTK went from 282.258 s to 277.094 s
+(vendored 277.204 s); damage/blow went from 16.2478 to 16.5499 (vendored 16.5406).
+At 64 relay seeds and 400 attacks per fight, damage/attack went from 20.59914 to
+20.97586 (vendored 21.04320, z from −6.90 to −1.09). Explicit floor is still
+outside the held-item bounds and the original seeded floor trace is unchanged.
+
+**Outputs moved.** `src/simulateFight.js` and `src/relayFight.js` enable the
+existing carried sampler when `carry` is omitted. The sampled objectives and
+benchmark CLI inherit it; ordinary CLI builds and deterministic objectives
+still use the card or its deterministic estimate. `carry: false` retains the
+old sampled floor stream. `W-LOOT-CARRY` remains for the stateless estimates
+and explicit floor, not the default sampled fights. Pricing, `ceilingTotalDps` /
+`ceilingTotalTtk`, the optimizer and benchmark artifacts are unchanged.
+
+## Phase 2 (M44) - allowance totals use the existing claim estimate (2026-11-18)
+
+**Source.** `net/gate/gateBrain.js:1298-1335@a3eb1605` spends a shared blow
+token and damage purse for every accepted submission. The card's ceiling
+(`src/enchants.js:137-172`) applies per-claim caps but sums the proc rates
+before that shared budget. No claim, carry, or fight rules change here.
+
+**Red → green.** `node --test --test-name-pattern='Phase 2' test/procBudget.test.js`
+first failed on both changed defaults. Replaying the card's fixed proc schedule
+through the vendored `applyHit` measured 150 DPS after the bucket drained;
+raw `totalDps` was 710.08698005698 and is now 150. The finite kill agrees before
+and after (75.69429833789175 s vs vendored 75.69429833789185 s; the ceiling is
+22.90 s). With a 100,000,000 HP pool, raw `totalTtk` was 1283880.52643776 s and
+is now null; the finite estimate remains available as `ceilingTotalTtk`.
+Ordinary totals and bands still match the pre-budget formula.
+
+**Outputs moved.** `src/model.js:1128-1139` selects the existing claim fields
+for allowance totals; no TTK fallback, and DPS keeps its ceiling fallback when
+there is no run. The legacy DPS band is null only for a sustained default; the
+unchanged ceiling band is explicitly named and exported by `build --json`.
+The CLI and HTML distinguish censored and missing runs. Enchant-plan,
+real-build and benchmark ceiling baselines and the explicit fight objectives
+retain their metrics. `W-PROC-BUDGET` remains for the pre-budget proc estimate;
+the vendored replay verifies the fixed schedule's billing, not sampled proc
+lifecycle parity for the card.
+
+## Turned relay DoT rounds tick without sending a claim (2026-11-18)
+
+**Source.** At `a3eb1605`, `scenes/gate/standInSpell.js:137-150` runs the tick and
+updates the carried entry before landing; `:219-236` suppresses the host callback
+for a turned body or entity. `scenes/gate/gateCourt.js:1159-1168` sends nothing
+while `t < shieldUntil`. This supersedes the round-submission behavior in M38.
+
+**Change and evidence.** `src/relayFight.js` still spends the tick's duration
+and draws, but does not submit it under the shield or an explicit `target.warded`.
+Before the fix, `test/standInSpellDifferential.test.js` found an extra claim of
+200 at 5 s. Afterward the claims are 10, 160 and 160 at 10, 15 and 20 s,
+matching the vendored bridge, including the round exactly at shield end. A
+persistent entity ward went from four claims to zero, also matching upstream.
+The tick draw counts still match. The separate relay-claim differential still
+checks engine refusal when a shielded claim actually reaches it.
+
+**Outputs moved.** A turned tick adds no claim or claim-log row, offer,
+refusal, or shielded-claim count, and does not advance either the claim clock
+or the last billed time. If it was the last billed event after the last attack,
+schedule- or blow-budget elapsed time can shrink and output DPS can change;
+horizon and kill time rules are unchanged. An explicit ward now also prevents
+the turned tick's damage from landing. Stun and court geometry are not modelled.
+
+## Relay spell claims respect the boss's element-proof trait (2026-11-18)
+
+**Source.** At `a3eb1605`, `scenes/gate/standInSpell.js:198-217` sums the cast's
+direct damage and first tick, then applies `bossStrike` once. Later rounds
+resist each tick before summing (`:51-58`, `:137-150`). The shared clock's
+period is 5,000 ms (`gateCourt.js:159`, `net/wire.js:240`); its phase relative
+to the fight start is not established by this comparison.
+
+**Change and evidence.** `src/relayFight.js` applies the existing `resistSpell`
+helper at those two points. `test/standInSpellDifferential.test.js` drives the
+vendored `createStandInSpell` with scripted rolls: on a flameproof boss the
+local fire claims were `[210, 200, 10, 160, 160]` (red) and are now
+`[53, 50, 3, 40, 40]` (green), matching the game. The no-trait and mismatched
+element controls agree without scaling. This changes seeded relay-fight spell
+claims, damage and potentially TTK; it does not change the card or ordinary fights.
+
 ## Ward correction - `W-WARD` was recorded as a divergence that the source does not show (2026-11-18)
 
 **What the game does.** The boss `warded` trait is a health pool: "a ward of WARD_SHARE of its health takes every blow

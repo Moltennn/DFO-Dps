@@ -147,12 +147,9 @@ Use `./dfo-dps --help` for every flag, or see
   in the ordinary fight (Stage 3.5.1), with its condition bill when
   `durability: true` (Stage 3.5.2); in the relay fight every proc and every DoT
   round is its own claim, compared claim for claim against the vendored
-  compositor (Stage 3.7d-3.7f). The CARD's default figures are the **ceiling**:
-  CWS/DoTs priced as expected damage added to the capped weapon figure, an upper
-  bound that can promise a kill the allowance refuses. Since M44 they are named
-  `ceilingTotalDps`/`ceilingTotalTtk`, the allowance run's own figures are named
-  `claimTotalTtk`/`claimSustainedDps`, and both are printed labelled; see
-  `W-PROC-BUDGET`.
+  compositor (Stage 3.7d-3.7f). The card defaults to the expected-value allowance
+  run where available and still shows the pre-budget `ceilingTotalDps` and
+  `ceilingTotalTtk` separately; see `W-PROC-BUDGET`.
 - **Spells** use the live `SPELLS.STD` records, saving throws and school
   potency. Reflection/absorption and some effect families are not modelled.
 - **Firmament, enchant-plan, imprint and loadout** are supported planner
@@ -223,40 +220,33 @@ which pricing uses), and the sampled **stochastic-ttk** / **kill-probability** /
 **stochastic-relay** (seeded fights at the 1,000-trial first-pass floor; the 95%
 interval is on the mean TTK, not on the kill-rate score, and ranking pairs the
 seeds with a censoring guard). On a target with an allowance, the card also
-separates the **ceiling** (`ceilingTotalDps`, `ceilingTotalTtk`: the per-hit cap
-plus the uncapped proc sum, an upper bound) from the **allowance-sustained** run
-(`claimTotalTtk`, `claimSustainedDps`), and prints both labelled; when the run
-cannot kill, `claimTotalTtk` is null and the older `totalTtk` falls back to the
-ceiling. See [`METHOD.md`](METHOD.md) for formulas and the limitations below for
+separates the **ceiling** (`ceilingTotalDps`, `ceilingTotalTtk`: capped weapon
+plus the proc sum before the shared budget) from the **allowance-sustained** run
+(`claimTotalTtk`, `claimSustainedDps`). `totalTtk` stays null if there is no kill
+or no run; `totalDps` uses sustained DPS when the run exists. Ordinary foes keep
+their previous totals. See [`METHOD.md`](METHOD.md) for formulas and the limitations below for
 what is not verified.
 
 ## Limitations and known gaps
 
 These are recorded as waivers or assumptions, not hidden:
 
-- `W-PROC-BUDGET`: the relay fight bills every proc and DoT round as its own
-  claim (Stage 3.7d-3.7f); the card's default `totalDps`/`totalTtk`/
-  `totalTtkCapOnly` are still the **ceiling** (the capped weapon figure plus the
-  uncapped proc sum, an upper bound). Since M44 the same numbers are also named
-  `ceilingTotalDps`/`ceilingTotalTtk`, the allowance run's own figures are
-  exposed as `claimTotalTtk`/`claimSustainedDps`, and the CLI and report print
-  both, labelled `ceiling` and `allowance-sustained`, with a note when they
-  differ. The ceiling is never reported as the kill time when the allowance
-  runs and kills; the one exception is the pre-existing `totalTtk`, which falls
-  back to the ceiling when the run cannot kill - read `claimTotalTtk` (null
-  then) instead.
+- `W-PROC-BUDGET`: the relay fight bills each submitted proc and DoT round as
+  its own claim. The card's explicit ceiling and `enchantDps` still price
+  expected proc damage before the shared token and purse limits. The defaults
+  on allowance targets use the existing claim schedule, not the sampled proc
+  lifecycle; use the seeded relay fight for per-event billing.
 - Ward: the `warded` boss trait is a health pool the owner takes first (`bossTake`),
   priced as `WARD_SHARE` of health and checked against the vendored pool and drain; it
   is not the per-blow `target.warded` flag, which is the relay referee's turned blow and
   suppresses the blow powers when a caller sets it. No known divergence is waived here.
   Open and unverified: whether the unvendored host ever copies the trait ward onto
   `target.warded`, and the Firmament's gate (its sky law is a vendored stub).
-- `W-LOOT-CARRY`: the DEFAULT seeded fight streams and the plain card estimate
-  floor each blow; the game carries a percentage line's fraction between blows.
-  Pricing (imprints, enchant deltas) reads the carried mean instead, and the
-  seeded fight streams carry when called with the opt-in scenario flag
-  `carry: true` (`simulateFight` / `simulateFights` / `simulateRelayFight(s)`);
-  the shipped callers still run the floor default.
+- `W-LOOT-CARRY`: the plain card and its deterministic estimates, including
+  the CLI ceiling, omit the held item's percentage remainders. Pricing reads
+  the carried mean; sampled ordinary and relay fights (including sampled
+  objectives and new benchmark runs) track live remainders by default, starting
+  at zero for each fight. Pass `carry: false` to replay the old floor stream.
 - Phase-ward duration, Wrath termination and some encounter windows are model
   parameters or uncalibrated.
 - Spells, procs, the Firmament application and the planners do not all have
