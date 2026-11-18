@@ -16,9 +16,8 @@
  *     own timestamp comes AFTER the blow's claim (the M35/M38 ordering rule, an ASSUMPTION - upstream has no tie to
  *     read), and rounds still due after the last event are drained while an entry lives and the boss lives;
  *   - a warded blow (`now*1000 < f.shieldUntil`) sets `body.warded`, so the vendored CastWhenStrikes refuses the cast
- *     itself (`systems/enchantments.js:597`); this compositor ticks a round and submits it to the engine, which refuses
- *     it while shielded (`net/gate/gateBrain.js:1308`). The real host's turned-body no-send is a separate rule
- *     (`standInSpell.js:219-236`), not modelled here;
+ *     itself (`systems/enchantments.js:597`); the host ticks a turned round but does not submit it
+ *     (`standInSpell.js:219-236`, `gateCourt.js:1159-1168` @ a3eb1605);
  *   - a blow that casts and is KILLED by the cast sends no blow claim (the host's live-foe gate, `hostEnchant.js:198-209`).
  * `cwsRolls` is a separate seeded draw function for the cast and the rounds (the local fight keeps its own `cws` stream),
  * so both sides consume the same script. Everything still goes through the one vendored `applyHit`.
@@ -80,13 +79,14 @@ export async function upstreamRelayEvents(u, {
     return got;
   };
   const liveEntry = () => (body.activeEffects ?? []).some((a) => a?.kind === 'continuousDamage' && (a.roundsRemaining ?? 0) > 0);
+  const entityWarded = !!body.warded; // Keep the explicit flag separate from the per-blow shield sample below.
   // Each tick is resisted before summing into ONE claim (`standInSpell.js:51-58,131-151` @ a3eb1605).
   const roundClaim = (t) => {
     let total = 0;
     u.effects.tickActiveEffects(body, { hurt: (n, o) => {
       if (n > 0) total += Math.max(0, u.bossTraits.bossStrike(body, n, { kind: 'spell', element: o?.element ?? null }).damage);
     } }, castRolls);
-    if (total >= 1) submit(t, 'dot', total);
+    if (total >= 1 && t * 1000 >= f.shieldUntil && !entityWarded) submit(t, 'dot', total);
   };
   let nextRoundT = MAGIC_ROUND_SECONDS;
   // The round clock advances with the FIGHT's clock, not the entry's life: an anchor that passes with no live entry is

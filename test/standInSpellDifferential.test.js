@@ -17,14 +17,15 @@
  *     (:51-58 `counting(got, resist)`) and the round's sum is the claim (:150 `land(got.n)` when `got.n >= 1`).
  *   - The round clock is the WORLD's: `Math.floor(now() / COURT_ROUND_MS)` (:115, :122), so the phase of the rounds
  *     against a fight's own start is arbitrary; the local model anchors them at the fight's t = 0 (ASSUMPTION M35).
- *     Only AMOUNTS are compared here, never times, so the phase does not enter.
- * The turned-round case checks the vendor host only; relayDotFight.test.js checks engine refusal separately.
+ *     The amount comparisons don't depend on phase; the turned-round fixture deliberately aligns both clocks.
+ *     relayClaimDifferential.test.js checks refusal of an actual engine submission separately.
  * Not compared: the stun window, a missed frame's catch-up (:129-143), and mid-DoT potency changes (M34).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { gateTarget, weaponOf } from '../src/model.js';
 import { simulateRelayFight } from '../src/relayFight.js';
+import { resolveCwsCast } from '../src/cws.js';
 import { MAGIC_ROUND_SECONDS } from '../src/spells.js';
 import { ELEMENT_TRAITS } from '../src/bossTraits.js';
 import { character, simCharacter, weapon } from './harness/fixtures.mjs';
@@ -67,28 +68,31 @@ const scripted = (values) => { let i = 0; return () => (i < values.length ? valu
 const VALUES = [0.1, 0.9, 0.4, 0.2, 0.8, 0.6, 0.3, 0.7, 0.55, 0.45, 0.65, 0.35];
 
 /** The game's own claims: a cast at clock 0, then `frames` frames of the shared round clock, every claim recorded. */
-function oracleClaims({ ch, target, spell, values = VALUES, frames = 6, turnedRound = 0 }) {
+function oracleClaims({ ch, target, spell, values = VALUES, frames = 6, turnedRound = 0, entityWarded = false }) {
   let clock = 0;
   const claims = [];
   const entity = { ...target, activeEffects: [] };
   const body = { entity, warded: false };
   const player = Object.assign(Object.create(ch), { health: 100 });
+  const rolls = scripted(values);
+  let draws = 0;
   const host = {
-    player, say() {}, rolls: scripted(values), now: () => clock,
+    player, say() {}, rolls: () => { draws += 1; return rolls(); }, now: () => clock,
     boss: () => body,
     crystals: () => [], host: () => [], rival: () => null,
-    landOnBoss: (body, d, kind, round) => { claims.push({ d, round: round === true }); return true; },
+    landOnBoss: (body, d, kind, round) => { claims.push({ t: clock / 1000, d, round: round === true }); return true; },
     landOnCrystal: () => false, landOnHost: () => false, landOnRival: () => false,
     nextArenaQ() {}, trapNow: () => null, onTrap: () => false,
   };
   const door = createStandInSpell(host);
   const went = door.spellOnBoss(spell);
+  entity.warded = entityWarded;
   for (let k = 1; k <= frames; k += 1) {
     clock = k * COURT_ROUND_MS;
     body.warded = k === turnedRound;
     door.standInRound();
   }
-  return { went, claims };
+  return { went, claims, draws };
 }
 
 /** The local relay fight's cast and round claims, in order, for the same spell body and dice. */
@@ -169,15 +173,35 @@ test('ORACLE (control): a matching element-proof trait really changes the claims
   assert.ok(sum(proofOracle) < sum(plainOracle) * 0.6, `the game cuts a matching spell (${sum(proofOracle)} vs ${sum(plainOracle)})`);
 });
 
-test('ORACLE: a turned DoT round ticks but the host sends no claim', () => {
-  // standInSpell.js:131-151 consumes the tick; :219-236 suppresses the host callback, before any engine refusal.
-  const args = {
-    ch: simCharacter(BASIC(), sword()), target: gateTarget(45, { health: 100000, traits: [] }), spell: spellOf(),
-  };
-  const plain = oracleClaims(args);
-  const turned = oracleClaims({ ...args, turnedRound: 1 });
-  assert.equal(turned.went, true, 'the cast lands before the ward');
-  assert.equal(plain.claims[1]?.round, true, 'the unwarded first round sends a claim');
-  assert.ok(plain.claims.length > 2, 'the control has later round claims');
-  assert.deepEqual(turned.claims, plain.claims.filter((_, i) => i !== 1), 'only the turned round is lost, not delayed');
-});
+for (const entityWarded of [false, true]) {
+  test(`ORACLE: turned DoT ticks send no claim (${entityWarded ? 'caller-set entity ward' : 'timed shield'})`, () => {
+    // standInSpell.js:131-151 consumes the tick; :219-236 suppresses the host callback, before any engine refusal.
+    const item = sword();
+    const args = {
+      ch: simCharacter(BASIC(), item), target: gateTarget(45, { health: 100000, traits: [] }), spell: spellOf(),
+    };
+    const plain = oracleClaims(args);
+    const turned = oracleClaims({ ...args, turnedRound: entityWarded ? 0 : 1, entityWarded });
+    assert.equal(turned.went, true, 'the cast lands before the ward');
+    assert.equal(plain.claims[1]?.round, true, 'the unwarded first round sends a claim');
+    assert.ok(plain.claims.length > 2, 'the control has later round claims');
+    assert.deepEqual(turned.claims, plain.claims.filter((_, i) => entityWarded ? i === 0 : i !== 1),
+      'turned rounds are lost, not delayed');
+    assert.equal(turned.draws, plain.draws);
+
+    const rolls = scripted(VALUES);
+    let draws = 0;
+    const cwsRolls = () => { draws += 1; return rolls(); };
+    const target = { ...args.target, activeEffects: [] };
+    resolveCwsCast({ spell: args.spell, caster: { entity: args.ch }, casterLevel: 45, target, rolls: cwsRolls, hurt: () => {} });
+    target.warded = entityWarded;
+    const local = simulateRelayFight(args.ch, {
+      target, health: 100000, weapon: weaponOf(item), seed: 7, trace: true, maxBlows: 1, maxSeconds: 30,
+      shieldUntil: entityWarded ? 0 : 10, cwsRolls,
+    });
+    const actual = local.claimLog.filter((c) => c.kind === 'dot').map((c) => [c.t, c.claim]);
+    const expected = turned.claims.filter((c) => c.round).map((c) => [c.t, Math.round(c.d)]);
+    assert.deepEqual(actual, expected, 'round times and amounts match the host');
+    assert.equal(draws, turned.draws, 'no-send still consumes the tick draws');
+  });
+}

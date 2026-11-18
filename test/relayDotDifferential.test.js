@@ -10,8 +10,8 @@
  *
  * Ordering (ASSUMPTION, the same rule as M35 and M38 - upstream has no tie to read): a cast's claim lands before the
  * blow's claim at one timestamp; a round at a blow's own timestamp lands after the blow; rounds fall at k * 5 s from
- * t=0 (`src/spells.js:21`); for this engine check, a shield (`t < shieldUntil`) stops the cast and the round is still
- * submitted to the engine. The host's turned-body no-send is tested separately in standInSpellDifferential.test.js.
+ * t=0 (`src/spells.js:21`); a shield (`t < shieldUntil`) stops the cast and turns the round without sending it
+ * (`standInSpell.js:219-236@a3eb1605`, independently checked in standInSpellDifferential.test.js).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -245,15 +245,15 @@ test('4. a cast inside a shield: the oracle refuses it at the CastWhenStrikes ga
   assertSameClaims(up, local);
 });
 
-test('5. a DoT round inside a shield: the entry ticks, the engine refuses the claim', async () => {
+test('5. a shielded DoT round ticks but does not send; the round at shield end sends', async () => {
   const prime = spell({ mag: 40, rounds: 6 });
   const { up, local } = await compare({
-    item: sword(), events: [{ t: 0.5, hand: 'main' }], prime, draws: roundDraws(40), shieldUntil: 7, maxSeconds: 40,
+    item: sword(), events: [{ t: 0.5, hand: 'main' }], prime, shieldUntil: 10, maxSeconds: 40,
   });
   const dots = up.claims.filter((c) => c.kind === 'dot');
   assert.ok(dots.length >= 2, 'the primed entry keeps ticking');
-  assert.equal(dots[0].t, MAGIC_ROUND_SECONDS);
-  assert.equal(dots[0].got, 0, 'the shielded round is refused by the engine');
+  assert.equal(dots[0].t, 2 * MAGIC_ROUND_SECONDS, 'no submission at the first anchor');
+  assert.ok(dots[0].got > 0, 'the round on the boundary is paid');
   assert.ok(dots[1].got > 0, 'the next round is paid');
   assertSameClaims(up, local);
 });

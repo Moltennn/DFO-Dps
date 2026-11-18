@@ -24,9 +24,8 @@
  * (`vendor:scenes/gate/standInSpell.js:198-217`) and the cast's first DoT round rides it. Later rounds are ONE claim per
  * round carrying the sum of the live entries' ticks (`standInSpell.js:131-151`), at `k x MAGIC_ROUND_SECONDS` from t=0,
  * after the blow at an equal timestamp (M35); the entry itself is one like-kind entry per body (renewal,
- * `vendor:systems/effects.js:1091-1103`). The ward for a cast is the relay's own clock - `t < shieldUntil`, nothing sets
- * `target.warded` on a relay body (ASSUMPTION M38) - while a DoT round always ticks and lets the claim engine refuse it
- * while shielded (`gateBrain.js:1308`), so a warded round loses its damage and not its countdown (M36).
+ * `vendor:systems/effects.js:1091-1103`). A DoT round ticks even when the body is turned, but the host sends no claim
+ * during `t < shieldUntil` or an explicit `target.warded` (`standInSpell.js:219-236`, `gateCourt.js:1159-1168` @ a3eb1605).
  *
  * Excluded by this stage (the assumptions register M30/M31/M38): wear, phase-ward lifecycle, geometry, the Sundered
  * halves, stun/profile hit multipliers, Wrath, host/crystal hits and the multi-body `spendBlow` sequence. A build with
@@ -227,8 +226,7 @@ export function simulateRelayFight(ch, args = {}) {
     return { claim, result };
   };
   // STAGE 3.7d, the round clock: rounds at k x MAGIC_ROUND_SECONDS from t=0 (M35), billed AFTER the blow at an equal
-  // timestamp. A round TICKS whether or not the boss is shielded: the claim engine refuses a shielded claim
-  // (`gateBrain.js:1308`), which is the one ward rule for a round (M36), so the entry still counts down. The clock and
+  // timestamp. A turned round still ticks and counts down (standInSpell.js:137-150,219-236@a3eb1605). The clock and
   // the drain run only when the fight can hold an entry - it casts, or the caller's target arrived with a live
   // continuousDamage entry (the target's own state, cloned like the ordinary fight's, and billed the same way).
   const hasLiveDot = (fightTarget?.activeEffects ?? [])
@@ -241,7 +239,7 @@ export function simulateRelayFight(ch, args = {}) {
     tickActiveEffects(fightTarget, {
       hurt: (n, info) => { total += Math.max(0, n > 0 ? resistSpell(bossTraits, n, info?.element ?? null) : n); },
     }, cwsRolls);
-    if (total > 0) send(at, 'dot', total);
+    if (total > 0 && at >= shieldUntil && !fightTarget.warded) send(at, 'dot', total);
   };
   /** Rounds due at or before `at` (the ones strictly before it ran at the loop's head). True when the boss fell. */
   const roundsAt = (at) => {

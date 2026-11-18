@@ -6,6 +6,29 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Turned relay DoT rounds tick without sending a claim (2026-11-18)
+
+**Source.** At `a3eb1605`, `scenes/gate/standInSpell.js:137-150` runs the tick and
+updates the carried entry before landing; `:219-236` suppresses the host callback
+for a turned body or entity. `scenes/gate/gateCourt.js:1159-1168` sends nothing
+while `t < shieldUntil`. This supersedes the round-submission behavior in M38.
+
+**Change and evidence.** `src/relayFight.js` still spends the tick's duration
+and draws, but does not submit it under the shield or an explicit `target.warded`.
+Before the fix, `test/standInSpellDifferential.test.js` found an extra claim of
+200 at 5 s. Afterward the claims are 10, 160 and 160 at 10, 15 and 20 s,
+matching the vendored bridge, including the round exactly at shield end. A
+persistent entity ward went from four claims to zero, also matching upstream.
+The tick draw counts still match. The separate relay-claim differential still
+checks engine refusal when a shielded claim actually reaches it.
+
+**Outputs moved.** A turned tick adds no claim or claim-log row, offer,
+refusal, or shielded-claim count, and does not advance either the claim clock
+or the last billed time. If it was the last billed event after the last attack,
+schedule- or blow-budget elapsed time can shrink and output DPS can change;
+horizon and kill time rules are unchanged. An explicit ward now also prevents
+the turned tick's damage from landing. Stun and court geometry are not modelled.
+
 ## Relay spell claims respect the boss's element-proof trait (2026-11-18)
 
 **Source.** At `a3eb1605`, `scenes/gate/standInSpell.js:198-217` sums the cast's
