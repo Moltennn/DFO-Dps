@@ -6,6 +6,69 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage 3.7 - The proc budget: one DoT round is one claim, capped once, and a dual pair claims it once
+
+**What the game does.** A Cast When Strikes proc is its own relay claim (`vendor:scenes/gate/standInSpell.js:198-217`
+`land(..., HIT_KINDS.Spell)`), capped by the relay's `HIT_CAP_X x ref` per hit (`vendor:net/gate/gateBrain.js:1298-1336`,
+`ref = 5 + level`, `:302`). A DoT's ticks are different: every round's ticks arrive as ONE summed claim (`standInSpell.js:131-151`),
+so the cap applies ONCE to the round's sum. A round is 5 s (`src/allowance.js:40` `DOT_ROUND_S`, `src/spells.js:21`
+`MAGIC_ROUND_SECONDS`). And a body carries ONE like-kind Continuous Damage entry: any ContinuousDamageHealth is the
+incumbent, a re-cast renews it and keeps the incumbent's own magnitude (`vendor:systems/effects.js:1091-1103`).
+
+**What changed.** (3.7b) `src/enchants.js:148-155`: the card summed `min(each tick, cap)` - capping every proc's tick apart
+- while `src/allowance.js:108-114` claims `min(sum of ticks, cap)`. The central value now sums the round and caps it once;
+the min/max lines already did. Each proc's INSTANT damage is still capped per proc (`:145-147`), because each proc is its
+own claim. (3.7c) `src/model.js:1110-1117`: a dual build added `em.dot + eo.dot * 0.8` every round - the two hands' DoT
+figures, one of them 0.8-weighted - although upstream merges them into one entry. The pair now claims ONE round from the
+merged entry: the main hand's when it has one, else the off's, unweighted (an off-hand share belongs to a blow, not a
+magic round). `streamsOf` (`:1134-1148`) emits that one dot stream from the dot-holding hand's proc set, with the other
+hand's `dotTick` zeroed, so the allowance and the card agree. The band (`:1118-1127`) prices the SAME merged entry too: it
+used to halve both hands' DoT and weight the off hand 0.8, so the central value could fall outside
+`[enchantDpsMin, enchantDpsMax]`; it now takes the merged host's own `dotDpsMin`/`dotDpsMax`, and the hand cards expose
+them (`:1492`). The Pistolet pair branch (`:1179-1187`) had the mirror-image bug: the central figure dropped the DoT
+entirely while the band added BOTH single-hand rounds (`(min_m+min_o)/2 x 2`); both now come from the one merged host.
+`allowancePatch` (`:997-1027`) keeps the claim list it offered as `allowance.streams`. The merge rule and its host choice
+are M37.
+
+**Before and after.** (3.7b) a level-45 item with two CWS rows, each a magnitude-1000 DoT (an average 55.5% save -> 555 a
+tick), per-hit cap `12 x ref(45)` = 600: card `procDot` **1110 -> 600**, `dotDps` **222 -> 120**; the allowance's dot
+`perClaim` was already 600, so the two now agree. (3.7c) a level-30 dual pair with the same CWS DoT row on both hands,
+against `gateTarget(30)` (12000 health): `dotPart` **9.99 -> 5.55** (one hand's round), `enchantDps` **9.99 -> 5.55**,
+`totalDps` **23.75 -> 19.31**, `totalTtk` **361.00 -> 438.77 s**, allowance `ttk` **361.00 -> 438.77 s**; the band, which
+sat outside the central value at **[6.0729, 6.0729]** against 5.55, is now **[5.55, 5.55]** and `totalDps` 19.31 sits in
+[13.65, 25.30]. (Pistolet pair, the same DoT row on the pistol, `gateTarget(30)`): the central `enchantDps` was **0** - the
+pair branch dropped the round while its band carried both hands' rounds (2 x 5.55) - and is now **5.55**, with `totalDps`
+**13.63** inside **[10.01, 17.49]**, `totalTtkCapOnly` **622.21 s** and the allowance's `totalTtk` **621.23 s**.
+
+**Outputs moved.** (3.7b) only a CWS/DoT build whose summed round exceeds the per-hit cap; the sweep of the shipped
+spellbook found none - the five standard spells with a `(1,0)` effect top out at **58.83** a round at level 30 and
+**87.97** at level 45 (against caps of 420 and 600; `!Pyrrhic Acid`, index 76), Wildfire (33) at 54.39/79.37, and index 20
+(the allowance fixture's row) has no DoT at all; the benchmark carries no enchantment rows. So no shipped card's number
+moves from 3.7b. (3.7c) a dual build whose hands carry DoT enchants: its `enchantDps`, the min/max band, `totalDps`,
+`totalTtk` and allowance figures move as above; a Pistolet pair with a DoT row moves too (its central figure gains the
+round it used to drop). A single-hand build and a dual build with no DoT are unchanged: the one-hand card still prices
+`tick / 5`, and a no-DoT pair's enchant figure is exactly its per-blow run (asserted in the procBudget pins; the rest of
+the suite is unchanged).
+
+**Evidence.** `test/procBudget.test.js`: 3.7a pinned the disagreement first: `enchantDps(... { cap: 600 })` returned
+`procDot` 1110 against `claimStreams`' dot `perClaim` 600, asserted through `expectKnownDiscrepancy(assert, 'W-PROC-BUDGET', ...)`
+like `test/pricing.test.js:250`; after 3.7b the same pin went red (`600 !== 1110`) - the forcing function - and now asserts
+equality (`e.procDot === dot.perClaim === 600`, `e.dotDpsMax === 120`). 3.7c's red was the pair's dot part 9.99 against the
+one-hand 5.55 (`+ 9.99 - 5.55`), green at 5.55 with `enchantDps === oneHand.enchantDps`; the added cases pin the off-only
+host (unweighted), the differing-magnitude host (swapping the rows changes the answer) and the allowance's ONE dot stream
+(`dual.allowance.streams`, `perClaim` = the round). The band red was `enchantDps 5.55 inside [6.0729, 6.0729]` (dual) and
+the pair red `enchantDps 0 !== 5.55`; both green after. The 5 s pin asserts `DOT_ROUND_S === MAGIC_ROUND_SECONDS === 5`
+(two homes, one value, `src/allowance.js:40`, `src/spells.js:21`). The waiver's remaining half is pinned:
+`W-PROC-BUDGET` holds a `expectKnownDiscrepancy` case where three capped instant procs saturate the allowance
+(`sustainedDps` 150, `enchantDps` 676.39) and the ceiling's `totalTtkCapOnly` **22.90 s** promises a kill the allowance's
+`totalTtk` **75.69 s** refuses (`src/model.js:1479` `totalDps = cappedDps + enchantDpsValue`). `npm test` reports 0
+failures; vendor verify OK.
+
+**Limits.** The relay FIGHT (batch 2) is untouched: the allowance path is the card/ceiling side. `enchantDps`'s exported
+`procDotMin`/`procDotMax` remain the uncapped sums (a pre-existing shape; `dotDpsMin`/`dotDpsMax` use the capped values).
+`W-PROC-BUDGET` is narrowed, not closed: the ceiling still sums procs on top of the weapon figure (its DoT clause was
+removed). A pair with two different DoT spells prices the main hand's alone (M37).
+
 ## Stage 3.6c - A ward turns every per-blow power, and only those
 
 **What the game does.** A `warded` foe - the Warden's/court's word the host copies onto the body - refuses every per-blow

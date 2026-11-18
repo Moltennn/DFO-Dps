@@ -1,0 +1,211 @@
+/*
+ * test/procBudget.test.js - Stage 3.7: the per-hit cap and the DoT round (the proc budget).
+ *
+ * Two rules meet here, both read from the relay's own law:
+ *   - one magic round's DoT is ONE claim: all procs' ticks summed, then capped once (`src/allowance.js:108-114`
+ *     `claimStreams`, vendor:scenes/gate/standInSpell.js:131-151);
+ *   - a DoT round is `DOT_ROUND_S` seconds (`src/allowance.js:40`), the same 5 s the spell library's
+ *     `MAGIC_ROUND_SECONDS` uses (`src/spells.js:21`).
+ *
+ * 3.7: the card and the allowance claim the same DoT round - all procs' ticks summed, capped once - and a dual pair
+ * claims that round ONCE, from the one like-kind entry a body carries (vendor:systems/effects.js:1091-1103).
+ */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { character, simCharacter, weapon } from './harness/fixtures.mjs';
+import { analyze, gateTarget, referenceFoe, weaponOf } from '../src/model.js';
+import { enchantDps, strikeEnchantments } from '../src/enchants.js';
+import { ALLOWANCE, DOT_ROUND_S, claimStreams, refOf } from '../src/allowance.js';
+import { MAGIC_ROUND_SECONDS } from '../src/spells.js';
+import { expectKnownDiscrepancy } from './harness/waivers.mjs';
+
+const BASIC = () => character({ level: 45, raceId: 1, skills: 40, online: false });
+
+/** One Continuous Damage Health (1,0) spell, magnitude `mag`, ten rounds. */
+const dotSpell = (index, mag = 1000) => ({
+  name: `DoT ${index}`, index, element: 4, rangeType: 1,
+  effects: [{
+    type: 1, subType: 0,
+    magnitudeBaseLow: mag, magnitudeBaseHigh: mag,
+    magnitudeLevelBase: 0, magnitudeLevelHigh: 0, magnitudePerLevel: 1,
+    durationBase: 10, durationMod: 0, durationPerLevel: 1,
+    chanceBase: 0, chanceMod: 0, chancePerLevel: 1,
+  }],
+});
+
+/** A weapon with TWO Cast When Strikes rows, each a big DoT: the summed round is what the cap sees. */
+const twoDotItem = () => {
+  const it = weapon(121, { material: 9 });
+  it.enchantments = [{ type: 2, param: 1 }, { type: 2, param: 2 }];
+  return it;
+};
+
+/** One Cast When Strikes DoT row on a long blade, and the same piece in the other hand: a dual pair of one spell. */
+const dotPair = (mag = 200) => {
+  const main = weapon(121, { material: 9 });
+  main.enchantments = [{ type: 2, param: 1 }];
+  const off = { ...main, equipSlot: 21 };
+  const ch = simCharacter(character({ level: 30, raceId: 1, skills: 40, online: false }), main);
+  ch.offWeapon = off;
+  ch._dual = true;
+  return { ch, main, off, standard: new Map([[1, dotSpell(1, mag)]]) };
+};
+
+/** A card's DoT part: what `enchantDps` adds a second beyond the proc damage (an `enchantDps` over 5 s). */
+const dotPart = (card) => card.enchantDps - card.enchantPerSwing * card.cadence.aps;
+
+test('3.7b: one DoT round is one claim - the card and the allowance cap the same summed round', () => {
+  const item = twoDotItem();
+  const ch = simCharacter(BASIC(), item);
+  const target = referenceFoe(45, 'tough');
+  const standard = new Map([[1, dotSpell(1)], [2, dotSpell(2)]]);
+  const cap = ALLOWANCE.hitCapX * refOf(45); // the relay's per-hit cap for a CWS proc claim: 12 x ref
+  const s = strikeEnchantments(item, ch, target, { level: 45, standard });
+  const e = enchantDps(item, ch, target, { hit: 1, aps: 1, level: 45, cap, standard });
+  const streams = claimStreams({ cappedPerSwing: 100, hit: 1, aps: 1, procs: s.procs, cap });
+  const dot = streams.find((x) => x.kind === 'dot');
+  const tick = s.procs[0].dotTick;
+
+  assert.equal(s.procs.length, 2);
+  assert.equal(tick, 555, 'the round of one magnitude-1000 DoT at an average 55.5% save');
+  assert.ok(2 * tick > cap, 'the summed round is over the cap, each tick under it');
+  // Both sides now follow the allowance's law - the round summed, then capped ONCE (3.7b).
+  assert.equal(e.procDot, 600, 'sum-then-cap: min(1110, 600)');
+  assert.equal(e.dotDpsMax, 600 / MAGIC_ROUND_SECONDS, 'the maximum round is capped the same way');
+  // The allowance: the same sum, the same single cap - the card and the claim agree.
+  assert.equal(dot.perClaim, 600, 'sum-then-cap: min(1110, 600)');
+  assert.equal(e.procDot, dot.perClaim, 'the card and the allowance claim the same round');
+});
+
+test('3.7a: the DoT round is 5 s in the allowance and in the spell library alike (two homes, one value)', () => {
+  assert.equal(DOT_ROUND_S, MAGIC_ROUND_SECONDS);
+  assert.equal(DOT_ROUND_S, 5);
+});
+
+test('3.7c: a dual pair claims ONE DoT round, from one merged entry', () => {
+  const { ch, main, standard } = dotPair();
+  const gate = gateTarget(30);
+  const target = gate;
+  const single = simCharacter(character({ level: 30, raceId: 1, skills: 40, online: false }), main);
+  const oneHand = analyze(single, { target, health: gate.maxHealth, weapon: weaponOf(main), standard });
+  const dual = analyze(ch, { target, health: gate.maxHealth, weapon: weaponOf(main), dual: true, standard });
+  const tick = strikeEnchantments(main, single, target, { level: 30, standard }).procDot;
+
+  // The pair: the body carries ONE like-kind entry (effects.js:1091-1103), so the one hand's round once - not the two
+  // hands' rounds added (the pre-3.7c card priced 1 + 0.8 of it).
+  assert.equal(dotPart(dual), tick / DOT_ROUND_S, 'the pair claims the round once');
+  assert.equal(dual.enchantDps, oneHand.enchantDps, 'and its enchant DPS is the one-hand build\'s');
+  assert.equal(dotPart(oneHand), tick / DOT_ROUND_S, 'one hand: the round once per 5 s');
+
+  // A DoT on the OFF hand alone: the off hand hosts the merged entry, and the round is not scaled by its 0.8
+  // whole-blown share (a round is not a blow).
+  const offOnly = dotPair();
+  offOnly.ch.weapon.enchantments = [];
+  const offCard = analyze(offOnly.ch, { target, health: gate.maxHealth, weapon: weaponOf(offOnly.main), dual: true, standard });
+  assert.equal(dotPart(offCard), tick / DOT_ROUND_S, 'the off hand hosts the one entry, unweighted');
+
+  // Differing magnitudes on the two hands: upstream keeps the incumbent's own magnitude, and the card's incumbent is
+  // the main hand's (M37). Swapping which hand carries which row changes the answer, so the host choice is pinned
+  // rather than averaged.
+  const two = new Map([[1, dotSpell(1, 200)], [2, dotSpell(2, 300)]]);
+  const rowItem = (param) => {
+    const it = weapon(121, { material: 9 });
+    it.enchantments = [{ type: 2, param }];
+    return it;
+  };
+  const tickOf = (param) => strikeEnchantments(rowItem(param), single, target, { level: 30, standard: two }).procDot;
+  const small = tickOf(1);
+  const big = tickOf(2);
+  assert.notEqual(big, small, 'the two rows differ');
+  const swapOf = (mainParam, offParam) => {
+    const m = rowItem(mainParam);
+    const c = simCharacter(character({ level: 30, raceId: 1, skills: 40, online: false }), m);
+    c.offWeapon = { ...rowItem(offParam), equipSlot: 21 };
+    c._dual = true;
+    return c;
+  };
+  const mainBig = analyze(swapOf(2, 1), { target, health: gate.maxHealth, weapon: weaponOf(rowItem(2)), dual: true, standard: two });
+  const offBig = analyze(swapOf(1, 2), { target, health: gate.maxHealth, weapon: weaponOf(rowItem(1)), dual: true, standard: two });
+  assert.equal(dotPart(mainBig), big / DOT_ROUND_S, 'the main hand\'s magnitude is the entry');
+  assert.equal(dotPart(offBig), small / DOT_ROUND_S, 'swapped: the other hand hosts, and its magnitude is the entry');
+
+  // The allowance is offered ONE dot stream for the pair, at the merged round's size.
+  const streams = dual.allowance?.streams ?? [];
+  assert.equal(streams.filter((s) => s.kind === 'dot').length, 1, 'one dot stream, not one a hand');
+  assert.equal(streams.find((s) => s.kind === 'dot')?.perClaim, tick);
+});
+
+test('pin: a single-hand DoT card and a no-DoT pair price the round once (unchanged by 3.7c)', () => {
+  const { ch, main, standard } = dotPair();
+  const gate = gateTarget(30);
+  const target = gate;
+  const single = simCharacter(character({ level: 30, raceId: 1, skills: 40, online: false }), main);
+  const oneHand = analyze(single, { target, health: gate.maxHealth, weapon: weaponOf(main), standard });
+  assert.equal(oneHand.enchantDps, dotPart(oneHand), 'this fixture has no proc damage: the card is its DoT round');
+
+  // A pair with no DoT is untouched: there is no dot term at all, so the enchant figure is exactly its per-blow run.
+  const instant = new Map([[1, {
+    ...dotSpell(1),
+    effects: [{ ...dotSpell(1).effects[0], type: 4, durationBase: 0 }],
+  }]]);
+  const instantDual = analyze(ch, { target, health: gate.maxHealth, weapon: weaponOf(main), dual: true, standard: instant });
+  assert.equal(dotPart(instantDual), 0);
+  assert.equal(instantDual.enchantDps, instantDual.enchantPerSwing * instantDual.cadence.aps);
+  const bareDual = analyze(ch, { target, health: gate.maxHealth, weapon: weaponOf(main), dual: true });
+  assert.equal(dotPart(bareDual), 0);
+  assert.equal(bareDual.enchantDps, 0, 'no enchantment, no enchant damage');
+});
+
+test('3.7 band: the dual DoT pair\'s enchant and total DPS bands bracket the central value', () => {
+  const { ch, main, standard } = dotPair();
+  const gate = gateTarget(30);
+  const dual = analyze(ch, { target: gate, health: gate.maxHealth, weapon: weaponOf(main), dual: true, standard });
+  assert.ok(dual.enchantDpsMin <= dual.enchantDps && dual.enchantDps <= dual.enchantDpsMax,
+    `enchantDps ${dual.enchantDps} inside [${dual.enchantDpsMin}, ${dual.enchantDpsMax}]`);
+  assert.ok(dual.totalDpsMin <= dual.totalDps && dual.totalDps <= dual.totalDpsMax,
+    `totalDps ${dual.totalDps} inside [${dual.totalDpsMin}, ${dual.totalDpsMax}]`);
+});
+
+test('3.7 band: a Pistolet pair claims one merged DoT round and its band brackets it', () => {
+  const gun = weapon(562, { material: 4 });
+  gun.equipSlot = 19;
+  gun.enchantments = [{ type: 2, param: 1 }];
+  const ch = simCharacter(character({ level: 30, raceId: 1, skills: 40, online: false }), gun);
+  const standard = new Map([[1, dotSpell(1, 200)]]);
+  const gate = gateTarget(30);
+  const pair = analyze(ch, { target: gate, health: gate.maxHealth, weapon: weaponOf(gun), pair: true, standard });
+  const tick = strikeEnchantments(gun, ch, gate, { level: 30, standard }).procDot;
+  assert.ok(tick > 0, 'the fixture has a DoT round');
+  assert.equal(pair.enchantDps, tick / DOT_ROUND_S, 'the pair claims the merged round once');
+  assert.ok(pair.enchantDpsMin <= pair.enchantDps && pair.enchantDps <= pair.enchantDpsMax,
+    `enchantDps ${pair.enchantDps} inside [${pair.enchantDpsMin}, ${pair.enchantDpsMax}]`);
+  assert.ok(pair.totalDpsMin <= pair.totalDps && pair.totalDps <= pair.totalDpsMax,
+    `totalDps ${pair.totalDps} inside [${pair.totalDpsMin}, ${pair.totalDpsMax}]`);
+});
+
+test('waiver pin (W-PROC-BUDGET): the ceiling still prices CWS procs on top of the capped weapon figure', () => {
+  // Three big instant procs at the gate saturate the allowance: the ceiling (ttkCapOnly) prices their full summed rate
+  // on top of the capped weapon figure, while the allowance can only pay the refill, so the ceiling promises a kill the
+  // allowance refuses.
+  const item = weapon(121, { material: 9 });
+  item.enchantments = [{ type: 2, param: 1 }, { type: 2, param: 2 }, { type: 2, param: 3 }];
+  const desc = character({
+    level: 45, raceId: 1, stats: { strength: 70, agility: 60, speed: 100, luck: 50 }, skills: 100, online: false,
+  });
+  const ch = simCharacter(desc, item);
+  const instant = (index) => ({
+    ...dotSpell(index, 1000),
+    effects: [{ ...dotSpell(index, 1000).effects[0], type: 4, durationBase: 0 }],
+  });
+  const standard = new Map([[1, instant(1)], [2, instant(2)], [3, instant(3)]]);
+  const gate = gateTarget(45);
+  const card = analyze(ch, { target: gate, health: gate.maxHealth, weapon: weaponOf(item), standard });
+  assert.ok(card.enchantDps > 0, 'the procs price');
+  // `ttkCapOnly` is the WEAPON-only ceiling; `totalTtkCapOnly` is the ceiling with the procs summed on top, and
+  // `totalTtk` is what the allowance itself grants. The ceiling promises the shorter kill.
+  assert.ok(card.allowance?.sustainedDps !== null, 'the fixture runs through the allowance');
+  expectKnownDiscrepancy(assert, 'W-PROC-BUDGET', card.totalTtkCapOnly < card.totalTtk, {
+    ceilingWithProcsTtk: card.totalTtkCapOnly, allowanceWithProcsTtk: card.totalTtk, enchantDps: card.enchantDps,
+    sustainedDps: card.allowance?.sustainedDps ?? null,
+  });
+});

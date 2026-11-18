@@ -998,18 +998,27 @@ function allowancePatch(tgt, health, { cappedPerSwing, hit, aps, procs, cap, str
   const spec = tgt?.allowance;
   if (!spec || !(health > 0)) return null;
   const share = health / spec.players;
-  const run = (withProcs) => runAllowance({
-    level: spec.level, share, spec,
-    streams: streamsOf ? streamsOf(withProcs) : claimStreams({ cappedPerSwing, hit, aps, procs, cap, withProcs }),
-  });
-  const weapon = run(false);
-  if (!weapon) return null;
+  // One lane's claims and the run they feed. `streams` is kept on the result so a reader (a test, a report) can see
+  // exactly what the allowance was offered - the list is pure for pure inputs.
+  const lane = (withProcs) => {
+    const streams = streamsOf ? streamsOf(withProcs) : claimStreams({ cappedPerSwing, hit, aps, procs, cap, withProcs });
+    return { streams, run: runAllowance({ level: spec.level, share, spec, streams }) };
+  };
+  const weaponLane = lane(false);
+  if (!weaponLane.run) return null;
   const hasProcs = streamsOf ? true : procs?.some((p) => (p?.damage ?? 0) > 0 || (p?.dotTick ?? 0) > 0);
-  const total = hasProcs ? run(true) : weapon;
+  const totalLane = hasProcs ? lane(true) : weaponLane;
   return {
-    allowance: { ...total, weaponOnly: { ttk: weapon.ttk, sustainedDps: weapon.sustainedDps, ceilingDps: weapon.ceilingDps, burst5Dps: weapon.burst5Dps, averageDps: weapon.averageDps } },
-    ttk: weapon.ttk,
-    totalTtk: total.ttk,
+    allowance: {
+      ...totalLane.run,
+      streams: totalLane.streams,
+      weaponOnly: {
+        ttk: weaponLane.run.ttk, sustainedDps: weaponLane.run.sustainedDps, ceilingDps: weaponLane.run.ceilingDps,
+        burst5Dps: weaponLane.run.burst5Dps, averageDps: weaponLane.run.averageDps,
+      },
+    },
+    ttk: weaponLane.run.ttk,
+    totalTtk: totalLane.run.ttk,
   };
 }
 
@@ -1098,10 +1107,22 @@ function analyzeCard(ch, {
     const offWeight = OFF_HAND_BLOW.blowWeight;
     const enchOf = (r) => ({ perBlow: r.enchantPerSwing, dot: r.enchantDps - r.enchantPerSwing * r.cadence.aps });
     const em = enchOf(main), eo = enchOf(off);
+    // STAGE 3.7: a body carries ONE like-kind Continuous Damage entry - any ContinuousDamageHealth is the incumbent, a
+    // re-cast renews it and keeps its own magnitude (vendor:systems/effects.js:1091-1103) - so the pair claims ONE DoT
+    // round, from the hand that holds it: the main's when it has one (the main opens the exchange), else the off's. A
+    // round is not an off-hand blow, so the off hand's 0.8 share does not scale it.
+    const dotHost = em.dot > 0 ? main : (eo.dot > 0 ? off : null);
+    const mergedDot = dotHost === null ? 0 : (dotHost === main ? em.dot : eo.dot);
     const enchantPerSwing = (em.perBlow + eo.perBlow * offWeight) / 2;
-    const enchantDpsValue = (em.perBlow + eo.perBlow * offWeight) * (aps / 2) + em.dot + eo.dot * offWeight;
-    const enchantDpsMin = ((main.enchantDpsMin / main.cadence.aps) + (off.enchantDpsMin / off.cadence.aps) * offWeight) * (aps / 2);
-    const enchantDpsMax = ((main.enchantDpsMax / main.cadence.aps) + (off.enchantDpsMax / off.cadence.aps) * offWeight) * (aps / 2);
+    const enchantDpsValue = (em.perBlow + eo.perBlow * offWeight) * (aps / 2) + mergedDot;
+    // The min/max band prices the SAME merged entry's round (one home with the central value), so the band brackets it;
+    // the per-blow terms keep their per-hand halving and off-hand share.
+    const mergedDotMin = dotHost === null ? 0 : (dotHost === main ? main.enchantDotDpsMin : off.enchantDotDpsMin);
+    const mergedDotMax = dotHost === null ? 0 : (dotHost === main ? main.enchantDotDpsMax : off.enchantDotDpsMax);
+    const enchantDpsMin = (((main.enchantDpsMin - main.enchantDotDpsMin) / main.cadence.aps)
+      + ((off.enchantDpsMin - off.enchantDotDpsMin) / off.cadence.aps) * offWeight) * (aps / 2) + mergedDotMin;
+    const enchantDpsMax = (((main.enchantDpsMax - main.enchantDotDpsMax) / main.cadence.aps)
+      + ((off.enchantDpsMax - off.enchantDotDpsMax) / off.cadence.aps) * offWeight) * (aps / 2) + mergedDotMax;
     const totalDps = cappedDps + enchantDpsValue;
     const totalDpsMin = cappedDpsMin + enchantDpsMin;
     const totalDpsMax = cappedDpsMax + enchantDpsMax;
@@ -1116,7 +1137,11 @@ function analyzeCard(ch, {
       // blow later; claimStreams() already waits one hit-adjusted interval before the first blow.
       for (const [hand, start, weight] of [[main, 0, 1], [off, schedule.mainSeconds, offWeight]]) {
         const procs = withProcs
-          ? (hand.enchantProcs ?? []).map((p) => ({ ...p, damage: (p.damage ?? 0) * weight, dotTick: (p.dotTick ?? 0) * weight }))
+          ? (hand.enchantProcs ?? []).map((p) => ({
+            ...p,
+            damage: (p.damage ?? 0) * weight,
+            dotTick: hand === dotHost ? (p.dotTick ?? 0) : 0, // one merged DoT entry for the pair
+          }))
           : [];
         for (const st of claimStreams({ cappedPerSwing: hand.cappedPerSwing, hit: hand.hit.hit, aps: aps / 2, procs, cap: hand.cap })) {
           out.push({ ...st, start: (st.start ?? 0) + start });
@@ -1151,9 +1176,15 @@ function analyzeCard(ch, {
     const cappedDpsMin = cappedPerSwingMin * aps;
     const cappedDpsMax = cappedPerSwingMax * aps;
     const enchantPerSwing = (main.enchantPerSwing + off.enchantPerSwing) / 2;
-    const enchantDpsValue = enchantPerSwing * aps;
-    const enchantDpsMin = (main.enchantDpsMin + off.enchantDpsMin) / 2 * 2;
-    const enchantDpsMax = (main.enchantDpsMax + off.enchantDpsMax) / 2 * 2;
+    // STAGE 3.7: the pair claims ONE merged DoT round, like the melee pair (M37) - the central figure used to drop the
+    // dot entirely while the band added BOTH single-hand rounds. One host, one home, both figures.
+    const dotHost = main.enchantDotDps > 0 ? main : (off.enchantDotDps > 0 ? off : null);
+    const mergedDot = dotHost === null ? 0 : (dotHost === main ? main.enchantDotDps : off.enchantDotDps);
+    const mergedDotMin = dotHost === null ? 0 : (dotHost === main ? main.enchantDotDpsMin : off.enchantDotDpsMin);
+    const mergedDotMax = dotHost === null ? 0 : (dotHost === main ? main.enchantDotDpsMax : off.enchantDotDpsMax);
+    const enchantDpsValue = enchantPerSwing * aps + mergedDot;
+    const enchantDpsMin = ((main.enchantDpsMin - main.enchantDotDpsMin + off.enchantDpsMin - off.enchantDotDpsMin) / 2) * 2 + mergedDotMin;
+    const enchantDpsMax = ((main.enchantDpsMax - main.enchantDotDpsMax + off.enchantDpsMax - off.enchantDotDpsMax) / 2) * 2 + mergedDotMax;
     const totalDps = cappedDps + enchantDpsValue;
     const totalDpsMin = cappedDpsMin + enchantDpsMin;
     const totalDpsMax = cappedDpsMax + enchantDpsMax;
@@ -1458,7 +1489,7 @@ function analyzeCard(ch, {
     core, weapon: w, target: tgt, swing, swingDirections: swingKeys, swingMix, hit: hitOut, damage: displayDmg, cadence: cad,
     perSwing, perSwingMin, perSwingMax, dps, dpsMin, dpsMax,
     cappedPerSwing, cappedPerSwingMin, cappedPerSwingMax, cappedDps, cappedDpsMin, cappedDpsMax, cap, capSource, capLoss: dps > 0 ? 1 - cappedDps / dps : 0,
-    enchantPerSwing, enchantDps: enchantDpsValue, enchantDpsMin, enchantDpsMax, totalDps, totalDpsMin, totalDpsMax, totalTtk: gate?.totalTtk ?? totalTtk, enchantProcs: ench?.procs ?? [], procsBeforeBreak: procsBeforeBreak(w?.item ?? ch.wraps ?? ch.weapon), procsBeforeBreakBasis: PROCS_BEFORE_BREAK_BASIS,
+    enchantPerSwing, enchantDps: enchantDpsValue, enchantDpsMin, enchantDpsMax, totalDps, totalDpsMin, totalDpsMax, totalTtk: gate?.totalTtk ?? totalTtk, enchantProcs: ench?.procs ?? [], enchantDotDps: ench?.dotDps ?? 0, enchantDotDpsMin: ench?.dotDpsMin ?? 0, enchantDotDpsMax: ench?.dotDpsMax ?? 0, procsBeforeBreak: procsBeforeBreak(w?.item ?? ch.wraps ?? ch.weapon), procsBeforeBreakBasis: PROCS_BEFORE_BREAK_BASIS,
     resist, health: bossHealth || null, ward, shields, ttk: gate?.ttk ?? ttk, ttkCapOnly: ttk, totalTtkCapOnly: totalTtk, allowance: gate?.allowance ?? null, wrath, wrathAt: WRATH_AFTER_S,
     targetDefense,
     backstab: {

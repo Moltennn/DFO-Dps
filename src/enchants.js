@@ -145,7 +145,12 @@ export function enchantDps(item, ch, target, {
   const procDamage = s.procs.reduce((a, p) => a + capOne(p.damage), 0);
   const procDamageMin = s.procs.reduce((a, p) => a + capOne(p.min), 0);
   const procDamageMax = s.procs.reduce((a, p) => a + capOne(p.max), 0);
-  const procDot = s.procs.reduce((a, p) => a + capOne(p.dotTick ?? 0), 0);
+  // STAGE 3.7: one magic round's DoT is ONE claim - every proc's tick summed, then capped once - which is the
+  // allowance's own law (`src/allowance.js:108-114`, vendor:scenes/gate/standInSpell.js:131-151). The min/max lines
+  // already summed before their cap; the central value used to cap each tick apart and then sum, so a two-row item
+  // could price 2 x the cap a round.
+  const dotSum = s.procs.reduce((a, p) => a + (p.dotTick ?? 0), 0);
+  const procDot = cap > 0 ? Math.min(dotSum, cap) : dotSum;
   const procDotMin = cap > 0 ? Math.min(s.procDotMin ?? 0, cap) : (s.procDotMin ?? 0);
   const procDotMax = cap > 0 ? Math.min(s.procDotMax ?? 0, cap) : (s.procDotMax ?? 0);
   // Potent Vs / Low Damage Vs are NOT priced here any more: they are the blow's own Strikes payload
