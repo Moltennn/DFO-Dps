@@ -389,5 +389,5 @@ test('3.7d/M38(4) GREEN GUARD: caller-set target.warded blocks relay casts and b
   const p = meanBlow(plain);
   const w = meanBlow(warded);
   assert.ok(p > w * 1.05, `the warded blow carries no slayer line: ${p.toFixed(2)} vs ${w.toFixed(2)}`);
-  // The same gate is what the card's `warded` trait does NOT do; this is the caller-set flag only (W-WARD).
+  // This is the caller-set `target.warded` flag only; the card's `warded` trait is a health pool (bossTake), not this flag.
 });

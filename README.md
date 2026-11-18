@@ -245,8 +245,12 @@ These are recorded as waivers or assumptions, not hidden:
   runs and kills; the one exception is the pre-existing `totalTtk`, which falls
   back to the ceiling when the run cannot kill - read `claimTotalTtk` (null
   then) instead.
-- `W-WARD`: ward suppression of the per-blow powers fires on `target.warded`, which only a caller sets; the boss
-  `warded` TRAIT's own pool does not suppress them, and DoT rounds are not ward-gated.
+- Ward: the `warded` boss trait is a health pool the owner takes first (`bossTake`),
+  priced as `WARD_SHARE` of health and checked against the vendored pool and drain; it
+  is not the per-blow `target.warded` flag, which is the relay referee's turned blow and
+  suppresses the blow powers when a caller sets it. No known divergence is waived here.
+  Open and unverified: whether the unvendored host ever copies the trait ward onto
+  `target.warded`, and the Firmament's gate (its sky law is a vendored stub).
 - `W-LOOT-CARRY`: the DEFAULT seeded fight streams and the plain card estimate
   floor each blow; the game carries a percentage line's fraction between blows.
   Pricing (imprints, enchant deltas) reads the carried mean instead, and the

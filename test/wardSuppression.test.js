@@ -219,19 +219,44 @@ test('GREEN GUARD: Cast When Strikes is refused by a ward - no cast, no bill', a
   assert.equal(cwsEligible({ target: localBody(), strikesPositive: true, whole: true, item, standard }), true);
 });
 
-test('OPEN GAP (W-WARD): the `warded` TRAIT is a pool, not `target.warded` - the powers still pay', () => {
-  // The narrowed waiver's subject. `analyze(..., { traits: ['warded'] })` adds the boss ward's pool to the TTK
-  // (`src/model.js:1448`, `WARD_SHARE`) but never sets `target.warded`, so the one gate in `weaponBlow` does not fire and
-  // the blow still carries its slayer and elemental lines. Only a caller that SETS `target.warded` (the host's copy of
-  // the Warden's/court's word) is suppressed.
+test('the boss `warded` TRAIT is a health pool the owner takes first, not `target.warded`: pool and drain match bossTake', async () => {
+  // vendor:systems/bossTraits.js:8 "a ward of WARD_SHARE of its health takes every blow first"; :20-23 the ward is the
+  // OWNER's half (`bossTake`, where its health is), after the blow has landed - so the striker's per-blow powers fire
+  // as usual; :390-391 the relay bosses carry no ward at all. `target.warded` is the REFEREE's flag (vendor:systems/
+  // enchantments.js:594 "a stand-in `warded` - the Warden's ward, the Remnant shut, the Spire's turned blows"), and no
+  // vendored code sets it from the trait. Whether the cut host (`dungeonContext.js`) ever copies the trait ward onto
+  // `target.warded` is NOT established (docs: U8); this test pins what the source says.
+  const u = await upstream();
   const item = linedItem();
   const ch = simCharacter(BASIC(), item);
   const w = weaponOf(item);
   const plain = localBody();
-  const card = analyze(ch, { target: plain, health: 1000, traits: ['warded'] });
-  assert.ok(card.ward > 0, 'the trait adds the ward pool the card prices');
-  assert.equal(weaponBlow(ch, w, 100, plain, {}), 130, 'the trait does NOT suppress the slayer/elemental lines');
+  // 1. the powers still pay under the trait; only a caller-set target.warded suppresses them
+  assert.equal(weaponBlow(ch, w, 100, plain, {}), 130, 'the trait does not suppress the slayer/elemental lines');
   assert.equal(weaponBlow(ch, w, 100, localBody({ warded: true }), {}), 100, 'only target.warded does');
+  // 2. the pool: local ward === the vendored ward's maximum (WARD_SHARE of max health, rounded, at least 1)
+  for (const health of [1, 3, 17, 500, 1000, 12345, 250000]) {
+    const e = { maxHealth: health, bossTraits: ['warded'] };
+    assert.equal(u.bossTraits.standBossWard(e, 0), true);
+    const up = u.bossTraits.bossWardNow(e, 0);
+    const card = analyze(ch, { target: plain, health, traits: ['warded'] });
+    assert.equal(card.ward, up.max, `the ward pool at ${health} health`);
+    // the card's own time to kill uses that same pool: (health + ward) / capped dps, no shields on this body
+    assert.ok(card.cappedDps > 0);
+    assert.ok(Math.abs(card.ttkCapOnly * card.cappedDps - (health + card.ward)) <= 1e-9 * (health + card.ward),
+      `the card's TTK spends health + ward at ${health} health`);
+    // 3. the drain: blows of 37 against bossTake (no regrowth inside one fight) need ceil((health + ward) / 37) of them,
+    //    which is the card's (health + ward) / dps with a steady rate
+    const d = 37;
+    let blows = 0;
+    let toHealth = 0;
+    let guard = 0;
+    while (toHealth < health && guard++ < 100000) {
+      toHealth += u.bossTraits.bossTake(e, d, { nowS: 0, mine: false }).damage;
+      blows += 1;
+    }
+    assert.equal(blows, Math.ceil((health + up.max) / d), `blows to kill through the ward at ${health} health`);
+  }
 });
 
 test('blowDistribution: a warded target draws no echo', () => {

@@ -6,6 +6,34 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Ward correction - `W-WARD` was recorded as a divergence that the source does not show (2026-11-18)
+
+**What the game does.** The boss `warded` trait is a health pool: "a ward of WARD_SHARE of its health takes every blow
+first" (`vendor:systems/bossTraits.js:8`, `WARD_SHARE = 0.3` at `:64`), taken on the OWNER's side after the blow has
+landed (`bossTake`, `:234-255`: the ward absorbs `min(pool, blow)` first, then health), regrowing whole `WARD_REGROW_S`
+(10 s) after the last blow (`:65`, `:180-181`); relay bosses carry no ward at all (`:390-391`). `target.warded` is a
+different thing: the REFEREE's turned blow - "a stand-in `warded` - the Warden's ward, the Remnant shut, the Spire's
+turned blows" (`vendor:systems/enchantments.js:594`, `:670`). No vendored code sets it from the trait.
+
+**What changed.** Nothing in `src/`. The waiver `W-WARD` said the trait "does not suppress per-blow powers" and listed
+that as a known divergence; by the source the trait is not meant to, so the waiver is removed
+(`test/harness/waivers.mjs`; `test/harness.test.js` now uses `W-PROC-BUDGET` as its stale-waiver sample id, the same
+assertions). The test that used to pin the "gap" (`test/wardSuppression.test.js`, formerly "OPEN GAP (W-WARD)") is now a
+differential: for seven health values from 1 to 250,000 the card's ward equals the vendored `bossWardNow` maximum
+(`Math.max(1, Math.round(health * WARD_SHARE))`), the number of blows to kill through the ward equals the vendored
+`bossTake` drain (`ceil((health + ward) / blow)`), and the blow powers still pay under the trait while only a
+caller-set `target.warded` turns them. The local ward is therefore the same quantity as the vendored one for a
+sustained fight; what it does not model is the regrowth after a 10 s pause in blows. Order with `curbing`: upstream curbs
+the blow first and the ward then absorbs the curbed blow (`bossTake` `:238`, `:247-253`); the card applies the cap to the
+blow and divides `(health + ward)` by the capped rate, which spends the same total at a steady rate (blow granularity
+aside). The card's own TTK is asserted to spend `health + ward` in the same test.
+
+**Open, not waived.** Whether the cut host ever copies the trait ward onto `target.warded` (ASSUMPTION U8; no vendored
+code does it, so the model follows the source); the Firmament's gate, which only the vendored stub of its sky law
+covers (`STUBS.md:47`); and the relay phase-ward length, a model parameter (A8).
+
+**Outputs moved.** None.
+
 ## Stage 4a (M44) - the ceiling and the claim-based run are named and printed apart (W-PROC-BUDGET) (2026-11-18)
 
 **What the game does.** Nothing new is modelled. The relay bills every Cast When Strikes proc and every Continuous
@@ -2484,7 +2512,7 @@ Recorded as known and **not fixed** (each asserted as still broken):
 | ~~`W-CONDITION`~~ | Weapon condition bands read a float percentage - **fixed in Stage 2.5** (this waiver was removed). |
 | ~~`W-RACIAL`~~ | Racial weapon/fist arms missing - **fixed in Stage 2.6** (this waiver was removed). |
 | ~~`W-CLASSIC-STRENGTH`~~ | Classic Strength used /5; the live install uses /10 - **fixed in Stage 2.7** (this waiver was removed). |
-| `W-WARD`, `W-PROC-BUDGET` | Smaller per-hit discrepancies, detailed in `test/harness/waivers.mjs`. |
+| `W-WARD` (removed 2026-11-18), `W-PROC-BUDGET` | Smaller per-hit discrepancies, detailed in `test/harness/waivers.mjs`. |
 
 Next stages (not started): fix the critical set (Stage 1), the hit-path fidelity
 items (Stage 2), the encounter layer (Stage 3).
