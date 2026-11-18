@@ -212,7 +212,7 @@ export function buildReport(ch, {
     ${r.allowance ? card('Sustained DPS', n1(r.allowance.sustainedDps), `relay allowance refill ${n1(r.allowance.law.rate)}/s${r.allowance.saturated ? ' (the limit)' : ''}`, 'good') : ''}
     ${r.allowance ? card('Opening burst', n1(r.allowance.burst5Dps), `first 5 s, ${n1(r.allowance.law.depth)} bucket`, 'brass') : ''}
     ${r.enchantDps > 0 ? card('Enchant DPS', n1(r.enchantDps), `${n1(r.enchantPerSwing)} per landed hit`, 'brass') : ''}
-    ${r.enchantDps > 0 ? card('Total DPS', n1(r.totalDps), 'weapon + enchant procs', 'good') : ''}
+    ${r.enchantDps > 0 ? card('Total (per-hit-capped ceiling)', n1(r.totalDps), 'capped weapon + enchant procs', 'good') : ''}
     ${card('Hit chance', pct(r.hit.hit), `${pct(r.hit.crit.chance)} critical`, '')}
     ${card('Damage / hit', `${r.damage.min}-${r.damage.max}`, `avg ${n1(r.damage.avg)}; crit ${r.damage.critMin}-${r.damage.critMax}`)}
     ${r.backstab?.chance > 0 ? card('Backstab', `${pct(r.backstab.chance)} ×3`, r.backstab.uptime > 0 ? `uptime ${pct(r.backstab.uptime)}; raw crit ${r.backstab.critMin}-${r.backstab.critMax}` : `available; raw crit ${r.backstab.critMin}-${r.backstab.critMax}`) : ''}

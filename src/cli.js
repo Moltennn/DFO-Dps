@@ -481,7 +481,7 @@ function printBuild(ch, r, targetPreset, values) {
     ['Expected / swing', fmt(r.perSwing), 'hit chance and criticals included'],
     ['Swing time', `${fmt2(r.cadence.seconds)} s`, `${fmt2(r.cadence.aps)} swings/s`],
     ['DPS', fmt(r.dps), r.cap ? `per-hit-capped ${fmt(r.cappedDps)} (${pc(r.capLoss)} lost) - a ceiling${r.allowance ? ', not what the boss accepts' : ''}` : 'no per-hit cap'],
-    ...(r.enchantDps > 0 ? [['Enchant procs', fmt(r.enchantDps), `${fmt(r.enchantPerSwing)} per landed hit${r.procsBeforeBreak ? `; ${billCapacityNote(r.procsBeforeBreak)}` : ''}`], ['Total DPS', fmt(r.totalDps), 'weapon + enchant procs']] : []),
+    ...(r.enchantDps > 0 ? [['Enchant procs', fmt(r.enchantDps), `${fmt(r.enchantPerSwing)} per landed hit${r.procsBeforeBreak ? `; ${billCapacityNote(r.procsBeforeBreak)}` : ''}`], ['Total (per-hit-capped ceiling)', fmt(r.totalDps), 'capped weapon + enchant procs']] : []),
     ...(r.allowance ? allowanceRows(r.allowance) : []),
     ['Time to kill', (r.totalTtk ?? r.ttk) ? `${fmt(r.totalTtk ?? r.ttk)} s` : '-', r.health ? `${r.health.toLocaleString()} HP${r.ward ? ` + ${r.ward} ward` : ''}${r.shields ? ` + ${r.shields}s shields` : ''}${r.enchantDps > 0 ? ' (weapon + procs)' : ''}${r.allowance ? ' - through the relay allowance' : ''}` : 'no boss health'],
   ], ['Metric', 'Value', 'Notes']));
@@ -644,7 +644,7 @@ export async function main(argv = process.argv.slice(2)) {
       ['Weapon DPS', fmt(r.dps)],
       ['Enchant per landed hit', `${fmt(strike.procDamage + strike.flat)}${strike.procDot ? ` + ${fmt(strike.procDot / 5)} DoT DPS` : ''}`],
       ['Enchant DPS', fmt(r.enchantDps)],
-      ['Total DPS', fmt(r.totalDps)],
+      ['Total (per-hit-capped ceiling)', fmt(r.totalDps)],
       ['CWS bills covered (bill-only)', r.procsBeforeBreak ?? '-'],
       ['Procs', strike.procs.map((p) => `${p.name} ${p.dotTick ? `DoT ${fmt(p.dotTick)}/round` : fmt(p.damage)}`).join(', ') || '-'],
     ], ['Metric', 'Value']));

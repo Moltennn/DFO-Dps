@@ -53,7 +53,7 @@ test('3.8 ordering guard: the relay walk ranks 127 over 126, the sampled relay r
   assert.equal(diff.n > 900, true);
   assert.equal(diff.containsZero, false);
   assert.ok(diff.hi < 0, `paired TTK difference ${JSON.stringify(diff)}`);
-  assert.equal(BY_ID.get(127).separated, true);
+  assert.equal(BY_ID.get(127).ttkSeparated, true);
   // and the paired kill indicators agree: both kill almost every seed
   assert.ok(BY_ID.get(127).pairedKill, 'the TTK pair reports the kill-indicator difference too');
   assert.equal(BY_ID.get(127).pairedKill.metric, 'kill');

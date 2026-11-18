@@ -26,7 +26,7 @@ import { maxCharacter } from '../src/maxprofile.js';
 const OPTS = { core: 'overhaul', rri: true, passiveOn: true, stacks: 5 };
 const foe = () => referenceFoe(45, 'tough');
 const max = (id) => ({ id, ch: maxCharacter(id) });
-const strip = ({ id, rank, separated, censoringDiffers, paired, pairedKill, ...row }) => row;
+const strip = ({ id, rank, ttkSeparated, censoringDiffers, paired, pairedKill, ...row }) => row;
 
 // One shared 1,000-seed fight ranking at a 0.63 s horizon: 126 nearly always kills, 127 kills about a third of the
 // seeds. 126's conditional TTK is longer than 127's, so the old kill-rate score would put 127 first; the censoring
@@ -71,7 +71,7 @@ test('3.8: sampled rows name metric and damage mode; censoring cannot be rewarde
   assert.equal(rows[rows.length - 1].id, 127);
   // an identical adjacent pair is never separated, and its interval is exactly [0, 0]
   const same = BY_ID.get('same');
-  assert.equal(same.separated, false);
+  assert.equal(same.ttkSeparated, false);
   assert.equal(same.paired.metric, 'ttk');
   assert.equal(same.paired.n, same.detail.kills, 'only the seeds both rows kill are paired');
   assert.equal(same.paired.dropped, same.n - same.detail.kills);
@@ -85,7 +85,7 @@ test('3.8: sampled rows name metric and damage mode; censoring cannot be rewarde
   // the sub-resolution slowdown stays inside the paired CI: point estimate and rank flag both say not separated
   const tinyDiff = pairedDifference(BY_ID.get('tiny'), BY_ID.get(126));
   assert.equal(tinyDiff.containsZero, true);
-  assert.equal(BY_ID.get('tiny').separated, false);
+  assert.equal(BY_ID.get('tiny').ttkSeparated, false);
   // different trial tables are refused BEFORE any sampler runs: the offending row's own error would be the
   // 1,000-trial minimum, so a post-simulation check would not throw this message
   assert.throws(() => rankBuilds([

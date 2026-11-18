@@ -171,6 +171,14 @@ how many Cast When Strikes bills it can pay in full; `procsBeforeBreak` reports 
 `procsBeforeBreakBasis: "cws-bill-only"` in the JSON of both `build --json` and `enchant --json`. It ignores ordinary weapon wear (paid first, every blow) and is not a count of casts
 before the weapon breaks; take break odds and lifetimes from `simulateFights({ durability: true })`.
 
+Pricing reads the **carried** metric when a piece carries a percentage line:
+`analyze` reports `carriedPerSwing`, `carriedDps` and `carriedCappedDps` beside
+the card's `perSwing`/`dps`/`cappedDps`. The carried figure is the held item's
+long-run mean (the line's exact share); the plain card floors each blow.
+`imprints`, `enchant-plan` and the real-build rows keep the two labelled apart
+(`metric: "carried"`, `cardEnchDps`, `carriedBaseDps` / `cardPlanDps`), and the
+`--json` output carries both names.
+
 ## 8. Firmament and real loadouts
 
 ```bash

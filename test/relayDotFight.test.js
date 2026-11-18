@@ -355,3 +355,39 @@ test('3.7d: a build with no CWS rows is bit-identical to the same fight before t
   assert.equal(plain.time, 30);
   assert.equal(plain.trace.length, 32);
 });
+
+test('3.7d/M38(4) GREEN GUARD: caller-set target.warded blocks relay casts and blow powers, not DoT rounds', () => {
+  // M38(4) is a caller-set flag on a relay body, not the relay's own shield clock. The gateway here is the ordinary
+  // `weaponBlow` ward gate: casts (`cwsEligible`), the four blow power channels and the echo are suppressed; rounds
+  // keep ticking. A green guard because the code already behaves this way; it fails only if a future edit makes the
+  // relay's `target.warded` inert on blows or starts gating rounds.
+  const item = sword([1]);
+  item.affixes = [{ id: 'slayer', param: 'daedra', value: 20 }];
+  const ch = simCharacter(BASIC(), item);
+  const base = gateTarget(45, { health: 20000 });
+  const scratch = { ...base, activeEffects: [] };
+  resolveCwsCast({
+    spell: spell({ mag: 100, rounds: 10 }), caster: { entity: ch }, casterLevel: 45, target: scratch,
+    rolls: () => 0.5, hurt: () => {},
+  });
+  const primed = (warded) => ({ ...base, warded, activeEffects: scratch.activeEffects.map((a) => ({ ...a })) });
+  const args = {
+    health: 20000, weapon: weaponOf(item), seed: 7, trace: true, maxSeconds: 10,
+    standard: new Map([[1, spell({ mag: 100, rounds: 10, direct: 50 })]]),
+  };
+  const plain = simulateRelayFight(ch, { ...args, target: primed(false) });
+  const warded = simulateRelayFight(ch, { ...args, target: primed(true) });
+  assert.ok(plain.claimsByKind.proc > 0, 'the control casts');
+  assert.equal(warded.claimsByKind.proc, 0, 'target.warded suppresses the cast');
+  assert.ok(plain.claimsByKind.dot > 0, 'the primed entry ticks on the control');
+  assert.ok(warded.claimsByKind.dot > 0, 'DoT rounds are not ward-gated');
+  assert.ok(warded.claimLog.some((c) => c.kind === 'dot'), 'a primed round is still a dot claim');
+  const meanBlow = (r) => {
+    const rows = r.claimLog.filter((c) => c.kind === 'blow');
+    return rows.reduce((a, c) => a + c.claim, 0) / rows.length;
+  };
+  const p = meanBlow(plain);
+  const w = meanBlow(warded);
+  assert.ok(p > w * 1.05, `the warded blow carries no slayer line: ${p.toFixed(2)} vs ${w.toFixed(2)}`);
+  // The same gate is what the card's `warded` trait does NOT do; this is the caller-set flag only (W-WARD).
+});

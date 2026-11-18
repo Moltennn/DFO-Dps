@@ -265,7 +265,8 @@ export function evaluateObjective(ch, { objective = 'snapshot', target = null, h
  * per-seed kill indicator instead (a difference of two proportions). `dropped` counts trials omitted because one side
  * was censored - the conditional TTK comparison is stated for what it is, not an unconditional one. `separated` is
  * `null` below `MIN_PAIRED_PAIRS` both-kill pairs: the interval is still printed, but it is not a ranking claim.
- * The interval uses the Student t quantile for small samples (1.96 at a 1,000-trial sample).
+ * `rankBuilds` copies it to the row as `ttkSeparated`. The interval uses the Student t quantile for small samples
+ * (1.96 at a 1,000-trial sample).
  */
 export function pairedDifference(a, b, { metric } = {}) {
   const sa = a?.detail?.samples;
@@ -303,7 +304,7 @@ export function pairedDifference(a, b, { metric } = {}) {
  * evaluated (a build that cannot kill the pool, a relay objective on a foe) is kept with `error` and sorts last -
  * never silently dropped.
  *
- * A sampled ranking is PAIRED on common random numbers: the row below another carries `separated` (false when the
+ * A sampled ranking is PAIRED on common random numbers: the row below another carries `ttkSeparated` (false when the
  * paired 95% interval contains 0, null below 8 both-kill pairs) and the paired difference itself. It never reorders.
  * When two rows' kill probabilities are statistically different (Wilson intervals do not overlap), the affected rows
  * carry `censoringDiffers` and the ranking is ordered by kill probability first, then by kill rate: a conditional TTK
@@ -379,17 +380,17 @@ export function rankBuilds(entries, { objective = 'snapshot', target = null, hea
   ok.forEach((r, i) => { r.rank = i + 1; });
   failed.forEach((r) => { r.rank = null; });
   if (stochastic) {
-    // flags only: the rows keep their score order, even when the paired interval cannot separate them. `separated`
+    // flags only: the rows keep their score order, even when the paired interval cannot separate them. `ttkSeparated`
     // compares per-seed TTK over the seeds BOTH kill, while the score uses each row's own killers (ASSUMPTION M42);
     // the paired kill-indicator difference is carried beside it so the two readings cannot be confused.
     for (let i = 1; i < ok.length; i += 1) {
       try {
         const paired = pairedDifference(ok[i - 1], ok[i]);
-        ok[i].separated = paired.separated;
+        ok[i].ttkSeparated = paired.separated;
         ok[i].paired = paired;
         if (paired.metric === 'ttk') ok[i].pairedKill = pairedDifference(ok[i - 1], ok[i], { metric: 'kill' });
       } catch (err) {
-        ok[i].separated = null;
+        ok[i].ttkSeparated = null;
         ok[i].paired = { error: String(err?.message ?? err) };
       }
     }

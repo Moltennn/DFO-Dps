@@ -6,7 +6,30 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
-## Pricing reads the carried percentage mean (W-LOOT-CARRY step 2)
+## Stage 3.8 - Sampled objectives with paired seeds and censoring-first ranking (2026-11-18)
+
+**What changed.** `evaluateObjective` gains the additive `stochastic-ttk`, `kill-probability` and
+`stochastic-relay` objectives over the existing seeded fights. Every sampled row names its objective, metric,
+`damageMode`, trial count, horizon and the 95% interval on the **mean TTK** (kill probability carries a Wilson
+interval). `MIN_STOCHASTIC_TRIALS` is 1,000, the audit's first pass; fewer is refused. `pairedDifference` compares
+the same seeds, uses Student t for small samples and returns `separated: null` below 8 both-kill pairs. `rankBuilds`
+refuses rows whose declared trials, seeds or horizon differ, flags adjacent rows with `ttkSeparated`, and - when any
+two kill-probability Wilson intervals do not overlap - carries `censoringDiffers` and ranks by kill probability first,
+then kill rate, so a build that only kills its luckiest seeds cannot win on a short conditional TTK.
+
+**Ordering fixture.** Gate 45, pool 2,000: the expected-value `relay` walk ranks 127 (217.36) over 126 (200.86);
+`stochastic-relay` reverses them (126 = 216.87 over 127 = 215.96), with a paired TTK difference of -0.0365 s and a
+95% CI of +/-0.0121 s over 996 both-kill seeds (kill probabilities 0.996 / 0.999). The first candidate was the
+ordinary fight at pool 500; investigation showed that a one-blow fight makes the sampler's fresh t=0 lead dominate
+(walk/sampler ratio 0.481 at 500, 0.913 at 5,000, 0.999 at 50,000 for build 121), so it is not used as evidence.
+
+**Outputs moved: none.** The four deterministic objectives and every seeded-fight number are unchanged. Evidence:
+`test/stochasticObjectives.test.js` and `test/stochasticOrdering.test.js` (row fields and damage mode; identical
+inputs and the [0, 0] paired interval; the sub-resolution pair; the censoring pair and ordering; Student t and the
+8-pair floor; the pre-simulation refusal; the relay reversal). Limits: no optimizer/CLI integration, no bootstrap
+quantiles, the paired TTK is conditional on both builds killing, and `ttkSeparated` is a TTK flag, not the score.
+
+## Stage 3.7h - Pricing reads the carried percentage mean (W-LOOT-CARRY step 2) (2026-11-18)
 
 **What the game does.** A percentage blow channel floors each blow and keeps the fraction on the held item:
 `systems/loot/lootPowers.js:176-181` `shareOf` (`exact = damage * pct / 100 + carry`, `more = floor(exact + 1e-9)`,
@@ -116,7 +139,7 @@ passes for all six families.
   ranking; the shipped benchmark's chosen imprint is a flow power and flow's rank did not move. The untracked root
   pages (`imprints*.html`, `enchant-plans*.html`, `loadouts*.html`) do change and need regenerating.
 
-## Equipment delegate - a class foe's kit is Enemy Expansion's (W-DEX-LOADOUT closed)
+## Stage 3.7h - Equipment delegate - a class foe's kit is Enemy Expansion's (W-DEX-LOADOUT closed) (2026-11-18)
 
 **What the game does.** The client boots Daggerfall Enemy Expansion at every load (`scenes/shared.js:1518`), and its
 install takes EnemyEntity's equipment delegate: `systems/enemyExpansion/dexInstall.js:246-247`
@@ -176,10 +199,10 @@ make a later test's mint order-dependent. Posture (ASSUMPTION M40): `UPSTREAM_BO
 
 ```
 ✔ stage: the game's own enemy loadout is worn by the target (4.8ms)
-ℹ tests 46   ℹ pass 46   ℹ fail 0
+all nine differential cases pass (the runner's count moves; it is not repeated here)
 ```
 
-and `npm test` reports `ℹ tests 762  ℹ pass 762  ℹ fail 0`; `npm run vendor:verify` OK.
+and `npm test` is green; `npm run vendor:verify` OK.
 
 **Outputs moved: class foes only.** A `gearEnemy`-dressed class target now wears the booted kit; monsters keep theirs -
 the same file's m7 (an Orc, career 7, variant 0) and m22 cases pass with unchanged answers, because both sides already
@@ -204,7 +227,7 @@ the same switch. The delegate's answer is used for worn armour and the shield on
 items are ignored, as before). A class foe's displayed hit chance reads the overhaul's flat 60 (`src/model.js:563`), so
 this change is proven on the ArmorValues field and the kit list, not on a hit percentage.
 
-## Stage 3.7f/3.7g - The relay compositor's CWS/DoT claims, differential and distributed
+## Stage 3.7f/3.7g - The relay compositor's CWS/DoT claims, differential and distributed (2026-11-18)
 
 **What the game does.** In a relay fight a Cast When Strikes row is resolved INSIDE the blow's formula: the vendored
 `systems/enchantments.js` doItemEnchantmentPayloads calls the host's `applySpellToTarget`
@@ -267,7 +290,7 @@ or more. The oracle reuses one `roundDraws` script across the seeds (a fixture, 
 is the differential's job. The relay's phase-ward LIFECYCLE is still a fixed `shieldUntil` (M38), so a shield that starts
 mid-fight is not exercised.
 
-## Stage 3.7d/3.7e - CWS and DoT claims inside a relay fight, and the per-kind accounting
+## Stage 3.7d/3.7e - CWS and DoT claims inside a relay fight, and the per-kind accounting (2026-11-18)
 
 **What the game does.** A Cast When Strikes proc is its own relay claim (`full:scenes/gate/standInSpell.js:198-217`
 `land(..., HIT_KINDS.Spell)`), and the cast is resolved INSIDE the blow's formula, before the host applies the blow
@@ -328,7 +351,7 @@ the sum of their kinds). `npm test` reports 0 failures; vendor verify OK.
 `strikesPositive`, so it casts nothing. `simulateRelayFights` does not aggregate the new per-kind counters (each row
 carries them). `W-PROC-BUDGET` and `W-WARD` are untouched (3.7h).
 
-## Stage 3.7 - The proc budget: one DoT round is one claim, capped once, and a dual pair claims it once
+## Stage 3.7 - The proc budget: one DoT round is one claim, capped once, and a dual pair claims it once (2026-11-18)
 
 **What the game does.** A Cast When Strikes proc is its own relay claim (`vendor:scenes/gate/standInSpell.js:198-217`
 `land(..., HIT_KINDS.Spell)`), capped by the relay's `HIT_CAP_X x ref` per hit (`vendor:net/gate/gateBrain.js:1298-1336`,

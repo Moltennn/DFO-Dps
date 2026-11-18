@@ -50,6 +50,30 @@ swing = (5 + hold) * tick
 - a fresh main-hand swing is five frames; the 0.45s floor makes the maximum
   about 2.2 swings/s
 
+## Metrics
+
+The project names a metric instead of reporting one bare "DPS". The card
+(`analyze`) is an **expectation** over the foe's state; the seeded fights sample
+whole fights and report distributions.
+
+| metric | field | what it is for |
+|---|---|---|
+| uncapped | `dps`, `perSwing` | the blow at full foe health, before the per-hit cap: the Combat Stats card's rate |
+| per-hit-capped | `cappedDps`, `cappedPerSwing` | the same blow after the cap; a **ceiling**, not what a relay accepts |
+| allowance-sustained | `allowance.sustainedDps` | the relay's refill once the purse/bucket limit binds |
+| opening burst | `allowance.burst5Dps` | the first 5 s while the relay purse is full |
+| carried sustained mean | `carriedDps`, `carriedCappedDps` | a held item's long-run mean of a percentage line (the exact share, not the card's per-blow floor); pricing reads this |
+| sampled fight | `stochastic-ttk`, `kill-probability` | seeded `simulateFight` trials: kill rate with a mean-TTK interval, or the share that kills inside the horizon (Wilson) |
+| sampled relay | `stochastic-relay` | the same over `simulateRelayFight` claims |
+
+`fight` and `fightRelay` are deterministic walks of the same health-dependent
+model; `snapshot`, `fight`, `relay` and `relay-ceiling` are the four
+deterministic ranking objectives. The sampled objectives start at 1,000 trials
+(the audit's first pass; 10,000 for a reported mean) and rank on the same seeds;
+a censored trial is reported as kill probability, never folded into the mean.
+See the [README](README.md) and [docs/USAGE.md](docs/USAGE.md) for the
+commands and target flags.
+
 ## The level-45 theory character
 
 `theory` is the live ceiling. Attributes are 100 (the `liveStat` clamp), Long Blade, Critical Strike and Backstabbing are mastered at raw 200 (`effectiveSkill` = 140), the weapon is a Daedric Dai-katana, online rules are on, and RRI weapon balance is on. It uses no community assumptions and no legacy strength model.
