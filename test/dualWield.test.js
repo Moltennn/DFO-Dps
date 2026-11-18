@@ -10,7 +10,7 @@
  *   combat/playerWeapon.js:1244-1257 the off hand alone takes offHandToHit and OFF_HAND_BLOW
  *
  * The schedule is checked against the game's own weapon machine, driven here exactly as the game's
- * test drives it (test/combat/twohands.test.js:145-183): blows counted, at two frame rates.
+ * test drives it (test/combat/twohands.test.js:145-183): blows counted, at three frame rates.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -97,13 +97,13 @@ test('schedule: a pair makes two blows per eight ticks, one weapon one per five'
   assert.equal(averageOffHandHold({ burden: 1.3, ticks: 4, tick: 0.4 }), 0);
 });
 
-test('schedule: matches the game\'s machine, blows a second, for four weapons and two frame rates', async () => {
+test('schedule: matches the game\'s machine, blows a second, for four weapons and three frame rates', async () => {
   for (const template of [113, 120, 121, 124]) {
     const ch = pair(template, { off: true });
     const single = run(pair(template, { off: false }));
     const dual = run(ch, { dual: true });
     const sched = dualSchedule({ mainTick: single.cadence.tick, offTick: dual.offHand.cadence.tick, burden: offHandBurden(weaponOf(weapon(template, { material: 9 })).weight, 50) });
-    for (const fps of [30, 144]) {
+    for (const fps of [30, 60, 144]) {
       const one = await machine({ template, paired: false, fps });
       const two = await machine({ template, paired: true, fps });
       const rate = two.blowsPerSecond / one.blowsPerSecond;

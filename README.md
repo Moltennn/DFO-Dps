@@ -124,8 +124,10 @@ Use `./dfo-dps --help` for every flag, or see
   damage, and opt-in `durability: true` with ordinary weapon wear, the CWS
   condition bill, breaks/unequipping and survivor promotion. Durability is off
   by default, so the Stage 3.1-3.5.1 no-wear fight is unchanged. Relay
-  durability is not implemented: `simulateRelayFight` rejects
-  `durability: true` (Stage 3.5.3g).
+  durability needs no model: a relay body is a `spareGear` stand-in the game
+  wears nothing on (`formulas.js:574`, `enchantments.js:1066-1072`), so
+  `simulateRelayFight` rejects `durability: true` (Stage 3.5.3g) rather than
+  invent a loss.
 - The Stage 3.3 streaming relay claim engine (`src/relayClaim.js`,
   `src/relayFight.js`): the four-token hand, the damage purse, the per-claim
   cap, clipped/refused claims, saturation, remaining bucket state and seeded
@@ -172,8 +174,9 @@ Use `./dfo-dps --help` for every flag, or see
   Kaplan-Meier estimate is made.
 - The Stage 3.3/3.4 relay engine does not model geometry, Sundered halves,
   stun/profile hit multipliers, Wrath, host/crystal claims, phase-ward
-  lifecycle, CWS, DoTs or relay durability; `durability: true` is refused
-  (Stage 3.5.3g). A static Warded trait/ward pool is not modelled. A synthetic two-echo
+  lifecycle, CWS or DoTs. Relay durability needs no model (a relay body is
+  `spareGear` and the game wears nothing on it), and `durability: true` is
+  refused (Stage 3.5.3g). A static Warded trait/ward pool is not modelled. A synthetic two-echo
   build, an unarmed build, and bow/gun builds (whose release/landing timing is
   not modelled) are refused rather than approximated. Flow and one Many
   Endings power are supported; an echo build requires `target.relayBody === true` up front.

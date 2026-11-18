@@ -25,6 +25,7 @@ import { upstream, referenceFoe } from './harness/upstream.mjs';
 import { dotSpell } from './harness/fixtures.mjs';
 import { makeTarget } from '../src/target.js';
 import * as cws from '../src/cws.js';
+import { registerSpellPowerMod, registerSpellPierceMod } from '../vendor/upstream/a3eb1605/src/systems/spell/spellPower.js';
 
 /** Same shape as test/cwsDifferential.test.js's out-of-combat caster: a player with no gear and no school climb. */
 const CASTER = {
@@ -82,11 +83,11 @@ function upCast(u, target, spell, rolls, level = 30) {
 }
 
 /** The local cast on the same target and draw script. */
-function localCast(target, spell, rolls, level = 30) {
+function localCast(target, spell, rolls, level = 30, power = {}) {
   const draws = scripted(rolls);
   const ticks = [];
   const out = cws.resolveCwsCast({
-    spell, caster: { entity: CASTER }, casterLevel: level, target, rolls: draws,
+    spell, caster: { entity: CASTER }, casterLevel: level, target, rolls: draws, ...power,
     hurt: (n, info) => { ticks.push(tick(n, info)); },
   });
   return { ticks, used: draws.used(), out, target };
@@ -321,4 +322,38 @@ test('DoT: the expiry pass bills nothing', async () => {
   assert.deepEqual(localP1.ticks, upP1.ticks);
   assert.equal(localP1.used, upP1.used);
   assert.equal(local.target.activeEffects.length, 0);
+});
+
+test('DoT: a round under spell power and pierce matches the oracle, round by round', async () => {
+  // A green guard (no source change): the local entry freezes the cast's spellPower and pierce (M34), and the oracle
+  // re-reads the same unchanged registry each round, so the two agree while no potency/pierce swap happens mid-DoT.
+  // Only a mid-fight swap could separate them; that remains unproven.
+  const u = await upstream();
+  const spell = dotSpell({ magnitude: 10, magnitudeHigh: 20, rounds: 5 });
+  registerSpellPowerMod('audit-dot', () => 20);
+  registerSpellPierceMod('audit-dot', () => 15);
+  try {
+    // 20% power and 15 pierce beat the 50/50 save: each round rolls whole and x1.2 (10 -> 12, 20 -> 24, 15 -> 18).
+    const up = upCast(u, upBody(u), spell, [0, 0.5, 0.5]);
+    assert.deepEqual(up.ticks, [{ n: 12, round: true }], 'cast round: 10 rolled, unsaved, x1.2');
+    const upP1 = upTick(u, up.target, [0.99, 0.5, 0.5]);
+    assert.deepEqual(upP1.ticks, [{ n: 24, round: true }], 'next round: 20 rolled, unsaved, x1.2');
+    const upP2 = upTick(u, up.target, [0.5, 0.5, 0.5]);
+    assert.deepEqual(upP2.ticks, [{ n: 18, round: true }], 'third round: 15 rolled, unsaved, x1.2');
+
+    const local = localCast(localBody(), spell, [0, 0.5, 0.5], 30, { potencyPct: 20, pierce: 15 });
+    assert.deepEqual(local.ticks, up.ticks);
+    assert.equal(local.target.activeEffects[0]?.spellPower, 1.2, 'the entry carries the cast-time power');
+    assert.equal(local.target.activeEffects[0]?.pierce, 15, 'and the cast-time pierce');
+    const localP1 = localTick(local.target, [0.99, 0.5, 0.5]);
+    assert.deepEqual(localP1.ticks, upP1.ticks);
+    const localP2 = localTick(local.target, [0.5, 0.5, 0.5]);
+    assert.deepEqual(localP2.ticks, upP2.ticks);
+    assert.equal(local.used, up.used, 'the cast draws the same 3');
+    assert.equal(localP1.used, upP1.used);
+    assert.equal(localP2.used, upP2.used);
+  } finally {
+    registerSpellPowerMod('audit-dot', null);
+    registerSpellPierceMod('audit-dot', null);
+  }
 });
