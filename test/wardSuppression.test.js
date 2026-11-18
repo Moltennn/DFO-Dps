@@ -8,7 +8,7 @@
  *   2. lootStrike     vendor:systems/loot/lootPowers.js:354   - early return: no leech, chain, quake, echo, fists
  *   3. CastWhenStrikes vendor:systems/enchantments.js:597     - no cast, no bill (already local: cwsEligible)
  *   4. weaponMasteryBlow vendor:systems/weaponMastery.js:141  - returns the damage
- *   5. firmamentBlow  vendor:systems/firmamentPowers.js:173   - nothing for a ward (the gate is BEFORE the sky is read)
+ *   5. firmamentBlow  vendor:systems/firmamentPowers.js:173   - checked with a live tree in firmamentBlow.test.js
  *   6. martialPowers  vendor:systems/martialPowers.js:136     - foeOf: !target.warded (the blow at :229 and the strike
  *                                                                at :241 both read it)
  *   7. Vampiric WhenStrikes vendor:systems/artifactEffects.js:247 and vendor:systems/enchantments.js:674
@@ -102,7 +102,7 @@ test('B ward: weaponMasteryBlow adds nothing to a warded foe', async () => {
   assert.equal(weaponBlow(ch, w, 100, localBody({ warded: true }), {}), upWarded);
 });
 
-test('C ward: the martial blow channel and the Firmament add nothing to a warded foe', async () => {
+test('C ward: the martial blow channel adds nothing to a warded foe', async () => {
   const u = await upstream();
   const item = weaponItem(121, { material: 9 });
   const path = u.martialPaths.MARTIAL_BY_ID.cutthroat;
@@ -123,13 +123,6 @@ test('C ward: the martial blow channel and the Firmament add nothing to a warded
     'the path itself still reports its percent: weaponBlow\'s single ward gate is what suppresses the blow');
   assert.equal(weaponBlow(ch, w, 100, localBody(), { unaware: true }), upPlain);
   assert.equal(weaponBlow(ch, w, 100, localBody({ warded: true }), { unaware: true }), upWarded);
-
-  // The Firmament: the gate is BEFORE the sky is read, so a warded body returns the damage even in a realm where the
-  // vendored `blowPct` is a stub (STUBS.md, firmwareLaw row). The local model carries `firmamentDamagePct`, so its own
-  // control is the card's number.
-  assert.equal(u.firmamentPowers.firmamentBlow(item, 100, attacker, upBody(u, { warded: true }), {}), 100);
-  assert.equal(weaponBlow(ch, w, 100, localBody(), { firmamentDamagePct: 20 }), 120);
-  assert.equal(weaponBlow(ch, w, 100, localBody({ warded: true }), { firmamentDamagePct: 20 }), 100);
 });
 
 test('D ward: lootStrike answers a warded foe with nothing - no echo, no leech, no chain', async () => {

@@ -122,7 +122,7 @@ test('2. slayer + bane are ONE carried share; mastery then loot are TWO independ
   assert.notDeepEqual(merged, masteryMine, 'two remainders are not one merged remainder');
 });
 
-test('3. the martial path and the Firmament carry too', async () => {
+test('3. the martial path carries its own remainder', async () => {
   const u = await upstream();
   const { body } = await upstreamBody({ kind: 'standIn', mobile: 31 });
   const group = u.lootPowers.foeGroup(body);
@@ -139,9 +139,11 @@ test('3. the martial path and the Firmament carry too', async () => {
   const mine = bases.map((b) => weaponBlow(ch, w, b, tgt, { carryState: state, unaware: true }));
   const theirs = bases.map((b) => u.martialPowers.martialBlow(held, b, attacker, body, { unaware: true }));
   assert.deepEqual(mine, theirs, 'the martial stream carries its own remainder');
+});
 
-  // The Firmament: its vendored blowPct is an inert stub (STUBS.md:47), so there is no upstream stream to sample.
-  // Its law is the same shareOf shape with floor/ceil and an unclamped remainder: the carried mean is the exact share.
+test('3b. LOCAL: the long-run carried Firmament mean converges to the exact share', () => {
+  const tgt = referenceFoe(30, 'tough');
+  // The fractional remainder is bounded by one point (firmamentPowers.js:111-115@a3eb1605).
   const firmItem = weapon(121, { material: 9 });
   const firmCh = simCharacter(PLAIN(), firmItem);
   const fw = weaponOf(firmItem);

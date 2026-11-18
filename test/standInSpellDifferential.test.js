@@ -29,7 +29,8 @@ import { MAGIC_ROUND_SECONDS } from '../src/spells.js';
 import { ELEMENT_TRAITS } from '../src/bossTraits.js';
 import { character, simCharacter, weapon } from './harness/fixtures.mjs';
 import { createStandInSpell } from '../vendor/upstream/a3eb1605/src/scenes/gate/standInSpell.js';
-import { COURT_ROUND_MS } from '../vendor/upstream/a3eb1605/src/scenes/gate/gateCourt.js';
+import { COURT_ROUND_MS, createGateCourt } from '../vendor/upstream/a3eb1605/src/scenes/gate/gateCourt.js';
+import { ATTACKS, COURTS, COURT_CENTRE, HIT_KINDS, newFight } from '../vendor/upstream/a3eb1605/src/net/gate/gateBrain.js';
 import { ONLINE_MINUTES_PER_MS } from '../vendor/upstream/a3eb1605/src/net/wire.js';
 
 const BASIC = () => character({
@@ -107,6 +108,31 @@ test('ORACLE: the round is COURT_ROUND_MS = 5000 ms, one game minute online - th
   assert.equal(COURT_ROUND_MS, Math.round(1 / ONLINE_MINUTES_PER_MS), 'gateCourt.js:159');
   assert.equal(COURT_ROUND_MS, 5000);
   assert.equal(COURT_ROUND_MS, MAGIC_ROUND_SECONDS * 1000, 'the local round is the source\'s round');
+});
+
+test('ORACLE: the court rounds before dropping a sub-point hit, and sends at the shield end', () => {
+  // Real hit door (gateCourt.js:1159-1168@a3eb1605); the transport just records what gets sent.
+  const state = newFight(1, 0, 1e6, 'ruhn');
+  state.shieldUntil = 1000;
+  // A leap in court two makes bossPlace use the real leapAt instead of the stubbed idle bossAt.
+  const [x, z] = COURTS[1];
+  state.atk = { a: ATTACKS.leap.id, at: 1000, x, z, tg: [[x + 1, z]] };
+  let clock = 999;
+  const sent = [];
+  const court = createGateCourt({
+    link: { state: () => state }, now: () => clock, rng: () => 0.5,
+    feet: () => [COURT_CENTRE[0] + x, COURT_CENTRE[1], COURT_CENTRE[2] + z],
+    send: (hit) => { sent.push(hit); return true; },
+  });
+  const hit = (d) => court.hit({ d, r: HIT_KINDS.Spell });
+  assert.equal(hit(2.5), false, 'one millisecond before shield end');
+  assert.deepEqual(sent, [], 'the shielded hit never reaches transport');
+  clock = state.shieldUntil;
+  assert.equal(hit(0.49), false, 'rounds to zero');
+  assert.deepEqual(sent, [], 'zero never reaches transport');
+  assert.equal(hit(0.5), true, 'rounds to one at the exact shield end');
+  assert.equal(hit(2.5), true, 'a nonzero half point rounds up too');
+  assert.deepEqual(sent.map(({ d, r }) => [d, r]), [[1, HIT_KINDS.Spell], [3, HIT_KINDS.Spell]]);
 });
 
 for (const [name, traits, element, why] of [
