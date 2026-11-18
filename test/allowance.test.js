@@ -22,7 +22,7 @@ import { theoryCharacter } from '../src/theory.js';
 import { perfectSockets } from '../src/sockets.js';
 
 import { upstream } from './harness/upstream.mjs';
-import { relayRun, expandStreams } from './harness/relay.mjs';
+import { relayRun, relayStream, expandStreams } from './harness/relay.mjs';
 import { generator, seeds, summarize } from './harness/prng.mjs';
 
 const near = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
@@ -188,6 +188,34 @@ test('relay: a boss shield refuses the blow before a token is spent, and the buc
   const noShield = simulateAllowance({ share: 12000, law, streams, phases: [] });
   // The bucket refills through the ward, so a bucket-limited build loses almost nothing to it.
   assert.ok(s.fightSeconds - noShield.fightSeconds < 3, `shield cost ${s.fightSeconds - noShield.fightSeconds} s, not the 6 s on the clock`);
+});
+
+test('relay: a phase shield ending exactly on a claim time accepts that claim (gateBrain is strict <)', async () => {
+  const level = 45;
+  const law = allowanceLaw(level);
+  // Claims at 1, 2, 3, 4 s. The phase triggers on the first accepted claim (t=1) and wards for exactly 1 s, so its
+  // end is the t=2 claim exactly; all values are binary-exact, so no float noise can move the boundary.
+  const streams = [stream(100, 1, 1)];
+  const phases = [{ at: 1, shieldS: 1 }];
+  const claims = expandStreams(streams, 4);
+  const oracle = await relayStream({ level, claims, phases });
+  for (let i = 1; i <= claims.length; i += 1) {
+    const t = claims[i - 1].t;
+    const local = simulateAllowance({ share: law.share, law, streams, phases, maxSeconds: t });
+    const rows = oracle.rows.slice(0, i);
+    const landed = rows.reduce((a, r) => a + r.got, 0);
+    const accepted = rows.filter((r) => r.got > 0).length;
+    assert.equal(local.claimsAccepted, accepted, `accepted through t=${t}`);
+    assert.equal(local.landed, landed, `landed through t=${t}`);
+  }
+  // the boundary claim itself: the vendored `now < shieldUntil` accepts at exactly 2 s; the local law must too
+  const at2 = oracle.rows.find((r) => r.t === 2);
+  assert.ok(at2.got > 0, 'the vendored law accepts the claim at exactly shieldUntil');
+  const local2 = simulateAllowance({ share: law.share, law, streams, phases, maxSeconds: 2 });
+  assert.equal(local2.claimsAccepted, 2, 'the local law accepts the boundary claim');
+  assert.equal(local2.landed, 200);
+  // the ward lasts its full second; line 202 counts a duration, not a claim, so the strict boundary does not move it
+  assert.ok(near(local2.shieldedSeconds, 1, 1e-12));
 });
 
 test('relay: joining a wounded boss starts with an empty bucket', async () => {

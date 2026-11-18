@@ -6,6 +6,49 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage 3.3 correction - the allowance accepts a claim at exactly the shield's end (2026-11-18)
+
+**What the game does.** `applyHit` refuses a shielded blow only while the clock is strictly inside the ward:
+`if (now < B.shieldUntil) return 0;` (`vendor/upstream/a3eb1605/src/net/gate/gateBrain.js:1308@a3eb1605`). A claim at exactly
+`shieldUntil` is therefore accepted. The relay claim engine already reads it that way (`src/relayClaim.js:149`, strict
+`<`, pinned by `test/relayClaim.test.js` "6." and `test/relayClaimDifferential.test.js` "3.").
+
+**What changed.** The card allowance used the opposite boundary: `src/allowance.js:180` was `if (t <= shieldUntil)` and
+is now `if (t < shieldUntil)`. The `shielded` accumulator (`src/allowance.js:202`) is unchanged: it measures the ward's
+duration (`until - max(t, shieldUntil)`), not a claim, and the ward still lasts its full span. No ASSUMPTION was added;
+the strict law is the vendored one.
+
+**Red, before the fix** (new test `test/allowance.test.js` "relay: a phase shield ending exactly on a claim time
+accepts that claim (gateBrain is strict <)"): claims at 1, 2, 3, 4 s, a phase raised on the t=1 claim with `shieldS: 1`
+so its end is exactly t=2, compared claim by claim through `test/harness/relay.mjs` `relayStream` (which now takes an
+optional `phases` list, setting the ward after the phase-crossing claim exactly as `relayRun` does):
+
+```
+✖ relay: a phase shield ending exactly on a claim time accepts that claim (gateBrain is strict <)
+  AssertionError [ERR_ASSERTION]: accepted through t=2
+  1 !== 2
+```
+
+The local allowance refused the boundary claim; the vendored `applyHit` accepted it (local 1 accepted vs oracle 2).
+
+**Green, after** (same test): all four prefixes agree claim for claim; at the boundary the local row is accepted
+(`claimsAccepted = 2`, `landed = 200`), and `shieldedSeconds = 1` is unchanged. Before/after on the fixture:
+`accepted through t=2` 1 -> 2, `landed through t=2` 100 -> 200.
+
+**Outputs moved.** Only a figure fed by a claim whose time lands exactly on `shieldUntil`: the card allowance's `ttk`
+(and anything derived from it) can shorten when a phase shield ends on a claim time. The shipped purse fixture moved:
+`test/purse.test.js` "phase shields add their seconds to the kill" had a coarse `>= 5.5 s` bound calibrated on the old
+boundary; the two 3 s Breach wards now cost exactly 4 s at its 100 damage / 100 s pace because each exact-end claim
+buys 1 s back (`breach 124` vs `plain 120`). The test is now an exact assertion of that law rather than a lower bound.
+The random-stream allowance comparisons (1/aps = 1.4 and 0.7) did not hit an exact end and are unchanged; the geared
+headline figures in `test/allowance.test.js` are unchanged. The benchmark was not run here; its allowance/ceiling TTK
+could move only on the same exact-boundary coincidence.
+
+**Evidence.** `test/allowance.test.js` boundary test (prefix-by-prefix against the vendored `applyHit`), the existing
+shield tests (`test/allowance.test.js:178`, `test/relayClaim.test.js` 6, `test/relayClaimDifferential.test.js` 3,
+`test/relayClaimFight.test.js` 13), and `test/purse.test.js`'s corrected shield-cost assertion. Limits: the strict
+boundary is exact double equality, as upstream's; a phase end that is not exactly representable will not hit it.
+
 ## Stage 3.8 - Sampled objectives with paired seeds and censoring-first ranking (2026-11-18)
 
 **What changed.** `evaluateObjective` gains the additive `stochastic-ttk`, `kill-probability` and
