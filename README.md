@@ -226,6 +226,7 @@ suites cover it.
 
 ```bash
 npm test
+node tools/test-fast.mjs   # quick iteration pass: the suite minus the heavy files
 npm run benchmark
 npm run test:differential
 npm run test:golden
@@ -239,6 +240,10 @@ The suite covers the combat model, the per-blow distribution, the seeded RNG,
 the differential/golden/vendor checks, and the Stage 3 distribution and fight
 oracles. The vendored tree is hash-checked; vendor parity compares the vendored
 subset with the full pinned checkout.
+
+`node tools/test-fast.mjs` is a quick iteration pass only: it runs every test
+file except the heavy ones listed in `tools/test-fast.mjs`. `npm test` is the
+gate and runs everything.
 
 ## Documentation map
 
