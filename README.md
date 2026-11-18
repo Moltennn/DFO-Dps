@@ -108,11 +108,16 @@ Use `./dfo-dps --help` for every flag, or see
 - Boss traits Curbing, Warded, Bladeturning, Stoneskin, Thorned and the
   elemental proofs, where the target carries them. Wrathful is reported but
   does not terminate the modelled fight.
-- Snapshot, whole-fight, relay, relay-ceiling and carried metrics, with
-  explicitly named targets. Carried is a held item's long-run mean: the
-  percentage lines (mastery, slayer/loot powers, the martial path, the
-  Firmament) carry their fraction between blows, so pricing reads the exact
-  share rather than the card's per-blow floor.
+- Snapshot, whole-fight, relay, relay-ceiling, carried and sampled
+  (`stochastic-ttk`, `kill-probability`, `stochastic-relay`) metrics, with
+  explicitly named targets. The sampled three use seeded fights at the audit's
+  1,000-trial first-pass floor (10,000 for a reported mean, 100,000 for a close
+  ranking), carry their horizon and a 95% interval on the **mean TTK** (not on
+  the kill-rate score), and rank with paired seeds, a censoring guard and a
+  separation flag rather than independent noise. Carried is a held item's
+  long-run mean: the percentage lines (mastery, slayer/loot powers, the martial
+  path, the Firmament) carry their fraction between blows, so pricing reads the
+  exact share rather than the card's per-blow floor.
 - The Stage 3.1 seeded RNG and exact per-blow distribution library
   (`src/rng.js`, `src/blowOutcomes.js`); these are library APIs, not CLI pages.
 - The Stage 3.2 seeded blow-by-blow fight simulation (`src/simulateFight.js`):
@@ -207,10 +212,13 @@ golden fixtures. The live card is a useful comparison, not the oracle.
 
 The project names its metrics rather than treating every “DPS” as one number:
 **snapshot** (full-health card), **fight** (whole-fight kill rate),
-**relay** (allowance applied), **relay-ceiling** (capped offered rate), and
+**relay** (allowance applied), **relay-ceiling** (capped offered rate),
 **carried** (a held item's long-run mean: the percentage channels' exact share,
-which pricing uses). See [`METHOD.md`](METHOD.md) for formulas and the
-limitations below for what is not verified.
+which pricing uses), and the sampled **stochastic-ttk** / **kill-probability** /
+**stochastic-relay** (seeded fights at the 1,000-trial first-pass floor; the 95%
+interval is on the mean TTK, not on the kill-rate score, and ranking pairs the
+seeds with a censoring guard). See [`METHOD.md`](METHOD.md) for formulas
+and the limitations below for what is not verified.
 
 ## Limitations and known gaps
 

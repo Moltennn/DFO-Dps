@@ -24,6 +24,8 @@ const HEAVY = [
   'longBow.test.js',
   'pricing.test.js',
   'shieldOutcomes.test.js',
+  'stochasticObjectives.test.js',
+  'stochasticOrdering.test.js',
 ];
 
 const dir = new URL('../test/', import.meta.url);
