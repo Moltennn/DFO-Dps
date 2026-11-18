@@ -24,16 +24,18 @@ test('imprint eligibility is the Weapons group, then the power\'s own fit', () =
 test('a power is priced both unconditionally and under its trigger', () => {
   const base = maxRun(maxCharacter(123));
   const flow = { kind: 'flow', pct: 6, max: 5 };
-  // Stage 2.9: a power is the same card re-run with its percentage in lootBlow's step (analyze's `with`). The share
-  // is floored per blow (shareOf) and the crit, condition and defence round whole numbers after it, so the
-  // result is within a point of damage per blow of the linear figure - not the exactly linear one the pre-2.9
-  // shortcut gave.
+  // Stage 2.9: a power is the same card re-run with its percentage in lootBlow's step (analyze's `with`). Pricing
+  // reads the CARRIED metric (W-LOOT-CARRY, M41): the held item's long-run mean is the exact share, so the figure
+  // is the linear one up to the non-carried stages; the card's own floored figure stays available and pinned below.
   const within = (priced, linear) => Math.abs(priced / linear - 1) < 0.01;
-  assert.equal(powerDps(flow, base, false), base.with({ loot: { pct: 30, flat: 0 } }).dps);
-  assert.ok(within(powerDps(flow, base, false), base.dps * 1.30), `${powerDps(flow, base, false) / base.dps}`);
+  const flowCard = base.with({ loot: { pct: 30, flat: 0 } });
+  assert.equal(powerDps(flow, base, false), flowCard.carriedDps);
+  // The card's own figure is untouched: it is upstream's estimate path (each blow floors), not the carried mean.
+  assert.ok(Math.abs(flowCard.dps - 1456.4817054596926) < 1e-9, `flow card ${flowCard.dps}`);
+  assert.ok(within(powerDps(flow, base, false), base.carriedDps * 1.30), `${powerDps(flow, base, false) / base.carriedDps}`);
   const bane = { kind: 'bane', pct: 50 };
-  assert.equal(powerDps(bane, base, false), base.dps);
-  assert.ok(within(powerDps(bane, base, true), base.dps * 1.50), `${powerDps(bane, base, true) / base.dps}`);
+  assert.equal(powerDps(bane, base, false), base.carriedDps);
+  assert.ok(within(powerDps(bane, base, true), base.carriedDps * 1.50), `${powerDps(bane, base, true) / base.carriedDps}`);
 });
 
 test('the long-blade ranking keeps every weapon power, read on a long blade', () => {
@@ -50,8 +52,10 @@ test('the long-blade ranking keeps every weapon power, read on a long blade', ()
 test('Silent Death is a double only away from the gate, where its trigger can occur', () => {
   const base = maxRun(maxCharacter(117));
   const silent = { kind: 'unaware', pct: 100 };
-  assert.equal(powerDps(silent, base, true), base.with({ loot: { pct: 100, flat: 0 } }).dps);
-  assert.ok(Math.abs(powerDps(silent, base, true) / base.dps - 2) < 0.02, `${powerDps(silent, base, true) / base.dps}`); // +100% is exact before the crit, condition and defence round it
+  const silentCard = base.with({ loot: { pct: 100, flat: 0 } });
+  assert.equal(powerDps(silent, base, true), silentCard.carriedDps);
+  assert.ok(Math.abs(silentCard.dps - 1980.021481481482) < 1e-9, `silent card ${silentCard.dps}`);
+  assert.ok(Math.abs(powerDps(silent, base, true) / base.carriedDps - 2) < 0.02, `${powerDps(silent, base, true) / base.carriedDps}`); // +100% is exact before the crit, condition and defence round it
   const r = rankFamily(family('ShortBlade'));
   const row = r.rows.find((x) => x.power.name === 'Silent Death');
   assert.equal(row.conditionalDps, row.baseDps);
@@ -66,6 +70,26 @@ test('the boss ranking reflects the gate cap, not the uncapped ceiling', () => {
   assert.ok(flow.delta >= 0);
   assert.ok(flow.uncappedDelta > flow.delta * 5, `capped ${flow.delta} vs uncapped ${flow.uncappedDelta}`);
   assert.ok(flow.uncappedDps > flow.baseDps);
+});
+
+test('the carried metric keeps the card\'s imprint order on every family fixture', () => {
+  // A guard against a metric-driven reorder: pricing now ranks by the carried delta, and on the six max-profile
+  // fixtures that order is the order the plain card delta gives. If a future carried change reorders a family, this
+  // fails and the reorder has to be argued (and the changelog updated), not slipped in with the metric switch.
+  const order = (list) => list.map((r) => r.id);
+  for (const f of rankAll()) {
+    if (!f.base) continue;
+    const card = (r) => ({
+      id: r.id,
+      delta: f.base.with({ imprint: r.power, assumeTriggers: false }).cappedDps - f.base.cappedDps,
+      uncappedDelta: f.base.with({ imprint: r.power, assumeTriggers: false }).dps - f.base.dps,
+    });
+    const byCard = f.rows.map(card).sort((a, b) => b.delta - a.delta || b.uncappedDelta - a.uncappedDelta);
+    const byCarried = f.rows.slice().sort((a, b) => b.delta - a.delta || b.uncappedDelta - a.uncappedDelta);
+    assert.deepEqual(order(byCarried), order(byCard), `${f.key}: carried order equals the card-delta order`);
+    // not vacuous: the fixture's deltas are not all equal, so an order exists to reverse
+    assert.ok(new Set(byCard.map((r) => r.delta)).size > 1, `${f.key}: distinct card deltas`);
+  }
 });
 
 test('every family returns rows and a base weapon', () => {
@@ -100,21 +124,23 @@ test('Many Endings rides the blow\'s claim on a relay body, and is its own hit o
   const base = maxRun(maxCharacter(123), { target: gate });
   const echo = { kind: 'echo', chance: 10 };
   const boss = powerDps(echo, base, false, { capped: true });
-  assert.ok(boss > base.cappedDps, 'still worth something');
-  assert.ok(boss < base.cappedDps * 1.1 - 1e-6, 'not a whole second capped hit: the claim (mean 598 of 600) clips it');
+  assert.ok(boss > base.carriedCappedDps, 'still worth something');
+  assert.ok(boss < base.carriedCappedDps * 1.1 - 1e-6, 'not a whole second capped hit: the claim (mean 598 of 600) clips it');
   // on an ordinary foe there is no relay claim: the echo is a second hit on the foe's health, uncapped
   const raw = maxRun(maxCharacter(123), { target: referenceFoe(45, 'tough') });
-  assert.ok(Math.abs(powerDps(echo, raw, false) / raw.dps - 1.1) < 0.002, `${(powerDps(echo, raw, false) / raw.dps).toFixed(4)}`);
+  assert.ok(Math.abs(powerDps(echo, raw, false) / raw.carriedDps - 1.1) < 0.002, `${(powerDps(echo, raw, false) / raw.carriedDps).toFixed(4)}`);
 });
 
 
 test('moon adds both night and animal shares, and chain/quake are other-target only', () => {
   const base = maxRun(maxCharacter(123));
   const moon = powerDps({ kind: 'moon', pct: 35, beast: 35 }, base, true);
-  assert.equal(moon, base.with({ loot: { pct: 70, flat: 0 } }).dps);
-  assert.ok(Math.abs(moon / (base.dps * 1.7) - 1) < 0.01, `${moon / base.dps}`);
-  assert.equal(powerDps({ kind: 'chain', share: 50 }, base, true), base.dps);
-  assert.equal(powerDps({ kind: 'quake', share: 25 }, base, true), base.dps);
+  const moonCard = base.with({ loot: { pct: 70, flat: 0 } });
+  assert.equal(moon, moonCard.carriedDps);
+  assert.ok(Math.abs(moonCard.dps - 1906.223850543819) < 1e-9, `moon card ${moonCard.dps}`);
+  assert.ok(Math.abs(moon / (base.carriedDps * 1.7) - 1) < 0.01, `${moon / base.carriedDps}`);
+  assert.equal(powerDps({ kind: 'chain', share: 50 }, base, true), base.carriedDps);
+  assert.equal(powerDps({ kind: 'quake', share: 25 }, base, true), base.carriedDps);
 });
 
 

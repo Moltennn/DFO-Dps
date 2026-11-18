@@ -81,8 +81,10 @@ export function powerDps(power, base, conditional = false, { capped = false } = 
   // Every power - Many Endings included, since Stage 2.11b - is priced by putting it on the main-hand item of the SAME card (analyze's `with`): the
   // code that reads an equipped power (src/model.js `lootPowerTerms`) reads this one, with its condition taken
   // from the target and the scenario. `conditional` only assumes the trigger holds (a pricing assumption).
+  // The figure is the CARRIED metric (the held item's long-run mean), not the card's floored estimate: a
+  // percentage power's worth is its exact share (W-LOOT-CARRY, docs/ASSUMPTIONS.md M41).
   const priced = base.with({ imprint: power, assumeTriggers: conditional });
-  return capped ? priced.cappedDps : priced.dps;
+  return capped ? priced.carriedCappedDps : priced.carriedDps;
 }
 
 /** Powers whose condition cannot occur at the level-45 gate (a Daedra, one foe). */
@@ -122,13 +124,13 @@ export function rankFamily(family, { firmament = false, vampire = false, sort = 
     uncapped.set(t, maxRun(ch));
   }
   let best = null;
-  for (const [t, base] of bases) if (!best || base.cappedDps > best.base.cappedDps) best = { template: t, base };
+  for (const [t, base] of bases) if (!best || base.carriedCappedDps > best.base.carriedCappedDps) best = { template: t, base };
   if (!best) return { ...family, template: null, base: null, rows: [] };
   const rows = WEAPON_IMPRINTS.map((rec) => {
     // A Weapon Legendary's power fits any weapon of the group; only the power's own fit excludes one.
     const eligible = family.templates.filter((t) => bases.has(t) && powerFits(t, rec.power));
     if (!eligible.length) return null;
-    const host = eligible.reduce((a, t) => (bases.get(t).cappedDps > bases.get(a).cappedDps ? t : a), eligible[0]);
+    const host = eligible.reduce((a, t) => (bases.get(t).carriedCappedDps > bases.get(a).carriedCappedDps ? t : a), eligible[0]);
     const base = bases.get(host);
     const raw = uncapped.get(host);
     const baseDps = powerDps(rec.power, base, false, { capped: true });
@@ -138,9 +140,9 @@ export function rankFamily(family, { firmament = false, vampire = false, sort = 
     return {
       id: rec.id, name: rec.name, power: rec.power, template: host, weapon: WEAPONS[host]?.name ?? String(host),
       baseDps, conditionalDps, uncappedDps,
-      delta: baseDps - base.cappedDps,
-      triggerDelta: conditionalDps - base.cappedDps,
-      uncappedDelta: uncappedDps - raw.dps,
+      delta: baseDps - base.carriedCappedDps,
+      triggerDelta: conditionalDps - base.carriedCappedDps,
+      uncappedDelta: uncappedDps - raw.carriedDps,
       hit: HIT_KIND[rec.power.kind] ?? 'same hit',
       trigger: `${TRIGGER[rec.power.kind] ?? ''}${canTrigger ? '' : ' (not at the gate)'}`,
       unconditional: rec.power.kind === 'flow' || rec.power.kind === 'echo',

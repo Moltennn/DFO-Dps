@@ -633,6 +633,17 @@ function applyPct(damage, pct) {
   return pct > 0 ? damage + floor(damage * (pct / 100) + 1e-9) : damage;
 }
 
+/**
+ * The carried stream's long-run mean of a per-cent channel. `shareOf` floors each blow and keeps the remainder on
+ * the item (systems/loot/lootPowers.js:176-181; the same shape in weaponMastery.js:148-150, martialPowers.js:232-235),
+ * so floor(x_i + c) = x_i + c - c_next and sum f_i = sum x_i + c_0 - c_n: the mean is the EXACT share. The card's
+ * own estimate path reads the carry but never writes it (info.estimate), so it keeps flooring via `applyPct`.
+ */
+const carriedPct = (damage, pct) => damage + (damage * pct) / 100;
+
+/** The Firmament's own variant: whole = pct >= 0 ? floor : ceil and the remainder kept unclamped
+ *  (systems/firmamentPowers.js:111-115), the blow never below 1 (:181). Its stream's mean is the exact share. */
+const carriedFirmament = (damage, pct) => Math.max(1, damage + (damage * pct) / 100);
 
 /** pcaao.js:607-637 pcaaoAlterDamageBasedOnWepCondition, on the INTEGER percentage
  *  (`conditionPercentage`, :277-279) - a float 5.9% belongs to the 5% band, not the >5%
@@ -674,6 +685,7 @@ export function conditionMultiplier(w, sharpEdge = false) {
  */
 export function weaponBlow(ch, w, damage, target, opts = {}) {
   let d = damage;
+  const carried = opts.carried === true; // the carried metric's exact-share pass; the card (`applyPct`) is untouched
   const lines = w ?? opts.wraps ?? null;
   // STAGE 3.6c: A WARD turns every per-blow power, and only those. One gate here - the one place every card, fight-tier
   // and what-if blow passes - for the four channels upstream refuses on a `warded` foe: the loot's slayer/elemental/power
@@ -687,7 +699,7 @@ export function weaponBlow(ch, w, damage, target, opts = {}) {
     return own ? applyPct(damage, own) : damage;
   }
   const mastery = masteryPct(ch, w, target, opts);
-  if (mastery > 0) d = applyPct(d, mastery);
+  if (mastery > 0) d = carried ? carriedPct(d, mastery) : applyPct(d, mastery);
   // lootBlow (systems/loot/lootPowers.js:286-347) sums EVERY percentage - the weapon's slayer lines, and any
   // power (bane, unaware, flow, moon, ...) - into one `pct` and takes it of the blow ONCE (`shareOf`), then
   // adds the flat (elemental lines, venom). `opts.loot` is a power the weapon does not carry yet - a what-if
@@ -696,7 +708,7 @@ export function weaponBlow(ch, w, damage, target, opts = {}) {
   const what = opts.loot ?? null;
   const power = lootPowerTerms([...(lines?.powers ?? []), ...(opts.imprintsExtra ?? [])], target, opts);
   const slayer = (lines?.slayerByGroup?.[String(target?.group ?? '')] ?? 0) + num(what?.pct, 0) + power.pct;
-  if (slayer > 0) d = applyPct(d, slayer);
+  if (slayer > 0) d = carried ? carriedPct(d, slayer) : applyPct(d, slayer);
   const elementalLines = lines?.elementalLines ?? null;
   let elemental = 0;
   if (elementalLines && elementalLines.length) {
@@ -708,11 +720,11 @@ export function weaponBlow(ch, w, damage, target, opts = {}) {
   elemental += num(what?.flat, 0) + power.flat; // venom's flat rides the same `flat` (lootPowers.js:346 `out + flat`)
   if (elemental > 0) d += elemental;
   const martial = martialBlowPct(ch, target, opts);
-  if (martial > 0) d = applyPct(d, martial);
+  if (martial > 0) d = carried ? carriedPct(d, martial) : applyPct(d, martial);
   const theory = num(opts.damagePct, 0);
-  if (theory) d = applyPct(d, theory);
+  if (theory) d = applyPct(d, theory); // the card's OWN roll (lootRarity.js:2474-2478 trunc): never carried
   const firm = num(opts.firmamentDamagePct, 0);
-  if (firm) d = applyPct(d, firm);
+  if (firm) d = carried ? carriedFirmament(d, firm) : applyPct(d, firm);
   // The long bow's pull is NOT part of the blow: bowFastDamage acts on the finished
   // calculateAttackDamage (combat/arrowFlight.js:501-510), after the crit, the material, the condition,
   // the armour and the off hand's share, and before the boss trait and the cap. See `bowBlow`.
@@ -936,13 +948,16 @@ export function damageModel(ch, w, target, swingKey, core, opts = {}) {
   const finish = (d, critical) => {
     if (core !== 'overhaul') return d;
     d = Math.max(0, d);
-    if (critical && crit.damageMult !== 1) d = unityRound(fround(d * crit.damageMult));
+    // The carried metric passes the stream's MEAN: unityRound on each integer blow is unbiased over the stream, so
+    // its mean is the plain product - rounding the mean again would quantise the carry away.
+    const round = opts.carried === true ? (v) => v : unityRound;
+    if (critical && crit.damageMult !== 1) d = round(fround(d * crit.damageMult));
     // pcaao.js:1745-1755: the soft/hard material requirement is applied after the critical
     // multiplier and before the weapon-condition band.
-    if (matReq !== 1) d = unityRound(fround(d * fround(matReq)));
+    if (matReq !== 1) d = round(fround(d * fround(matReq)));
     if (d >= 1 && w) {
       const mult = conditionMultiplier(w, opts.equipmentDamageEnhanced === true);
-      if (mult !== 1) d = unityRound(fround(d * mult));
+      if (mult !== 1) d = round(fround(d * mult));
     }
     return d;
   };
@@ -1038,9 +1053,20 @@ function allowancePatch(tgt, health, { cappedPerSwing, hit, aps, procs, cap, str
  * An item that CARRIES the power or the enchantment (`rarity`+`imprint`/`legendary`, `enchantments`) is read by the
  * same code: equipped evaluation and `with(edit)` are one path (Stage 2.11a).
  * or any other analyze option. In a dual build the edit rides the main-hand item; a pair is one item.
+ *
+ * The card's perSwing/dps/cappedDps floor each percentage line, which is upstream's own estimate path
+ * (info.estimate reads the carry and never writes it). A HELD item carries the fraction between blows, and the
+ * stream's long-run mean is the exact share, so the same pipeline is run once more with `carried: true`
+ * (src/model.js `carriedPct`) and exposed as `carriedPerSwing` / `carriedCappedPerSwing` / `carriedDps` /
+ * `carriedCappedDps` - the metric pricing deltas use. The fight streams still floor (W-LOOT-CARRY).
  */
 export function analyze(ch, args = {}) {
   const r = analyzeCard(ch, args);
+  const carried = analyzeCard(ch, { ...args, carried: true });
+  r.carriedPerSwing = carried.perSwing;
+  r.carriedCappedPerSwing = carried.cappedPerSwing;
+  r.carriedDps = carried.dps;
+  r.carriedCappedDps = carried.cappedDps;
   Object.defineProperty(r, 'with', {
     value: (edit = {}) => {
       const { imprint, ...rest } = edit;
@@ -1288,7 +1314,9 @@ function analyzeCard(ch, {
   // through the target's layer, the boss's traits and the cap.
   const geared = core === 'overhaul' && hasWornEquipment(tgt);
   const weights = bodyPartWeights(core);
-  const defended = (d) => (geared ? targetExpectedDamage(tgt, d, { weapon: w }) : intrinsicDamage(tgt, d, { weapon: w }));
+  const defended = (d) => (geared
+    ? targetExpectedDamage(tgt, d, { weapon: w })
+    : intrinsicDamage(tgt, d, { weapon: w, exact: opts.carried === true }));
   const targetDefense = {
     careerIndex: tgt.careerIndex ?? -1,
     mobileType: tgt.mobileType ?? null,

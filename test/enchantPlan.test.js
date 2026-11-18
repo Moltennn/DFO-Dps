@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { gearPieces, planEnchants, planMatrix, SOUL_GEM_POINTS } from '../src/enchantPlan.js';
-import { referenceFoe } from '../src/model.js';
+import { gateTarget, referenceFoe } from '../src/model.js';
+import { THEORY_LEVEL } from '../src/theory.js';
+import { maxCharacter, maxRun } from '../src/maxprofile.js';
 import { ITEM_ENCHANTMENT_MAX } from '../src/enchantData.js';
 
 test('a two-handed weapon has no shield, a one-handed one does', () => {
@@ -74,10 +76,26 @@ test('strike enchantments only sit on the weapon', () => {
 });
 
 
+test('the plan names the carried baseline beside the card plan figures', () => {
+  // The CLI's JSON reads these fields; a carried baseline must not sit unlabelled beside a card plan total, or a
+  // reader adds a metric jump to the plan's worth. The names are the contract: carried on the weapon baseline,
+  // card on the plan totals (`applyPlanDps` re-runs the card).
+  const gate = gateTarget(THEORY_LEVEL);
+  const plan = planEnchants({ weapon: 123, soulGem: true });
+  const ch = maxCharacter(123, {});
+  ch._template = 123;
+  const base = maxRun(ch, { target: gate });
+  assert.equal(plan.carriedBaseDps, base.carriedCappedDps);
+  assert.ok(plan.carriedBaseDps !== base.cappedDps, 'the card baseline differs on this fixture');
+  assert.ok(Object.hasOwn(plan, 'carriedUncappedDps'), 'carried uncapped baseline is named');
+  assert.ok(Object.hasOwn(plan, 'cardPlanDps') && Object.hasOwn(plan, 'cardUncappedPlanDps'), 'card plan totals are named');
+  assert.ok(plan.cardPlanDps > 0 && plan.cardUncappedPlanDps > 0);
+});
+
 test('the weapon-type matrix prices every family on its best weapon', () => {
   const gate = planMatrix({ soulGem: true });
   assert.equal(gate.length, 6);
-  assert.ok(gate.every((x) => x.plan && x.plan.dps > 0));
+  assert.ok(gate.every((x) => x.plan && x.plan.cardPlanDps > 0));
   const uncapped = planMatrix({ soulGem: true, target: referenceFoe(45, 'tough') });
   for (const id of ['LongBlade', 'ShortBlade', 'Axe', 'BluntWeapon', 'HandToHand']) {
     const row = uncapped.find((x) => x.key === id);

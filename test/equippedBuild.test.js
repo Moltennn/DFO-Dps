@@ -86,8 +86,8 @@ test('2. equipped == with(edit): every power kind, every configuration, exactly'
     same(run(carry(katana, imprinted(id)), {}, target), run(katana, {}, target), `${id}: condition false`);
   }
   // the pricing assumption (conditional=true) is the scenario that makes the condition true
-  assert.equal(powerDps(powerOf('nightwhisper'), run(katana), true, { capped: true }), run(carry(katana, imprinted('nightwhisper')), { unaware: true }).cappedDps);
-  assert.equal(powerDps(powerOf('gortwogs-cleaver'), run(katana), true, { capped: true }), run(carry(katana, imprinted('gortwogs-cleaver')), { attackerHealthShare: 0.1 }).cappedDps);
+  assert.equal(powerDps(powerOf('nightwhisper'), run(katana), true, { capped: true }), run(carry(katana, imprinted('nightwhisper')), { unaware: true }).carriedCappedDps);
+  assert.equal(powerDps(powerOf('gortwogs-cleaver'), run(katana), true, { capped: true }), run(carry(katana, imprinted('gortwogs-cleaver')), { attackerHealthShare: 0.1 }).carriedCappedDps);
 });
 
 test('2b. equipped == with(edit) across the supported hold configurations', () => {

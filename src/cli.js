@@ -430,6 +430,8 @@ function summary(ch, r, extra = {}) {
       damage: { min: r.damage.min, max: r.damage.max, avg: r.damage.avg, critMin: r.damage.critMin, critMax: r.damage.critMax, critAvg: r.damage.critAvg },
       perSwing: r.perSwing, aps: r.cadence.aps, swingSeconds: r.cadence.seconds,
       dps: r.dps, dpsMin: r.dpsMin, dpsMax: r.dpsMax, cappedDps: r.cappedDps, cappedDpsMin: r.cappedDpsMin, cappedDpsMax: r.cappedDpsMax, cap: r.cap, capLoss: r.capLoss,
+      // the held item's long-run mean (exact carried percentages); pricing reads these, the card above floors
+      carriedPerSwing: r.carriedPerSwing, carriedDps: r.carriedDps, carriedCappedDps: r.carriedCappedDps,
       enchantDps: r.enchantDps, enchantDpsMin: r.enchantDpsMin, enchantDpsMax: r.enchantDpsMax, totalDps: r.totalDps, totalDpsMin: r.totalDpsMin, totalDpsMax: r.totalDpsMax, enchantPerSwing: r.enchantPerSwing, enchantProcs: r.enchantProcs, procsBeforeBreak: r.procsBeforeBreak, procsBeforeBreakBasis: r.procsBeforeBreakBasis,
       ward: r.ward, ttk: r.ttk, totalTtk: r.totalTtk, wrath: r.wrath,
       terms: r.damage.parts,
@@ -790,19 +792,19 @@ export async function main(argv = process.argv.slice(2)) {
       if (wantsUncapped) {
         const list = byDps(uncappedRows);
         console.log(`\nReal loadouts  |  uncapped theory  |  soul gem +${SOUL_GEM_POINTS}`);
-        console.log(table(list.map((r) => [`${r.category} · ${r.family}`, r.weapon, r.imprint ?? '-', fmt(r.totalDps)]), ['Family', 'Weapon', 'Imprint', 'Total DPS'], ['left', 'left', 'left', 'right']));
+        console.log(table(list.map((r) => [`${r.category} · ${r.family}`, r.weapon, r.imprint ?? '-', fmt(r.totalDps)]), ['Family', 'Weapon', 'Imprint', 'Total DPS (carried)'], ['left', 'left', 'left', 'right']));
       }
       if (wantsCap) for (const id of requested) {
         const e = ENCOUNTERS[id];
         const list = byDps(capRows.get(id));
         console.log(`\nReal loadouts  |  ${e.name}  |  soul gem +${SOUL_GEM_POINTS}${e.calibrated ? '' : '  |  uncalibrated mechanics'}`);
-        console.log(table(list.map((r) => [`${r.category} · ${r.family}`, r.weapon, r.imprint ?? '-', fmt(r.totalDps), fmt(r.burst5), fmt(r.sustainedDps), fmt(r.averageDps), fmt(r.ttk), pc(r.landedShare)]), ['Family', 'Weapon', 'Imprint', 'Per-hit-capped DPS', 'Burst 5s', 'Sustained DPS', 'Kill-avg DPS', 'TTK', 'Kept'], ['left', 'left', 'left', 'right', 'right', 'right', 'right', 'right']));
+        console.log(table(list.map((r) => [`${r.category} · ${r.family}`, r.weapon, r.imprint ?? '-', fmt(r.totalDps), fmt(r.burst5), fmt(r.sustainedDps), fmt(r.averageDps), fmt(r.ttk), pc(r.landedShare)]), ['Family', 'Weapon', 'Imprint', 'Per-hit-capped DPS (carried)', 'Burst 5s', 'Sustained DPS', 'Kill-avg DPS', 'TTK', 'Kept'], ['left', 'left', 'left', 'right', 'right', 'right', 'right', 'right']));
       }
     }
     const shared = uncappedRows.find((r) => r.category === '1H')?.enchPlan
       ?? [...capRows.values()].flat().find((r) => r.category === '1H')?.enchPlan
       ?? rows[0]?.enchPlan;
-    const imprintRows = rankAll({ sort: 'uncapped' }).flatMap((f) => f.rows.slice(0, 3).map((r) => ({ family: f.name, power: r.power.name, weapon: r.weapon, boss: r.baseDps, uncapped: r.uncappedDps })));
+    const imprintRows = rankAll({ sort: 'uncapped' }).flatMap((f) => f.rows.slice(0, 3).map((r) => ({ family: f.name, power: r.power.name, weapon: r.weapon, carriedBoss: r.baseDps, carriedUncapped: r.uncappedDps })));
     const builds = buildIds().map((id) => {
       const build = buildById(id);
       const p = planBuild(build);
@@ -814,25 +816,25 @@ export async function main(argv = process.argv.slice(2)) {
     if (wantsUncapped) {
       const list = byDps(uncappedRows);
       const chart = barChart({
-        title: 'Uncapped loadouts by DPS',
+        title: 'Uncapped loadouts by carried DPS',
         labels: list.map((r) => `${r.category} ${r.weapon}`),
-        series: [{ name: 'Total DPS', values: list.map((r) => r.totalDps) }],
+        series: [{ name: 'Carried total DPS', values: list.map((r) => r.totalDps) }],
       });
       const body = list.map((r) => `<tr><td class="k">${r.category} · ${r.family}</td><td>${r.weapon}</td><td>${r.imprint ?? '-'}</td><td>${fmt(r.totalDps)}</td></tr>`).join('');
       sections.push({
         title: 'Uncapped theory - all weapons and hold configurations',
-        note: 'Every weapon template in every hand configuration. Total is tree + enchants + the best eligible positive imprint; null means no positive imprint was used.',
+        note: 'Every weapon template in every hand configuration. Total is the CARRIED figure: tree + enchants + the best eligible positive imprint; null means no positive imprint was used.',
         chart,
-        table: `<div class="table"><table><thead><tr><th>Family</th><th>Weapon</th><th>Imprint</th><th>Total DPS</th></tr></thead><tbody>${body}</tbody></table></div>`,
+        table: `<div class="table"><table><thead><tr><th>Family</th><th>Weapon</th><th>Imprint</th><th>Total DPS (carried)</th></tr></thead><tbody>${body}</tbody></table></div>`,
       });
     }
     if (wantsCap) for (const id of requested) {
       const e = ENCOUNTERS[id];
       const list = byDps(capRows.get(id));
       const chart = barChart({
-        title: `${e.name} loadouts by per-hit-cap DPS`,
+        title: `${e.name} loadouts by carried per-hit-cap DPS`,
         labels: list.map((r) => `${r.category} ${r.weapon}`),
-        series: [{ name: 'Total DPS', values: list.map((r) => r.totalDps) }],
+        series: [{ name: 'Carried total DPS', values: list.map((r) => r.totalDps) }],
       });
       const ttkList = list.slice().sort((a, b) => (a.ttk ?? Infinity) - (b.ttk ?? Infinity));
       const ttkChart = barChart({
@@ -843,9 +845,9 @@ export async function main(argv = process.argv.slice(2)) {
       const body = list.map((r) => `<tr><td class="k">${r.category} · ${r.family}</td><td>${r.weapon}</td><td>${r.imprint ?? '-'}</td><td>${fmt(r.totalDps)}</td><td>${fmt(r.burst5)}</td><td>${fmt(r.sustainedDps)}</td><td>${fmt(r.averageDps)}</td><td>${fmt(r.ttk)}</td><td>${pc(r.landedShare)}</td></tr>`).join('');
       sections.push({
         title: `${e.name} - all weapons and hold configurations${e.calibrated ? '' : ' (uncalibrated mechanics)'}`,
-        note: `${e.note} Per-hit-capped DPS is a ceiling, not what the boss takes; Burst 5s (damage in the first five seconds), Sustained DPS (the refill rate once the opening allowance is spent), Kill-avg DPS (health over TTK) and TTK apply the relay's per-player allowance (750 depth, 150/s, 600 per blow, four blows/s at level 45). Purse kept is the share of that ceiling which lands after the purse. The imprint is chosen on the per-hit ceiling; under the purse Many Endings is not credited, because its extra blow is capped and spends the same four-blow budget.${e.calibrated ? '' : ' The purse is known; the encounter immunity/split timing is not yet measured, so TTK is a purse-only baseline.'}`,
+        note: `${e.note} The carried per-hit-capped DPS is a ceiling, not what the boss takes; Burst 5s (damage in the first five seconds), Sustained DPS (the refill rate once the opening allowance is spent), Kill-avg DPS (health over TTK) and TTK apply the relay's per-player allowance (750 depth, 150/s, 600 per blow, four blows/s at level 45). Purse kept is the share of that ceiling which lands after the purse. The imprint is chosen on the per-hit ceiling; under the purse Many Endings is not credited, because its extra blow is capped and spends the same four-blow budget.${e.calibrated ? '' : ' The purse is known; the encounter immunity/split timing is not yet measured, so TTK is a purse-only baseline.'}`,
         chart,
-        table: `<div class="table"><table><thead><tr><th>Family</th><th>Weapon</th><th>Imprint</th><th>Per-hit-capped DPS</th><th>Burst 5s</th><th>Sustained DPS</th><th>Kill-avg DPS</th><th>TTK</th><th>Allowance kept</th></tr></thead><tbody>${body}</tbody></table></div>`,
+        table: `<div class="table"><table><thead><tr><th>Family</th><th>Weapon</th><th>Imprint</th><th>Per-hit-capped DPS (carried)</th><th>Burst 5s</th><th>Sustained DPS</th><th>Kill-avg DPS</th><th>TTK</th><th>Allowance kept</th></tr></thead><tbody>${body}</tbody></table></div>`,
       });
       sections.push({
         title: `${e.name} - time to kill`,
@@ -862,7 +864,7 @@ export async function main(argv = process.argv.slice(2)) {
       title: 'Imprint ratings',
       note: 'Top three eligible imprints per family. Boss is the breach purse; Uncapped has no cap. Monster-type damage imprints are shown for reference but are not used in the loadouts.',
       chart: '',
-      table: `<div class="table"><table><thead><tr><th>Family</th><th>Imprint</th><th>Weapon</th><th>Per-hit-capped DPS</th><th>Uncapped DPS</th></tr></thead><tbody>${imprintRows.map((r) => `<tr><td class="k">${r.family}</td><td>${r.power}</td><td>${r.weapon}</td><td>${fmt(r.boss)}</td><td>${fmt(r.uncapped)}</td></tr>`).join('')}</tbody></table></div>`,
+      table: `<div class="table"><table><thead><tr><th>Family</th><th>Imprint</th><th>Weapon</th><th>Per-hit-capped DPS (carried)</th><th>Uncapped DPS (carried)</th></tr></thead><tbody>${imprintRows.map((r) => `<tr><td class="k">${r.family}</td><td>${r.power}</td><td>${r.weapon}</td><td>${fmt(r.carriedBoss)}</td><td>${fmt(r.carriedUncapped)}</td></tr>`).join('')}</tbody></table></div>`,
     });
     sections.push({
       title: 'Firmament plans used',
@@ -905,15 +907,15 @@ export async function main(argv = process.argv.slice(2)) {
         family: x.family, weapon: x.weapon ?? '-', skillPieces: x.skillPieces ?? 0, csPieces: x.csPieces ?? 0,
         procs: rows[0]?.effects.filter((e) => e.type === 'CastWhenStrikes').length ?? 0,
         repairs: rows.flatMap((r) => r.effects).filter((e) => e.type === 'RepairsObjects').length,
-        base: x.plan?.baseDps ?? 0, dps: x.plan?.dps ?? 0, futureDps: x.plan?.uncappedPlanDps ?? 0,
+        carriedBase: x.plan?.carriedBaseDps ?? 0, cardDps: x.plan?.cardPlanDps ?? 0, cardFutureDps: x.plan?.cardUncappedPlanDps ?? 0,
         spent: rows.reduce((a, r) => a + r.spent, 0), budget: rows.reduce((a, r) => a + r.budget, 0),
         left: rows.reduce((a, r) => a + (r.budget - r.spent), 0),
       };
     });
     const summaryHtml = (summary, modeKey) => {
       const cap = modeKey === 'cap';
-      const head = `<tr><th>Family</th><th>Best weapon</th><th>Weapon skill pieces</th><th>CS pieces</th><th>Procs</th><th>Repairs</th><th>Weapon DPS</th>${cap ? '<th>Gate plan</th><th>No-cap plan</th>' : '<th>Plan DPS</th>'}<th>Spent</th><th>Left</th></tr>`;
-      return `<div class="table"><table><thead>${head}</thead><tbody>${summary.map((x) => `<tr><td class="k">${x.family}</td><td>${x.weapon}</td><td>${x.skillPieces}</td><td>${x.csPieces}</td><td>${x.procs}</td><td>${x.repairs}</td><td>${fmt(x.base)}</td>${cap ? `<td>${fmt(x.dps)}</td><td>${fmt(x.futureDps)}</td>` : `<td>${fmt(x.dps)}</td>`}<td>${x.spent}</td><td>${x.left}</td></tr>`).join('')}</tbody></table></div>`;
+      const head = `<tr><th>Family</th><th>Best weapon</th><th>Weapon skill pieces</th><th>CS pieces</th><th>Procs</th><th>Repairs</th><th>Weapon DPS (carried)</th>${cap ? '<th>Gate plan (card)</th><th>No-cap plan (card)</th>' : '<th>Plan DPS (card)</th>'}<th>Spent</th><th>Left</th></tr>`;
+      return `<div class="table"><table><thead>${head}</thead><tbody>${summary.map((x) => `<tr><td class="k">${x.family}</td><td>${x.weapon}</td><td>${x.skillPieces}</td><td>${x.csPieces}</td><td>${x.procs}</td><td>${x.repairs}</td><td>${fmt(x.carriedBase)}</td>${cap ? `<td>${fmt(x.cardDps)}</td><td>${fmt(x.cardFutureDps)}</td>` : `<td>${fmt(x.cardDps)}</td>`}<td>${x.spent}</td><td>${x.left}</td></tr>`).join('')}</tbody></table></div>`;
     };
     const canonical = (matrix, modeKey) => {
       const melee = matrix.filter((x) => ['LongBlade', 'ShortBlade', 'Axe', 'BluntWeapon', 'HandToHand'].includes(x.key));
@@ -931,7 +933,7 @@ export async function main(argv = process.argv.slice(2)) {
           console.log(`
 Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem +${SOUL_GEM_POINTS}` : 'template points only'}`);
           const cap = r.key === 'cap';
-          console.log(table(r.summary.map((x) => [x.family, x.weapon, x.skillPieces, x.csPieces, x.procs, x.repairs, fmt(x.base), ...(cap ? [fmt(x.dps), fmt(x.futureDps)] : [fmt(x.dps)]), x.spent, x.left]), ['Family', 'Best', 'Weapon skill', 'CS', 'Procs', 'Repairs', 'Weapon DPS', ...(cap ? ['Gate plan', 'No-cap plan'] : ['Plan DPS']), 'Spent', 'Left'], ['left', 'left', 'right', 'right', 'right', 'right', 'right', ...(cap ? ['right', 'right'] : ['right']), 'right', 'right']));
+          console.log(table(r.summary.map((x) => [x.family, x.weapon, x.skillPieces, x.csPieces, x.procs, x.repairs, fmt(x.carriedBase), ...(cap ? [fmt(x.cardDps), fmt(x.cardFutureDps)] : [fmt(x.cardDps)]), x.spent, x.left]), ['Family', 'Best', 'Weapon skill', 'CS', 'Procs', 'Repairs', 'Weapon DPS (carried)', ...(cap ? ['Gate plan (card)', 'No-cap plan (card)'] : ['Plan DPS (card)']), 'Spent', 'Left'], ['left', 'left', 'right', 'right', 'right', 'right', 'right', ...(cap ? ['right', 'right'] : ['right']), 'right', 'right']));
           if (r.melee?.plan) {
             console.log(`\nCanonical melee layout (${r.melee.family} - ${r.melee.weapon})`);
             console.log(table(r.melee.plan.rows.map((row) => [row.slot, row.item, row.effects.map((e) => effectLine(e)).join('; ') || '-']), ['Slot', 'Item', 'Enchantments'], ['left', 'left', 'left']));
@@ -964,7 +966,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       if (plan.imprint?.base) {
         const b = plan.imprint.base;
         const u = plan.imprint.uncapped;
-        console.log(`Weapon imprint (separate): boss ${b.power.name} ${fmt(b.baseDps)} (+${fmt(b.baseDps - plan.baseDps)}); uncapped ${u.power.name} ${fmt(u.uncappedDps)} (+${fmt(u.uncappedDps - plan.uncappedDps)})`);
+        console.log(`Weapon imprint (separate, carried mean): boss ${b.power.name} ${fmt(b.carriedDps)} (+${fmt(b.carriedDps - plan.carriedBaseDps)}); uncapped ${u.power.name} ${fmt(u.carriedUncappedDps)} (+${fmt(u.carriedUncappedDps - plan.carriedUncappedDps)})`);
       }
       console.log('');
       console.log(table(plan.rows.map((r) => [
@@ -1008,7 +1010,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     const html = multiGraphPage({
       title: 'DFO enchant plan',
       subtitle: `${plan.weaponName}${plan.rows.find((r) => /Shield|Buckler/.test(r.slot)) ? ` + ${plan.rows.find((r) => /Shield|Buckler/.test(r.slot)).item}` : ''}; ${plan.soulGem ? `soul gem +${SOUL_GEM_POINTS} on every piece` : 'template enchantment points only'}. Budgets are the game's ItemTemplates enchantmentPoints plus the stated soul gem; a POWER is positive, a side effect negative.`,
-      sections: [{ title: 'Per piece', note: `Boss-first fill against the level-45 Breach (${group}, 600 per-hit cap). Backstabbing is not planned: its ×3 is capped after the roll, so +15 Backstabbing adds no capped DPS on the capped weapons. Uncapped theory puts weapon skill and Critical Strike on every piece; cap-aware buys only what the current cap pays. One-piece effects go out once; Repairs Objects is a player-chosen count (default 1); Regens Health is optional and off by default (heal spells are stronger). Empty pieces have no remaining effect that added capped DPS. Strike procs are capped per hit too; the weapon holds ${plan.maxProcs} proc row${plan.maxProcs === 1 ? '' : 's'} over its ${plan.swings}-swing Breach fight (10 condition a proc). ${plan.soulGem ? 'The soul gem is applied to every piece.' : 'No soul gem: base template points only.'}${plan.imprint?.base ? ` The weapon's imprint is separate from this budget: best boss ${plan.imprint.base.power.name} (${fmt(plan.imprint.base.baseDps)} DPS), best uncapped ${plan.imprint.uncapped.power.name} (${fmt(plan.imprint.uncapped.uncappedDps)} DPS).` : ''}`, chart: '', table: pieceTable + oneTable + stackTable + weaponTable + ratingTable }],
+      sections: [{ title: 'Per piece', note: `Boss-first fill against the level-45 Breach (${group}, 600 per-hit cap). Backstabbing is not planned: its ×3 is capped after the roll, so +15 Backstabbing adds no capped DPS on the capped weapons. Uncapped theory puts weapon skill and Critical Strike on every piece; cap-aware buys only what the current cap pays. One-piece effects go out once; Repairs Objects is a player-chosen count (default 1); Regens Health is optional and off by default (heal spells are stronger). Empty pieces have no remaining effect that added capped DPS. Strike procs are capped per hit too; the weapon holds ${plan.maxProcs} proc row${plan.maxProcs === 1 ? '' : 's'} over its ${plan.swings}-swing Breach fight (10 condition a proc). ${plan.soulGem ? 'The soul gem is applied to every piece.' : 'No soul gem: base template points only.'}${plan.imprint?.base ? ` The weapon's imprint is separate from this budget: best boss ${plan.imprint.base.power.name} (${fmt(plan.imprint.base.carriedDps)} carried DPS), best uncapped ${plan.imprint.uncapped.power.name} (${fmt(plan.imprint.uncapped.carriedUncappedDps)} carried DPS).` : ''}`, chart: '', table: pieceTable + oneTable + stackTable + weaponTable + ratingTable }],
     });
     fs.writeFileSync(out, html, 'utf8');
     if (!values.json) console.log(`enchant plan written: ${out}`);
@@ -1029,8 +1031,8 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     if (!values.json) {
       console.log('Weapon imprints');
       for (const f of rows) {
-        console.log(`\n${f.name} - ${f.weapon} (${fmt(f.base.cappedDps)} per-hit-capped DPS; the Breach allowance is not applied to imprint rankings)`);
-        console.log(table(f.rows.map((r) => [r.power.name, r.name, r.weapon, r.hit, fmt(r.baseDps), fmt(r.delta), fmt(r.uncappedDps), fmt(r.uncappedDelta), fmt(r.conditionalDps), fmt(r.triggerDelta), r.trigger, r.power.brief]), ['Imprint', 'Of', 'On', 'Hit', 'Boss DPS', 'Boss gain', 'Uncapped DPS', 'Uncapped gain', 'Trigger DPS', 'Trigger gain', 'Trigger', 'Effect'], ['left', 'left', 'left', 'left', 'right', 'right', 'right', 'right', 'right', 'right', 'left', 'left']));
+        console.log(`\n${f.name} - ${f.weapon} (${fmt(f.base.carriedCappedDps)} carried per-hit-capped DPS; the Breach allowance is not applied to imprint rankings)`);
+        console.log(table(f.rows.map((r) => [r.power.name, r.name, r.weapon, r.hit, fmt(r.baseDps), fmt(r.delta), fmt(r.uncappedDps), fmt(r.uncappedDelta), fmt(r.conditionalDps), fmt(r.triggerDelta), r.trigger, r.power.brief]), ['Imprint', 'Of', 'On', 'Hit', 'Boss carried DPS', 'Boss carried gain', 'Uncapped carried DPS', 'Uncapped carried gain', 'Trigger carried DPS', 'Trigger carried gain', 'Trigger', 'Effect'], ['left', 'left', 'left', 'left', 'right', 'right', 'right', 'right', 'right', 'right', 'left', 'left']));
       }
     }
     const out = path.resolve(values.out === 'dfo-dps-report.html' ? 'imprints.html' : values.out);
@@ -1047,19 +1049,19 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       const body = f.rows.map((r) => `<tr><td class="k" style="white-space:normal;min-width:300px">${r.power.name}<br><span style="color:#a8a092;font-size:11px">of ${r.name} - ${r.power.brief}</span></td><td>${r.weapon}</td><td>${r.hit}</td><td>${fmt(r.baseDps)}</td><td>${fmt(r.delta)}</td><td>${fmt(r.uncappedDps)}</td><td>${fmt(r.uncappedDelta)}</td><td style="white-space:normal;min-width:180px">${r.trigger}</td></tr>`).join('');
       return {
         title: `${f.name} - ${f.weapon}`,
-        note: `Every Weapon Legendary's power may sit on any weapon of its group; only Chain Lightning (a shot) and Earthshaker (a melee blow) narrow it. Each row reads the power on this family's best weapon. Boss is the level-${THEORY_LEVEL} Breach (Daedra, 600 per-hit cap); Uncapped is the same weapon with no cap. Trigger applies the condition only where it can occur at the Breach; otherwise it is marked. The imprint is the Legendary power only; the Rare's own affixes are separate.`,
+        note: `Every Weapon Legendary's power may sit on any weapon of its group; only Chain Lightning (a shot) and Earthshaker (a melee blow) narrow it. Each row reads the power on this family's best weapon. The DPS figures are the CARRIED mean (a held item carries a percentage line's fraction, so its long-run mean is the exact share), not the card's per-blow floor. Boss is the level-${THEORY_LEVEL} Breach (Daedra, 600 per-hit cap); Uncapped is the same weapon with no cap. Trigger applies the condition only where it can occur at the Breach; otherwise it is marked. The imprint is the Legendary power only; the Rare's own affixes are separate.`,
         chart,
-        table: `<div class="table"><table><thead><tr><th>Imprint</th><th>On</th><th>Hit</th><th>Per-hit-capped DPS</th><th>Per-hit-capped gain</th><th>Uncapped DPS</th><th>Uncapped gain</th><th>Trigger</th></tr></thead><tbody>${body}</tbody></table></div>`,
+        table: `<div class="table"><table><thead><tr><th>Imprint</th><th>On</th><th>Hit</th><th>Carried per-hit-capped DPS</th><th>Carried per-hit-capped gain</th><th>Carried uncapped DPS</th><th>Carried uncapped gain</th><th>Trigger</th></tr></thead><tbody>${body}</tbody></table></div>`,
       };
     });
     const html = multiGraphPage({
       title: 'DFO weapon imprints',
-      subtitle: `The Reforge's Rare imprints on each family's best max-profile weapon${values.firmament ? ', +Firmament' : ''}. Boss is the level-45 Breach with its 600 cap; Uncapped is the same weapon without it. Ranked by ${sort === 'uncapped' ? 'uncapped' : sort === 'conditional' ? 'trigger' : 'boss'} DPS.`,
+      subtitle: `The Reforge's Rare imprints on each family's best max-profile weapon${values.firmament ? ', +Firmament' : ''}. Boss is the level-45 Breach with its 600 cap; Uncapped is the same weapon without it. DPS is the carried mean (the held item's long-run share, not the card's per-blow floor). Ranked by ${sort === 'uncapped' ? 'uncapped' : sort === 'conditional' ? 'trigger' : 'boss'} carried DPS.`,
       sections,
     });
     fs.writeFileSync(out, html, 'utf8');
     if (!values.json) console.log(`imprints page written: ${out}`);
-    if (values.json) console.log(JSON.stringify(rows.map((f) => ({ family: f.key, weapon: f.weapon, template: f.template, baseDps: f.base.cappedDps, rows: f.rows.map((r) => ({ id: r.id, record: r.name, power: r.power.name, weapon: r.weapon, baseDps: r.baseDps, conditionalDps: r.conditionalDps, uncappedDps: r.uncappedDps, delta: r.delta, uncappedDelta: r.uncappedDelta, triggerDelta: r.triggerDelta, trigger: r.trigger, hit: r.hit, effect: r.power.brief })) })), null, 2));
+    if (values.json) console.log(JSON.stringify(rows.map((f) => ({ family: f.key, weapon: f.weapon, template: f.template, baseDps: f.base.carriedCappedDps, cardBaseDps: f.base.cappedDps, metric: 'carried', rows: f.rows.map((r) => ({ id: r.id, record: r.name, power: r.power.name, weapon: r.weapon, baseDps: r.baseDps, conditionalDps: r.conditionalDps, uncappedDps: r.uncappedDps, delta: r.delta, uncappedDelta: r.uncappedDelta, triggerDelta: r.triggerDelta, trigger: r.trigger, hit: r.hit, effect: r.power.brief })) })), null, 2));
     return;
   }
 

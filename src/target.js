@@ -197,8 +197,12 @@ export function skeletalSilverDamage(damage, target, weapon) {
  * nothing on the struck part, by its career group. The result already includes natural resistance;
  * do not subtract it again. `damage` is the blow after critical/condition, before the host's traits.
  */
-export function monsterHideDamage(target, damage, bluntWep, naturalDamResist = naturalDamageResistance(target)) {
-  const r = (m) => unityRound(fround(damage * fround(fround(m) - naturalDamResist)));
+export function monsterHideDamage(target, damage, bluntWep, naturalDamResist = naturalDamageResistance(target), exact = false) {
+  // `exact`: the carried metric's mean is not rounded again - upstream's unityRound runs on each integer blow,
+  // whose mean this is (src/model.js carriedPct).
+  const r = (m) => (exact
+    ? fround(damage * fround(fround(m) - naturalDamResist))
+    : unityRound(fround(damage * fround(fround(m) - naturalDamResist))));
   const c = target?.careerIndex;
   switch (enemyEntityGroup(c)) {
     case ENEMY_GROUPS.Animals:
@@ -231,14 +235,18 @@ export function monsterHideDamage(target, damage, bluntWep, naturalDamResist = n
  * below resolves a geared target part by part. (`spareGear` is upstream's "a blow wears no
  * weapon" flag, not an armour flag, so it does not enter this decision.)
  */
-export function intrinsicDamage(target, damage, { weapon = null } = {}) {
+export function intrinsicDamage(target, damage, { weapon = null, exact = false } = {}) {
   if (!(damage > 0) || !target) return damage;
   const natural = naturalDamageResistance(target);
   const blunt = weapon ? weapon.skillId === SKILLS.BluntWeapon : false;
   if (target.isClass === false && target.careerIndex != null) {
-    return monsterHideDamage(target, damage, blunt, natural);
+    return monsterHideDamage(target, damage, blunt, natural, exact);
   }
-  return unityRound(fround(damage * fround(1 - natural)));
+  // `exact` is the carried metric's mean (see monsterHideDamage): the defensive round is applied per integer
+  // blow upstream, so rounding the mean would quantise the carry away.
+  return exact
+    ? fround(damage * fround(1 - natural))
+    : unityRound(fround(damage * fround(1 - natural)));
 }
 
 // ── worn armour and the shield (Stage 2.2) ────────────────────────

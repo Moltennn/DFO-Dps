@@ -6,6 +6,116 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Pricing reads the carried percentage mean (W-LOOT-CARRY step 2)
+
+**What the game does.** A percentage blow channel floors each blow and keeps the fraction on the held item:
+`systems/loot/lootPowers.js:176-181` `shareOf` (`exact = damage * pct / 100 + carry`, `more = floor(exact + 1e-9)`,
+`carry = max(0, exact - more)`), the same shape in `systems/weaponMastery.js:148-150` and
+`systems/martialPowers.js:232-235`, and the Firmament's own in `systems/firmamentPowers.js:111-115`
+(`whole = pct >= 0 ? floor : ceil`, remainder unclamped; the blow never below 1, `:181`). Because
+`floor(x_i + c) = x_i + c - c_next`, `sum f_i = sum x_i + c_0 - c_n`: a held item's long-run mean of the line is its
+EXACT share. The card is upstream's own estimate path (`info.estimate` reads the carry and never writes it), so a
+fresh-item card floors.
+
+**What changed.** Pricing no longer inherits the card's floor. `analyze` runs the one card a second time with
+`carried: true` and exposes `carriedPerSwing` / `carriedCappedPerSwing` / `carriedDps` / `carriedCappedDps`
+(`src/model.js:1063-1069`). In that pass the four carried channels take the exact share - mastery
+(`src/model.js:702`), the loot step's one slayer + what-if + power percentage (`:711`), the martial path (`:723`) and
+the Firmament (`:727`, with its `max(1, ...)` clamp) - through `carriedPct`/`carriedFirmament` (`:642`, `:646`) in
+place of `applyPct`'s floor. The non-carried floors stay as the game's: the weapon damage affix and the theory
+`damagePct` (lootRarity.js:2474-2478 trunc; `src/model.js:725`) and the elemental/venom flat (`Math.floor`,
+lootPowers.js:294,:320). The target's hide/natural stage takes the mean without rounding it again
+(`src/target.js:200`, `:238`, `exact`), and the card's crit/material/condition stages pass it through
+(`src/model.js:953`) - upstream rounds each integer blow, whose mean is this. Pricing reads the new metric:
+`powerDps` and the rankings (`src/imprints.js:87`, `:127-145`), the enchant plan's imprint pool and its base
+(`src/enchantPlan.js:301-316`), and `bestImprint` (`src/realBuild.js:91`). Each real-build row is one metric:
+`treeDps`/`enchDps`/`totalDps` are the carried capped blow plus the proc layer, `metric: 'carried'`, and
+`cardEnchDps` keeps the plain card baseline under its own name; the enchant plan names `carriedBaseDps` /
+`carriedUncappedDps` beside the card `cardPlanDps` / `cardUncappedPlanDps`. The benchmark's recorded
+`cardDps`/`cardTreeDps`/`cardEnchDps` keep the pure card figures (`cardTotalDps`/`cardTreeDps`/`cardEnchDps` on the
+row; the winning imprint's card figure is priced once), so that tracked selector keeps its name.
+`carriedPerSwing`, `carriedDps` and `carriedCappedDps` are in the CLI JSON. The card's own `perSwing`/`dps`/`cappedDps`
+and the seeded fight streams are untouched (ASSUMPTION M41; `W-LOOT-CARRY` narrowed, not deleted).
+
+**Before/after, a 25% slayer line on the level-30 katana** (fixture of `test/pricing.test.js` section 5; 250,000
+blows of one held item, vendored `calculateAttackDamage`):
+
+- held-item stream: **19.4536** per swing (se 0.0125)
+- card figure (unchanged): **19.0259** - the +2.2% the waiver still pins
+- new carried metric: **19.4051** (0.25% below the stream: a bias, see Limits)
+- the same line's share is exact: the carried figure is 1.25 x the no-affix blow, where the sample's integer-stage
+  overshoot makes it 1.2589.
+
+**Imprint deltas** (level-45 Breach, max-profile long blade): base 853.490 -> 855.520 carried; Way of the Sword
++36.243 -> +34.513, Serpent's Kiss +21.876 -> +21.101, Many Endings +3.826 -> +3.623 (the base carries its own
+percentage lines, so a delta shrinks while both figures rise). Archery: base 775.702 -> 775.978.
+
+**Ranking order: unchanged on the six max-profile fixtures.** `test/imprints.test.js` 'the carried metric keeps the
+card's imprint order on every family fixture' asserts, for every family `rankAll()` reaches, that the order by the
+carried delta equals the order by the plain card delta, with a distinct-delta guard so the comparison is not
+vacuous. The host weapon was the same template under both metrics.
+
+**Red, before the change** (`carriedPerSwing` did not exist; the card figure was the only one the test could read):
+
+```
+✖ 5. W-LOOT-CARRY: the carried metric is the held item's stream; the card still floors each blow
+  TypeError: Cannot read properties of undefined (reading 'toFixed')   <- carriedPerSwing undefined
+  probe: carried undefined, card 19.025857142857145, upstream 19.453648, se 0.012510859841289234
+```
+
+**Green, after** (`test/pricing.test.js` section 5 prints the same fixture):
+
+```
+✔ 5. W-LOOT-CARRY: the carried metric is the held item's stream; the card still floors each blow
+  carried 19.4051 vs held 19.4536 (0.25%, z -3.88 at this seed) - the 0.5% bound passes; the card gap (+2.25%) is pinned
+```
+
+The test asserts the carried figure within 0.5% of the held stream AND that the card still fails the same
+comparison by more than 0.5% (the narrowed waiver's pin, which covers the **card** half only).
+
+**The row-metric fix in the same change.** `realTemplate` mixed the carried imprint figure with a card baseline, so
+an imprint step reported the ~2% metric jump as the imprint's worth, and `planEnchants` put a carried `baseDps`
+beside card `dps`/`uncappedPlanDps`. Red, before:
+
+```
+✖ the imprint step is one metric: carried minus carried, and the row names it
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal: + undefined - 'carried'
+✖ the plan names the carried baseline beside the card plan figures      (fields absent)
+```
+
+Green, after: both pass, the row's `treeDps`/`enchDps`/`totalDps` are carried with `metric: 'carried'` and
+`cardEnchDps`/`cardTreeDps`/`cardTotalDps` named separately, the plan names `carriedBaseDps`/`carriedUncappedDps`
+beside `cardPlanDps`/`cardUncappedPlanDps`, the CLI's tables and JSON say "carried" where the figure is carried, and
+the order guard `test/imprints.test.js` 'the carried metric keeps the card's imprint order on every family fixture'
+passes for all six families.
+
+**Limits (recorded, not fixed).**
+
+- The local blow has no `blowRoom`/`BLOW_MOST` clamp (`systems/powerCeiling.js:9-13`, `:52-64`; loot tops at 240%,
+  mastery 400%, martial 40%, firmament 50%), so a percentage above its registry's top carries a larger share than the
+  game. Existing separate divergence (M41).
+- A geared target's worn-armour stage keeps its integer rows on the mean; the bare hide/natural stage is exact.
+- **The carried figure is BIASED ~0.25% low on this fixture, not just sampling noise.** The mean-based pass skips the
+  integer stages' per-blow `unityRound` (the crit's and the hide's), so `carriedDps` differs from `dps` even for an
+  item with no percentage line at all; imprint/enchant deltas largely cancel the bias because both sides drop the same
+  rounding, while an absolute carried figure carries it.
+- **A second, separate residual:** the theory `damagePct` channel stays floored on the MEAN (`applyPct` at
+  `src/model.js:725`), a floor-of-mean where the game floors each blow's share - up to one point of damage per blow
+  when that scenario channel is used. It is a what-if channel, not a loot rarity line; not carried here.
+- **The waiver pin covers the CARD half only.** No test compares a seeded fight-stream mean to the held-item stream;
+  the fight half is unpinned by a test (the tiers pass the blow without `carried`; `test/blowOutcomes.test.js` pins
+  the tiers equal the card).
+- **Possible refinement, not done:** a per-channel floor/ceil mixture that tracks the carried remainder's phase would
+  recover the integer-stage bias; a mean-based passage was chosen instead for the pricing metric.
+- The seeded fight streams and the plain card still floor each blow (`W-LOOT-CARRY`).
+- **Generated artefacts:** `docs/benchmark/**` and `docs/charts/**` are tracked and were NOT regenerated. Their DPS
+  numbers come from `simulateFights` (fight streams, unchanged); the only path from this change into them is
+  `realBuildStages`'s `bestImprint` (now ranked by the carried figure) and the recorded `cardDps` selector, which now
+  prices the winning imprint's CARD figure where the old value mixed the carried imprint into a card base. A
+  regeneration could therefore move an imprinted row's `cardDps` by a few points and, if a close pair swaps, its
+  ranking; the shipped benchmark's chosen imprint is a flow power and flow's rank did not move. The untracked root
+  pages (`imprints*.html`, `enchant-plans*.html`, `loadouts*.html`) do change and need regenerating.
+
 ## Equipment delegate - a class foe's kit is Enemy Expansion's (W-DEX-LOADOUT closed)
 
 **What the game does.** The client boots Daggerfall Enemy Expansion at every load (`scenes/shared.js:1518`), and its

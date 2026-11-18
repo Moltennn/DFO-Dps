@@ -71,10 +71,10 @@ test('1. no change: pricing evaluates to the canonical analysis, for every suppo
     }
     // the priced path: a power that changes nothing prices at the base, capped and uncapped
     for (const kind of ['chain', 'quake', 'conduit', 'siphon', 'surge']) {
-      assert.equal(powerDps({ kind }, base, true, { capped: true }), base.cappedDps, `${c.id}: ${kind} capped`);
-      assert.equal(powerDps({ kind }, base, false), base.dps, `${c.id}: ${kind} uncapped`);
+      assert.equal(powerDps({ kind }, base, true, { capped: true }), base.carriedCappedDps, `${c.id}: ${kind} capped`);
+      assert.equal(powerDps({ kind }, base, false), base.carriedDps, `${c.id}: ${kind} uncapped`);
     }
-    assert.equal(powerDps({ kind: 'bane', pct: 50 }, base, false, { capped: true }), base.cappedDps, `${c.id}: an untriggered power is the base`);
+    assert.equal(powerDps({ kind: 'bane', pct: 50 }, base, false, { capped: true }), base.carriedCappedDps, `${c.id}: an untriggered power is the base`);
   }
 });
 
@@ -111,7 +111,7 @@ test('2. a what-if is the same line on the item: pct = a slayer line, flat = an 
       [{ loot: { pct: 30, flat: 6 } }, [{ id: 'slayer', param: 'daedra', value: 30 }, { id: 'elemental', param: 'fire', value: 6 }]],
     ]) {
       const a = base.with(what); const b = real(line, extra);
-      for (const k of ['perSwing', 'cappedPerSwing', 'cappedDps', 'dps']) assert.equal(a[k], b[k], `${c.id}: ${JSON.stringify(what)} ${k}`);
+      for (const k of ['perSwing', 'cappedPerSwing', 'cappedDps', 'dps', 'carriedPerSwing', 'carriedCappedPerSwing', 'carriedCappedDps', 'carriedDps']) assert.equal(a[k], b[k], `${c.id}: ${JSON.stringify(what)} ${k}`);
     }
   }
 });
@@ -226,9 +226,13 @@ test('4. a loot line (percentage + flat) on the blow matches upstream, in the ga
   }
 });
 
-test('5. W-LOOT-CARRY: upstream carries a percentage line\'s fraction between blows; the model floors each blow', async () => {
+test('5. W-LOOT-CARRY: the carried metric is the held item\'s stream; the card still floors each blow', async () => {
   // lootPowers.js:176-181 shareOf: floor(damage x pct / 100 + carry), the remainder kept per held item. A fresh
-  // item per blow (the card) agrees with the model (section 4); the one item the game holds does not.
+  // item per blow (the card) floors; the one item the game holds carries, and its long-run mean is the EXACT
+  // share - sum f_i = sum x_i + c_0 - c_n, so the stream's total differs from the exact total by under one point.
+  // The carried metric (src/model.js `carriedPerSwing`/`carriedDps`) is that exact mean, proved here; the card's
+  // own estimate path (info.estimate reads the carry, never writes it) keeps flooring, and the pin below holds
+  // that divergence while the fight streams still floor too.
   const u = await upstream();
   const modules = pcaaoModules(u);
   void modules;
@@ -246,6 +250,16 @@ test('5. W-LOOT-CARRY: upstream carries a percentage line\'s fraction between bl
     sum += d; sq += d * d;
   }
   const m = sum / N; const se = Math.sqrt((sq / N - m * m) / N);
-  const local = analyze(simCharacter(desc, item), { target: standInTarget(31), core: 'overhaul', weapon: weaponOf(item), swing: 'StrikeLeft' }).with({ loot: { pct: 25, flat: 0 } }).perSwing;
-  expectKnownDiscrepancy(assert, 'W-LOOT-CARRY', (m - local) / se > 8 && m / local - 1 > 0.005, { upstream: m, local, z: (m - local) / se });
+  const baseLocal = analyze(simCharacter(desc, item), { target: standInTarget(31), core: 'overhaul', weapon: weaponOf(item), swing: 'StrikeLeft' });
+  const priced = baseLocal.with({ loot: { pct: 25, flat: 0 } });
+  const carried = priced.carriedPerSwing;
+  // The carried metric is the exact share passed down the pipeline; the sample still carries the integer stages
+  // (the crit's unityRound, the hide's) applied per integer blow, whose dither is worth a fraction of a point
+  // here (0.18%), so the bound is 0.5% - still 4x tighter than the card's own 2.2% gap, which the pin below keeps.
+  const rel = Math.abs(carried / m - 1);
+  assert.ok(rel < 0.005, `carried ${carried.toFixed(4)} vs held ${m.toFixed(4)} (${(rel * 100).toFixed(2)}%, z ${((carried - m) / se).toFixed(2)})`);
+  // The card is upstream's own estimate path (info.estimate reads the carry, never writes it), so each blow floors:
+  // the gap this waiver keeps pinning - 19.03 against 19.45 on this 25% line, +2.2%.
+  const card = priced.perSwing;
+  expectKnownDiscrepancy(assert, 'W-LOOT-CARRY', (m - card) / se > 8 && m / card - 1 > 0.005, { upstream: m, card, z: (m - card) / se });
 });

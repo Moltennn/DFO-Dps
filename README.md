@@ -108,8 +108,11 @@ Use `./dfo-dps --help` for every flag, or see
 - Boss traits Curbing, Warded, Bladeturning, Stoneskin, Thorned and the
   elemental proofs, where the target carries them. Wrathful is reported but
   does not terminate the modelled fight.
-- Snapshot, whole-fight, relay and relay-ceiling metrics, with explicitly
-  named targets.
+- Snapshot, whole-fight, relay, relay-ceiling and carried metrics, with
+  explicitly named targets. Carried is a held item's long-run mean: the
+  percentage lines (mastery, slayer/loot powers, the martial path, the
+  Firmament) carry their fraction between blows, so pricing reads the exact
+  share rather than the card's per-blow floor.
 - The Stage 3.1 seeded RNG and exact per-blow distribution library
   (`src/rng.js`, `src/blowOutcomes.js`); these are library APIs, not CLI pages.
 - The Stage 3.2 seeded blow-by-blow fight simulation (`src/simulateFight.js`):
@@ -201,9 +204,10 @@ golden fixtures. The live card is a useful comparison, not the oracle.
 
 The project names its metrics rather than treating every “DPS” as one number:
 **snapshot** (full-health card), **fight** (whole-fight kill rate),
-**relay** (allowance applied), and **relay-ceiling** (capped offered rate).
-See [`METHOD.md`](METHOD.md) for formulas and the limitations below for what is
-not verified.
+**relay** (allowance applied), **relay-ceiling** (capped offered rate), and
+**carried** (a held item's long-run mean: the percentage channels' exact share,
+which pricing uses). See [`METHOD.md`](METHOD.md) for formulas and the
+limitations below for what is not verified.
 
 ## Limitations and known gaps
 
@@ -214,8 +218,9 @@ These are recorded as waivers or assumptions, not hidden:
   weapon figure.
 - `W-WARD`: ward suppression of the per-blow powers fires on `target.warded`, which only a caller sets; the boss
   `warded` TRAIT's own pool does not suppress them, and DoT rounds are not ward-gated.
-- `W-LOOT-CARRY`: percentage lines floor each blow instead of carrying the
-  fraction.
+- `W-LOOT-CARRY`: the seeded fight streams and the card estimate floor each
+  blow; the game carries a percentage line's fraction between blows. Pricing
+  (imprints, enchant deltas) reads the carried mean instead.
 - Phase-ward duration, Wrath termination and some encounter windows are model
   parameters or uncalibrated.
 - Spells, procs, the Firmament application and the planners do not all have

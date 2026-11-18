@@ -298,20 +298,21 @@ export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, s
   const imprintPool = imprintsFor(w.template)
     .map((rec) => ({
       name: rec.name, power: rec.power,
-      baseDps: powerDps(rec.power, base, false, { capped: true }),
-      triggerDps: powerDps(rec.power, base, true, { capped: true }),
-      uncappedDps: powerDps(rec.power, rawBase, false),
+      carriedDps: powerDps(rec.power, base, false, { capped: true }),
+      carriedTriggerDps: powerDps(rec.power, base, true, { capped: true }),
+      carriedUncappedDps: powerDps(rec.power, rawBase, false),
     }));
-  const imprintBase = imprintPool.slice().sort((a, b) => b.baseDps - a.baseDps)[0] ?? null;
-  const imprintTrigger = imprintPool.slice().sort((a, b) => b.triggerDps - a.triggerDps)[0] ?? null;
-  const imprintUncapped = imprintPool.slice().sort((a, b) => b.uncappedDps - a.uncappedDps)[0] ?? null;
+  const imprintBase = imprintPool.slice().sort((a, b) => b.carriedDps - a.carriedDps)[0] ?? null;
+  const imprintTrigger = imprintPool.slice().sort((a, b) => b.carriedTriggerDps - a.carriedTriggerDps)[0] ?? null;
+  const imprintUncapped = imprintPool.slice().sort((a, b) => b.carriedUncappedDps - a.carriedUncappedDps)[0] ?? null;
   const imprint = { base: imprintBase, trigger: imprintTrigger, uncapped: imprintUncapped };
   const applied = applyPlanDps(ch, { rows }, target);
   const future = applyPlanDps(ch, { rows }, rawTarget);
   return {
     weapon: w.template, weaponName: w.item, shield: pieces.find((p) => /Shield|Buckler/.test(p.slot))?.template ?? null,
     soulGem: !!soulGem, soulPoints: soulGem ? SOUL_GEM_POINTS : 0,
-    group, baseDps: base.cappedDps, uncappedDps: rawBase.dps, dps: applied.dps, uncappedPlanDps: future.dps, procDps: applied.procDps, skillId, rows, imprint, swings, maxProcs, forceSkills,
+    // The baseline is the CARRIED weapon figure; the plan totals are the card's (`applyPlanDps` re-runs the card).
+    group, carriedBaseDps: base.carriedCappedDps, carriedUncappedDps: rawBase.carriedDps, cardPlanDps: applied.dps, cardUncappedPlanDps: future.dps, procDps: applied.procDps, skillId, rows, imprint, swings, maxProcs, forceSkills,
     repairs: Math.max(0, Math.trunc(Number(repairs) || 0)), regen: Math.max(0, Math.trunc(Number(regen) || 0)),
     ratings: { weapon: weaponRatings, skills: skillRatings, utility: utilityRatings },
     onePiece: ONE_PIECE, stacks: STACKS, weaponOnly: WEAPON_ONLY,

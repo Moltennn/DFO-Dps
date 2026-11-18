@@ -88,7 +88,7 @@ function applyEnchants(ch, plan) {
 
 /** The best eligible imprint for this weapon and target. */
 function bestImprint(template, run, capped) {
-  const baseline = capped ? run.cappedDps : run.dps;
+  const baseline = capped ? run.carriedCappedDps : run.carriedDps;
   const rows = imprintsFor(template)
     .filter((rec) => !MONSTER_KINDS.has(rec.power.kind))
     .map((rec) => ({
@@ -97,7 +97,11 @@ function bestImprint(template, run, capped) {
     }))
     .filter((rec) => rec.dps > baseline + 1e-9)
     .sort((a, b) => b.dps - a.dps);
-  return rows[0] ?? null;
+  const best = rows[0];
+  if (!best) return null;
+  // The card figure of the SAME winner, kept apart from the carried pricing figure for the rows that name both.
+  const carded = run.with({ imprint: best.power });
+  return { ...best, cardDps: capped ? carded.cappedDps : carded.dps };
 }
 
 /**
@@ -108,8 +112,9 @@ function bestImprint(template, run, capped) {
  *   ench   tree + the enchant plan's skill lines and weapon strike rows
  *   imprint the power `bestImprint` selected for `ench` (a what-if addition, not yet on the item)
  *
- * `realTemplate` reports this chain's card numbers; the benchmark (`tools/benchmark-loadouts.mjs`) runs the same
- * characters through `simulateFights`. One construction, so the two cannot drift.
+ * `realTemplate` reports this chain's CARRIED figures (a held item's long-run mean, plus the proc layer, which is
+ * not a percentage channel); the benchmark (`tools/benchmark-loadouts.mjs`) runs the same characters through
+ * `simulateFights`. One construction, so the two cannot drift.
  */
 export function realBuildStages(template, family, { mode = 'uncapped', vampire = false, dual = false, encounter = 'breach' } = {}) {
   const capped = mode !== 'uncapped';
@@ -138,7 +143,13 @@ export function realBuildStages(template, family, { mode = 'uncapped', vampire =
 /** One real loadout for one template. */
 export function realTemplate(template, family, { mode = 'uncapped', vampire = false, dual = false, encounter = 'breach' } = {}) {
   const { capped, tree, treeCh, treeRun, enchRun, enchPlan, imprint } = realBuildStages(template, family, { mode, vampire, dual, encounter });
-  const total = enchRun.enchantDps + (imprint?.dps ?? enchRun.cappedDps);
+  // ONE metric per row: the CARRIED capped blow (a held item's long-run mean) plus the proc layer, which is not a
+  // percentage channel. The imprint step is therefore carried minus carried, never a metric jump. `cardEnchDps`
+  // keeps the plain card figure under its own name (W-LOOT-CARRY, docs/ASSUMPTIONS.md M41).
+  const enchDps = enchRun.carriedCappedDps + enchRun.enchantDps;
+  const totalDps = enchRun.enchantDps + (imprint?.dps ?? enchRun.carriedCappedDps);
+  // The same row's CARD figures, under their own names (the benchmark's `cardDps` selector reads these).
+  const cardTotalDps = enchRun.enchantDps + (imprint?.cardDps ?? enchRun.cappedDps);
   // The purse is run on the imprinted CARD - the same blow the ranking priced, Many Endings' echo included (it rides
   // that blow's claim, so the capped mean already carries what the relay accepts).
   const imprintedRun = imprint ? enchRun.with({ imprint: imprint.power }) : enchRun;
@@ -146,7 +157,8 @@ export function realTemplate(template, family, { mode = 'uncapped', vampire = fa
   return {
     mode, family: family.name, key: family.key, weapon: WEAPONS[template]?.name ?? String(template), template, dual, encounter,
     treeStars: tree.stars, freeStars: tree.freeStars, treeBlow: treeCh.firmamentDamagePct,
-    treeDps: treeRun.totalDps, enchDps: enchRun.totalDps, totalDps: total,
+    treeDps: treeRun.carriedCappedDps + treeRun.enchantDps, enchDps, totalDps,
+    metric: 'carried', cardTreeDps: treeRun.totalDps, cardEnchDps: enchRun.totalDps, cardTotalDps,
     ttk: purse?.ttk ?? enchRun.ttk,
     burst5: purse?.burst5 ?? null,
     sustainedDps: purse?.sustainedDps ?? null,

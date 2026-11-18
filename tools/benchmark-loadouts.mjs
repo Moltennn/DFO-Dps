@@ -108,7 +108,7 @@ export function loadoutUniverse() {
     .map((r) => ({
       id: `${r.key}-${r.template}-${r.category.toLowerCase()}`,
       key: r.key, family: r.family, category: r.category, template: r.template, weapon: r.weapon,
-      dual: r.category === 'DW', cardDps: round(r.totalDps), cardTreeDps: round(r.treeDps), cardEnchDps: round(r.enchDps),
+      dual: r.category === 'DW', cardDps: round(r.cardTotalDps), cardTreeDps: round(r.cardTreeDps), cardEnchDps: round(r.cardEnchDps),
       imprintName: r.imprintPower,
     }))
     .sort((a, b) => a.id.localeCompare(b.id));
