@@ -93,3 +93,30 @@ export const upstreamWeapon = (item) => ({
 
 /** A freshly-cloned item, so wear in one blow cannot leak into the next. */
 export const fresh = (item) => ({ ...item });
+
+/**
+ * One Continuous Damage Health (1,0) spell record, in the shape `applySpell` reads.
+ *
+ * `rounds` is the number of magic rounds the spell stands for, and it IS `durationBase`: `rollDuration`
+ * (vendor:systems/effects.js:611-616) returns `durationBase + durationMod * mult`, so with `durationMod` 0 the rolled
+ * duration is `durationBase` however high the caster level. `pushActive` (:767-772) runs the FIRST round at the cast and
+ * leaves `rounds - 1`, so `rounds` rounds are one cast tick plus `rounds - 1` tick passes - not `durationBase - 1`.
+ * `magnitudeHigh` widens the magnitude roll (one draw, :229-235 of vendor:systems/spellcast.js) for a per-tick re-roll.
+ */
+export function dotSpell({
+  magnitude = 10, magnitudeHigh = magnitude, rounds = 5, element = 4, rangeType = 1, index = 1, name = 'Test DoT',
+} = {}) {
+  return {
+    name,
+    index,
+    element,
+    rangeType,
+    effects: [{
+      type: 1, subType: 0,
+      magnitudeBaseLow: magnitude, magnitudeBaseHigh: magnitudeHigh,
+      magnitudeLevelBase: 0, magnitudeLevelHigh: 0, magnitudePerLevel: 1,
+      durationBase: rounds, durationMod: 0, durationPerLevel: 1,
+      chanceBase: 0, chanceMod: 0, chancePerLevel: 1,
+    }],
+  };
+}

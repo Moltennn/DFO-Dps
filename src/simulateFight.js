@@ -37,7 +37,8 @@
  */
 import { analyze, conditionMultiplier, weaponOf, weaponPowers } from './model.js';
 import { blowFightTier, createBlowSampler } from './blowOutcomes.js';
-import { cwsEligible, cwsRows, equipTableForFight, equippedForFight, resolveCwsCast, spellPowerInputs } from './cws.js';
+import { cwsEligible, cwsRows, equipTableForFight, equippedForFight, resolveCwsCast, spellPowerInputs, tickActiveEffects } from './cws.js';
+import { MAGIC_ROUND_SECONDS } from './spells.js';
 import { createRng } from './rng.js';
 import { blowWear, cloneItem, conditionPct, cwsBill, makeOwner, wearItem } from './durability.js';
 import { healthThresholds } from './fight.js';
@@ -305,7 +306,13 @@ export function simulateFight(ch, args = {}) {
     : scenario.conditionRolls;
   if (durability && typeof conditionRolls !== 'function') throw new TypeError('simulateFight: conditionRolls must be a function');
   const standard = scenario.standard;
-  const target = schedule.target;
+  const baseTarget = schedule.target;
+  // The fight OWNS the target's live spell state (Stage 3.6b): `simulateFights` hands every trial the same scenario
+  // object, and a Continuous Damage entry left on it would turn the next trial's cast into a renewal (no joined round).
+  // The target is cloned per fight, as the durability path clones the items; the caller's object keeps its own effects.
+  const target = baseTarget
+    ? { ...baseTarget, activeEffects: (baseTarget.activeEffects ?? []).map((a) => ({ ...a })) }
+    : null;
   const probe = schedule.probe;
   const strikeItems = [probe.weapon?.item, probe.offHand?.weapon?.item].filter(Boolean);
   // A CWS row can only ride the item that struck: `doItemEnchantmentPayloads(Strikes, item, ...)`
@@ -420,6 +427,7 @@ export function simulateFight(ch, args = {}) {
   let blows = 0;
   let dealt = 0;
   let cwsDealt = 0;
+  let dotDealt = 0;
   let echoDealt = 0;
   let meleeDealt = 0;
   let cwsCasts = 0;
@@ -432,9 +440,51 @@ export function simulateFight(ch, args = {}) {
   let scheduleNow = schedule;
   let clock = 0;
   let next = scheduleNow.next();
+  // Stage 3.6b, the DoT round clock: rounds fall at k * MAGIC_ROUND_SECONDS on the FIGHT clock from t=0. That phase is an
+  // ASSUMPTION (M35; the record of this choice is the Stage 3.6 changelog entry) - the cast's own first round is billed
+  // inside the cast, at the cast's time. At an
+  // equal timestamp the BLOW resolves first and the round after it (`docs/ASSUMPTIONS.md` M35). A round bills the same
+  // health path a cast does, and kills like one.
+  let nextRoundT = MAGIC_ROUND_SECONDS;
+  let lastHand = 'main'; // the hand a round's reporting segment rides (a round is no hand's blow)
+  const tickRound = (at) => {
+    tickActiveEffects(target, {
+      hurt: (n, info) => {
+        if (!(n > 0)) return;
+        const shareNow = clamp(hp / pool, 0, 1);
+        hp = Math.max(0, hp - n);
+        cwsDealt += n;
+        dotDealt += n;
+        dealt += n;
+        // The health segments are the fight's reporting split and must add up to `damageDealt` (objectives.js:103 reads
+        // only their count). A round rides the segment it lands in and the hand of the last blow.
+        const segIndex = healthSegment(bounds, shareNow);
+        const segKey = `${segIndex}|${lastHand}`;
+        const seg = used.get(segKey) ?? {
+          segment: segIndex, hand: lastHand, share: (bounds[segIndex] + bounds[segIndex + 1]) / 2,
+          blows: 0, damage: 0, cwsDamage: 0, echoDamage: 0, wear: 0,
+        };
+        seg.damage += n;
+        seg.cwsDamage += n;
+        used.set(segKey, seg);
+        cwsTrace?.push({
+          t: at, round: true, hand: null, row: null,
+          spell: info?.spell ?? null, index: info?.index ?? null,
+          damage: n, remaining: hp, kill: hp <= 0,
+        });
+        if (hp <= 0) { ttk = at; killSource = 'dot'; }
+        t = at; // a round that bills is an event: the fight's elapsed time cannot lag it
+        return hp > 0;
+      },
+    }, cwsRolls);
+  };
   while (hp > 0 && blows < maxBlows && next && clock + next.t <= maxSeconds) {
     const tNow = clock + next.t;
+    // Rounds due strictly before this blow. Equal timestamps are the tie rule's business, below the blow.
+    while (nextRoundT < tNow && hp > 0) { tickRound(nextRoundT); nextRoundT += MAGIC_ROUND_SECONDS; }
+    if (hp <= 0) break;
     const hand = dual ? next.hand : 'main';
+    lastHand = hand;
     const item = slotItem(hand);
     if (durability && !item) { dur.endedByBreak = true; break; }
     const share = clamp(hp / pool, 0, 1);
@@ -474,6 +524,8 @@ export function simulateFight(ch, args = {}) {
     let cwsDamage = 0;
     let cwsCastsThis = 0;
     let cwsKill = false;
+    let dotThisBlow = 0;
+    let killedByDot = false;
     // A break by a bill AFTER the killing cast (the row walk continues past a kill, see below). It is a break of the
     // item like any other: it counts in `broke`/`breaks` and unequips the weapon before the strike listener, but it is kept
     // apart from `brokeNow` because the fight ends at the kill and never reaches the survivor promotion.
@@ -498,10 +550,16 @@ export function simulateFight(ch, args = {}) {
             spell: row.spell, caster: { entity: fightCh }, casterLevel: num(fightCh.level, 1), target, rolls: cwsRolls,
             pierce: cwsPower.pierce, potencyPct: cwsPower.potencyPct, hurt,
           });
-          cwsDamage += cast.damage;
+          cwsDamage += cast.damage + (cast.dotDamage ?? 0);
+          dotThisBlow += cast.dotDamage ?? 0;
           cwsCastsThis += 1;
           killed = hp <= 0;
-          if (killed) { hp = 0; cwsKill = true; cwsKills += 1; }
+          if (killed) {
+            hp = 0;
+            cwsKill = true;
+            cwsKills += 1;
+            if (cast.dotKill) killedByDot = true;
+          }
         }
         // The bill is INSIDE the row's applyResults, immediately after the cast (enchantments.js:1124-1133): it is paid
         // for a resisted, absorbed, deferred or missing-record cast, and a spareGear target zeroes it. The walk
@@ -533,10 +591,11 @@ export function simulateFight(ch, args = {}) {
           index: row.spell ? (row.spell.index ?? null) : null,
           missing: !row.spell,
           casterLevel: num(fightCh.level, 1),
-          damage: cast ? cast.damage : 0,
+          damage: cast ? cast.damage + (cast.dotDamage ?? 0) : 0,
           ...(cast ? {
             absorbed: cast.absorbed, reflected: cast.reflected, resisted: cast.resisted,
-            deferred: cast.deferred, effects: cast.effects,
+            deferred: cast.deferred, effects: cast.effects, dotDamage: cast.dotDamage ?? 0,
+            ...(cast.dotKill ? { dotKill: true } : {}),
           } : {}),
           kill: killed,
           ...(afterKill ? { afterKill: true, cast: false } : {}),
@@ -590,7 +649,7 @@ export function simulateFight(ch, args = {}) {
       hp = Math.max(0, hp - echoApplied);
       echoKill = hp <= 0;
     }
-    if (cwsKill) killSource = 'cws';
+    if (cwsKill) killSource = killedByDot ? 'dot' : 'cws';
     else if (echoKill) killSource = 'echo';
     if (!cwsKill && !echoKill && blowDamage > 0) {
       meleeDamage = blowDamage;
@@ -598,6 +657,7 @@ export function simulateFight(ch, args = {}) {
     }
     if (hp < 0) hp = 0;
     cwsDealt += cwsDamage;
+    dotDealt += dotThisBlow;
     echoDealt += echoApplied;
     meleeDealt += meleeDamage;
     cwsCasts += cwsCastsThis;
@@ -627,6 +687,9 @@ export function simulateFight(ch, args = {}) {
       } : {}),
     });
     if (hp <= 0) { ttk = t; break; }
+    // The round on this blow's own timestamp resolves AFTER the blow (the tie rule, M35) - and only while the foe lives.
+    while (nextRoundT <= t && hp > 0) { tickRound(nextRoundT); nextRoundT += MAGIC_ROUND_SECONDS; }
+    if (hp <= 0) break;
     if (durability && brokeNow) {
       // Upstream follows the hand that still holds a weapon (playerWeapon.js:443-452): the survivor becomes the lead,
       // and the next swing is a single-weapon swing. With no weapon left the local model has no fist schedule
@@ -663,6 +726,10 @@ export function simulateFight(ch, args = {}) {
       next = scheduleNow.next();
     }
   }
+  // The drain (Stage 3.6b): whichever way the loop ended - the horizon, the blow budget, a break that left no weapon, or
+  // a round that never got to run - the rounds still due inside the horizon are billed while the foe lives. A round is
+  // not a blow, so the blow budget does not stop it; a DoT that falls after the last blow is counted, and can kill.
+  while (hp > 0 && nextRoundT <= maxSeconds) { tickRound(nextRoundT); nextRoundT += MAGIC_ROUND_SECONDS; }
   if (hp < 0) hp = 0;
   const remainingHealth = Math.max(0, hp);
   const kill = ttk !== null;
@@ -687,6 +754,7 @@ export function simulateFight(ch, args = {}) {
     overkill: Math.max(0, dealt - pool),
     damageDealt: dealt,
     cwsDamage: cwsDealt,
+    dotDamage: dotDealt,
     echoDamage: echoDealt,
     meleeDamage: meleeDealt,
     cwsCasts,

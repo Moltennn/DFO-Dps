@@ -6,6 +6,143 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage 3.6c - A ward turns every per-blow power, and only those
+
+**What the game does.** A `warded` foe - the Warden's/court's word the host copies onto the body - refuses every per-blow
+channel: `lootBlow` returns the damage untouched, so the slayer percentage, the elemental flat and every riding power
+(bane, unaware, sanctified, flow, venom, moon, rage, execute, ...) are skipped (`vendor:systems/loot/lootPowers.js:287`);
+`lootStrike` returns before leech, chain, quake, echo and fists (`:354`); `weaponMasteryBlow` returns the damage
+(`vendor:systems/weaponMastery.js:141`); the martial path's blow and strike read `foeOf` = `!target.warded`
+(`vendor:systems/martialPowers.js:136`, `:229`, `:241`); `firmamentBlow` returns the damage (`vendor:systems/firmamentPowers.js:173`);
+Cast When Strikes returns null and bills nothing (`vendor:systems/enchantments.js:597`), and so do the two Vampiric
+WhenStrikes arms (`vendor:systems/artifactEffects.js:247`, `vendor:systems/enchantments.js:674`). NOT gated: the Strikes
+payload - Potent Vs / Low Damage Vs (`vendor:systems/enchantments.js:623-631`) - so a warded blow still carries its +-5.
+
+**What changed.** `src/model.js` `weaponBlow` (:675-687) gained ONE ward gate at the top - the local home of all four blow
+channels (mastery, the loot slayer/elemental/power walk, the martial path, the Firmament) - so no module carries its own
+ward test. `afterShare` (:817-829) skips the echo for a warded foe, the strike listener's only answer the card carries,
+with the `warded` flag passed by its three callers (`model.js:1295`, `:1336`; `src/blowOutcomes.js:169`) and by
+`blowDistribution` (:872-883, the flag at :879), which otherwise priced the echo on a warded target (red: the distribution
+200 with a 100% echo against 100 without). `strikesNet` (Potent Vs) is untouched, `cwsEligible` already
+refused a warded target (`src/cws.js:342`) and the relay keeps its own `shieldUntil` suppression
+(`src/relayFight.js:196-209`).
+
+**What is still open - `W-WARD` is narrowed, not removed.** The gate fires only when a caller SETS `target.warded`. The
+card's own `warded` TRAIT is a different thing: it adds the boss ward's health pool to the kill time
+(`src/model.js:1451`, `WARD_SHARE`) and never sets `target.warded`, so a trait-warded target still carries every per-blow
+power. Continuous Damage rounds are not ward-gated on either side (the vendored `runEffectRound` has no ward test,
+`vendor:systems/effects.js:720-731`; assumptions M36), and the Firmament gate is checked only against the vendored stub of
+the sky law (`vendor/upstream/a3eb1605/STUBS.md:47`), never a live oracle call. `test/wardSuppression.test.js`'s "OPEN GAP
+(W-WARD)" test pins the trait path (130 through `weaponBlow` with `traits: ['warded']`, 100 with `target.warded`), so the
+waiver is backed by a case that asserts the divergence still stands.
+
+**Before and after** (lvl-30 build: Long Blade 150 online+mastered, Cutthroat (Cheap Shot, an unaware foe), a weapon with a
++20% humanoid slayer line and a +10 fire line, Firmament +20%; `analyze(..., { health: 1000, unaware: true,
+firmamentDamagePct: 20 })`, target `referenceFoe(30,'tough')` + `group/affinity` humanoid):
+
+| | before (a ward ignored) | after |
+|---|---|---|
+| `perSwing` | 8.2214 | **5.8495** |
+| `dps` | 9.9801 | **7.1008** |
+| blow at 100 through `weaponBlow` | 130 (slayer 20 + elemental 10) | **100** |
+| mastery channel | +17 | **0** |
+| martial channel | +25 | **0** |
+| Firmament channel | +20 | **0** |
+| echo `perSwing` delta (Many Endings) | +1.4086 | **0** |
+| `blowDistribution` mean, 100% echo, `target.warded` | 200 | **100** |
+
+An unwarded target, and a target whose ward is only the TRAIT, are unchanged: every existing fight, card, relay, allowance
+and pricing number holds (`npm test` reports 0 failures).
+
+**Evidence.** New `test/wardSuppression.test.js` (9): A (red: the warded blow 130 !== 100), B (red: the mastery channel paid
+17 on a warded target) and C (red: the martial channel paid 25), whose final cases assert the BLOW through the one gate and
+also pin that the channel helpers still report those percentages, D (red: the warded card carried the echo, +1.409),
+`blowDistribution` (red: the mean 200 with a 100% echo against 100 without), the Potent Vs guard (green: a warded miss still
+answers 5), the Cast When Strikes guard (green: no cast, and the warded blow pays wear only,
+`drop === unwarded drop - 10`), Q6 (the ordinary path reads `target.warded`, not `shieldUntil`) and the OPEN GAP case
+(green: the trait path still pays). `npm test` reports 0 failures; vendor verify OK.
+
+**Limits.** The Firmament gate is asserted from the source line and locally, not by a live oracle call: the vendored
+`net/firmament/firmamentLaw.js` is a stub (`STUBS.md:47`), so `blowPct` cannot fire; the oracle assertion is that a warded
+body returns the damage, and the local control (unwarded +20) is the card's number. A live DoT entry keeps ticking through
+a ward (M36); no per-round ward test exists on either side. The TRAIT path (the boss `warded` trait and its ward pool) is
+NOT covered: its powers still pay, which is the narrowed `W-WARD`.
+
+## Stage 3.6 - Continuous Damage (1,0): the cast's first round, the round clock, accounting, renewal and merge
+
+**What the game does.** Continuous Damage Health is classic key `(1,0)` (`vendor:systems/effects.js:441`). Its rolled
+duration is `durationBase + durationMod x max(1, floor(level / durationPerLevel))` (`:611-616`), the cast pushes the entry
+and runs its FIRST round immediately, consuming one round (`pushActive`, `:767-772`), and every later round re-rolls the
+magnitude and the saving throw (`runEffectRound`, `:720-731`; `GetMagnitude`, `:646-650`). An entry found at 0 rounds is
+removed WITHOUT acting (`tickActiveEffects`, `:1986-2026`); a like-kind re-cast renews the incumbent - never stacking,
+never shortening, and running the round a fresh cast would have run when the incumbent has lapsed (`renewActing`,
+`:762-765`; `renewRounds`, `:628-630`); IsLikeKind is settings-blind, so any ContinuousDamageHealth claims any other
+(`:1091-1103`).
+
+**What changed.** `src/cws.js` gained the family: `isContinuousDamage` (:48), the cast arm (:417-453), `runDotRound`
+(:486-503) and `tickActiveEffects` (:513-524). The cast's own round is billed through the host's hurt sink and reported as
+`dotDamage`/`dotKill` (:383-384, :476); a round on a foe the spell has already killed still rolls its draws (the direct
+arm rolls every effect, `applied = !dead && n > 0`) but bills nothing and claims no kill (:490). `src/simulateFight.js`
+clones the target per fight so a trial cannot inherit an entry (:309-316), ticks every live entry at the 5 s clock anchors
+(:443-481, :690) with the blow first at an equal timestamp, drains the rounds still due inside `maxSeconds` after the
+loop whatever ended it (:728-731), and counts rounds in `cwsDamage`, `dotDamage`, `dealt`/`outputDps`, the health segments
+and `cwsTrace` (:448-476, :552, :593, :651, :659, :756). A segment round rides the segment it lands in and the
+hand of the last blow, so `sum(segments[].damage) === damageDealt`; `objectives.js:103` reads only their count, unchanged.
+
+**Before and after** (lvl-30 BASIC, long blade 121/material 9 with one CWS row -> `(1,0)` magnitude 10, `durationBase` 3,
+reference foe `tough`, pool 1e6, 12 s horizon, `cwsRolls` 0.5, seed 3; 13 blows, 10 casts):
+
+| | before | after |
+|---|---|---|
+| `cwsDamage` | 0 (the 8-point cast round was billed to the sink but counted nowhere; the later rounds never ran) | **24** |
+| `dotDamage` | field absent | **24** (8 at the cast, 8 at 5 s, 8 at 10 s) |
+| `damageDealt` | 206 | **230** |
+| `remainingHealth` | 999786 (206 counted + 8 hidden: the trace did not reconcile) | **999770 = 1e6 - 230** |
+| `cwsTrace` rounds | none | `[5, 10]` |
+| a second identical trial | 8 hp higher at every blow (the entry leaked) | identical |
+
+Dead round (spell `(4,0)` 1000 then `(1,0)` 1000, pool 10): before, the dead round added a phantom 800 to `dotDamage` and
+so to `dealt`/`overkill` (measured `dotDamage` 800; `dealt` 1600, `overkill` 1590 by construction); after, `dotDamage` 0,
+`dealt` 800 = the direct effect's kill, `overkill` 790, with the same 6 draws. Drain (same fixture, `maxBlows` 1): before,
+no round after the last blow (`dotDamage` 8); after, rounds `[5, 10]`, `dotDamage` 24, `remainingHealth = health -
+damageDealt`. Segments (rounds-3 fixture, seed 5): before, the segments summed to 241 against `damageDealt` 257; after,
+257 = 257 (`cwsDamage` likewise).
+
+**Outputs moved.** A fight whose spell has a `(1,0)` effect with rounds > 0 changes: hp, `cwsDamage`, the new `dotDamage`,
+`damageDealt`/`outputDps`, `overkill` (a round can kill), `killSource: 'dot'`, `ttk`/`time` when a round is the last or the
+killing event, `segments`, and `cwsTrace` (cast rows now carry `dotDamage` - and `damage` = direct + own rounds - and each
+boundary round is a row with `round: true`, `spell`, `index`, `remaining`, `kill`; `dotKill` on a cast row whose round
+killed). A `(1,0)` effect with `durationBase === 0` moves too, in shape rather than in damage: the cast is no longer
+deferred (`deferred` 1 -> 0, `continuous` 0), its effects record changes from `{ deferred: true, applied: false }` to
+`{ rounds: 0, continuous: true }`, and its `cwsTrace` row gains `dotDamage: 0` - no round, no entry, no draws. Every `(4,0)`
+fight is unchanged: all existing fight, gate, durability and relay numbers hold (`npm test` reports 0 failures). The cast
+object gains `dotDamage`, `dotKill` and `continuous` (`resolveCwsCast`), and `simulateFight`'s result gains `dotDamage`.
+
+**One fight-level change is not DoT-specific.** `src/simulateFight.js:313-315` clones the target per fight (its
+`activeEffects` entries copied), for EVERY fight: the batch hands all trials one scenario object, so a target mutation made
+by one trial (a mark, a DoT entry) no longer leaks into the next, and the caller's own target object is left as it was
+handed in. `simulateFight`'s `target` result is that per-fight clone.
+
+**Card numbers: unchanged.** `src/spells.js`/`src/enchants.js` are untouched: the CWS-DoT card still prices per tick from
+the spell card (`src/enchants.js:145-160`), and `test/enchants.test.js`'s "a Cast When Strikes DoT is priced per tick" and
+`test/spells.test.js`'s "a continuous damage spell adds its rounds" pass before and after.
+
+**Evidence.** New `test/dotDifferential.test.js` (8, against the vendored `applySpell` + `tickActiveEffects`): first tick
+at the cast with `roundsRemaining` = rounds - 1 (red: local billed nothing and left no entry; green: `[{n: 8, round: true}]`,
+one entry); the 3 draws a round takes; `durationBase` 3 = three rounds with the removal pass silent; per-tick magnitude and
+throw re-rolls; a live renewal (0 ticks, 0 draws) and a lapsed one (one tick); a settings-blind merge; the expiry pass. New
+`test/dotFight.test.js` (8): no cross-trial leak (red: the second trial 8 hp higher at every blow), the trace/health
+reconciliation (red: "a DoT round landed" false), the 5 s anchors + the cast's own round (red: `dotDamage` undefined), a
+round kill (`killSource:'dot'`, the later `(4,0)` skipped; red: `dotDamage` undefined), the tie (red: 0 rounds at 5 s), the
+dead round (red: `dotDamage` 800 !== 0), the drain (red: no rounds after the last blow) and the segments (red: 241 !== 257).
+The RED captures are in the stage report; `npm test` reports 0 failures and vendor verify OK.
+`test/durability.test.js` keeps the standing-DoT bill at
+10 and restores the deferred `(11,8)` case (both pay 10). Waiver `W-PROC-BUDGET` (procs and DoT rounds summed on the
+ceiling, per-tick capping, no relay summing) still holds: no relay or allowance summing is modelled here.
+
+**Limits.** No round summing across relay and allowance; no ward suppression of a round; a round keeps the cast's spell
+power and pierce (M34); enemy-cast DoTs are not modelled; the round phase is an assumption (M35).
+
 ## Stage 3.5.3g - relay durability option guard (2026-11-17)
 
 **What was wrong.** `simulateRelayFight` ignored `durability: true`: relay durability is not implemented, but the option

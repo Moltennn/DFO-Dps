@@ -15,15 +15,19 @@
  * The payload walk also stops at the first enchantment type the vendored REGISTRY does not answer
  * (`enchantments.js:1052-1060`). `payloadRows` in src/enchants.js carries that order/abort.
  *
- * This module implements the DIRECT DAMAGE part only:
+ * This module implements:
  *   - the exact `isDamageHealth` family: classic (4, 0) Damage Health;
+ *   - the exact `isContinuousDamage` family: classic (1, 0) Continuous Damage Health. Its first round lands inside the
+ *     cast, its entry rides `target.activeEffects` with its rounds, `tickActiveEffects` runs one magic round, and a
+ *     like-kind re-cast renews the incumbent - upstream's `effects.js` law (:441, :611-616, :628-630, :720-731,
+ *     :762-772, :1091-1103, :1986-2026);
  *   - the per-effect absorption / reflection / resistance gates in `applySpell` order;
  *   - `rollMagnitude` and `savingThrow` with the game's formula and percentile law;
  *   - the damage-health pierce (`spellPierce`) and the online school/potency multiplier (`spellPowerMult`);
  *   - the first-effect-only reflection quirk.
  *
- * Deferred: Continuous Damage (1,0) and every other family, DoTs, condition costs, wear and break. A deferred effect
- * still passes the per-effect gates (so reflection/gate order is preserved) but contributes no direct damage.
+ * Deferred: every other family, condition costs, wear and break. A deferred effect still passes the per-effect gates
+ * (so reflection/gate order is preserved) but contributes nothing.
  *
  * The RNG is a `rolls()` function supplied by the caller. The fight simulator gives it a dedicated stream; tests may
  * inject a scripted sequence. Nothing here uses `Math.random`.
@@ -34,12 +38,14 @@ import { EQUIP_SLOTS } from '../vendor/upstream/a3eb1605/src/characters/paperdol
 import { POTENCY_CAP, SPELL_POWER_MOST } from '../vendor/upstream/a3eb1605/src/systems/loot/lootPowers.js';
 import { EFFECT_FLAGS, ELEMENT_FLAG_BY_INDEX } from './target.js';
 import { fightingClimb } from '../vendor/upstream/a3eb1605/src/systems/spell/spellPower.js';
-import { effectSchool, savingChanceOutcome, standardSpells } from './spells.js';
+import { effectSchool, savingChanceOutcome, spellRounds, standardSpells } from './spells.js';
 import { ENCHANTMENT_TYPES, enchantmentRows, payloadRows } from './enchants.js';
 import { validItemLines } from './gearLines.js';
 
 /** systems/effects.js:440 - `e.type === 4 && e.subType === 0`. NOT the broader local DAMAGE_HEALTH set. */
 export const isDamageHealth = (e) => !!e && e.type === 4 && e.subType === 0;
+/** systems/effects.js:441 - `e.type === 1 && e.subType === 0`. */
+export const isContinuousDamage = (e) => !!e && e.type === 1 && e.subType === 0;
 
 /** systems/effects.js:510-515 - the best live chance of one effect kind. */
 function bestLiveChance(target, kind) {
@@ -84,6 +90,19 @@ export function savingThrow(element, effectFlags, target, rolls, pierce = 0) {
   if (roll <= saving) percent = saving - 20 <= roll ? 100 - 5 * (saving - roll) : 0;
   return Math.max(0, Math.min(100, percent));
 }
+
+/** EntityEffect.GetMagnitude's one application (systems/effects.js:646-650): the magnitude roll, then - for a bundle
+ *  that is not CasterOnly - `savingThrow` scaling, truncated as C# int division does. `magnitude`/`percent` are the
+ *  parts the callers record; `n` is what lands. One home for the direct effect and the DoT round. */
+function magnitudeRoll(effect, casterLevel, saveScaled, element, flag, target, rolls, pierce) {
+  const magnitude = rollMagnitude(effect, casterLevel, rolls);
+  const percent = saveScaled ? savingThrow(element, flag, target, rolls, pierce) : 100;
+  return { magnitude, percent, n: saveScaled ? Math.trunc((magnitude * percent) / 100) : magnitude };
+}
+
+/** spellPower.js:93-101 (spellPowerMult) through the local inputs: a zero magnitude stays zero (upstream's `n > 0`
+ *  guard, so a throw turned whole never becomes 1). */
+const spellPowered = (n, spellPower) => (n > 0 && spellPower !== 1 ? Math.max(1, Math.round(n * spellPower)) : n);
 
 /** spellPower.js:56-65 - the school past 100, online only. `fightingClimb` is upstream's own (master-capped and
  *  mentored). The online gate is `isOnlinePage()`; the build's `online === true` is the local stand-in for it
@@ -335,14 +354,19 @@ export function cwsEligible({
  * counted (the single-effect tests).
  *
  * @returns {{ damage: number, absorbed: number, reflected: number, resisted: number, deferred: number,
- *   effects: object[] }}
+ *   continuous: number, dotDamage: number, dotKill: boolean, effects: object[] }} `damage` is the direct (4,0) damage
+ *   only, as upstream's `out.damage`; `dotDamage` is what this cast's own Continuous Damage rounds billed (the cast's
+ *   first round, and a lapsed incumbent's renewal round), and `dotKill` says one of them delivered the kill.
+ *   `continuous` counts the casts that stood, as `out.continuous`.
  */
 export function resolveCwsCast({
   spell, caster = null, casterLevel = 1, target = null, rolls = Math.random,
   pierce = 0, potencyPct = 0, hurt = null,
 } = {}) {
   if (typeof rolls !== 'function') throw new TypeError('resolveCwsCast: rolls must be a function');
-  if (!spell || !target) return { damage: 0, absorbed: 0, reflected: 0, resisted: 0, deferred: 0, effects: [] };
+  if (!spell || !target) {
+    return { damage: 0, absorbed: 0, reflected: 0, resisted: 0, deferred: 0, continuous: 0, dotDamage: 0, dotKill: false, effects: [] };
+  }
   const rangeType = Number.isInteger(spell.rangeType) ? spell.rangeType : 0;
   const element = Number.isInteger(spell.element) ? spell.element : 4;
   const effectFlags = ELEMENT_FLAG_BY_INDEX[element] ?? EFFECT_FLAGS.Magic;
@@ -355,6 +379,9 @@ export function resolveCwsCast({
   let reflected = 0;
   let resisted = 0;
   let deferred = 0;
+  let continuous = 0;
+  let dotDamage = 0;
+  let dotKill = false;
   let reflectedCount = 0;
   let dead = false;
 
@@ -387,6 +414,43 @@ export function resolveCwsCast({
         continue;
       }
     }
+    if (isContinuousDamage(e)) {
+      // effects.js:1091-1103. IsLikeKind is settings-blind for ContinuousDamageHealth, so ANY live entry of the kind
+      // is the incumbent: a re-cast renews it and keeps its own magnitude and settings, and fires no initial round.
+      const rounds = spellRounds(e, casterLevel);
+      if (rounds > 0) {
+        target.activeEffects = target.activeEffects ?? [];
+        const inc = target.activeEffects.find((a) => a.kind === 'continuousDamage');
+        if (inc) {
+          // renewActing (:762-765): a lapsed incumbent (0 rounds, not swept yet) runs the round a fresh cast would
+          // have. renewRounds (:628-630) only ever raises, to a fresh cast's rounds less the round pushActive spends.
+          if (!(inc.roundsRemaining > 0)) {
+            const round = runDotRound(inc, target, { hurt }, rolls, dead);
+            dotDamage += round.n;
+            if (round.killed) { if (!dead) dotKill = true; dead = true; }
+          }
+          if (rounds - 1 > inc.roundsRemaining) inc.roundsRemaining = rounds - 1;
+        } else {
+          const spellPower = schoolPotencyFor(casterEntity, effectSchool(e)) * Math.max(0.5, 1 + powerPct / 100);
+          // ASSUMPTION: upstream re-reads a round's spell power and pierce every round (effects.js:722 through
+          // spellPowerMult and spellPierce); this port has no live registry, so the entry carries the cast's inputs.
+          const entry = {
+            kind: 'continuousDamage', effect: e, casterLevel, caster: casterEntity, element, flag: effectFlags,
+            saveScaled, pierce, spellPower, roundsRemaining: rounds,
+            // The trace's own name for the round (`spell`/`index`); the mechanic reads none of it.
+            spell: spell.name ?? null, index: spell.index ?? null,
+          };
+          target.activeEffects.push(entry);
+          const round = runDotRound(entry, target, { hurt }, rolls, dead); // pushActive (:767-772): round 1 lands now...
+          dotDamage += round.n;
+          if (round.killed) { if (!dead) dotKill = true; dead = true; } // a killing round ends the cast, as the direct arm's hurt does
+          entry.roundsRemaining -= 1; // ...and is consumed
+        }
+        continuous += 1;
+      }
+      effects.push({ type: e.type, subType: e.subType, rounds, continuous: true });
+      continue;
+    }
     if (!isDamageHealth(e)) {
       // The direct-damage stage does not apply this family. It still consumed the gates above, preserving the
       // per-effect order; its own duration/magnitude draws are deferred with the family.
@@ -394,12 +458,10 @@ export function resolveCwsCast({
       effects.push({ type: e.type, subType: e.subType, deferred: true, applied: false });
       continue;
     }
-    const magnitude = rollMagnitude(e, casterLevel, rolls);
-    const percent = saveScaled ? savingThrow(element, effectFlags, target, rolls, pierce) : 100;
-    let n = saveScaled ? Math.trunc((magnitude * percent) / 100) : magnitude;
+    const { magnitude, percent, n: rolled } = magnitudeRoll(e, casterLevel, saveScaled, element, effectFlags, target, rolls, pierce);
     const school = effectSchool(e);
     const spellPower = schoolPotencyFor(casterEntity, school) * Math.max(0.5, 1 + powerPct / 100);
-    if (n > 0 && spellPower !== 1) n = Math.max(1, Math.round(n * spellPower));
+    const n = spellPowered(rolled, spellPower);
     const applied = !dead && n > 0;
     if (applied) {
       damage += n;
@@ -411,5 +473,52 @@ export function resolveCwsCast({
     });
   }
 
-  return { damage, absorbed, reflected, resisted, deferred, effects };
+  return { damage, absorbed, reflected, resisted, deferred, continuous, dotDamage, dotKill, effects };
+}
+
+/** runEffectRound's continuousDamage arm (effects.js:720-731): every round rolls its own magnitude and saving throw
+ *  (F10), and the round is billed with `round: true`. Returns what it billed and whether the sink reported the kill -
+ *  the caller sets `dead` from that, exactly as the direct arm does with its own `hurt`.
+ *
+ *  A round on a foe the spell has already killed ROLLS ITS DRAWS AND BILLS NOTHING: the direct arm rolls every effect
+ *  whether or not it applies it (`cws.js`'s `applied = !dead && n > 0`), so the draw stream is the same, but nothing
+ *  is counted, no damage is dealt and no kill is claimed. */
+function runDotRound(entry, target, sinks, rolls, dead = false) {
+  const { n } = magnitudeRoll(
+    entry.effect, entry.casterLevel, entry.saveScaled, entry.element, entry.flag, target, rolls, entry.pierce ?? 0,
+  );
+  if (dead) return { n: 0, killed: false };
+  const amount = spellPowered(n, entry.spellPower ?? 1);
+  if (!(amount > 0)) return { n: 0, killed: false };
+  if (!sinks?.hurt) return { n: amount, killed: false };
+  const killed = sinks.hurt(amount, {
+    fromPlayer: !entry.caster || !!entry.caster.isPlayer,
+    bundleDuel: !!entry.bundleDuel,
+    round: true,
+    element: entry.element ?? null,
+    spell: entry.spell ?? null,
+    index: entry.index ?? null,
+  }) === false;
+  return { n: amount, killed };
+}
+
+/**
+ * One magic round for one entity, `tickActiveEffects`' shape (systems/effects.js:1986-2026): an entry found at 0 rounds
+ * ends this pass and is removed WITHOUT acting; a live one acts, decrements, and stays through the pass that reaches 0
+ * (so a DoT's last listed round really lands and the next pass is silent).
+ *
+ * Only the `continuousDamage` entries this module owns are run; the target's mark entries (resistance, reflection)
+ * carry no rounds and are left alone. `rolls` is the caller's seeded stream - this module never draws its own.
+ */
+export function tickActiveEffects(target, sinks, rolls) {
+  if (typeof rolls !== 'function') throw new TypeError('tickActiveEffects: rolls must be a function');
+  const list = target?.activeEffects;
+  if (!list || !list.length) return;
+  target.activeEffects = list.filter((a) => {
+    if (a.kind !== 'continuousDamage') return true;
+    if (!(a.roundsRemaining > 0)) return false; // :2012 - expired last pass, removed without acting
+    runDotRound(a, target, sinks, rolls);
+    a.roundsRemaining -= 1;
+    return true;
+  });
 }

@@ -20,7 +20,7 @@ import { upstream, referenceFoe, referenceFoe as upstreamReferenceFoe, weaponIte
 import { upstreamEntity, character, simCharacter, weapon } from './harness/fixtures.mjs';
 import { makeTarget, EFFECT_FLAGS } from '../src/target.js';
 import { referenceFoe as localReferenceFoe, weaponOf, strikesNet } from '../src/model.js';
-import { resolveCwsCast, cwsEligible, isDamageHealth, cwsRows, spellPowerInputs, schoolPotencyFor } from '../src/cws.js';
+import { resolveCwsCast, cwsEligible, isDamageHealth, isContinuousDamage, cwsRows, spellPowerInputs, schoolPotencyFor } from '../src/cws.js';
 import { payloadRows } from '../src/enchants.js';
 import { blowFightTier } from '../src/blowOutcomes.js';
 import { createAttackSchedule, simulateFight, simulateFights, summarize } from '../src/simulateFight.js';
@@ -240,11 +240,18 @@ test('CWS family boundary: only isDamageHealth (4,0) is direct damage', async ()
   assert.equal(u.effects.isDamageHealth(eff(4, 0)), true);
   assert.equal(u.effects.isDamageHealth(eff(1, 0)), false);
   assert.equal(u.effects.isDamageHealth(eff(11, 8)), false);
+  assert.equal(isContinuousDamage(eff(1, 0)), true);
+  assert.equal(u.effects.isContinuousDamage(eff(1, 0)), true);
 
+  // A (1,0) spell with durationBase 0 stands for no round at all: upstream pushes nothing (`rounds > 0` at
+  // effects.js:1096), so it bills nothing, leaves no entry and draws nothing - and it is no longer deferred.
   const dot = runSpell(u, { spell: spellOf([eff(1, 0, 10)]), rolls: [0.5, 0.5, 0.5] });
   assert.equal(dot.local.damage, 0);
-  assert.equal(dot.local.deferred, 1);
-  assert.equal(dot.out.damage, 0);
+  assert.equal(dot.local.deferred, 0);
+  assert.equal(dot.local.continuous, dot.out.continuous);
+  assert.equal(dot.localDraws, dot.upDraws);
+  assert.equal(dot.hurt, 0);
+  assert.equal(dot.localTarget.activeEffects.length, 0);
 
   const transfer = runSpell(u, { spell: spellOf([eff(11, 8, 10)]), rolls: [0.5, 0.5, 0.5] });
   assert.equal(transfer.local.damage, 0, 'Transfer Health is a separate family, not isDamageHealth');

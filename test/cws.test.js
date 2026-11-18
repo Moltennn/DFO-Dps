@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { character, simCharacter, weapon } from './harness/fixtures.mjs';
 import { referenceFoe, weaponOf } from '../src/model.js';
-import { resolveCwsCast, cwsRows, cwsEligible, isDamageHealth } from '../src/cws.js';
+import { resolveCwsCast, cwsRows, cwsEligible, isDamageHealth, isContinuousDamage } from '../src/cws.js';
 import { simulateFight } from '../src/simulateFight.js';
 
 const BASIC = () => character({
@@ -77,6 +77,8 @@ test('direct damage is the actual isDamageHealth family (4,0), not the broad loc
   assert.equal(isDamageHealth(effect(4, 0)), true);
   assert.equal(isDamageHealth(effect(1, 0)), false);
   assert.equal(isDamageHealth(effect(11, 8)), false);
+  assert.equal(isContinuousDamage(effect(1, 0)), true);
+  assert.equal(isContinuousDamage(effect(4, 0)), false);
 
   const caster = { entity: { level: 30 } };
   const plain = resolveCwsCast({
@@ -87,12 +89,16 @@ test('direct damage is the actual isDamageHealth family (4,0), not the broad loc
   assert.equal(plain.deferred, 0);
   assert.equal(plain.effects[0].savePercent, 80);
 
+  // A (1,0) spell with no rounds (durationBase 0) stands for nothing: no round, no entry, no draws - and it is the
+  // DoT family, not a deferred one.
   const dot = resolveCwsCast({
     spell: spellOf([effect(1, 0, 10)]), caster, casterLevel: 30, target: target(),
     rolls: scripted([0.5, 0.5, 0.5]),
   });
   assert.equal(dot.damage, 0);
-  assert.equal(dot.deferred, 1);
+  assert.equal(dot.deferred, 0);
+  assert.equal(dot.continuous, 0);
+  assert.equal(dot.effects[0].rounds, 0);
 
   const transfer = resolveCwsCast({
     spell: spellOf([effect(11, 8, 10)]), caster, casterLevel: 30, target: target(),
@@ -263,7 +269,10 @@ test('missing records, zero-damage spells and multiple rows keep their order', (
   });
   assert.equal(zero.cwsTrace.length, 1);
   assert.equal(zero.cwsTrace[0].damage, 0);
-  assert.equal(zero.cwsTrace[0].deferred, 1);
+  // (1,0) is the DoT family now, not a deferred one; this spell has no rounds, so it stands for nothing.
+  assert.equal(zero.cwsTrace[0].deferred, 0);
+  assert.equal(zero.cwsTrace[0].effects[0].continuous, true);
+  assert.equal(zero.cwsTrace[0].effects[0].rounds, 0);
   assert.equal(zero.trace[0].meleeApplied, true);
 
   const twoItem = itemWith([1, 2]);

@@ -14,11 +14,11 @@
 
 export const WAIVERS = Object.freeze({
   'W-WARD': {
-    title: 'Warded shields do not suppress on-hit effects per blow',
+    title: 'The `warded` boss trait and its ward pool do not suppress per-blow powers',
     detail:
-      'Upstream every blow-path power no-ops while the target is warded (lootPowers.js:287,354; enchantments.js:597; weaponMastery.js:137). The simulator only adds the shield seconds to the kill time.',
-    evidence: 'above vs src/model.js:766-769',
-    fix: 'Stage 3.',
+      'Stage 3.6c gated the six per-blow ward paths (lootPowers.js:287,354; enchantments.js:597,674; artifactEffects.js:247; weaponMastery.js:141; martialPowers.js:136; firmamentPowers.js:173) on ONE local test - `target.warded` (src/model.js `weaponBlow` :675-687 and `afterShare` :817-829) - and that gate fires only when a CALLER sets the flag (the host\'s copy of the Warden\'s/court\'s word). The card\'s own `warded` TRAIT is a different thing: it adds the boss ward\'s health pool to the kill time (src/model.js:1451, `WARD_SHARE`) and never sets `target.warded`, so a trait-warded target still carries its slayer lines, elemental flat, mastery, martial path, Firmament and echo (src/model.js:1451 vs :675-687). Two smaller openings stay with it: Continuous Damage rounds are not ward-gated on either side (the vendored `runEffectRound` has no ward test, effects.js:720-731; docs/ASSUMPTIONS.md M36), and the Firmament gate is checked only against the vendored stub of the sky law (vendor/upstream/a3eb1605/STUBS.md:47), never a live oracle call.',
+    evidence: 'test/wardSuppression.test.js "OPEN GAP (W-WARD)": a target with traits ["warded"] prices the ward pool (card.ward > 0) and still takes the slayer+elemental blow (130 through weaponBlow), where target.warded takes 100; the six gate tests A-D and the Potent Vs / CWS guards are the part now closed',
+    fix: 'A later stage: the host copies the trait/boss ward onto the body as `target.warded` per blow (the card has no such per-blow state), and `runEffectRound` reads it. The Firmament needs the live sky law to become a real oracle.',
   },
   'W-PROC-BUDGET': {
     title: 'The per-hit-capped ceiling still sums procs on top of weapon DPS',

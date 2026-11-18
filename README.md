@@ -209,7 +209,8 @@ not verified.
 These are recorded as waivers or assumptions, not hidden:
 
 - `W-PROC-BUDGET`: proc/DoT DPS is still summed outside parts of the ceiling.
-- `W-WARD`: ward suppression of per-blow powers is not modelled.
+- `W-WARD`: ward suppression of the per-blow powers fires on `target.warded`, which only a caller sets; the boss
+  `warded` TRAIT's own pool does not suppress them, and DoT rounds are not ward-gated.
 - `W-LOOT-CARRY`: percentage lines floor each blow instead of carrying the
   fraction.
 - `W-DEX-LOADOUT`: class foes under the booted client can use a different kit.

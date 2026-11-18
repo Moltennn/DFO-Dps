@@ -675,6 +675,17 @@ export function conditionMultiplier(w, sharpEdge = false) {
 export function weaponBlow(ch, w, damage, target, opts = {}) {
   let d = damage;
   const lines = w ?? opts.wraps ?? null;
+  // STAGE 3.6c: A WARD turns every per-blow power, and only those. One gate here - the one place every card, fight-tier
+  // and what-if blow passes - for the four channels upstream refuses on a `warded` foe: the loot's slayer/elemental/power
+  // walk (`vendor:systems/loot/lootPowers.js:287`), weapon mastery (`vendor:systems/weaponMastery.js:141`), the martial
+  // path's blow (`vendor:systems/martialPowers.js:136` `foeOf`) and the Firmament's (`vendor:systems/firmamentPowers.js:173`).
+  // The Strikes payload (Potent Vs) is NOT one of them and is added later, by `afterShare` (`enchantments.js:623-631`).
+  if (target?.warded === true) {
+    // The card's own rolled damage line is not a blow power: it is inside the roll (`theory.js` turns it into a damage
+    // affix), so it keeps its percentage.
+    const own = num(opts.damagePct, 0);
+    return own ? applyPct(damage, own) : damage;
+  }
   const mastery = masteryPct(ch, w, target, opts);
   if (mastery > 0) d = applyPct(d, mastery);
   // lootBlow (systems/loot/lootPowers.js:286-347) sums EVERY percentage - the weapon's slayer lines, and any
@@ -803,7 +814,7 @@ export function resolveBlow(d, part, ctx = {}) {
  * Each outcome also carries `strikesDamage`/`strikesPositive`: the PRE-payload damage (`shared`), which is what the
  * Cast When Strikes guard reads. `formulaPositive` is the POST-Payload value Flow and Many Endings read.
  */
-export function afterShare(shared, p, { weapon = null, offHand = false, traits = [], strikeKind = 'melee', bow = null, potentVs = 0, echoes = [], relay = false } = {}) {
+export function afterShare(shared, p, { weapon = null, offHand = false, traits = [], strikeKind = 'melee', bow = null, potentVs = 0, echoes = [], relay = false, warded = false } = {}) {
   const heard = potentVs ? (offHand ? OFF_HAND_BLOW.blowWeight : 1) : 0;
   const branches = heard > 0 && heard < 1
     ? [{ p: p * heard, damage: Math.max(0, shared + potentVs) }, { p: p * (1 - heard), damage: shared }]
@@ -812,7 +823,10 @@ export function afterShare(shared, p, { weapon = null, offHand = false, traits =
   for (const { p: q, damage } of branches) {
     const shot = bowBlow(damage, bow); // the pull comes after the payloads, before the trait
     const v = shot > 0 && traits.length ? resistBlow(traits, shot, { kind: strikeKind, weapon }) : shot;
-    if (!(damage > 0) || !echoes.length) { out.push({ p: q, v, x: 0, echoMask: 0, echoHits: 0, echoEligible: false, formulaPositive: damage > 0, strikesDamage: shared, strikesPositive: shared > 0 }); continue; }
+    // STAGE 3.6c: the strike listener refuses a warded foe (`vendor:systems/loot/lootPowers.js:354`), so the echo - the
+    // only strike-listener answer the card carries (leech, chain and quake add no damage) - answers nothing. Potent Vs is
+    // the Strikes payload, not a blow power, and survives (`enchantments.js:623-631`).
+    if (!(damage > 0) || !echoes.length || warded) { out.push({ p: q, v, x: 0, echoMask: 0, echoHits: 0, echoEligible: false, formulaPositive: damage > 0, strikesDamage: shared, strikesPositive: shared > 0 }); continue; }
     // Many Endings (lootPowers.js:374-376, :444-454): the strike listener is told the blow's FINAL damage - the
     // formula's, so before the pull and the trait - and each power rolls `chance` per cent. A hit repeats it as
     // n = max(1, round(damage)): on a body the relay runs it is OWED (oweFoe) and taken into THIS blow's claim by the
@@ -860,7 +874,10 @@ export function blowDistribution(rolls, part, { target, weapon = null, offHand =
   const bow = bowOf(weapon, { bowSpam });
   const out = new Map();
   for (const d of rolls) {
-    for (const { p, v, x } of resolveBlow(d, part, { target, weapon, offHand, traits, strikeKind, bow, potentVs, echoes, relay: !!target?.relayBody })) {
+    for (const { p, v, x } of resolveBlow(d, part, {
+      target, weapon, offHand, traits, strikeKind, bow, potentVs, echoes, relay: !!target?.relayBody,
+      warded: target?.warded === true, // STAGE 3.6c: the same ward flag `afterShare` gates the echo on
+    })) {
       const value = (cap > 0 ? Math.min(v, cap) : v) + (x ?? 0);
       out.set(value, (out.get(value) ?? 0) + p / rolls.length);
     }
@@ -1275,7 +1292,7 @@ function analyzeCard(ch, {
       // (the shield's block or its miss), each already through the off hand's share and the boss
       // trait; the cap and the means are taken over those outcomes (Stage 2.9, F1).
       const parts = [];
-      const ctx = { target: tgt, weapon: w, offHand: !!opts.offHand, traits: traitList, strikeKind, bow: bowOf(w, opts), potentVs: strikes, echoes, relay: !!tgt.relayBody };
+      const ctx = { target: tgt, weapon: w, offHand: !!opts.offHand, traits: traitList, strikeKind, bow: bowOf(w, opts), potentVs: strikes, echoes, relay: !!tgt.relayBody, warded: tgt.warded === true };
       for (let part = 0; part < 7; part++) {
         const weight = weights[part] ?? 0;
         if (!weight) continue;
@@ -1316,7 +1333,7 @@ function analyzeCard(ch, {
       };
     }
     // A bare target (no worn piece): one defended number per roll, then the same host steps as outcomes.
-    const ctx = { weapon: w, offHand: !!opts.offHand, traits: traitList, strikeKind, bow, potentVs: strikes, echoes, relay: !!tgt.relayBody };
+    const ctx = { weapon: w, offHand: !!opts.offHand, traits: traitList, strikeKind, bow, potentVs: strikes, echoes, relay: !!tgt.relayBody, warded: tgt.warded === true };
     const each = (rolls) => rolls.map((d) => afterShare(hand(defended(d)), 1, ctx));
     const plain = each(plainRolls);
     const crits = each(critRolls);

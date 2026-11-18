@@ -26,11 +26,11 @@ const DESC = () => character({
 const item = (cond = 1000, extra = {}) => ({
   ...weapon(121, { material: 9 }), maxCondition: 1000, currentCondition: cond, ...extra,
 });
-const eff = (type, subType, magnitude = 10) => ({
+const eff = (type, subType, magnitude = 10, durationBase = 0) => ({
   type, subType,
   magnitudeBaseLow: magnitude, magnitudeBaseHigh: magnitude,
   magnitudeLevelBase: 0, magnitudeLevelHigh: 0, magnitudePerLevel: 1,
-  durationBase: 0, durationMod: 0, durationPerLevel: 1,
+  durationBase, durationMod: 0, durationPerLevel: 1,
   chanceBase: 0, chanceMod: 0, chancePerLevel: 1,
 });
 const spellOf = (index = 1, effect = eff(4, 0, 10)) => ({
@@ -575,7 +575,7 @@ test('multiple CWS rows: a break between rows does not skip the later row; both 
   assert.equal(found.run.condition.main, 0);
 });
 
-test('a resisted, absorbed or deferred cast still pays its 10', () => {
+test('a resisted, absorbed or Continuous Damage cast still pays its 10', () => {
   // Spell resistance 100: the cast lands nothing, the row still pays.
   const resistedTarget = { ...referenceFoe(30, 'tough'), activeEffects: [{ kind: 'spellResistance', chance: 100 }] };
   const it = cws(30, [1]);
@@ -593,17 +593,33 @@ test('a resisted, absorbed or deferred cast still pays its 10', () => {
   assert.equal(found.run.cwsTrace[0].bill, 10);
   assert.ok(found.run.trace[0].condition < 30, 'ordinary wear and the bill both lower the item');
 
-  // A non-damage effect (1,0) is deferred, and still billed.
-  const deferred = cws(30, [1]);
-  const ch2 = simCharacter(DESC(), deferred);
-  const std2 = new Map([[1, spellOf(1, eff(1, 0, 10))]]);
+  // A Continuous Damage (1,0) spell with rounds STANDS (the entry is pushed and its first round lands): the row still
+  // pays its 10, and the cast is not a deferred family.
+  const dotCast = cws(30, [1]);
+  const ch2 = simCharacter(DESC(), dotCast);
+  const std2 = new Map([[1, spellOf(1, eff(1, 0, 10, 3))]]);
   const found2 = findRun(
-    (seed) => fight(ch2, deferred, { seed, maxBlows: 5, standard: std2 }),
+    (seed) => fight(ch2, dotCast, { seed, maxBlows: 5, standard: std2 }),
+    (r) => r.cwsTrace.length > 0 && r.cwsTrace[0].effects.some((e) => e.continuous === true),
+  );
+  assert.ok(found2, 'a standing Continuous Damage cast');
+  assert.equal(found2.run.cwsTrace[0].deferred, 0);
+  assert.ok(found2.run.cwsTrace[0].dotDamage > 0, 'the cast billed its own first round');
+  assert.equal(found2.run.cwsTrace[0].damage, found2.run.cwsTrace[0].dotDamage, 'a DoT has no direct damage, only its round');
+  assert.equal(found2.run.cwsTrace[0].bill, 10);
+
+  // A family the port still defers (11,8 Transfer Health) also pays its 10: deferred and standing are both billed.
+  const transferCast = cws(30, [1]);
+  const ch3 = simCharacter(DESC(), transferCast);
+  const std3 = new Map([[1, spellOf(1, eff(11, 8, 10))]]);
+  const found3 = findRun(
+    (seed) => fight(ch3, transferCast, { seed, maxBlows: 5, standard: std3 }),
     (r) => r.cwsTrace.length > 0 && r.cwsTrace[0].deferred > 0,
   );
-  assert.ok(found2, 'a deferred CWS');
-  assert.equal(found2.run.cwsTrace[0].damage, 0);
-  assert.equal(found2.run.cwsTrace[0].bill, 10);
+  assert.ok(found3, 'a deferred CWS');
+  assert.equal(found3.run.cwsTrace[0].damage, 0);
+  assert.equal(found3.run.cwsTrace[0].dotDamage, 0);
+  assert.equal(found3.run.cwsTrace[0].bill, 10);
 });
 
 test('absorbed and zero-magnitude casts still pay; a zero-damage blow pays and wears nothing', () => {

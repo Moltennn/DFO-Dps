@@ -166,6 +166,7 @@ export function blowOutcomes(ch, args = {}) {
   // off hand's share, the Strikes payload (only when whole), the pull, the trait, the echo - model.js's own functions.
   const ctxOf = (whole) => ({
     weapon: w, offHand: false, traits: traitList, strikeKind, bow, potentVs: whole ? strikes : 0, echoes, relay,
+    warded: tgt.warded === true,
   });
   const cache = new Map();
   const resolve = (card, part, whole) => {
