@@ -6,6 +6,67 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage 3.7d/3.7e - CWS and DoT claims inside a relay fight, and the per-kind accounting
+
+**What the game does.** A Cast When Strikes proc is its own relay claim (`full:scenes/gate/standInSpell.js:198-217`
+`land(..., HIT_KINDS.Spell)`), and the cast is resolved INSIDE the blow's formula, before the host applies the blow
+(`vendor:combat/formulas.js:826-836`) - so a cast that kills suppresses the blow claim. A DoT's ticks are different:
+every round's ticks arrive as ONE claim per round (`full:scenes/gate/standInSpell.js:131-151`), a round is 5 s
+(`src/spells.js:21` `MAGIC_ROUND_SECONDS`), and the body carries ONE like-kind Continuous Damage entry, a re-cast
+renewing it (`vendor:systems/effects.js:1091-1103`). A claim made while the boss is shielded is refused by the engine
+before any token (`vendor:net/gate/gateBrain.js:1308`; `src/relayClaim.js:149`).
+
+**What changed.** `src/relayFight.js` only (the ordinary fight's loop is not merged in): the same CWS helpers the
+ordinary fight uses (`cwsEligible`, `cwsRows`, `resolveCwsCast`, `tickActiveEffects`, `spellPowerInputs`,
+`equippedForFight`, `:129-146`), a per-fight target clone of `activeEffects` (`:135-137`), the cast's claim at `:299-319`
+(submitted before the blow claim, rounded at the host boundary `:200-215`), the round clock and its one-claim-per-round
+send (`:216-241`), the drain after the schedule (`:385-388`), and the claim order at one timestamp: cast, blow, then the
+round (M35; `:280`, `:358`, `:380`). The ward for a cast is the relay's own clock `t < shieldUntil` (nothing sets
+`target.warded` on a relay body - ASSUMPTION M38), while a round always ticks and lets the engine refuse its claim, so a
+warded round loses its damage and not its countdown (M36). The round clock and the drain run only when the fight can hold
+an entry - it casts, or the caller's target arrived with a live `continuousDamage` entry (`:219-224`) - so a fight with no
+CWS row and no primed entry does no round work at all. A caller-primed entry IS billed: it is the target's own state,
+cloned per fight as in the ordinary fight. A non-kill fight ended by the blow budget or the schedule now lasts to the last
+claim it BILLED (`:391-396`), not to the last blow, so a drained round is in `time`/`outputDps`. 3.7e:
+`claimsByKind` / `dealtByKind` / `clippedByKind` (`blow` | `proc` | `dot`), `killSource` (`'blow' | 'cws' | 'dot'`), and
+the whole claim log (`claimLog`, with `trace`, each row carrying its `hand`), around `:194-241`, `:414-424`; the batch
+summary `simulateRelayFights` sums the kinds and tallies the kill source (`:501-517`). A kill made by the cast's own
+FIRST round reads `'cws'` here - the relay merges the cast's direct damage and that round into one claim - where the
+ordinary fight's cast bills the round through its own sink and reads `'dot'` when the round delivered it.
+
+**Before and after.** Before, a relay fight made BLOW claims only: a CWS row was never walked and no DoT entry existed
+(the module header listed both as excluded), so a CWS/DoT build's procs and rounds dealt nothing. After (a level-45 gate
+body, 4000 health, seed 3, 30 s; one Cast When Strikes row holding a magnitude-200 DoT with ten rounds and a
+magnitude-150 instant): **claims 51 = 26 blow + 22 proc + 3 dot**; `damageDealt` 4000 = **520 + 2920 + 560**;
+`clipped` 98 = **0 + 98 + 0**; `offered` 4098; the kill came from a cast (`killSource: 'cws'`) at 25.99 s. The censored
+drain fixture (`maxBlows` 1, a long DoT): `time` **0.37 -> 35 s** (the last round billed) and `outputDps` the dealt
+figure over that time instead of over one blow.
+
+**Outputs moved.** Only relay fights whose build carries a CWS row (and the (1,0) spells among them), or whose target
+arrives with a live entry: their claims, `damageDealt`/`offered`/`clipped`, the claim/kind counters, the kill source and
+time, and the trace. A relay fight with NO CWS row and NO primed entry is bit-identical: the cast stream draws nothing,
+the round clock never runs, and the whole existing relay suite (claim differential, seeded fights, saturation, Flow/echo,
+the real sampler) passes unchanged; its seeded figures are pinned as literals in the test (see the note there on where
+they were recorded). The card is untouched by this batch.
+
+**Evidence.** New `test/relayDotFight.test.js`: every fight's whole claim log is replayed through the vendored `applyHit`
+(`test/harness/relay.mjs` `relayStream`) and compared per claim on `got`/`bucket`/`tokens`/`hp`/cumulative `clipped`.
+Red first (no claim log or kind counters existed: `Cannot read properties of undefined (reading 'proc')`,
+`undefined !== 'cws'`, `0.366 !== 35` for the time fix, and `claimsByKind` absent on the batch summary); green after. The
+fixtures: the cast before the blow at one timestamp; a cast inside a shield (no proc before it); a primed live entry whose
+5 s round is claimed and refused while the entry keeps counting down and the 10 s round is paid (a tick VALUE asserted);
+a casting kill suppressing the blow claim (`claimsByKind.blow` 0); a renewal (one proc claim for the whole fight); a DoT
+kill (`killSource: 'dot'`, `ttk` = the round's); a `durationBase` 0 (1,0) (no entry, no dot claim); the cast's claim
+against the vendored `applySpell` for scripted `cwsRolls`; the one-entry-per-body rule (a second (1,0) renews, and no
+other continuous kind exists in `src/cws.js`); a dual pair with the CWS row on the OFF hand only (every proc claim's
+`hand` is `'off'`); the drain time; the batch kinds/tally; and the 3.7e identities (`claims`/`damageDealt`/`clipped` =
+the sum of their kinds). `npm test` reports 0 failures; vendor verify OK.
+
+**Limits.** Batch 2 is the card/ceiling side's other half only: the relay's phase-ward LIFECYCLE is still not scheduled
+(a fixed `shieldUntil` is the caller's), wear stays refused (3.5.3g), and the `events` test seam carries no
+`strikesPositive`, so it casts nothing. `simulateRelayFights` does not aggregate the new per-kind counters (each row
+carries them). `W-PROC-BUDGET` and `W-WARD` are untouched (3.7h).
+
 ## Stage 3.7 - The proc budget: one DoT round is one claim, capped once, and a dual pair claims it once
 
 **What the game does.** A Cast When Strikes proc is its own relay claim (`vendor:scenes/gate/standInSpell.js:198-217`

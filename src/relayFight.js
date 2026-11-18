@@ -18,7 +18,17 @@
  * segment, and a new table is built at 0.5 or an execute threshold. The engine's `hp` is the player's share of the
  * boss, so a refused claim does not move the tier.
  *
- * Excluded by this stage (the assumptions register M30/M31): CWS, DoTs, wear, phase-ward lifecycle, geometry, the Sundered
+ * Included since Stage 3.7d: Cast When Strikes procs and Continuous Damage rounds are claims of their own on the relay
+ * body. A blow that carries a CWS row resolves the cast INSIDE the blow's formula, before the host's blow claim
+ * (`vendor:combat/formulas.js:826-836`), so a cast kill suppresses the blow claim; a proc is its own claim
+ * (`full:scenes/gate/standInSpell.js:198-217`) and the cast's first DoT round rides it. Later rounds are ONE claim per
+ * round carrying the sum of the live entries' ticks (`standInSpell.js:131-151`), at `k x MAGIC_ROUND_SECONDS` from t=0,
+ * after the blow at an equal timestamp (M35); the entry itself is one like-kind entry per body (renewal,
+ * `vendor:systems/effects.js:1091-1103`). The ward for a cast is the relay's own clock - `t < shieldUntil`, nothing sets
+ * `target.warded` on a relay body (ASSUMPTION M38) - while a DoT round always ticks and lets the claim engine refuse it
+ * while shielded (`gateBrain.js:1308`), so a warded round loses its damage and not its countdown (M36).
+ *
+ * Excluded by this stage (the assumptions register M30/M31/M38): wear, phase-ward lifecycle, geometry, the Sundered
  * halves, stun/profile hit multipliers, Wrath, host/crystal hits and the multi-body `spendBlow` sequence. A build with
  * fists is refused by the Stage 3.2 schedule (the unarmed StrikeLeft frame list is not in the analytical cadence).
  * Relay durability is not implemented: `durability: true` is REFUSED (Stage 3.5.3g) rather than silently ignored;
@@ -33,6 +43,8 @@ import {
 } from './simulateFight.js';
 import { createRelayClaimEngine } from './relayClaim.js';
 import { createFlowState } from './flowState.js';
+import { cwsEligible, cwsRows, equippedForFight, resolveCwsCast, spellPowerInputs, tickActiveEffects } from './cws.js';
+import { MAGIC_ROUND_SECONDS } from './spells.js';
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 
@@ -111,6 +123,27 @@ export function simulateRelayFight(ch, args = {}) {
   const seed = Number.isSafeInteger(scenario.seed) ? scenario.seed : 0;
   const rng = createRng(seed);
   const blowStream = rng.stream('blow');
+  // The cast's own stream, exactly as the ordinary fight takes one (simulateFight.js): a new stream is independent of
+  // the blow stream, so a build with no CWS row draws nothing and its fight is bit-identical.
+  const cwsStream = rng.stream('cws');
+  const cwsRolls = scenario.cwsRolls === undefined ? () => cwsStream.float() : scenario.cwsRolls;
+  if (typeof cwsRolls !== 'function') throw new TypeError('simulateRelayFight: cwsRolls must be a function');
+  // STAGE 3.7d: the fight owns the target's live spell state (the target clone of simulateFight.js:313-315), so a
+  // batch's trials cannot inherit an entry. The caller's object keeps its own effects, and `target` in the result stays
+  // the caller's.
+  const baseTarget = target;
+  const fightTarget = baseTarget
+    ? { ...baseTarget, activeEffects: (baseTarget.activeEffects ?? []).map((a) => ({ ...a })) }
+    : null;
+  const standard = scenario.standard;
+  const strikeItems = [probe.weapon?.item, probe.offHand?.weapon?.item].filter(Boolean);
+  const castsCws = strikeItems.some((it) => cwsRows(it, standard).length > 0);
+  const cwsPower = castsCws
+    ? spellPowerInputs(ch, {
+      potencyPct: scenario.potencyPct, pierce: scenario.pierce,
+      worn: equippedForFight(ch, [probe.weapon?.item ?? null, probe.offHand?.weapon?.item ?? null]),
+    })
+    : { potencyPct: 0, pierce: 0 };
   const shieldUntil = num(scenario.shieldUntil, 0);
   const engine = createRelayClaimEngine({
     level: spec.level,
@@ -147,7 +180,6 @@ export function simulateRelayFight(ch, args = {}) {
   };
 
   let attacks = 0;
-  let claims = 0;
   let wardedAttacks = 0;
   let zeroDamage = 0;
   let roundedZero = 0;
@@ -156,6 +188,56 @@ export function simulateRelayFight(ch, args = {}) {
   let termination = 'schedule';
   let eventIndex = 0;
   let next = provided ? null : schedule.next();
+  // STAGE 3.7e: the claims and their proceeds by kind ('blow' | 'proc' | 'dot'), and who made the kill. Every claim goes
+  // through `send`, so these always add up to the engine's own counters.
+  const claimsByKind = { blow: 0, proc: 0, dot: 0 };
+  const dealtByKind = { blow: 0, proc: 0, dot: 0 };
+  const clippedByKind = { blow: 0, proc: 0, dot: 0 };
+  let killSource = null;
+  let lastBilledAt = 0;
+  const claimLog = scenario.trace === true ? [] : null;
+  /** One claim at the host's wire boundary (rounded, nothing under 1: `Math.round`, ASSUMPTION M38), with its accounting. */
+  const send = (t, kind, damage, hand = null) => {
+    const claim = Math.round(damage);
+    if (!(claim >= 1)) return null;
+    const result = engine.claim({ t, damage: claim });
+    claimsByKind[kind] += 1;
+    dealtByKind[kind] += result.got;
+    clippedByKind[kind] += result.clipped;
+    lastBilledAt = Math.max(lastBilledAt, t);
+    if (claimLog) {
+      claimLog.push({
+        t, kind, hand, claim, got: result.got, accepted: result.accepted, reason: result.reason,
+        clipped: result.clipped, bucket: result.bucketAfter, tokens: result.tokensAfter, hp: result.hpAfter,
+      });
+    }
+    if (engine.killed && killSource === null) killSource = kind === 'proc' ? 'cws' : kind;
+    return { claim, result };
+  };
+  // STAGE 3.7d, the round clock: rounds at k x MAGIC_ROUND_SECONDS from t=0 (M35), billed AFTER the blow at an equal
+  // timestamp. A round TICKS whether or not the boss is shielded: the claim engine refuses a shielded claim
+  // (`gateBrain.js:1308`), which is the one ward rule for a round (M36), so the entry still counts down. The clock and
+  // the drain run only when the fight can hold an entry - it casts, or the caller's target arrived with a live
+  // continuousDamage entry (the target's own state, cloned like the ordinary fight's, and billed the same way).
+  const hasLiveDot = (fightTarget?.activeEffects ?? [])
+    .some((a) => a?.kind === 'continuousDamage' && (a.roundsRemaining ?? 0) > 0);
+  const holdsEntries = castsCws || hasLiveDot;
+  let nextRoundT = MAGIC_ROUND_SECONDS;
+  const dotRound = (at) => {
+    let total = 0;
+    tickActiveEffects(fightTarget, { hurt: (n) => { total += n; } }, cwsRolls);
+    if (total > 0) send(at, 'dot', total);
+  };
+  /** Rounds due at or before `at` (the ones strictly before it ran at the loop's head). True when the boss fell. */
+  const roundsAt = (at) => {
+    while (holdsEntries && nextRoundT <= at && !engine.killed) { dotRound(nextRoundT); nextRoundT += MAGIC_ROUND_SECONDS; }
+    return engine.killed;
+  };
+  /** Rounds due strictly before `at`: the blow at an equal timestamp lands first (M35). */
+  const roundsBefore = (at) => {
+    while (holdsEntries && nextRoundT < at && !engine.killed) { dotRound(nextRoundT); nextRoundT += MAGIC_ROUND_SECONDS; }
+    return engine.killed;
+  };
   for (;;) {
     // The blow budget is checked before the horizon: if both bind, the fight stopped at the last attack, not at a
     // horizon it never reached.
@@ -165,6 +247,8 @@ export function simulateRelayFight(ch, args = {}) {
     if (!provided && !next) { termination = 'schedule'; break; }
     const t = provided ? event.t : next.t;
     if (t > maxSeconds) { termination = 'horizon'; break; }
+    // Rounds due strictly before this attack's time; the round at an equal timestamp comes after the blow (M35).
+    if (roundsBefore(t) && engine.killed) { termination = 'kill'; break; }
     attacks += 1;
     lastAttackAt = t;
     const hand = provided ? (event.hand ?? 'main') : (dual ? next.hand : 'main');
@@ -203,9 +287,32 @@ export function simulateRelayFight(ch, args = {}) {
         stacksBefore: stackedBefore, stacksAfter: stackedBefore, flowUntil: flow.until, flowBuilt: false,
         got: 0, accepted: false, reason: 'warded', bucket: engine.bucket, tokens: engine.tokens, hp: engine.hp,
       });
+      roundsAt(t);
       if (engine.killed) { termination = 'kill'; break; }
       if (!provided) next = schedule.next();
       continue;
+    }
+    // STAGE 3.7d: the Strikes payload runs inside the blow's formula, so the cast's claim lands BEFORE the blow's
+    // (formulas.js:826-836; the ordinary fight's order is simulateFight.js:557-562). The cast is one claim - its direct
+    // damage and its first round together - and a killing cast suppresses the blow claim. The ward is the relay's own
+    // clock (ASSUMPTION M38); nothing sets target.warded here.
+    if (castsCws) {
+      const rowItem = hand === 'off' ? (probe.offHand?.weapon?.item ?? null) : (probe.weapon?.item ?? null);
+      if (cwsEligible({
+        target: fightTarget, strikesPositive: outcome.strikesPositive === true, whole: outcome.whole === true, item: rowItem, standard,
+      })) {
+        for (const row of cwsRows(rowItem, standard)) {
+          if (!row.spell || engine.killed) continue;
+          let castDamage = 0;
+          resolveCwsCast({
+            spell: row.spell, caster: { entity: ch }, casterLevel: num(ch.level, 1), target: fightTarget, rolls: cwsRolls,
+            pierce: cwsPower.pierce, potencyPct: cwsPower.potencyPct,
+            hurt: (n) => { castDamage += n; },
+          });
+          if (castDamage > 0) send(t, 'proc', castDamage, hand);
+        }
+      }
+      if (engine.killed) { termination = 'kill'; break; }
     }
     // A relay tier's `blow` already carries the owed echo (echoDamage 0). The event seam receives the pre-echo and echo
     // components separately from upstream, so the compositor composes them here; production is unchanged.
@@ -226,6 +333,7 @@ export function simulateRelayFight(ch, args = {}) {
         stacksBefore: flowResult.before, stacksAfter: flowResult.after, flowUntil: flowResult.until, flowBuilt: flowResult.built,
         got: 0, accepted: false, reason: 'zero', bucket: engine.bucket, tokens: engine.tokens, hp: engine.hp,
       });
+      roundsAt(t);
       if (engine.killed) { termination = 'kill'; break; }
       if (!provided) next = schedule.next();
       continue;
@@ -241,12 +349,13 @@ export function simulateRelayFight(ch, args = {}) {
         stacksBefore: flowResult.before, stacksAfter: flowResult.after, flowUntil: flowResult.until, flowBuilt: flowResult.built,
         got: 0, accepted: false, reason: 'rounded-zero', bucket: engine.bucket, tokens: engine.tokens, hp: engine.hp,
       });
+      roundsAt(t);
       if (engine.killed) { termination = 'kill'; break; }
       if (!provided) next = schedule.next();
       continue;
     }
-    const result = engine.claim({ t, damage: claim });
-    claims += 1;
+    // The blow itself goes through `send` like every other claim (3.7e accounting; the boundary is unchanged).
+    const { result } = send(t, 'blow', raw, hand);
     if (traceAll) traceAll.push({
       t, hand, segment: index, share, warded: false, raw, claim,
       tierStacks, tierHand,
@@ -268,15 +377,23 @@ export function simulateRelayFight(ch, args = {}) {
         bucket: result.bucketAfter, tokens: result.tokensAfter, hp: result.hpAfter,
       });
     }
+    roundsAt(t);
     if (engine.killed) { termination = 'kill'; break; }
     if (!provided) next = schedule.next();
   }
 
+  // The drain: rounds still due inside the horizon are billed after the loop ends (simulateFight.js:728-731), so a DoT
+  // cast on the last blow is still counted and can kill. Guarded like the loop's own clock: no entry can exist otherwise.
+  while (holdsEntries && nextRoundT <= maxSeconds && !engine.killed) { dotRound(nextRoundT); nextRoundT += MAGIC_ROUND_SECONDS; }
+  if (engine.killed) termination = 'kill';
+
   const s = engine.summary();
-  // Fight elapsed time is independent of the claim clock: the claim engine only sees positive landed claims.
+  // Fight elapsed time is independent of the claim clock: the claim engine only sees positive landed claims. A fight
+  // ended by the blow budget or the schedule still ends at the last claim it BILLED (a drained DoT round after the last
+  // blow, simulateFight.js:476), not at the last blow.
   const time = s.killed ? s.killedAt
     : termination === 'horizon' ? maxSeconds
-      : lastAttackAt;
+      : Math.max(lastAttackAt, lastBilledAt);
   const outputDps = time > 0 ? s.dealt / time : null;
   return {
     seed,
@@ -299,6 +416,11 @@ export function simulateRelayFight(ch, args = {}) {
     bucketClip: s.bucketClip,
     healthClip: s.healthClip,
     claims: s.claims,
+    claimsByKind,
+    dealtByKind,
+    clippedByKind,
+    killSource: s.killed ? (killSource ?? 'blow') : null,
+    claimLog,
     attacks,
     wardedAttacks,
     zeroDamage,
@@ -374,6 +496,23 @@ export function simulateRelayFights(ch, args = {}) {
     accepted: summarize(rows.map((r) => r.accepted)),
     refused: summarize(rows.map((r) => r.refused)),
     claims: summarize(rows.map((r) => r.claims)),
+    // STAGE 3.7e: the claim kinds and the kill source are totals over the batch, never mixed silently into one figure
+    // (rule 7). `claimsByKind` sums to `claims`, `dealtByKind` to `damageDealt`, and the kill tally to `kills`.
+    claimsByKind: {
+      blow: rows.reduce((a, r) => a + (r.claimsByKind?.blow ?? 0), 0),
+      proc: rows.reduce((a, r) => a + (r.claimsByKind?.proc ?? 0), 0),
+      dot: rows.reduce((a, r) => a + (r.claimsByKind?.dot ?? 0), 0),
+    },
+    dealtByKind: {
+      blow: rows.reduce((a, r) => a + (r.dealtByKind?.blow ?? 0), 0),
+      proc: rows.reduce((a, r) => a + (r.dealtByKind?.proc ?? 0), 0),
+      dot: rows.reduce((a, r) => a + (r.dealtByKind?.dot ?? 0), 0),
+    },
+    killSource: {
+      blow: rows.filter((r) => r.killSource === 'blow').length,
+      cws: rows.filter((r) => r.killSource === 'cws').length,
+      dot: rows.filter((r) => r.killSource === 'dot').length,
+    },
     wardedAttacks: summarize(rows.map((r) => r.wardedAttacks)),
     zeroDamage: summarize(rows.map((r) => r.zeroDamage)),
     roundedZero: summarize(rows.map((r) => r.roundedZero)),
