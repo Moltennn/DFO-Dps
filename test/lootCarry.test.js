@@ -28,6 +28,7 @@ import { upstream, referenceFoe as upstreamReferenceFoe } from './harness/upstre
 import { oracleEntity, upstreamBody } from './harness/upstreamBodies.mjs';
 import { generator } from './harness/prng.mjs';
 import { oracleItem, upstreamFight } from './harness/fightOracle.mjs';
+import { upstreamRelayEvents } from './harness/relayFightOracle.mjs';
 import { expectKnownDiscrepancy } from './harness/waivers.mjs';
 
 const BASIC = () => character({
@@ -263,16 +264,42 @@ test('6. the default (carry off) path is bit-identical: the fight literal captur
   assert.notDeepEqual(compact(simulateFight(ch, { ...args, carry: true })), LITERAL);
 });
 
-test('7. relay fights accept carry:true and the carried stream is the higher one', () => {
+test('7. sampled relay carry matches the vendored held-item damage per scheduled attack', async (t) => {
+  // ORACLE: calculateAttackDamage keeps the same item throughout each upstreamRelayEvents run
+  // (lootPowers.js:171,176-181@a3eb1605), then gateBrain.applyHit admits each host claim.
+  const u = await upstream();
+  const { body } = await upstreamBody({ kind: 'standIn', mobile: 31 });
+  assert.equal(u.lootPowers.foeGroup(body), 'daedra', 'the vendored body activates the slayer line');
   const item = { ...weapon(121, { material: 9 }), affixes: [{ id: 'slayer', param: 'daedra', value: 25 }] };
-  const ch = simCharacter(BASIC(), item);
-  const target = { ...gateTarget(45, { health: 200000 }), group: 'daedra' };
-  const args = { target, health: 200000, weapon: weaponOf(item), trials: 40, seed: 0x6600, maxBlows: 400, maxSeconds: 600 };
+  const desc = BASIC();
+  const ch = simCharacter(desc, item);
+  const level = 45;
+  const pool = 200000;
+  const target = gateTarget(level, { health: pool, traits: [] });
+  const maxBlows = 400;
+  const args = { target, health: pool, weapon: weaponOf(item), swing: 'StrikeLeft', trials: 64, seed: 0x6600, maxBlows, maxSeconds: 600 };
+  const events = eventsOf(ch, args, maxBlows);
   const off = simulateRelayFights(ch, { ...args, carry: false });
   const on = simulateRelayFights(ch, { ...args, carry: true });
   assert.ok(off && on, 'both runs return a summary');
-  assert.ok(on.damageDealt.mean > off.damageDealt.mean, `carried relay damage ${on.damageDealt.mean} > floor ${off.damageDealt.mean}`);
-  assert.ok(Number.isFinite(on.ttk?.mean ?? 0) || on.kills === 0, 'a finite or censored TTK');
+  assert.equal(on.terminations.maxBlows, args.trials);
+  assert.equal(off.terminations.maxBlows, args.trials);
+  assert.equal(on.offered.mean, on.damageDealt.mean, 'nonbinding relay caps and allowance');
+  const landed = [];
+  for (const seed of on.seeds) {
+    const up = await upstreamRelayEvents(u, { desc, item: upItem(item), body: oracleEntity(body), level, pool, events, seed });
+    assert.ok(up.hp > 0 && up.claims.every((c) => c.claim === c.got), 'no oracle kill, clipping, or refusal');
+    landed.push(up.landed);
+  }
+  const held = summarize(landed);
+  const z = meanZ(on.damageDealt, held);
+  const floorZ = meanZ(held, off.damageDealt);
+  // Same fixed attack count: per-fight damage and damage per scheduled attack have the same z statistic.
+  // Different seeded samplers; use the existing carry differential's 3.5 pooled-SE bound.
+  const means = `damage per attack: carried ${(on.damageDealt.mean / maxBlows).toFixed(5)}, held ${(held.mean / maxBlows).toFixed(5)}, floor ${(off.damageDealt.mean / maxBlows).toFixed(5)}`;
+  assert.ok(Math.abs(z) < 3.5, `${means}; carried vs held z=${z.toFixed(2)}`);
+  assert.ok(floorZ > 3.5, `${means}; held vs floor z=${floorZ.toFixed(2)}`);
+  t.diagnostic(`${means}; carried vs held z=${z.toFixed(2)}, held vs floor z=${floorZ.toFixed(2)}`);
 });
 
 test('8. a base of 0 stays 0 under carry:true: the elemental flat is not added on a damage <= 0 blow', async () => {
