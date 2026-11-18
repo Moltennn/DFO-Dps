@@ -37,7 +37,7 @@
  * nothing to model, so `durability: true` stays REFUSED (Stage 3.5.3g): a wear pass here would invent a loss the game
  * never takes. Omitted and `durability: false` keep the Stage 3.3 behaviour.
  */
-import { echoChances, weaponOf, weaponPowers } from './model.js';
+import { createCarryState, echoChances, weaponOf, weaponPowers } from './model.js';
 import { blowFightTier, createBlowSampler } from './blowOutcomes.js';
 import { createRng } from './rng.js';
 import { healthThresholds } from './fight.js';
@@ -170,6 +170,8 @@ export function simulateRelayFight(ch, args = {}) {
   }
 
   const cache = new Map();
+  // The carried stream's per-fight remainders (scenario `carry: true`): one state per fight (ASSUMPTION M43).
+  const carryState = scenario.carry === true ? createCarryState() : null;
   const distribution = (index, hand, stacks) => {
     const key = `${index}|${hand}|${stacks}`;
     let d = cache.get(key);
@@ -269,7 +271,8 @@ export function simulateRelayFight(ch, args = {}) {
       eventIndex += 1;
     } else {
       const dist = distribution(index, hand, stackedBefore);
-      outcome = dist.sampler.sample(blowStream);
+      const sampled = dist.sampler.sample(blowStream);
+      outcome = dist.tier.carryResolve ? dist.tier.carryResolve(sampled, carryState) : sampled;
       tierStacks = dist.tier.meta.flowStacks;
       tierHand = dist.tier.meta.hand;
     }

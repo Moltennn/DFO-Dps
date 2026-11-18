@@ -35,7 +35,7 @@
  * ward lifecycle, ranged support, incoming damage, attacker health/death and pair support. The simulation does not
  * pretend those are present.
  */
-import { analyze, conditionMultiplier, weaponOf, weaponPowers } from './model.js';
+import { analyze, conditionMultiplier, createCarryState, weaponOf, weaponPowers } from './model.js';
 import { blowFightTier, createBlowSampler } from './blowOutcomes.js';
 import { cwsEligible, cwsRows, equipTableForFight, equippedForFight, resolveCwsCast, spellPowerInputs, tickActiveEffects } from './cws.js';
 import { MAGIC_ROUND_SECONDS } from './spells.js';
@@ -390,6 +390,9 @@ export function simulateFight(ch, args = {}) {
     });
   };
   const cache = tierCache.tiers;
+  // The carried stream's per-fight remainders (scenario `carry: true`): one state per fight, reset at its start
+  // (ASSUMPTION M43), keyed per channel and held item inside `weaponBlow`.
+  const carryState = scenario.carry === true ? createCarryState() : null;
   // The health thresholds a tier was built under. A break/promotion changes them, and the segment index alone does not
   // say which threshold set it belongs to, so the epoch is part of the key (and a batch's other fights keep theirs).
   let epoch = 0;
@@ -491,7 +494,8 @@ export function simulateFight(ch, args = {}) {
     const index = healthSegment(bounds, share);
     const band = bandOf(item);
     const dist = distribution(index, hand, item, dual, band);
-    const outcome = dist.sampler.sample(blowStream);
+    const sampled = dist.sampler.sample(blowStream);
+    const outcome = dist.tier.carryResolve ? dist.tier.carryResolve(sampled, carryState) : sampled;
     const blowDamage = damageMode === 'capped' ? outcome.claim : outcome.blow; // the host's melee blow
     let echoDamage = num(outcome.echoDamage, 0); // the strike listener's separate hit, before the host's blow
     t = tNow;

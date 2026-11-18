@@ -22,6 +22,7 @@ const HEAVY = [
   'fight.test.js',
   'fightDifferential.test.js',
   'longBow.test.js',
+  'lootCarry.test.js',
   'pricing.test.js',
   'shieldOutcomes.test.js',
   'stochasticObjectives.test.js',

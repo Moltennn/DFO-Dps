@@ -6,6 +6,86 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage 3.7i - the seeded fight streams carry the percentage fraction (W-LOOT-CARRY step 3) (2026-11-18)
+
+**What the game does.** Every percentage blow channel floors the blow and keeps the remainder on the held item:
+`shareOf` at `vendor/upstream/a3eb1605/src/systems/loot/lootPowers.js:176-181@a3eb1605`
+(`exact = damage * pct / 100 + carry`, `more = floor(exact + 1e-9)`, `carry = max(0, exact - more)`, written only
+when `!info.estimate`; every `pct` source of the loot step is summed into ONE share, `:344-345` and `:305-345`),
+the same shape in `systems/weaponMastery.js:148-150`, the martial path `systems/martialPowers.js:232-235`, and the
+Firmament `systems/firmamentPowers.js:111-115` (`whole = pct >= 0 ? floor : ceil`, remainder unclamped, the blow never
+below 1 at `:181`). The key is the held item (a module `WeakMap`), one remainder per channel. A miss never reaches
+`shareOf` (guarded by `damage > 0` at `lootPowers.js:287`, `weaponMastery.js:135`, `martialPowers.js:229`,
+`firmamentPowers.js:173`), so it neither consumes nor advances one.
+
+**What changed.** The seeded fight streams gain the opt-in scenario flag `carry: true` on
+`simulateFight`/`simulateFights`/`simulateRelayFight(s)`. A per-fight carry state (`Map` per channel and held item,
+reset at the fight's start - ASSUMPTION M43) is consulted per DRAWN blow. The tier keeps each landed atom's
+pre-percentage base (`src/model.js` `damageModel` `blowBaseRolls`, `{ carryBases: true }`) and the `resolve` branch it
+took (`src/blowOutcomes.js` atoms `blowBase`/`branch`); `mergeToCarryTier` keys on them and `carryResolve` re-runs the
+percentage channels in upstream order (mastery, the loot step's one summed share, the elemental flat, the martial path,
+the theory `damagePct` floor, the Firmament) with the live remainder, then the unchanged integer stages (crit, material,
+condition, defence, off-hand share, payload, pull, trait, cap). `weaponBlow` reads `opts.carryState`; the `carried`
+pricing pass deliberately ignores it (`src/model.js`). `finishBlow` is the extracted integer-stage sequence (same
+`unityRound` order), used by `damageModel` and the re-resolution. The default path is untouched: `blowFightTier`
+returns the ordinary tier, no atom gains a field, and the model arithmetic is unchanged.
+
+**Phase 1 measurement (before/after).** (a) On the vendored functions with ONE reused item over 120,000 blows
+(`test/harness/upstream.mjs`/`upstreamBodies.mjs`, standIn mobile 31, level 30 katana material 9), the held stream vs the
+fresh-item (floor) stream, per ATTACK and per landed blow:
+
+- 25% slayer line: **16.31768 vs 15.97885** (+0.33883, +2.12%); per landed blow +0.39843
+- mastery line (skill 150 online, the vendored 17% climb): **17.34781 vs 16.88877** (+0.45904, +2.72%); per landed +0.47325
+- martial path (Cutthroat Cheap Shot 25%, unaware): **16.31768 vs 15.97885** (+2.12%) - the same 25% share on the same
+  build, as expected
+- Firmament 30%: the vendored `blowPct` is an inert stub (`STUBS.md:47`), so the local law is measured instead:
+  carried mean **115.3425** = the exact mean 115.3425, floor 114.8950 (+0.4475, +0.39%)
+
+(b) Seeded `simulateFights` (2,000 trials, pool 5,000, reference foe tough, `carry` off -> on), mean conditional TTK and
+mean per-swing damage:
+
+- slayer 25%: **282.986 -> 278.055 s (-1.74%)**, per swing 16.2052 -> 16.4931 (+1.78%)
+- mastery 17%: **279.034 -> 271.990 s (-2.52%)**, per swing 17.8332 -> 18.2956 (+2.59%)
+- martial 25%: **1041.426 -> 1020.048 s (-2.05%)**, per swing 4.7992 -> 4.8999 (+2.10%)
+- Firmament 30%: **1003.481 -> 980.640 s (-2.28%)**, per swing 4.9815 -> 5.0979 (+2.34%)
+
+Those TTK moves are 1.7-2.5x the 1% TTK tolerance used elsewhere, which is why the default stays off. `simulateFights`
+wall time on the same fixture: **1.26-1.37x** the floor path (2,000 trials, 943-1,171 ms -> 1,241-1,588 ms).
+
+Against the held-item oracle (`upstreamFight(..., reuseItem: true)`, 300 seeds, pool 5,000): `carry: true` matches to
+**TTK z -0.07 / 0.06 / -0.02** and per-blow gap **0.01% / 0.00% / 0.03%** for the slayer, mastery and martial builds;
+`carry: false` is **+1.53% / +2.74% / +2.25%** low on per-blow damage (z 4.82 / 14.75 / 4.75), exactly the waiver's floor.
+`test/lootCarry.test.js` runs the same comparison at 240 seeds and pins the floor with `expectKnownDiscrepancy`.
+
+**Red, before the change** (the new sequence differential on the pre-change path, where `carryState` did not exist; the
+same hold is now test 1):
+
+```
+✖ 1. a held item carries the loot share: 25% slayer, one remainder, misses do not advance it
+  AssertionError [ERR_ASSERTION]: the local carried stream is the vendored held-item stream, blow for blow
+  + actual - expected
+    [ 0, 81, 146, 128, 76, 137, 128, 132, ... ]
+    (expected) [ 0, 81, 146, 129, 76, 138, 128, 133, ... ]
+```
+
+**Green, after** (`test/lootCarry.test.js`, 7 sections; `npm test`):
+1: the 400-blow stream equals `lootBlow` blow for blow, and differs from the floor. 2: 25% slayer + 50% bane
+(Dragonsbane on career 16) is ONE 75% remainder; a two-carry control differs; mastery then loot equal
+`lootBlow(weaponMasteryBlow(...))`; a merged one-share control differs. 3: the martial stream equals `martialBlow`;
+the Firmament mean is its exact share (within 1/n). 4: the `carried` estimate pass ignores a carry state and writes
+nothing. 5: seeded fights, three builds, oracle bounds above. 6: the default path is bit-identical to the recorded
+pre-change fight literal (`seed` 119, 295 blows, `ttk` 269.4661224489796, `damageDealt` 5017, the full 295-value blow
+array), while `carry: true` differs. 7: relay fights accept the flag and the carried stream is the higher one.
+
+**Outputs moved: none by default.** Every shipped caller keeps `carry` off and reproduces the recorded literal;
+`carry: true` is a new opt-in metric whose effect is the numbers above. The relay stream is wired and smoke-tested, not
+differentially sampled. Limits: the per-fight zero remainder (M43), and the `damage > 0` gate boundary noted there.
+
+**Evidence.** `test/lootCarry.test.js` (new, in the HEAVY list), `test/harness/fightOracle.mjs` (`reuseItem` keeps one
+item for the whole fight and restores its condition, since the oracle still excludes wear; `attacker` and `unaware` let
+the online/mastery and martial builds be driven), `test/pricing.test.js` section 5 (unchanged card pin),
+`test/harness/waivers.mjs` `W-LOOT-CARRY` (narrowed: default + card remain, fight `carry: true` proved).
+
 ## Stage 3.3 correction - the allowance accepts a claim at exactly the shield's end (2026-11-18)
 
 **What the game does.** `applyHit` refuses a shielded blow only while the clock is strictly inside the ward:

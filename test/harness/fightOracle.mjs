@@ -15,16 +15,23 @@ import { setPlayerDoor, takeOwed } from '../../vendor/upstream/a3eb1605/src/syst
 import {
   _resetLootPowersForTests, _setLootPowersRandForTests,
 } from '../../vendor/upstream/a3eb1605/src/systems/loot/lootPowers.js';
+import { _resetWeaponMasteryForTests } from '../../vendor/upstream/a3eb1605/src/systems/weaponMastery.js';
+import { _resetMartialPowersForTests } from '../../vendor/upstream/a3eb1605/src/systems/martialPowers.js';
+import { _resetFirmamentPowersForTests } from '../../vendor/upstream/a3eb1605/src/systems/firmamentPowers.js';
 
 /**
  * @param {object} u the oracle
  * @param {object} o desc, item, offItem, body (upstream-minted), events [{t,hand}], seed, uptime, traits
+ * @param {object} [o.reuseItem] keep ONE item object for the whole fight, as a held item is: the percentage channels'
+ *   remainders (W-LOOT-CARRY) then carry between blows. The default (false) spreads a fresh clone per event - upstream's
+ *   estimate path, which floors every blow.
+ * @param {object} [o.attacker] a prepared upstream attacker (online flags / mastered skills) instead of `upstreamEntity(desc)`
  * @returns {{ttk:number|null, damageDealt:number, cwsDamage:number, echoDamage:number, meleeDamage:number,
  *   killSource:'cws'|'echo'|'melee'|null, blows:number, remainingHealth:number, overkill:number, trace:Array}}
  */
-export function upstreamFight(u, { desc, item, offItem = null, body, events, seed, uptime = 0, traits = [], cws = null }) {
+export function upstreamFight(u, { desc, item, offItem = null, body, events, seed, uptime = 0, traits = [], cws = null, reuseItem = false, attacker: attackerOverride = null, unaware = false }) {
   const rng = generator(seed);
-  const attacker = upstreamEntity(desc);
+  const attacker = attackerOverride ?? upstreamEntity(desc);
   const slots = u.equip.equipTableOf(attacker);
   const slotFor = (hand) => (hand === 'off' ? u.equip.EQUIP_SLOTS.LeftHand : u.equip.EQUIP_SLOTS.RightHand);
   const backSkill = desc.skills[19];
@@ -39,6 +46,9 @@ export function upstreamFight(u, { desc, item, offItem = null, body, events, see
   let totalEcho = 0;
   let totalMelee = 0;
   _resetLootPowersForTests();
+  _resetWeaponMasteryForTests();
+  _resetMartialPowersForTests();
+  _resetFirmamentPowersForTests();
   _setLootPowersRandForTests(() => rng());
   setPlayerDoor({
     foes: () => [foe],
@@ -63,13 +73,17 @@ export function upstreamFight(u, { desc, item, offItem = null, body, events, see
       const strike = u.anims.DIRECTION_TO_STRIKE[u.playerWeapon.CLICK_ATTACK_DIRECTIONS[directionIndex]];
       const mods = u.playerWeapon.SWING_MODS[strike];
       const facing = uptime > 0 ? rng() < uptime : false;
-      // Stage 3.2 excludes equipment wear: every event gets a fresh item, as the Stage 3.1 oracle does.
-      const w = ev.hand === 'off' ? (offItem ? { ...offItem } : null) : (item ? { ...item } : null);
+      // Stage 3.2 excludes equipment wear: every event gets a fresh item, as the Stage 3.1 oracle does. `reuseItem`
+      // keeps ONE item for the whole fight instead - a held item, whose percentage remainders carry (W-LOOT-CARRY).
+      const w = ev.hand === 'off'
+        ? (reuseItem ? offItem : (offItem ? { ...offItem } : null))
+        : (reuseItem ? item : (item ? { ...item } : null));
       const slot = slotFor(ev.hand);
       slots[slot] = w;
       const opts = {
         weapon: w, damageMod: mods.damage, toHitMod: mods.toHit,
         backstabChance: facing ? backSkill : 0, rolls: rng,
+        ...(unaware ? { unaware: true } : {}),
       };
       if (ev.hand === 'off') {
         opts.toHitMod += u.handsLaw.offHandToHit(attacker.stats.agility);
@@ -101,6 +115,9 @@ export function upstreamFight(u, { desc, item, offItem = null, body, events, see
       foe.dead = false;
       body.health = Math.max(0, hp); // the share the formula reads is the pool that stands at this hit
       const raw = u.formulas.calculateAttackDamage(attacker, body, opts);
+      // A held item keeps its IDENTITY for the whole fight (the percentage remainders), but this oracle excludes ordinary
+      // wear (Stage 3.2): restore its condition so 300 held blows do not break the very item the carry rides.
+      if (reuseItem && w && Number.isFinite(w.currentCondition) && Number.isFinite(w.maxCondition)) w.currentCondition = w.maxCondition;
       const owed = takeOwed(body); // relay-only; zero for an ordinary body
       const struck = (d, kind) => (traits.length && d > 0
         ? u.bossTraits.bossStrike({ bossTraits: traits }, d, { kind, weapon: w }).damage : d);
@@ -125,6 +142,9 @@ export function upstreamFight(u, { desc, item, offItem = null, body, events, see
     }
   } finally {
     _resetLootPowersForTests();
+    _resetWeaponMasteryForTests();
+    _resetMartialPowersForTests();
+    _resetFirmamentPowersForTests();
     setPlayerDoor(null);
     slots[u.equip.EQUIP_SLOTS.RightHand] = null;
     slots[u.equip.EQUIP_SLOTS.LeftHand] = null;

@@ -231,9 +231,12 @@ These are recorded as waivers or assumptions, not hidden:
   weapon figure.
 - `W-WARD`: ward suppression of the per-blow powers fires on `target.warded`, which only a caller sets; the boss
   `warded` TRAIT's own pool does not suppress them, and DoT rounds are not ward-gated.
-- `W-LOOT-CARRY`: the seeded fight streams and the card estimate floor each
-  blow; the game carries a percentage line's fraction between blows. Pricing
-  (imprints, enchant deltas) reads the carried mean instead.
+- `W-LOOT-CARRY`: the DEFAULT seeded fight streams and the plain card estimate
+  floor each blow; the game carries a percentage line's fraction between blows.
+  Pricing (imprints, enchant deltas) reads the carried mean instead, and the
+  seeded fight streams carry when called with the opt-in scenario flag
+  `carry: true` (`simulateFight` / `simulateFights` / `simulateRelayFight(s)`);
+  the shipped callers still run the floor default.
 - Phase-ward duration, Wrath termination and some encounter windows are model
   parameters or uncalibrated.
 - Spells, procs, the Firmament application and the planners do not all have
