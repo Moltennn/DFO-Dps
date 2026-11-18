@@ -434,6 +434,8 @@ function summary(ch, r, extra = {}) {
       carriedPerSwing: r.carriedPerSwing, carriedDps: r.carriedDps, carriedCappedDps: r.carriedCappedDps,
       enchantDps: r.enchantDps, enchantDpsMin: r.enchantDpsMin, enchantDpsMax: r.enchantDpsMax, totalDps: r.totalDps, totalDpsMin: r.totalDpsMin, totalDpsMax: r.totalDpsMax, enchantPerSwing: r.enchantPerSwing, enchantProcs: r.enchantProcs, procsBeforeBreak: r.procsBeforeBreak, procsBeforeBreakBasis: r.procsBeforeBreakBasis,
       ward: r.ward, ttk: r.ttk, totalTtk: r.totalTtk, wrath: r.wrath,
+      // M44: the ceiling's own names, and the claim-based run's (null when the target declares no allowance)
+      ceilingTotalDps: r.ceilingTotalDps, ceilingTotalTtk: r.ceilingTotalTtk, claimTotalTtk: r.claimTotalTtk, claimSustainedDps: r.claimSustainedDps,
       terms: r.damage.parts,
     },
     ...extra,
@@ -459,7 +461,7 @@ function printScale(rows, values) {
 function allowanceRows(a) {
   const ref = a.law;
   return [
-    ['Sustained DPS', fmt(a.sustainedDps), `the allowance's refill ${fmt(ref.rate)}/s${a.saturated ? ' - this build exceeds it, so it is the limit' : ' - this build is below it'}`],
+    ['Allowance-sustained DPS', fmt(a.sustainedDps), `the allowance's refill ${fmt(ref.rate)}/s${a.saturated ? ' - this build exceeds it, so it is the limit' : ' - this build is below it'}`],
     ['Opening burst', fmt(a.burst5Dps), `first 5 s: the ${fmt(ref.depth)} bucket plus refill${a.dryAt != null ? `; spent after ${fmt(a.dryAt)} s` : '; never spent'}`],
     ['Kill-average DPS', a.averageDps ? fmt(a.averageDps) : '-', `${fmt(a.share)} HP share over the whole fight, shields included`],
     ['Allowance kept', pc(a.landedShare), 'of the claims that won a blow token, the part the relay accepted'],
@@ -473,6 +475,14 @@ function printBuild(ch, r, targetPreset, values) {
   console.log(`${weaponLabel(w)}${r.dual ? ' / dual' : ''}${r.pair ? ' / pair' : ''}  |  ${r.core}${ch.online ? ' / online' : ' / offline'}${ch.martialPath ? ` / ${MARTIAL_PATHS[ch.martialPath]?.name ?? ch.martialPath}` : ''}`);
   console.log(`target: ${targetPreset}${r.target.isClass ? ' (class)' : ''}, level ${r.target.level}${r.health ? `, ${r.health.toLocaleString()} HP` : ''}${traits.length ? `, traits: ${traits.join(', ')}` : ''}`);
   console.log('');
+  // M44: with an allowance the kill time shown is the allowance-sustained run's own, with the per-hit-capped ceiling
+  // named beside it. Without one it IS the ceiling (rule 7). A run that cannot kill says so, never '-'.
+  const ttk = r.allowance ? r.claimTotalTtk : (r.totalTtk ?? r.ttk);
+  const ttkLine = ttk ? `${fmt(ttk)} s` : r.allowance ? 'no kill' : '-';
+  const ttkLabel = r.allowance ? 'Time to kill' : 'Time to kill (per-hit-capped ceiling)';
+  const ttkNote = r.health
+    ? `${r.health.toLocaleString()} HP${r.ward ? ` + ${r.ward} ward` : ''}${r.shields ? ` + ${r.shields}s shields` : ''}${r.allowance ? `; allowance-sustained - ceiling: ${fmt(r.ceilingTotalTtk)} s` : r.enchantDps > 0 ? ' (weapon + procs)' : ''}`
+    : 'no boss health';
   console.log(table([
     ['Hit chance', pc(r.hit.hit), `${pc(r.hit.crit.chance)} critical, x${fmt2(r.hit.crit.damageMult)}`],
     ...(r.backstab?.chance > 0 ? [['Backstab', `${pc(r.backstab.chance)} x3`, r.backstab.uptime > 0 ? `uptime ${pc(r.backstab.uptime)}; expected x${fmt2(r.backstab.expectedMult)}` : 'available; use --behind']] : []),
@@ -481,10 +491,20 @@ function printBuild(ch, r, targetPreset, values) {
     ['Expected / swing', fmt(r.perSwing), 'hit chance and criticals included'],
     ['Swing time', `${fmt2(r.cadence.seconds)} s`, `${fmt2(r.cadence.aps)} swings/s`],
     ['DPS', fmt(r.dps), r.cap ? `per-hit-capped ${fmt(r.cappedDps)} (${pc(r.capLoss)} lost) - a ceiling${r.allowance ? ', not what the boss accepts' : ''}` : 'no per-hit cap'],
-    ...(r.enchantDps > 0 ? [['Enchant procs', fmt(r.enchantDps), `${fmt(r.enchantPerSwing)} per landed hit${r.procsBeforeBreak ? `; ${billCapacityNote(r.procsBeforeBreak)}` : ''}`], ['Total (per-hit-capped ceiling)', fmt(r.totalDps), 'capped weapon + enchant procs']] : []),
+    ...(r.enchantDps > 0 ? [['Enchant procs', fmt(r.enchantDps), `${fmt(r.enchantPerSwing)} per landed hit${r.procsBeforeBreak ? `; ${billCapacityNote(r.procsBeforeBreak)}` : ''}`], ['Total (per-hit-capped ceiling)', fmt(r.totalDps), 'capped weapon + uncapped proc sum - a ceiling']] : []),
     ...(r.allowance ? allowanceRows(r.allowance) : []),
-    ['Time to kill', (r.totalTtk ?? r.ttk) ? `${fmt(r.totalTtk ?? r.ttk)} s` : '-', r.health ? `${r.health.toLocaleString()} HP${r.ward ? ` + ${r.ward} ward` : ''}${r.shields ? ` + ${r.shields}s shields` : ''}${r.enchantDps > 0 ? ' (weapon + procs)' : ''}${r.allowance ? ' - through the relay allowance' : ''}` : 'no boss health'],
+    [ttkLabel, ttkLine, ttkNote],
   ], ['Metric', 'Value', 'Notes']));
+  const ttkGap = r.allowance && r.claimTotalTtk && r.ceilingTotalTtk
+    ? Math.abs(r.claimTotalTtk - r.ceilingTotalTtk) / r.claimTotalTtk : null;
+  if (r.allowance && r.ceilingTotalTtk && (r.claimTotalTtk === null || ttkGap > 0.01)) {
+    const figures = r.claimTotalTtk === null
+      ? `ceiling ${fmt(r.ceilingTotalTtk)} s; the allowance-sustained run never kills - the ceiling can promise a kill the allowance refuses`
+      : r.claimTotalTtk > r.ceilingTotalTtk
+        ? `ceiling ${fmt(r.ceilingTotalTtk)} s; allowance-sustained ${fmt(r.claimTotalTtk)} s - the ceiling can promise a kill the allowance refuses`
+        : `ceiling ${fmt(r.ceilingTotalTtk)} s; allowance-sustained ${fmt(r.claimTotalTtk)} s - ceiling and allowance-sustained differ by ${pc(ttkGap)}`;
+    console.log(`\nCeiling vs allowance: ${figures}.`);
+  }
   if (r.cap) console.log(`\n${r.capSource === 'hit cap' ? 'Per-hit hit cap' : 'Curbing cap'}: ${r.cap} per hit${r.capSource === 'curbing' ? ` (5% of ${r.health.toLocaleString()} HP)` : ''}.`);
   if (r.target?.phaseShields) console.log(`Phase shields: ${r.target.phaseShields} x ${r.target.shieldSeconds}s (${r.shields}s added to TTK).`);
   if (r.wrath) console.log(`Wrathful: enrages at ${r.wrathAt}s.`);
@@ -645,10 +665,15 @@ export async function main(argv = process.argv.slice(2)) {
       ['Enchant per landed hit', `${fmt(strike.procDamage + strike.flat)}${strike.procDot ? ` + ${fmt(strike.procDot / 5)} DoT DPS` : ''}`],
       ['Enchant DPS', fmt(r.enchantDps)],
       ['Total (per-hit-capped ceiling)', fmt(r.totalDps)],
+      ...(r.allowance ? [
+        ['Allowance-sustained DPS', fmt(r.claimSustainedDps)],
+        ['Time to kill (allowance-sustained)', r.claimTotalTtk ? `${fmt(r.claimTotalTtk)} s` : 'no kill'],
+        ['Time to kill (per-hit-capped ceiling)', r.ceilingTotalTtk ? `${fmt(r.ceilingTotalTtk)} s` : '-'],
+      ] : []),
       ['CWS bills covered (bill-only)', r.procsBeforeBreak ?? '-'],
       ['Procs', strike.procs.map((p) => `${p.name} ${p.dotTick ? `DoT ${fmt(p.dotTick)}/round` : fmt(p.damage)}`).join(', ') || '-'],
     ], ['Metric', 'Value']));
-    if (values.json) console.log(JSON.stringify({ enchantments: rows, strike, result: { weaponDps: r.dps, enchantDps: r.enchantDps, totalDps: r.totalDps, procsBeforeBreak: r.procsBeforeBreak, procsBeforeBreakBasis: r.procsBeforeBreakBasis } }, null, 2));
+    if (values.json) console.log(JSON.stringify({ enchantments: rows, strike, result: { weaponDps: r.dps, enchantDps: r.enchantDps, totalDps: r.totalDps, ceilingTotalDps: r.ceilingTotalDps, ceilingTotalTtk: r.ceilingTotalTtk, claimTotalTtk: r.claimTotalTtk, claimSustainedDps: r.claimSustainedDps, procsBeforeBreak: r.procsBeforeBreak, procsBeforeBreakBasis: r.procsBeforeBreakBasis } }, null, 2));
     return;
   }
 

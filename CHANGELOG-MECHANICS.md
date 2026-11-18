@@ -6,6 +6,102 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage 4a (M44) - the ceiling and the claim-based run are named and printed apart (W-PROC-BUDGET) (2026-11-18)
+
+**What the game does.** Nothing new is modelled. The relay bills every Cast When Strikes proc and every Continuous
+Damage round as its own claim against the per-hit cap and the allowance (`vendor:scenes/gate/standInSpell.js:131-151`,
+`:198-217`; the local claim list is `src/allowance.js:97-115` `claimStreams`), and the local allowance has run that law
+since Stage 3.7 (`src/allowance.js:134-297` `simulateAllowance`/`runAllowance`). The card's default figures do NOT do
+that: `totalDps = cappedDps + enchantDps` and `totalTtkCapOnly = (health + ward) / that + shields` add the procs
+(direct plus DoT) to the per-hit-capped weapon figure, so they are an upper bound, not a relay verdict.
+
+**What changed.** Naming only; no arithmetic. `analyze` (`src/model.js:1119-1132`) also exposes
+`ceilingTotalDps` (= `totalDps`), `ceilingTotalTtk` (= `totalTtkCapOnly` - the pure ceiling; `ttkCapOnly` is the
+weapon-only one), and the allowance run's own figures `claimTotalTtk` (= `allowance.ttk`) and `claimSustainedDps`
+(= `allowance.sustainedDps`). `claimSustainedDps` is `null` only without an allowance spec; `claimTotalTtk` is also
+`null` when the run cannot kill inside the horizon. Every existing key keeps its value, with one caveat: the
+pre-existing `totalTtk` carries the claim figure only when the run KILLS - when it cannot, `gate?.totalTtk ?? totalTtk`
+(`src/model.js:1246`, `:1295`, `:1583`) falls back to the ceiling, so read `claimTotalTtk` (null then). `src/cli.js`
+labels the allowance row `Allowance-sustained DPS`, prints the allowance-sustained kill time with `ceiling: X s` beside
+it (`no kill` when there is none), labels the no-allowance row `Time to kill (per-hit-capped ceiling)`, adds a
+`Ceiling vs allowance` line when the two differ by more than 1% - the fixed "the ceiling can promise a kill the
+allowance refuses" sentence only when the claim is null or longer, otherwise `ceiling and allowance-sustained differ by
+X%` - and adds the four fields to `build --json` and `enchant --json`. `src/report.js` does the same on the cards and
+prints the same note. `W-PROC-BUDGET` is narrowed, not closed: the default figures are still the ceiling by definition;
+the pin stays live.
+
+**Measured before/after** (2026-11-18, the shipped/test fixtures; TTK in seconds). "before" is the same card read
+through its old names:
+
+| build | ceilingTotalDps | allowance-sustained DPS | ceilingTotalTtk | claimTotalTtk | claim / ceiling |
+|---|---|---|---|---|---|
+| waiver pin: 3 instant procs, level-45 gate | 710.09 | 150 | 22.90 | 75.69 | 3.31x |
+| geared blade + 1 CWS row, level-45 gate | 935.57 | 150 | 18.83 | 75.98 | 4.04x |
+| the same geared blade, no enchants | 821.24 | 150 | 20.61 | 75.98 | 3.69x |
+| weak blade, no enchants (below the refill) | 65.03 | 65.03 | 190.52 | 189.54 | 0.995x |
+| dual pair + CWS DoT, level-30 gate (below the refill) | 19.31 | 19.31 | 441.00 | 438.77 | 0.995x |
+
+A no-proc build can still differ: the allowance clips the weapon blows themselves (row 3). A build under the refill
+has a slightly SHORTER claim figure (rows 4-5, 0.5%); that is the claim schedule's discretisation, traced and exact,
+not a proc or clipping effect:
+
+- Claims land on `interval = 1/(aps x hit)` (the first at one interval), so the run ends on the first claim whose
+  cumulative damage covers the pool: 300 claims deliver 12,006.25 against 12,000 HP on the weak fixture, 6.25 HP of
+  overkill = 0.096 s.
+- A phase shield is charged in full by the card (3 s each, 6 s), but the claim run only loses the claims that fall
+  strictly inside it: `floor((3 - eps)/interval)` claims. On the weak fixture `interval` = 0.6154 s, so 4 claims per
+  shield (2.462 s), 8 refusals over two shields (`claimsRefused: 8`).
+- Difference = 6 - 8 x 0.6154 - 6.25/65.032 = 6 - 4.9232 - 0.0961 = **0.9807 s**, exactly the measured
+  190.5241 - 189.5434. The multi-stream dual pair is the same quantity: refused damage 8,467.56 - 8,400.98 = 66.58 at
+  the 19.31 offered DPS = 3.448 s against the card's 6 s, plus 0.32 s of kill-claim slack (435.00 + 3.45 + 0.32 =
+  438.77). The purse (65 DPS < 150/s) and token bucket (1.62 claims/s < 4/s) do not bind, so neither is the cause. The
+  1% note tolerance is why rows 4-5 print no note. The pin's 22.90 vs 75.69 s is the disagreement the waiver records.
+
+**Red, before the change** (`test/procBudget.test.js`, the two new M44 cases, pre-change code):
+
+```
+✖ M44: the ceiling aliases are the same numbers as the fields they name
+  AssertionError [ERR_ASSERTION]: single-hand DoT: ceilingTotalDps is totalDps
+  + actual - expected
+    undefined
+    18.45575042735043
+✖ M44: the ceiling can promise a kill the allowance refuses - named, and printed beside it
+  TypeError: Cannot read properties of undefined (reading 'toFixed')
+```
+
+**Red, before the follow-up fixes** (the null-claim, note-direction and no-allowance-label cases, on the first cut):
+
+```
+✖ M44: the ceiling can promise a kill the allowance refuses - named, and printed beside it
+  AssertionError [ERR_ASSERTION]: and it names the direction
+✖ M44: an allowance that cannot kill leaves the claim figure null, and totalTtk falls back to the ceiling
+  AssertionError [ERR_ASSERTION]: the CLI says the claim run never kills, not "-"
+✖ M44: the gap note names its direction - the ceiling is not always the shorter figure
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /ceiling and allowance-sustained differ by \d+%/
+✖ M44: without an allowance the kill time is labelled as the per-hit-capped ceiling
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /Time to kill \(per-hit-capped ceiling\)/
+```
+
+**Green, after** (`npm test`): 0 failures. The alias cases assert `ceilingTotalDps === totalDps`,
+`ceilingTotalTtk === totalTtkCapOnly`, `claimTotalTtk === allowance.ttk` and `claimSustainedDps === allowance.sustainedDps`
+on the single-hand DoT, dual-pair and pin fixtures, and both aliases `null` on a plain reference foe; the label cases
+assert the pin's `ceilingTotalTtk < claimTotalTtk`, the report's `Total (per-hit-capped ceiling)` /
+`Allowance-sustained DPS` / `ceiling: X s` strings and `Ceiling vs allowance` note with its direction, the CLI's same
+rows, and the new JSON fields on both `build --json` and `enchant --json`. The follow-up cases add a level-45 gate at
+1e8 HP (the run never kills: `claimTotalTtk` null, `ceilingTotalTtk` finite, `totalTtk` === the ceiling, the report/CLI
+say `no kill`/`never kills`), the neutral note branch (a 1,000 HP gate, claim shorter: `ceiling and allowance-sustained
+differ by X%`, never the "promises a kill" sentence), and the no-allowance label (`Time to kill (per-hit-capped
+ceiling)`, with no `null`/`NaN` when there is no health at all).
+
+**Outputs moved: none.** No existing key's value changes and no printed number changes (the CLI/report add rows and
+labels; a `-` becomes `no kill` only where an allowance exists and never kills). The waiver entry was reworded, the pin
+assertion is unchanged.
+
+**Evidence.** `test/procBudget.test.js` M44 cases (see above); `test/harness/waivers.mjs` `W-PROC-BUDGET` (narrowed).
+Limits: the ceiling is still an uncapped-proc upper bound until procs are priced as capped claims (Stage 4); a target
+without an allowance spec has no claim figure (`null`), nor does a run that cannot kill (`claimTotalTtk` null, and the
+pre-existing `totalTtk` falls back to the ceiling).
+
 ## Stage 3.7i - the seeded fight streams carry the percentage fraction (W-LOOT-CARRY step 3) (2026-11-18)
 
 **What the game does.** Every percentage blow channel floors the blow and keeps the remainder on the held item:

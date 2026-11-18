@@ -12,11 +12,18 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { character, simCharacter, weapon } from './harness/fixtures.mjs';
 import { analyze, gateTarget, referenceFoe, weaponOf } from '../src/model.js';
 import { enchantDps, strikeEnchantments } from '../src/enchants.js';
 import { ALLOWANCE, DOT_ROUND_S, claimStreams, refOf } from '../src/allowance.js';
 import { MAGIC_ROUND_SECONDS } from '../src/spells.js';
+import { buildReport } from '../src/report.js';
+import { theoryCharacter } from '../src/theory.js';
+import { perfectSockets } from '../src/sockets.js';
 import { expectKnownDiscrepancy } from './harness/waivers.mjs';
 
 const BASIC = () => character({ level: 45, raceId: 1, skills: 40, online: false });
@@ -183,10 +190,8 @@ test('3.7 band: a Pistolet pair claims one merged DoT round and its band bracket
     `totalDps ${pair.totalDps} inside [${pair.totalDpsMin}, ${pair.totalDpsMax}]`);
 });
 
-test('waiver pin (W-PROC-BUDGET): the ceiling still prices CWS procs on top of the capped weapon figure', () => {
-  // Three big instant procs at the gate saturate the allowance: the ceiling (ttkCapOnly) prices their full summed rate
-  // on top of the capped weapon figure, while the allowance can only pay the refill, so the ceiling promises a kill the
-  // allowance refuses.
+/** The waiver pin's build (and M44's labels): three big instant procs at the level-45 gate. */
+const heavyProcs = () => {
   const item = weapon(121, { material: 9 });
   item.enchantments = [{ type: 2, param: 1 }, { type: 2, param: 2 }, { type: 2, param: 3 }];
   const desc = character({
@@ -197,7 +202,14 @@ test('waiver pin (W-PROC-BUDGET): the ceiling still prices CWS procs on top of t
     ...dotSpell(index, 1000),
     effects: [{ ...dotSpell(index, 1000).effects[0], type: 4, durationBase: 0 }],
   });
-  const standard = new Map([[1, instant(1)], [2, instant(2)], [3, instant(3)]]);
+  return { ch, item, standard: new Map([[1, instant(1)], [2, instant(2)], [3, instant(3)]]) };
+};
+
+test('waiver pin (W-PROC-BUDGET): the ceiling still prices CWS procs on top of the capped weapon figure', () => {
+  // Three big instant procs at the gate saturate the allowance: the ceiling (ttkCapOnly) prices their full summed rate
+  // on top of the capped weapon figure, while the allowance can only pay the refill, so the ceiling promises a kill the
+  // allowance refuses.
+  const { ch, item, standard } = heavyProcs();
   const gate = gateTarget(45);
   const card = analyze(ch, { target: gate, health: gate.maxHealth, weapon: weaponOf(item), standard });
   assert.ok(card.enchantDps > 0, 'the procs price');
@@ -208,4 +220,147 @@ test('waiver pin (W-PROC-BUDGET): the ceiling still prices CWS procs on top of t
     ceilingWithProcsTtk: card.totalTtkCapOnly, allowanceWithProcsTtk: card.totalTtk, enchantDps: card.enchantDps,
     sustainedDps: card.allowance?.sustainedDps ?? null,
   });
+});
+
+// ── M44: the labelling split - the ceiling's numbers, and the claim-based run beside them ──────────────────────────
+
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+/** Run the real CLI in theory mode (no save needed); its default gate target carries the allowance. */
+const cli = (cmd, extra = [], json = false) => execFileSync(
+  process.execPath,
+  [path.join(REPO, 'bin', 'dfo-dps.js'), cmd, '--theory', ...extra, ...(json ? ['--json'] : [])],
+  { env: { ...process.env, HOME: os.tmpdir() }, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' },
+);
+/** `build --json` prints one document; `enchant --json` prints its table first (existing behaviour). */
+const cliJson = (cmd, extra = []) => {
+  const out = cli(cmd, extra, true);
+  const at = out.startsWith('{') ? 0 : out.indexOf('\n{') + 1;
+  assert.ok(at >= 0, `${cmd}: a JSON document in the output`);
+  return JSON.parse(out.slice(at));
+};
+
+test('M44: the ceiling aliases are the same numbers as the fields they name', () => {
+  const g30 = gateTarget(30);
+  const { ch, main, standard } = dotPair();
+  const single = simCharacter(character({ level: 30, raceId: 1, skills: 40, online: false }), main);
+  const one = analyze(single, { target: g30, health: g30.maxHealth, weapon: weaponOf(main), standard });
+  const dual = analyze(ch, { target: g30, health: g30.maxHealth, weapon: weaponOf(main), dual: true, standard });
+  const { ch: pinCh, item: pinItem, standard: pinStd } = heavyProcs();
+  const g45 = gateTarget(45);
+  const pin = analyze(pinCh, { target: g45, health: g45.maxHealth, weapon: weaponOf(pinItem), standard: pinStd });
+
+  for (const [name, card] of [['single-hand DoT', one], ['dual DoT pair', dual], ['waiver pin', pin]]) {
+    assert.equal(card.ceilingTotalDps, card.totalDps, `${name}: ceilingTotalDps is totalDps`);
+    assert.equal(card.ceilingTotalTtk, card.totalTtkCapOnly, `${name}: ceilingTotalTtk is totalTtkCapOnly`);
+    assert.equal(card.claimTotalTtk, card.allowance.ttk, `${name}: claimTotalTtk is the allowance run's own ttk`);
+    assert.equal(card.claimSustainedDps, card.allowance.sustainedDps, `${name}: claimSustainedDps is allowance.sustainedDps`);
+  }
+  assert.equal(pin.claimTotalTtk, pin.totalTtk, 'when the allowance kills, the existing totalTtk IS the claim figure');
+
+  // No allowance spec: there is no claim run, so the claim aliases say so instead of borrowing the ceiling.
+  const noRelay = analyze(single, { target: referenceFoe(30, 'tough'), health: 5000, weapon: weaponOf(main) });
+  assert.equal(noRelay.allowance, null);
+  assert.equal(noRelay.claimTotalTtk, null);
+  assert.equal(noRelay.claimSustainedDps, null);
+  assert.equal(noRelay.ceilingTotalTtk, noRelay.totalTtkCapOnly);
+});
+
+test('M44: the ceiling can promise a kill the allowance refuses - named, and printed beside it', () => {
+  const { ch, item, standard } = heavyProcs();
+  const gate = gateTarget(45);
+  const card = analyze(ch, { target: gate, health: gate.maxHealth, weapon: weaponOf(item), standard });
+  assert.ok(card.ceilingTotalTtk < card.claimTotalTtk,
+    `ceiling ${card.ceilingTotalTtk.toFixed(2)} s < allowance-sustained ${card.claimTotalTtk.toFixed(2)} s`);
+  assert.ok(card.claimTotalTtk > card.ceilingTotalTtk * 2, 'more than twice as long: not a rounding difference');
+
+  // The HTML report labels both figures on the card...
+  const html = buildReport(ch, { target: gate, health: gate.maxHealth, weapon: weaponOf(item) });
+  assert.match(html, /Total \(per-hit-capped ceiling\)/);
+  assert.match(html, /Allowance-sustained DPS/);
+  assert.match(html, /ceiling: [\d.]+ s/, 'the time-to-kill card names the ceiling figure');
+  // ...and says what the gap means on a build whose weapon blows the allowance cannot pay (a no-proc build: the gap
+  // is the allowance-only clipping, not a proc sum).
+  const geared = theoryCharacter({ level: 45, gearLB: 240, gearCS: 540, damagePct: 40, sockets: perfectSockets(123), martialPath: 'blademaster' });
+  const bound = buildReport(geared, { target: gate, health: gate.maxHealth });
+  assert.match(bound, /Ceiling vs allowance/, 'the divergence note is printed');
+  assert.match(bound, /the ceiling can promise a kill the allowance refuses/, 'and it names the direction');
+
+  // The CLI table labels them the same way, and its JSON carries the split as new fields.
+  const text = cli('build');
+  assert.match(text, /Allowance-sustained DPS/);
+  assert.match(text, /Ceiling vs allowance/);
+  assert.match(text, /allowance-sustained [\d.]+ s/, 'the CLI prints the claim-based kill time');
+  const build = cliJson('build').result;
+  assert.equal(build.ceilingTotalDps, build.totalDps, 'ceilingTotalDps aliases totalDps');
+  assert.equal(typeof build.ceilingTotalTtk, 'number', 'ceilingTotalTtk is exported');
+  assert.ok(build.claimTotalTtk >= build.ceilingTotalTtk, 'the saturated theory build: the claim figure is not shorter than the ceiling');
+  assert.equal(typeof build.claimSustainedDps, 'number', 'claimSustainedDps is exported');
+  const enchant = cliJson('enchant').result;
+  assert.equal(enchant.ceilingTotalDps, enchant.totalDps);
+  assert.equal(typeof enchant.claimTotalTtk, 'number');
+});
+
+test('M44: an allowance that cannot kill leaves the claim figure null, and totalTtk falls back to the ceiling', () => {
+  const { ch, item } = heavyProcs();
+  const gate = gateTarget(45, { health: 100000000 });
+  const card = analyze(ch, { target: gate, health: gate.maxHealth, weapon: weaponOf(item) });
+  assert.ok(card.allowance, 'the allowance run exists - it just never kills inside the horizon');
+  assert.equal(card.claimTotalTtk, null, 'the run killed nothing: no claim figure');
+  assert.ok(Number.isFinite(card.ceilingTotalTtk) && card.ceilingTotalTtk > 0, 'the ceiling still has a finite kill time');
+  assert.equal(card.totalTtk, card.ceilingTotalTtk, 'the existing totalTtk falls back to the ceiling when the run cannot kill');
+  assert.equal(card.claimSustainedDps, card.allowance.sustainedDps, 'the sustained figure exists even when the kill does not');
+
+  const html = buildReport(ch, { target: gate, health: gate.maxHealth, weapon: weaponOf(item) });
+  assert.match(html, /Time to kill \(allowance-sustained\)/);
+  assert.match(html, /no kill/);
+  assert.match(html, /the allowance-sustained run never kills/);
+
+  const text = cli('build', ['--health', '100000000']);
+  assert.match(text, /no kill/, 'the CLI says the claim run never kills, not "-"');
+  assert.match(text, /the allowance-sustained run never kills/);
+  const json = cliJson('build', ['--health', '100000000']).result;
+  assert.equal(json.claimTotalTtk, null);
+  assert.ok(Number.isFinite(json.ceilingTotalTtk));
+  assert.equal(json.totalTtk, json.ceilingTotalTtk, 'the JSON totalTtk is the ceiling fallback');
+});
+
+test('M44: the gap note names its direction - the ceiling is not always the shorter figure', () => {
+  // A level-45 gate at 1,000 HP: the run kills within/just after the first shield, so the card's flat +6 s is not paid
+  // and the allowance-sustained figure is the SHORTER one. The fixed "promises a kill" sentence would be a lie there.
+  const weak = theoryCharacter({ level: 45, rawBlade: 100, rawCrit: 50, rawBackstab: 100, blade: 121 });
+  weak.masteredSkills = [];
+  const gate = gateTarget(45, { health: 1000 });
+  const card = analyze(weak, { target: gate, health: 1000 });
+  assert.ok(card.claimTotalTtk < card.ceilingTotalTtk,
+    `claim ${card.claimTotalTtk.toFixed(2)} s < ceiling ${card.ceilingTotalTtk.toFixed(2)} s`);
+
+  const html = buildReport(weak, { target: gate, health: 1000 });
+  assert.match(html, /ceiling and allowance-sustained differ by \d+%/);
+  assert.doesNotMatch(html, /the ceiling can promise a kill the allowance refuses/);
+
+  const text = cli('build', ['--health', '1000']);
+  assert.match(text, /ceiling and allowance-sustained differ by \d+%/);
+  assert.doesNotMatch(text, /the ceiling can promise a kill the allowance refuses/);
+
+  // The other direction keeps the fixed sentence (same build, 2,000 HP: the run outlasts the ceiling).
+  const long = cli('build', ['--health', '2000']);
+  assert.match(long, /the ceiling can promise a kill the allowance refuses/);
+  assert.doesNotMatch(long, /differ by/);
+});
+
+test('M44: without an allowance the kill time is labelled as the per-hit-capped ceiling', () => {
+  const weak = theoryCharacter({ level: 45, rawBlade: 100, rawCrit: 50, rawBackstab: 100, blade: 121 });
+  weak.masteredSkills = [];
+  const foe = referenceFoe(45, 'tough');
+  const html = buildReport(weak, { target: foe, health: 5000 });
+  assert.match(html, /Time to kill \(per-hit-capped ceiling\)/);
+
+  const text = cli('build', ['--target', 'tough', '--health', '5000']);
+  assert.match(text, /Time to kill \(per-hit-capped ceiling\)/);
+
+  // No boss health at all: the row is a placeholder (fmt(null) is '-'), never "null"/"NaN".
+  const bare = cli('build', ['--target', 'tough']);
+  assert.match(bare, /Time to kill \(per-hit-capped ceiling\)/);
+  assert.match(bare, /Time to kill \(per-hit-capped ceiling\)\s+-\s+no boss health/, "fmt(null) renders '-'");
+  assert.doesNotMatch(bare, /null|NaN/);
 });

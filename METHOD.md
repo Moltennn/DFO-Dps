@@ -60,11 +60,41 @@ whole fights and report distributions.
 |---|---|---|
 | uncapped | `dps`, `perSwing` | the blow at full foe health, before the per-hit cap: the Combat Stats card's rate |
 | per-hit-capped | `cappedDps`, `cappedPerSwing` | the same blow after the cap; a **ceiling**, not what a relay accepts |
+| ceiling (card total) | `ceilingTotalDps`, `ceilingTotalTtk` | the per-hit-capped weapon figure plus the **uncapped** proc sum: an upper bound, never a relay verdict. Aliases of `totalDps` / `totalTtkCapOnly` (same values; those keys are unchanged) |
 | allowance-sustained | `allowance.sustainedDps` | the relay's refill once the purse/bucket limit binds |
+| allowance-sustained TTK | `claimTotalTtk` | the allowance run's own time to kill (`allowance.ttk`), null when the target declares no allowance or the run cannot kill inside the horizon; it is the figure `totalTtk` carries when the run KILLS (when it cannot, `totalTtk` falls back to the ceiling) |
+| claim-based sustained DPS | `claimSustainedDps` | alias of `allowance.sustainedDps`, null without an allowance spec |
 | opening burst | `allowance.burst5Dps` | the first 5 s while the relay purse is full |
 | carried sustained mean | `carriedDps`, `carriedCappedDps` | a held item's long-run mean of a percentage line (the exact share, not the card's per-blow floor); pricing reads this |
 | sampled fight | `stochastic-ttk`, `kill-probability` | seeded `simulateFight` trials: kill rate with a mean-TTK interval, or the share that kills inside the horizon (Wilson) |
 | sampled relay | `stochastic-relay` | the same over `simulateRelayFight` claims |
+
+The ceiling and the allowance-sustained run are different questions, so the CLI
+and the HTML report print both when the target has an allowance, each labelled
+(`ceiling` vs `allowance-sustained`), and add a one-line note when they differ by
+more than 1% - the note says the ceiling can promise a kill the allowance
+refuses only when the claim figure is null or longer; otherwise it states the
+percentage. Without an allowance the kill time is labelled as the per-hit-capped
+ceiling. The gap is relative to the claim figure; when the run cannot kill the
+claim figure is null and the pre-existing `totalTtk` falls back to the ceiling.
+
+Below the refill the claim TTK can be ~0.5% SHORTER than the ceiling, and that
+is the claim schedule's discretisation, not a proc effect:
+
+- claims land on a grid of `interval = 1 / (aps x hit)` (the first at one
+  interval), so the run ends on the first claim whose cumulative damage covers
+  the pool - up to one `perClaim` of overkill (6.25 HP = 0.096 s on the weak
+  level-45 fixture);
+- a phase shield is charged by the card as its full `shieldS`; the claim run
+  only loses the claims that fall strictly inside it, so a 3 s shield costs
+  `floor((3 - eps) / interval) x interval` (4 x 0.615 s = 2.462 s on that
+  fixture, 8 refused claims over two shields) rather than 3 s.
+
+Difference = 6 - 8 x 0.6154 - 6.25 / 65.032 = 0.9807 s, exactly the
+190.5241 -> 189.5434 s measured there (refused-claim damage / offered DPS is
+the same quantity on a multi-stream build). `W-PROC-BUDGET` records what
+remains: the ceiling is still an uncapped-proc upper bound until procs are
+priced as capped claims.
 
 `fight` and `fightRelay` are deterministic walks of the same health-dependent
 model; `snapshot`, `fight`, `relay` and `relay-ceiling` are the four

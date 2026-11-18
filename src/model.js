@@ -1111,6 +1111,10 @@ function allowancePatch(tgt, health, { cappedPerSwing, hit, aps, procs, cap, str
  * stream's long-run mean is the exact share, so the same pipeline is run once more with `carried: true`
  * (src/model.js `carriedPct`) and exposed as `carriedPerSwing` / `carriedCappedPerSwing` / `carriedDps` /
  * `carriedCappedDps` - the metric pricing deltas use. The fight streams still floor (W-LOOT-CARRY).
+ *
+ * The card's `totalDps` / `totalTtkCapOnly` are the CEILING (the per-hit-capped weapon figure plus the uncapped proc
+ * sum, an upper bound); they are also named `ceilingTotalDps` / `ceilingTotalTtk`, and a target that declares an
+ * allowance carries the run's own `claimTotalTtk` / `claimSustainedDps` (null otherwise) - ASSUMPTION M44.
  */
 export function analyze(ch, args = {}) {
   const r = analyzeCard(ch, args);
@@ -1119,6 +1123,13 @@ export function analyze(ch, args = {}) {
   r.carriedCappedPerSwing = carried.cappedPerSwing;
   r.carriedDps = carried.dps;
   r.carriedCappedDps = carried.cappedDps;
+  // M44: the same numbers, named for what they are. The CEILING sums the procs (direct + DoT) uncapped on top of the
+  // per-hit-capped weapon figure (an upper bound, before the relay); the CLAIM-based figures are the allowance run's
+  // own verdict and are null when the target declares no allowance. No number is recomputed here.
+  r.ceilingTotalDps = r.totalDps;
+  r.ceilingTotalTtk = r.totalTtkCapOnly;
+  r.claimTotalTtk = r.allowance?.ttk ?? null;
+  r.claimSustainedDps = r.allowance?.sustainedDps ?? null;
   Object.defineProperty(r, 'with', {
     value: (edit = {}) => {
       const { imprint, ...rest } = edit;

@@ -222,7 +222,8 @@ school potency, cost, cast recovery and per-tick DoT damage. Mana is treated
 as solved unless `--mana-limit` is passed.
 
 `enchant` shows the equipped weapon's Cast When Strikes, Potent Vs and related
-rows. CWS is an expected-value model, not a full proc scheduler; see the
+rows. CWS is an expected-value model, not a full proc scheduler; the ceiling and
+the allowance-sustained figures are printed labelled apart (M44). See the
 limitations in the README and the `W-PROC-BUDGET` waiver.
 
 ## 10. Graphs and the Combat Probe
@@ -388,6 +389,19 @@ HTML pages default to the current directory:
 
 Use `--out <file>` to override. Many table commands accept `--json`; use
 `--help` for the exact command.
+
+`build --json` and `enchant --json` carry the **ceiling vs claim** split in
+`result` (ASSUMPTION M44): `ceilingTotalDps` (= `totalDps`, the per-hit-capped
+weapon figure plus the uncapped proc sum), `ceilingTotalTtk` (=
+`totalTtkCapOnly`), and the allowance run's own `claimTotalTtk` and
+`claimSustainedDps`: `claimSustainedDps` is `null` without an allowance, and
+`claimTotalTtk` is also `null` when the run cannot kill. Every existing key
+keeps its value, with one caveat: `totalTtk` falls back to the ceiling when the
+allowance cannot kill, so read `claimTotalTtk` (null then). On a target with an
+allowance, `build` prints the allowance-sustained kill time (`no kill` when
+there is none), names the ceiling beside it, and adds a `Ceiling vs allowance`
+note when the two differ by more than 1%, naming the direction. Without an
+allowance the row is labelled `Time to kill (per-hit-capped ceiling)`.
 
 ## 15. First-run troubleshooting
 
