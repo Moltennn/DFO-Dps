@@ -135,10 +135,11 @@ Use `./dfo-dps --help` for every flag, or see
 
 - **Cast When Strikes and DoTs.** A CWS row's direct damage is resolved per blow
   in the ordinary fight (Stage 3.5.1), with its condition bill when
-  `durability: true` (Stage 3.5.2). The card, ceilings and relay still price
-  CWS/DoTs as expected damage per landed blow and per tick; proc/DoT claims are
-  not fully integrated into the headline ceilings and the relay fight; see
-  `W-PROC-BUDGET`.
+  `durability: true` (Stage 3.5.2); in the relay fight every proc and every DoT
+  round is its own claim, compared claim for claim against the vendored
+  compositor (Stage 3.7d-3.7f). The CARD and CEILING figures still price
+  CWS/DoTs as expected damage added to the capped weapon figure, so a ceiling can
+  promise a kill the allowance refuses; see `W-PROC-BUDGET`.
 - **Spells** use the live `SPELLS.STD` records, saving throws and school
   potency. Reflection/absorption and some effect families are not modelled.
 - **Firmament, enchant-plan, imprint and loadout** are supported planner
@@ -208,7 +209,9 @@ not verified.
 
 These are recorded as waivers or assumptions, not hidden:
 
-- `W-PROC-BUDGET`: proc/DoT DPS is still summed outside parts of the ceiling.
+- `W-PROC-BUDGET`: the relay fight bills every proc and DoT round as its own
+  claim (Stage 3.7d-3.7f); the ceiling figures still add that damage to the capped
+  weapon figure.
 - `W-WARD`: ward suppression of the per-blow powers fires on `target.warded`, which only a caller sets; the boss
   `warded` TRAIT's own pool does not suppress them, and DoT rounds are not ward-gated.
 - `W-LOOT-CARRY`: percentage lines floor each blow instead of carrying the

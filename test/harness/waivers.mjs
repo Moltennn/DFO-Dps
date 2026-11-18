@@ -21,11 +21,11 @@ export const WAIVERS = Object.freeze({
     fix: 'A later stage: the host copies the trait/boss ward onto the body as `target.warded` per blow (the card has no such per-blow state), and `runEffectRound` reads it. The Firmament needs the live sky law to become a real oracle.',
   },
   'W-PROC-BUDGET': {
-    title: 'The per-hit-capped ceiling still sums procs on top of weapon DPS',
+    title: 'The per-hit-capped ceiling still sums Cast When Strikes proc damage on top of the capped weapon figure',
     detail:
-      'C1 made every proc and DoT round its own relay claim in the allowance run (TTK, burst, sustained). The ceiling figures (totalDps, enchantDps) still add proc damage to weapon damage, and fold Potent Vs / Low Damage Vs (+-5) into the enchant layer instead of the blow (enchantments.js:623-631). Stage 2.9 modelled what the blow does with Potent Vs, and Stage 2.11a moved the EQUIPPED rows onto that same channel (src/model.js strikesNet), so an item and `with({ potentVs })` are one calculation and the enchant layer no longer adds `hit x 5`. What remains of this waiver is the Cast When Strikes procs: summed on top of the weapon figure, not as their own capped claims, and not a differential stage. The DoT round is one claim, summed then capped once, on both sides since Stage 3.7b (test/procBudget.test.js).',
-    evidence: 'standInSpell.js:131-151 vs src/enchants.js (procs and DoTs only since Stage 2.11a)',
-    fix: 'Stage 4 (procs).',
+      'The relay fight (simulateRelayFight) bills every Cast When Strikes proc and every Continuous Damage round as its own claim against the per-hit cap and the allowance, and test/relayDotDifferential.test.js compares that claim log with the vendored composition claim for claim (the composition is ASSUMPTION M38/M39; the claim boundary is not vendored). The CEILING figures are different: totalDps, enchantDps and totalTtkCapOnly add the proc damage (direct plus DoT) to the capped weapon figure instead of submitting it as claims, so the ceiling can promise a kill the allowance refuses (test/procBudget.test.js \'waiver pin\'). Closed: Potent Vs / Low Damage Vs ride the blow (Stage 2.9, Stage 2.11a, src/model.js strikesNet), and the DoT round is one claim, summed then capped once, on both sides since Stage 3.7b.',
+    evidence: 'test/procBudget.test.js \'waiver pin (W-PROC-BUDGET)\'; standInSpell.js:131-151, :198-217 (claims) vs src/enchants.js (ceiling sum); test/relayDotDifferential.test.js (relay side, closed)',
+    fix: 'Stage 4: price procs in the ceiling as capped claims, or report the summed figure only as a separately named uncapped metric.',
   },
   'W-LOOT-CARRY': {
     title: 'A percentage line floors each blow; the game carries the fraction between blows',

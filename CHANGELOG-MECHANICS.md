@@ -6,6 +6,69 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage 3.7f/3.7g - The relay compositor's CWS/DoT claims, differential and distributed
+
+**What the game does.** In a relay fight a Cast When Strikes row is resolved INSIDE the blow's formula: the vendored
+`systems/enchantments.js` doItemEnchantmentPayloads calls the host's `applySpellToTarget`
+(`full:scenes/gate/standInSpell.js:198-217`, `vendor:combat/formulas.js:826-836`), so the cast's damage lands BEFORE the
+host's blow claim and a cast kill suppresses it (`full:scenes/hostEnchant.js:198-209`); a proc is its own relay claim. A
+DoT round's ticks arrive as ONE claim per round (`standInSpell.js:131-151`), one round = 5 s (`src/spells.js:21`), and the
+body carries one like-kind entry (`vendor:systems/effects.js:1091-1103`). A shielded foe refuses a cast at the
+CastWhenStrikes gate itself (`vendor:systems/enchantments.js:597`) and refuses a claim at the engine
+(`vendor:net/gate/gateBrain.js:1308`; `src/relayClaim.js:149`).
+
+**What changed - test harness only.** `test/harness/relayFightOracle.mjs` now composes the CWS + Continuous Damage path
+the way the host does: a per-event claim log (`:73-79`), the vendored `tickActiveEffects` round clock with its own
+`flushRounds` at `k x 5 s` (`:81-100`) - its clock advances with the FIGHT's clock and an anchor that passed with no live
+entry bills nothing, so a late first cast cannot burst the anchors it missed, and the final drain stops once no entry
+lives - the `enchantCtx` that runs the vendored `effects.applySpell` and submits the cast's direct damage + first round as
+ONE claim before the blow's (`:102-111`), the host's live-foe gate on the blow claim (`:146`), and `strikesPositive` on the
+outcome object (`:154`, `:161`) so the local event seam's CWS gate can read it. Every claim still goes through the one
+vendored `applyHit`. No local result is an expected value. Two new test files: `test/relayDotDifferential.test.js` (the
+claim-log differential) and `test/relayProcTtk.test.js` (the distribution). `src/relayFight.js:385-394`: the drain also
+stops once no live entry remains - proved to move no output by the whole pre-existing relay suite
+(`test/relayClaimFight.test.js`, `test/relayClaimDifferential.test.js`, `test/relayRealSampler.test.js`,
+`test/relayFightDifferential.test.js`, `test/allowance.test.js`) and by the seeded no-CWS literal pin in
+`test/relayDotFight.test.js` ("a build with no CWS rows is bit-identical …", `ttk null`, `damageDealt 524`, `claims 32`,
+`time 30`), which is unchanged.
+
+**Outputs moved: none.** No src defect was exposed: the differential agrees claim for claim on every fixture, so the card,
+the fight, the allowance and the relay numbers are unchanged. **No divergence was found** - had one appeared, it would be
+reported here with its numbers rather than patched.
+
+**Evidence.** `test/relayDotDifferential.test.js`: the local `claimLog` equals the oracle's claim log claim for claim
+(kind, time, `claim`, `got`, `bucket`, `tokens`, `hp`, cumulative `clipped`) for - CWS direct only (the cast claim before
+the blow claim at one timestamp); CWS + DoT (rounds claim once each, on the 5 s anchors); CWS + Many Endings (the echo
+stays inside the blow claim); a cast inside a shield (no cast before `shieldUntil`, the fight casts after); a DoT round
+inside a shield (the primed entry ticks, the 5 s claim is refused by the engine, the 10 s claim is paid); and a CWS kill
+(the cast claim kills, no blow claim follows); and a LATE FIRST CAST (the first attack at 13 s, after the 5 s and 10 s
+anchors passed with no entry: no round is billed retroactively). Two NEGATIVE CONTROLS prove the comparison bites: the
+local cast stream shifted by one draw diverges (with the aligned run asserted to carry both a `proc` and a `dot` claim, so
+empty-vs-empty cannot pass), and a swapped cast/blow order or a split merged cast claim is caught on order and length
+alone (both perturbations are made in the expectation, never the repository).
+`test/relayProcTtk.test.js`: n = 24 seeded fights of a CWS+DoT build against the upstream compositor's own seeded fights
+over the same schedule - mean TTK **297.95 s vs 298.94 s, bias -0.33%**; the LOCAL mean's 95% CI is **+/-3.20 s** and the
+oracle mean's **+/-1.37 s**, inside the 1% bound of the `test/relayFight.test.js` precedent; and the proc build kills at
+**197.24 s vs 439.60 s** (122.9% faster) than the same blade without its CWS row on a body whose 600-a-claim cap binds
+nothing. The two new files add about 2.5 s to the suite (each well under the heavy-file budget), so no file was added to
+`tools/test-fast.mjs`'s HEAVY list. `npm test` reports 0 failures; vendor verify OK. `W-PROC-BUDGET` is narrowed (not
+closed) to the ceiling's summed procs, with the exact replacement text in `test/harness/waivers.mjs`; `W-WARD`,
+`W-LOOT-CARRY` and `W-DEX-LOADOUT` are untouched.
+
+**Limits.** The oracle composes the cast and the rounds from the same helpers the local fight uses, so this is a
+composition differential, not a second derivation of `applySpell` (that is `test/cwsDifferential.test.js` and
+`test/dotDifferential.test.js`). Two honest gaps in the oracle (M39): it imports `MAGIC_ROUND_SECONDS` from the project's
+`src/spells.js:21` - the same constant on both sides, not a vendored value - and it aliases the seam's `strikesPositive`
+to `raw > 0` (the POST-payload answer), where the local gate reads the PRE-payload damage (`src/cws.js:12`, `:334`); the
+two differ only when the Strikes payload moves a blow across zero (Potent Vs / Low Damage Vs), no such CWS fixture exists,
+and a case is not feasible because the vendored formula exposes only the post-payload `damage`
+(`vendor:combat/formulas.js:632`) and a second payload-free run would draw again and desync the streams. The TTK
+comparison is a MEAN test with independent streams on the two sides: n = 24, fixed seeds, so it is deterministic; the
+bound is 1% (about 2.2x the oracle CI and 0.6x the local CI) and catches only a gross composition error of roughly 1.5%
+or more. The oracle reuses one `roundDraws` script across the seeds (a fixture, not a sampling claim); per-fight equality
+is the differential's job. The relay's phase-ward LIFECYCLE is still a fixed `shieldUntil` (M38), so a shield that starts
+mid-fight is not exercised.
+
 ## Stage 3.7d/3.7e - CWS and DoT claims inside a relay fight, and the per-kind accounting
 
 **What the game does.** A Cast When Strikes proc is its own relay claim (`full:scenes/gate/standInSpell.js:198-217`

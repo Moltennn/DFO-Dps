@@ -383,8 +383,14 @@ export function simulateRelayFight(ch, args = {}) {
   }
 
   // The drain: rounds still due inside the horizon are billed after the loop ends (simulateFight.js:728-731), so a DoT
-  // cast on the last blow is still counted and can kill. Guarded like the loop's own clock: no entry can exist otherwise.
-  while (holdsEntries && nextRoundT <= maxSeconds && !engine.killed) { dotRound(nextRoundT); nextRoundT += MAGIC_ROUND_SECONDS; }
+  // cast on the last blow is still counted and can kill. Guarded like the loop's own clock: no entry can exist otherwise,
+  // and it stops as soon as no live entry is left (a no-op pass would claim nothing anyway).
+  const liveDot = () => (fightTarget?.activeEffects ?? [])
+    .some((a) => a?.kind === 'continuousDamage' && (a.roundsRemaining ?? 0) > 0);
+  while (holdsEntries && liveDot() && nextRoundT <= maxSeconds && !engine.killed) {
+    dotRound(nextRoundT);
+    nextRoundT += MAGIC_ROUND_SECONDS;
+  }
   if (engine.killed) termination = 'kill';
 
   const s = engine.summary();
