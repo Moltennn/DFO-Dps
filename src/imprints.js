@@ -82,7 +82,7 @@ export function powerDps(power, base, conditional = false, { capped = false } = 
   // code that reads an equipped power (src/model.js `lootPowerTerms`) reads this one, with its condition taken
   // from the target and the scenario. `conditional` only assumes the trigger holds (a pricing assumption).
   // The figure is the CARRIED metric (the held item's long-run mean), not the card's floored estimate: a
-  // percentage power's worth is its exact share (W-LOOT-CARRY, docs/ASSUMPTIONS.md M41).
+  // percentage power's worth is its exact share (W-LOOT-CARRY).
   const priced = base.with({ imprint: power, assumeTriggers: conditional });
   return capped ? priced.carriedCappedDps : priced.carriedDps;
 }

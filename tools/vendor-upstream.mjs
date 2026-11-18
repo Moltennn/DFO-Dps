@@ -117,7 +117,7 @@ export const ROOTS = Object.freeze([
   // root is never cut; its imports into the excluded directories (scenes/, render/, ui/, net/, world/) stay stubs, so
   // each of these is vendored as readable source and is never called by the harness unless a test says so.
   //  - the round summing, the `turned` gate and the first-round-in-the-cast rule of a stand-in's spell claims
-  //    (docs/ASSUMPTIONS.md M35, M38, M39; docs/STAGE-3-AUDIT.md A3.0-6, A3.0-7)
+  //
   'scenes/gate/standInSpell.js',
   //  - the claim door `gateCourt.hit` (the host rounding and the sub-1 drop, Q3), claim ordering within one timestamp
   //    (Q1) and COURT_ROUND_MS (:159), the round anchor that M35 assumes
@@ -127,7 +127,7 @@ export const ROOTS = Object.freeze([
   'net/wire.js',
   //  - NOT vendored: scenes/dungeonContext.js and scenes/hostEnchant.js (the host, U8). A dry run showed dungeonContext
   //    alone pulls in 148 files / 3.7 MB of unrelated systems and it is a scene host the harness cannot call; U8 is
-  //    answered by reading the pinned checkout and citing it as `full:` (docs/ASSUMPTIONS.md U8).
+  //    answered by reading the pinned checkout and citing it as `full:`.
   //  - the Firmament's sky law, now a stub (STUBS.md), so its blow gate and percentage had no live oracle
   'net/firmament/firmamentLaw.js',
 ]);

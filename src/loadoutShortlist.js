@@ -9,9 +9,10 @@ const universeCache = new Map();
 export function shortlistLoadouts({
   k, mode = 'uncapped', encounter = 'breach', vampire = false,
   objective = mode === 'cap' ? 'stochastic-relay' : 'stochastic-ttk',
-  trials = MIN_STOCHASTIC_TRIALS, seed = 0, maxSeconds = 900, maxBlows = 6000,
+  trials = MIN_STOCHASTIC_TRIALS, seed = 0, maxSeconds = 900, maxBlows = 6000, health = null,
 } = {}) {
   if (mode !== 'uncapped' && mode !== 'cap') throw new Error(`unknown shortlist mode: ${mode}`);
+  if (mode === 'cap' && health != null) throw new RangeError('--health does not apply to --cap-aware shortlists: the relay encounter sets the pool');
   const allowed = mode === 'cap' ? ['stochastic-relay'] : ['stochastic-ttk', 'kill-probability'];
   if (!allowed.includes(objective)) throw new Error(`${mode} shortlist: choose ${allowed.join(' or ')}, not ${objective}`);
   if (!Number.isSafeInteger(k) || k < 1) throw new RangeError('--shortlist must be a positive integer (0 disables it in the CLI)');
@@ -34,7 +35,7 @@ export function shortlistLoadouts({
   const seeds = pairedFightSeeds(trials, seed);
   const ranking = rankBuilds(stages.map(({ enchCh, imprint }, id) => ({
     id, ch: enchCh, scenario: { imprint: imprint?.power },
-  })), { objective, target: stages[0].target, seeds, maxSeconds, maxBlows });
+  })), { objective, target: stages[0].target, health, seeds, maxSeconds, maxBlows });
   const damageNote = mode === 'cap'
     ? 'Sampled melee and Cast When Strikes (direct and supported Continuous Damage) go through the relay allowance; live Flow, no wear. Deterministic DPS is a ceiling plus modeled proc DPS, before the allowance.'
     : 'Sampled melee and Cast When Strikes (direct and supported Continuous Damage) damage the ordinary foe; no wear or live Flow. Deterministic DPS includes modeled proc DPS.';

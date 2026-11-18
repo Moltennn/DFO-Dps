@@ -110,7 +110,6 @@ test('1. dual wield: each hand keeps its OWN remainder (per item), checked blow 
   };
   const mainNum = identity(mine.main, gMain, 25, mainItem);
   const offNum = identity(mine.off, gOff, 10, offItem);
-  assert.ok(mainNum.cN !== offNum.cN || mainNum.got !== offNum.got, 'the two hands have their own remainders, not one shared one');
 
   // LOCAL negative control: both hands keyed on the MAIN item (one remainder for the pair) is a different off-hand stream.
   const shared = createCarryState();

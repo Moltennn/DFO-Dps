@@ -145,7 +145,7 @@ export function realTemplate(template, family, { mode = 'uncapped', vampire = fa
   const { capped, tree, treeCh, treeRun, enchRun, enchPlan, imprint } = realBuildStages(template, family, { mode, vampire, dual, encounter });
   // ONE metric per row: the CARRIED capped blow (a held item's long-run mean) plus the proc layer, which is not a
   // percentage channel. The imprint step is therefore carried minus carried, never a metric jump. `cardEnchDps`
-  // keeps the plain card ceiling under its own name (W-LOOT-CARRY, docs/ASSUMPTIONS.md M41).
+  // keeps the plain card ceiling under its own name (W-LOOT-CARRY).
   const enchDps = enchRun.carriedCappedDps + enchRun.enchantDps;
   const totalDps = enchRun.enchantDps + (imprint?.dps ?? enchRun.carriedCappedDps);
   // The same row's CARD ceilings (the benchmark's `cardDps` selector reads these).

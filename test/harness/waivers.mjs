@@ -8,8 +8,7 @@
  * CHANGELOG-MECHANICS.md). Nothing in this file may be used to excuse a new
  * divergence.
  *
- * See the assumptions register for what is modelled and the verification notes for
- * what is independently checked.
+ * See README.md for what is modelled and what is independently checked.
  */
 
 export const WAIVERS = Object.freeze({

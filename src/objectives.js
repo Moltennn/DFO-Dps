@@ -30,7 +30,7 @@ const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 /**
  * Below this many both-kill pairs a paired TTK difference is reported but NOT called separated: the normal/t
  * interval is too wide to be a ranking claim. The audit's own floor for a reported mean is 1,000 trials
- * (docs/STAGE-3-AUDIT.md:473); this is only a guard against a pathological sample.
+ *; this is only a guard against a pathological sample.
  */
 const MIN_PAIRED_PAIRS = 8;
 

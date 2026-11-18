@@ -488,7 +488,9 @@ function printLoadoutShortlist(values, modes, encounters, k) {
   if (values.objective !== undefined && modes.length > 1) {
     throw new Error('--objective requires one shortlist mode: --uncapped for stochastic-ttk or kill-probability; --cap-aware for stochastic-relay');
   }
-  const opts = { ...sampledOptions(values), k, objective: values.objective, vampire: !!values.vampire };
+  const health = values.health === undefined ? null : Number(values.health);
+  if (health !== null && !(health > 0)) throw new RangeError('--health must be a positive number');
+  const opts = { ...sampledOptions(values), k, objective: values.objective, vampire: !!values.vampire, health };
   const rankings = modes.flatMap((mode) => (mode === 'cap' ? encounters : [undefined])
     .map((encounter) => shortlistLoadouts({ ...opts, mode, encounter })));
   if (values.json) {

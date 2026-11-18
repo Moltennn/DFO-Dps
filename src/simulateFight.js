@@ -447,7 +447,7 @@ export function simulateFight(ch, args = {}) {
   // Stage 3.6b, the DoT round clock: rounds fall at k * MAGIC_ROUND_SECONDS on the FIGHT clock from t=0. That phase is an
   // ASSUMPTION (M35; the record of this choice is the Stage 3.6 changelog entry) - the cast's own first round is billed
   // inside the cast, at the cast's time. At an
-  // equal timestamp the BLOW resolves first and the round after it (`docs/ASSUMPTIONS.md` M35). A round bills the same
+  // equal timestamp the BLOW resolves first and the round after it. A round bills the same
   // health path a cast does, and kills like one.
   let nextRoundT = MAGIC_ROUND_SECONDS;
   let lastHand = 'main'; // the hand a round's reporting segment rides (a round is no hand's blow)

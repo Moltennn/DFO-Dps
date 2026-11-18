@@ -20,6 +20,8 @@ test('invalid shortlist options exit 2', () => {
     [['--shortlist', '1', '--objective', 'stochastic-relay'], /uncapped/],
     [['--shortlist', '1', '--cap-aware', '--objective', 'kill-probability'], /stochastic-relay/],
     [['--shortlist', '1', '--trials', '999'], /1000/],
+    [['--shortlist', '1', '--cap-aware', '--health', '100'], /--health does not apply/],
+    [['--shortlist', '1', '--health', '0'], /--health must be a positive/],
   ]) {
     const result = cli(...args);
     assert.equal(result.status, 2, result.stderr);
@@ -89,6 +91,20 @@ test('capped CLI shortlist uses the relay target and keeps its sampling metadata
   assert.equal(row.n, 1000);
   assert.equal(row.killProbability.p, 0);
   assert.equal(row.detail, undefined);
+});
+
+test('--health sets the sampled pool; the default 100-point foe kills in one blow and ties', () => {
+  const tied = cli('--uncapped', '--shortlist', '5', '--trials', '1000', '--seed', '0');
+  assert.equal(tied.status, 0, tied.stderr);
+  assert.match(tied.stdout, /pool 100\b/);
+  const pooled = cli('--uncapped', '--shortlist', '5', '--trials', '1000', '--seed', '0', '--health', '40000');
+  assert.equal(pooled.status, 0, pooled.stderr);
+  assert.match(pooled.stdout, /pool 40000/);
+  // Kill rate is the third number in a row (Det. DPS, Proc DPS, Kill rate). At 100 points both dual-wield rows are the
+  // same one-blow kill; at 40000 they separate.
+  const killRate = (text, weapon) => text.split('\n').find((line) => line.includes(weapon)).match(/\d+\.\d{2}/g)[2];
+  assert.equal(killRate(tied.stdout, 'Wakizashi'), killRate(tied.stdout, 'Shortsword'));
+  assert.notEqual(killRate(pooled.stdout, 'Wakizashi'), killRate(pooled.stdout, 'Shortsword'));
 });
 
 test('uncapped CLI prints the sampled and deterministic rankings side by side', (t) => {

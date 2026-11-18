@@ -9,7 +9,7 @@
  * lead artefact and is not used as evidence). The old four objectives are untouched and are covered by
  * `test/objectives.test.js` and `test/swingDirection.test.js`.
  *
- * Minimum trials is the audit's FIRST PASS (docs/STAGE-3-AUDIT.md §4.12: 1,000); a reported mean wants 10,000 and a
+ * Minimum trials is 1,000 (a first pass); a reported mean wants 10,000 and a
  * close ranking 100,000, so 1,000 is a floor, not a resolution claim. Budget: under 10 s (measured ~6 s); this file is
  * in `tools/test-fast.mjs` HEAVY. The oracle-backed paired check is skipped: `relayProcTtk.test.js` already holds the
  * relay sampler's mean TTK within 1% of the vendored compositor, and this layer adds no sampling mechanic of its own.

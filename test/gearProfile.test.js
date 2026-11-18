@@ -233,8 +233,8 @@ test('scenario maxima remain legal; the allowance split is distinct', () => {
   for (const g of [uncapped, capped, allowance]) assert.deepEqual(g.violations, []);
   assert.ok(capped.cappedDps >= uncapped.cappedDps - 1e-9);
   assert.ok(uncapped.dps >= capped.dps);
-  // The target's uniform hide can leave the capped and uncapped optima on the same split; the relay
-  // allowance still prefers a different, legal split. Do not force a distinction the data no longer has.
+  // Today the allowance optimum is a different legal split from the uncapped one (250 Long Blade / 370 Critical
+  // Strike against 535 / 0): the relay allowance prefers it. The assertion pins that distinction.
   assert.ok(allowance.lb !== uncapped.lb || allowance.cs !== uncapped.cs, 'the allowance split must be preserved');
 });
 

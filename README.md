@@ -216,8 +216,6 @@ Source paths are relative to `vendor/upstream/a3eb1605/src/` unless noted.
   pose, floor, court and melee reach. The model omits geometry; the live host
   that supplies player positions and detects contact is not vendored.
 
-`docs/ASSUMPTIONS.md` is cited by the project but absent from this tree.
-
 ## Data, outputs and rules
 
 - `build`, `rank`, `compare`, `scale` and `tradeoff` print tables; many also

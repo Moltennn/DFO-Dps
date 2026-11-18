@@ -343,7 +343,7 @@ on load; this project rebuilds the channels the combat model reads:
 - `masteredSkills` gates which skills may read past 100
 
 The verification oracle is the pinned upstream source, checked by the
-differential and golden suites (the verification notes). The in-game Combat
+differential and golden suites. The in-game Combat
 Stats card is a useful reference, not the oracle: it can include opening
 effects (First Blood) and a different live gear state, so a disagreement is a
 reason to check the import and the scenario, not proof that the model is
