@@ -64,7 +64,9 @@ test('phase shields add their seconds to the kill', () => {
   const plain = simulatePurse(slow, 'abyss', { level: 45 });
   const breach = simulatePurse(slow, 'breach', { level: 45 });
   assert.equal(breach.phases, 2);
-  assert.ok(breach.ttk - plain.ttk >= 5.5, `breach ${breach.ttk}, plain ${plain.ttk}`);
+  // Two 3 s wards. The claim at each ward's EXACT end is accepted (gateBrain.js:1308 is strict `now < shieldUntil`),
+  // and at 100 damage a claim and 100/s each accepted boundary claim buys 1 s back: 6 - 2 = 4 s.
+  assert.ok(Math.abs((breach.ttk - plain.ttk) - 4) < 1e-9, `breach ${breach.ttk}, plain ${plain.ttk}`);
 });
 
 test('the Sky-ketch capture turns its immunity into an opening and a share', () => {

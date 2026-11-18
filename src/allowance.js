@@ -177,8 +177,9 @@ export function simulateAllowance({ share, law, streams, phases = [], openingS =
     const claim = perClaimAt ? Math.max(0, Number(perClaimAt(s, hp, t)) || 0) : s.perClaim;
     offered += claim;
     claims += 1;
-    if (t <= shieldUntil) {
-      // refused before a token is spent (gateBrain.js:1308)
+    if (t < shieldUntil) {
+      // refused before a token is spent; the law is strict (vendor/upstream/a3eb1605/src/net/gate/gateBrain.js:1308@a3eb1605
+      // `now < B.shieldUntil`), so a claim at exactly the shield's end is accepted
       refused += 1;
       continue;
     }
