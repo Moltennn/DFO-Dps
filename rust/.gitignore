@@ -1,0 +1,3 @@
+target/
+# Generated from the JS by `node tools/rust-vectors.mjs` (about 7 MB); `cargo test` fails with a clear message until they exist.
+tests/vectors/
