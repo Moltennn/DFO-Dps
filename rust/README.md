@@ -1,5 +1,21 @@
 # dfo-core (Rust), milestones R1 and R2
 
+## R6a: whole fights and Cast When Strikes
+
+`fight` and `fight_relay` return the JS result records (including the full analysis snapshot and relay run).
+The JS `.with(edit)` closures are explicit `fight_with` and `fight_relay_with` calls. Relay fights reuse
+the existing allowance simulator and evaluate each claim at the current pool share.
+
+`cws` takes the spellbook and roll stream explicitly. Casts and ticks take a mutable target and optional
+mutable hurt sink. The sink gets metadata on DoT rounds only. Equipment overlay callers borrow the actual
+worn entry for object identity, and supply an evaluated live magicka accessor if there is one. Condition
+bills use the existing mutable durability owner and item, after the cast; no stochastic fight host is added here.
+
+`tools/rust-fight-vectors.mjs` requires the real `SPELLS.STD` and compares full ordered results by f64 bits.
+The fixture also includes narrowly constructed mixed spells and script overrides at individual roll indices.
+Every replay checks the draw count, and every vector family has a minimum of 2,000 cases. The indexed probes
+share identical inputs and expected results by reference; the generated fixture is still several hundred MB.
+
 A Cargo workspace with one library crate, `dfo-core`: edition 2021, **no dependencies** (std only).
 It is a bit-exact port of a few pure rule modules of the JS in `../src/`. The JS and the vendored
 upstream (`../vendor/upstream/a3eb1605`) stay the source of truth; this crate changes no mechanic.

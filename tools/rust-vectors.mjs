@@ -83,6 +83,7 @@ import { theoryCharacter } from '../src/theory.js';
 import { genBlowFamilies } from './rust-blow-vectors.mjs';
 import { genSpellFamilies } from './rust-spell-vectors.mjs';
 import { genAnalysisFamilies } from './rust-analysis-vectors.mjs';
+import { genFightFamilies } from './rust-fight-vectors.mjs';
 
 export { encodeValue };
 
@@ -2783,6 +2784,7 @@ counts.loot = genLootFamily();
 Object.assign(counts, genBlowFamilies(Out, makeLcg));
 Object.assign(counts, genSpellFamilies(Out, makeLcg));
 Object.assign(counts, genAnalysisFamilies(Out, makeLcg));
+Object.assign(counts, genFightFamilies(Out, makeLcg));
 
 counts.maketarget = await genMaketarget();
 
