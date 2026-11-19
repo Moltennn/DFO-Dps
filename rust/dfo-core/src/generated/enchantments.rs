@@ -60,3 +60,12 @@ pub static AFFINITY_PARAM: AffinityParam = AffinityParam { undead: 0.0, daedra: 
 
 #[rustfmt::skip]
 pub static REGISTERED_ENCHANTMENT_TYPES: &[f64] = &[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 20.0, 21.0, 22.0, 23.0, 24.0, 25.0, 26.0];
+
+#[rustfmt::skip]
+pub const POTENT_VS_FLAT: f64 = 5.0;
+
+#[rustfmt::skip]
+pub const PROCS_BEFORE_BREAK_BASIS: &str = "cws-bill-only";
+
+#[rustfmt::skip]
+pub static STRIKE_AFFINITY: &[(i64, &str)] = &[(0, "undead"), (1, "daedra"), (2, "humanoid"), (3, "animal")];

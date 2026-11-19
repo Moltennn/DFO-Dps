@@ -67,7 +67,10 @@ import * as createItemRows from '../vendor/upstream/a3eb1605/src/systems/createI
 import * as gemGrades from '../vendor/upstream/a3eb1605/src/systems/loot/gemGrades.js';
 import * as thunderlockIds from '../vendor/upstream/a3eb1605/src/characters/thunderlockIds.js';
 import { HAND_WRAPS_TEMPLATE } from '../vendor/upstream/a3eb1605/src/characters/handWrapsIds.js';
-import { REGISTERED_ENCHANTMENT_TYPES } from '../src/enchants.js';
+import { REGISTERED_ENCHANTMENT_TYPES, POTENT_VS_FLAT, PROCS_BEFORE_BREAK_BASIS, ENCHANTMENT_TYPES } from '../src/enchants.js';
+import * as spells from '../src/spells.js';
+import { RELAY_BOSSES } from '../src/bossTraits.js';
+import { MENTOR_SKILL_BASELINE } from '../vendor/upstream/a3eb1605/src/systems/mentorMode.js';
 import * as save from '../src/save.js';
 import { encodeValue } from './rust-codec.mjs';
 import { mintRow } from '../src/target.js';
@@ -289,7 +292,15 @@ function buildItemFacts() {
 
 const SOURCES = [
   { file: 'data', from: 'src/data.js', mod: data, names: null },
-  { file: 'enchant_data', from: 'src/enchantData.js', mod: enchantData, names: null },
+  { file: 'enchant_data', from: 'src/enchantData.js', mod: {
+    ...enchantData,
+    ENCHANTMENT_PRICE_ROWS: Object.entries(ENCHANTMENT_TYPES).flatMap(([type, id]) =>
+      enchantData.enchantmentParamValues(type).map(param => [id, param, enchantData.enchantmentCost(type, param)])),
+    ITEM_ENCHANTMENT_POINTS: Object.fromEntries(JSON.parse(readFileSync(join(here, '..', 'vendor/enchanting/itemTemplates.json'), 'utf8'))
+      .map(t => [t.index, enchantData.itemEnchantmentPoints(t.index)])),
+  }, names: null },
+  { file: 'spell_tables', from: 'src/spells.js and systems/mentorMode.js', mod: { ...spells, MENTOR_SKILL_BASELINE },
+    names: ['SPELL_RECORD_SIZE', 'MAGIC_ROUND_SECONDS', 'EFFECT_COST_TABLE', 'TARGET_COST_MULT', 'CAST_COST_FLOOR', 'MENTOR_SKILL_BASELINE'] },
   { file: 'anims', from: `${V}/characters/anims.js`, mod: anims, names: ['DIRECTION_TO_STRIKE'] },
   {
     file: 'weapon_states',
@@ -335,11 +346,14 @@ const SOURCES = [
     names: ['SLOT_FOR_BODY_PART'],
     extra: () => [equipSlotNames()],
   },
-  { file: 'boss_traits', from: `${V}/systems/bossTraits.js`, mod: bossTraits, names: ['ELEMENT_TRAITS', 'RESIST_SHARE', 'WEAPON_RESIST_SHARE'] },
+  { file: 'boss_traits', from: `${V}/systems/bossTraits.js and src/bossTraits.js`, mod: { ...bossTraits, RELAY_BOSSES: Object.entries(RELAY_BOSSES),
+    RELAY_BOSS_BLOW_TRAITS: cutLiteral(`${V}/systems/bossTraits.js`, 'RELAY_BOSS_BLOW_TRAITS', '])'),
+  }, names: ['ELEMENT_TRAITS', 'RESIST_SHARE', 'WEAPON_RESIST_SHARE', 'THORN_SHARE', 'RELAY_BOSSES', 'RELAY_BOSS_BLOW_TRAITS'] },
   { file: 'enchantments', from: `${V}/systems/enchantments.js`, mod: { ...enchantments,
     AFFINITY_PARAM: cutLiteral(`${V}/systems/enchantments.js`, 'AFFINITY_PARAM', '})'),
-    REGISTERED_ENCHANTMENT_TYPES: [...REGISTERED_ENCHANTMENT_TYPES],
-  }, names: ['ENCHANTMENT_TYPES', 'LOW_DAMAGE_VS', 'POTENT_VS_DAMAGE', 'AFFINITY_PARAM', 'REGISTERED_ENCHANTMENT_TYPES'] },
+    REGISTERED_ENCHANTMENT_TYPES: [...REGISTERED_ENCHANTMENT_TYPES], POTENT_VS_FLAT, PROCS_BEFORE_BREAK_BASIS,
+    STRIKE_AFFINITY: cutLiteral('src/enchants.js', 'AFFINITY', '})'),
+  }, names: ['ENCHANTMENT_TYPES', 'LOW_DAMAGE_VS', 'POTENT_VS_DAMAGE', 'AFFINITY_PARAM', 'REGISTERED_ENCHANTMENT_TYPES', 'POTENT_VS_FLAT', 'PROCS_BEFORE_BREAK_BASIS', 'STRIKE_AFFINITY'] },
   { file: 'paperdoll', from: `${V}/characters/paperdoll/paperdoll.js`, mod: paperdoll, names: ['EQUIP_SLOTS'] },
   { file: 'level_cap', from: `${V}/systems/levelCap.js`, mod: levelCap, names: ['LEVEL_CAP'] },
   {

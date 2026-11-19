@@ -36,5 +36,6 @@ pub mod poisons;
 pub mod races;
 pub mod rri_items;
 pub mod save_tables;
+pub mod spell_tables;
 pub mod weapon_states;
 pub mod weapons;
