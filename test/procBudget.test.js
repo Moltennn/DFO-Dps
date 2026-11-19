@@ -11,6 +11,7 @@
  * claims that round ONCE, from the one like-kind entry a body carries (vendor:systems/effects.js:1091-1103).
  */
 import test from 'node:test';
+import { NEEDS_SPELLBOOK } from './harness/spellbook.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
@@ -320,7 +321,7 @@ test('M44: the ceiling aliases are the same numbers as the fields they name', ()
   assert.equal(noRelay.ceilingTotalTtk, noRelay.totalTtkCapOnly);
 });
 
-test('M44: the ceiling can promise a kill the allowance refuses - named, and printed beside it', () => {
+test('M44: the ceiling can promise a kill the allowance refuses - named, and printed beside it', NEEDS_SPELLBOOK, () => {
   const { ch, item, standard } = heavyProcs();
   const gate = gateTarget(45);
   const card = analyze(ch, { target: gate, health: gate.maxHealth, weapon: weaponOf(item), standard });

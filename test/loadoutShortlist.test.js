@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { NEEDS_SPELLBOOK } from './harness/spellbook.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -109,7 +110,7 @@ test('capped CLI shortlist uses the relay target and keeps its sampling metadata
   assert.equal(row.detail, undefined);
 });
 
-test('--health sets the sampled pool; the default 100-point foe kills in one blow and ties', () => {
+test('--health sets the sampled pool; the default 100-point foe kills in one blow and ties', NEEDS_SPELLBOOK, () => {
   const tied = cli('--uncapped', '--shortlist', '5', '--trials', '1000', '--seed', '0');
   assert.equal(tied.status, 0, tied.stderr);
   assert.match(tied.stdout, /pool 100\b/);

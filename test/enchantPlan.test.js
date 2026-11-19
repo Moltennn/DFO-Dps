@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { NEEDS_SPELLBOOK } from './harness/spellbook.mjs';
 import assert from 'node:assert/strict';
 import { gearPieces, planEnchants, planMatrix, SOUL_GEM_POINTS } from '../src/enchantPlan.js';
 import { gateTarget, referenceFoe } from '../src/model.js';
@@ -67,7 +68,7 @@ test('strike procs respect the weapon condition over the gate fight', () => {
   assert.ok(procs <= plan.maxProcs);
 });
 
-test('strike enchantments only sit on the weapon', () => {
+test('strike enchantments only sit on the weapon', NEEDS_SPELLBOOK, () => {
   const plan = planEnchants({ weapon: 123, soulGem: true });
   for (const row of plan.rows) {
     if (row.slot !== 'Weapon') assert.ok(!row.effects.some((e) => e.type === 'CastWhenStrikes'), row.slot);
