@@ -339,6 +339,11 @@ one.ttk; one.damageDealt; one.overkill; one.remainingHealth; one.blows;
 const many = simulateFights(ch, { ...scenario, trials: 2000 });
 many.ttk.mean; many.ttk.median; many.ttk.p10; many.ttk.p90; many.ttk.ci95;
 many.kills; many.censored; many.killProbability; many.damageDealt.mean; many.overkill.mean;
+// Summary conventions: `median`/`p10`/`p90` are order statistics (for an even count the median is the LOWER
+// middle value, not the average of the two); `ci95` is 1.96 x standard error, a normal approximation that is
+// too narrow with few kills. `health` is the pool fought AND the boss's maximum health for a per-hit curbing
+// cap (a share of `health`), so keep it equal to the target's own `maxHealth`.
+// A horizon-censored fight's `time` and `outputDps` run to its last blow (ordinary) or to `maxSeconds` (relay).
 
 // two builds on the SAME seed list
 const seeds = pairedFightSeeds(2000, 7);
