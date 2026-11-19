@@ -153,7 +153,7 @@ function gateMutate() {
     console.error('usage: node tools/gate.mjs mutate <file under rust/dfo-core/src> --tests a,b [--count N] [--seed S]');
     process.exit(2);
   }
-  const passthrough = ['--tests', 'count', 'seed', 'timeout'].flatMap((k) => {
+  const passthrough = ['--tests', 'count', 'seed', 'timeout', 'jobs'].flatMap((k) => {
     const name = k.replace(/^--/, '');
     const v = opt(name, undefined);
     return v === undefined ? [] : [`--${name}`, v];
