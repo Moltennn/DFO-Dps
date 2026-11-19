@@ -572,6 +572,221 @@ cd rust && cargo test && cargo fmt --check && cargo clippy --all-targets -- -D w
 Until `node tools/rust-data.mjs` runs, the crate does not compile (the new generated modules are missing). The vector
 files are not committed; the maketarget file is the largest of the set (several MB; the size is not measured here).
 
+## R4a: the value codec, the save helpers and the item readers (written; the lead runs the gates)
+
+Written without a shell: the generator, the vectors and the crate are unrun. The gate order is in "Run (R4a)".
+
+### Files
+
+- `dfo-core/src/value.rs`: `Value` (`Undefined`, `Null`, `Bool`, `Num(f64)`, `Str(String)`, `Arr(Vec<Value>)`,
+  `Obj(Vec<(String, Value)>)`), the JS reads (`get`, `at`, `has`, `set`, `prop`, `truthy`, `strict_eq`, `same_value_zero`,
+  `finite_or`, `num_or`, `num_or_default`, `to_number`, `to_js_string`, `array_index`, `items`, `is_str`), `number_to_string`
+  (`Number::toString`), `string_to_number` (`Number(string)`), the codec `parse` and `write`, and the table reads
+  `obj_table_get` (a JS object keyed by integers: the key compares as its string) and `map_table_get` (a `Map`:
+  SameValueZero, so `"113"` does not find 113).
+- `dfo-core/src/save.rs`: the pure half of `src/save.js` over a character `Value`.
+- `dfo-core/src/gear_lines.rs`: `src/gearLines.js` over `loot.rs`.
+- `dfo-core/src/sockets.rs`: `src/sockets.js`.
+- `dfo-core/src/loot.rs`: the lootRarity readers in the call tree of `readLines`, `validAffix`, `gemLine`, `socketGems`,
+  `socketsOf`, `socketMax`, `countedPieces`, `powerIdsOf`, `powerOf`, and `foeGroup` (lootPowers.js).
+- `tests/value.rs`, `tests/save.rs`, `tests/gear.rs` (gear and sockets), `tests/loot.rs`. `tests/common/mod.rs` gains
+  `load_with_defs`, `Case::value` (a token, or `@<index>` for a definition) and `Case::check_out` (`=>` then the canonical
+  write of the Rust value, compared as text: bit-exact, NaN canonical).
+- `tools/rust-codec.mjs`: `encodeValue` (the JS side of the codec). `tools/rust-vectors.mjs` re-exports it. It lives in its
+  own module because `tools/rust-data.mjs` needs it (the generated legendary-power tokens), and importing `rust-vectors.mjs`
+  from there would run the whole generator. The brief named `rust-vectors.mjs`; this is the one place it differs.
+- Generated (`tools/rust-data.mjs`; the generator is the only writer):
+  - new `save_tables.rs`: `SLOT`, `WEAPON_SKILL`, `PROFICIENCY_FLAG` (save.js:110-129), `ENHANCE_SKILL_MOD` (save.js:189);
+  - new `gem_grades.rs`: `GEM_IDS`, `GEM_GRADES`, `GEM_ROW_GRADES`, `ALL_GEM_IDS`, `GEM_GRADE_TEMPLATE_BASE`
+    (`systems/loot/gemGrades.js`, a leaf);
+  - new `item_facts.rs`: `WEAPON_SKILL_USED` (`weaponSkillUsed` probed over template indices 0..=700, minus the RRI classes
+    513..=526), `AMMUNITION_TEMPLATES` (`isAmmunition` probed the same way), `THUNDERLOCK_TEMPLATE` (560);
+  - `loot_rarity.rs` gains flat rows: `AFFIX_KIND_NAMES`, `AFFIX_PARAM_STR`, `AFFIX_PARAM_NUM`, `AFFIX_NO_PARAM` (the
+    `params` of each kind), `AFFIX_RARE_TOP`, `AFFIX_LEGENDARY_TOP` (`AFFIX_RANGES` tops), `GEM_LINE_ROWS` (`GEM_GRADE_LINES`,
+    one row per kind and side: `(kind, side, id, param?, values)`), `SOCKET_GROUPS`, `SOCKET_EMPTY`, `WEAPON_SOCKETS`;
+  - `loot_powers.rs` gains `LEGENDARY_POWER_TOKENS` (each `LEGENDARY_POWERS` record) and `LEGENDARY_OWN_POWER_TOKENS` (the
+    own `power` of each legendary: nine shipped records, one per id, the first record of an id as `legendaryById` finds
+    it, a null power skipped). Each record is a codec token, because the records have different field sets (`alikr-robes`
+    has `heat`, `wrothgar-mantle` has `cold`, `pilgrims-sandals` has `fatigue` and `fall`, ...) and a typed struct would
+    need field names the generator cannot fix. The generator prints the overlap of the two tables (none shipped today;
+    the vectors cover every id of both regardless).
+  - `js_prototypes.rs` (new): `OBJECT_PROTOTYPE_KEYS`, `ARRAY_PROTOTYPE_KEYS`, `STRING_PROTOTYPE_KEYS`,
+    `NUMBER_PROTOTYPE_KEYS`, `BOOLEAN_PROTOTYPE_KEYS`: the own property names of each built-in prototype, read from the
+    engine. They are the names a read can inherit (see "Inherited reads" below).
+  - Generator assertions: `powerOf` answers `null` for a made-up id (`no-such-gilded-id-for-the-rust-port`). That detects a
+    gilded registry that answers every id; a registry that answers only some ids is not detected.
+
+### The codec (grammar: one token per value, no spaces)
+
+| Token | Value |
+|---|---|
+| `u` | `undefined` |
+| `n` | `null` |
+| `b1` / `b0` | `true` / `false` |
+| `d` + 16 lowercase hex | an f64: its IEEE bits. Every NaN is written `d7ff8000000000000` (the payload is not meaningful in JS) |
+| `s` + 4 lowercase hex per UTF-16 unit + `;` | a string (`s;` is `""`) |
+| `[` v (`,` v)* `]` | an array (`[]` is empty); an `undefined` item is `u` |
+| `{` (`s`key `;` `:` v)(`,` ...)* `}` | an object, own enumerable keys in JS key order; a key present with `undefined` is `u` |
+
+A Map is its `[key, value]` pairs (an array). A function as an object key is skipped (as `tools/rust-data.mjs`'s
+`normalize` skips it); a function anywhere else, a symbol, a bigint, a circular reference, and a lone surrogate throw (in
+`encodeValue`) or fail (in `parse`, since a Rust `String` holds no lone surrogate). `parse` is strict: lowercase hex, no
+spaces, no trailing text, no duplicate key. `Obj` keeps the order written; `Value::set` places an array-index key among
+the index keys in ascending order, and any other new key last, as a JS object does.
+
+### JS reads the port mirrors (review these)
+
+- `get(k)`: `obj[k]`; a missing key reads `Undefined`, and `has(k)` tells it from an explicit `undefined`.
+- `prop(k)`: `o[k]` for any key (ToPropertyKey = `to_js_string`): an array reads its elements and `length`; a string reads
+  its units and `length`; any other primitive reads `undefined` (JS optional chaining). Owned: the read is a copy.
+- `finite_or(d)`: `Number.isFinite(v) ? v : d`, no coercion (a string is not finite): save.js `NUM`.
+- `num_or(d)`: `v ?? d` for a number. A non-number is NaN here: the JS would concatenate or coerce it in `+`, which the port
+  never reads (out of domain; the vectors pass numbers, `undefined`, `null`, and for a skill raw value a string).
+- `to_number`: `Number(v)`. A string follows StringToNumber: whitespace (JS's set, not U+0085, plus U+FEFF) trimmed; empty is
+  0; `0x`/`0o`/`0b` integers with no sign (exact to nearest-even up to 128 bits, a `u128`; longer ones accumulate in f64 and
+  may differ from JS, outside the vectors); `Infinity` with an optional sign; else a
+  decimal literal (`1.`, `.5`, `1.e2` and an exponent accepted; `e5`, `1e`, `1_000`, `inf` are NaN).
+- `to_js_string`: `String(v)`, the template literal, and a property key. An array joins with `,` (an `undefined` or `null`
+  item is empty); an object is `[object Object]`; numbers follow `Number::toString` (`number_to_string`, shortest round-trip
+  digits with JS's exponent thresholds).
+- `same_value_zero` (`includes`, `Map`, `Set`): NaN equals NaN and `+0` equals `-0`. `strict_eq` (`===`): objects are never
+  equal (identity is not modelled; the port never compares two objects).
+- `array_index`: an integer number in `0..=2^32-2` (`-0` is 0), or a canonical index string: `arr[v]` reads an element.
+- `truthy` (`!!v`): `undefined`, `null`, `false`, `+0`, `-0`, `NaN`, `""` are false.
+
+### Ported functions (Rust | JS file:line)
+
+| Rust | JS |
+|---|---|
+| `save::weapon_skill`, `proficiency_flag` | `src/save.js:116-123`, `:126-129` (tables: `save_tables.rs`) |
+| `save::effective_skill` | `src/save.js:132-137` (SOFTCAP1) |
+| `save::master_skills_active` | `src/save.js:140-142` (SOFTCAP3) |
+| `save::master_capped_skill` | `src/save.js:145-149` (SOFTCAP4) |
+| `save::skill_mod_of` | `src/save.js:152-158` |
+| `save::skill_value` | `src/save.js:161-164` |
+| `save::live_stat` | `src/save.js:167-181` (the character form; `target::live_stat` is the R3a typed form over `Live`) |
+| `save::rebuild_enchant_mods` | `src/save.js:192-204` (with `addMap`, `:183-186`, not used here) |
+| `save::rebuild_mods` | `src/save.js:207-230` |
+| `save::character_label` | `src/save.js:309-313` |
+| `save::skill_name` | `src/save.js:315-317` (`SKILL_NAMES` is an array: an index names it) |
+| `gear_lines::laid_lines` | `src/gearLines.js:33-37` (`layGemLines`, lootRarity.js:2085) |
+| `gear_lines::read_item_lines` | `src/gearLines.js:40` (`readLines`, lootRarity.js:2155) |
+| `gear_lines::valid_item_lines` | `src/gearLines.js:43` |
+| `gear_lines::weapon_damage_pct` | `src/gearLines.js:46` (`affixWeaponDamage` :2475) |
+| `gear_lines::blade_lines` | `src/gearLines.js:53-64` |
+| `gear_lines::fold_lines` | `src/gearLines.js:67-78` |
+| `gear_lines::sockets_for` | `src/gearLines.js:81` (`socketMax`, lootRarity.js:2004) |
+| `sockets::perfect_gem` | `src/sockets.js:16` |
+| `sockets::socket_count` | `src/sockets.js:19` |
+| `sockets::socket_affixes` | `src/sockets.js:25-28` |
+| `sockets::perfect_sockets` | `src/sockets.js:31-33` |
+| `loot::valid_affix` | `lootRarity.js:839-848` |
+| `loot::gem_piece_cap` | `lootRarity.js:2151` |
+| `loot::read_lines`, `read_lines_list` | `lootRarity.js:2155-2166` |
+| `loot::gem_kind`, `gem_grade`, `is_gem_id` | `systems/loot/gemGrades.js:64-67` |
+| `loot::sockets_of` | `lootRarity.js:2020-2023` |
+| `loot::socket_gems` | `lootRarity.js:2037` |
+| `loot::gem_line` | `lootRarity.js:2040-2043` (`gradeLine` :1988) |
+| `loot::socket_max`, `is_ammunition` | `lootRarity.js:2004-2011`; `systems/item/itemTemplates.js:134` |
+| `loot::counted_pieces` | `lootRarity.js:2348-2357` |
+| `loot::power_ids_of` | `lootRarity.js:1271` |
+| `loot::power_of` | `lootRarity.js:1268`: `LEGENDARY_POWER_TOKENS`, then `LEGENDARY_OWN_POWER_TOKENS`, then null (see "JS semantics" below) |
+| `loot::foe_group` | `systems/loot/lootPowers.js:142-155` |
+
+Constants from the generator, not re-typed: `ENHANCE_SKILL_MOD` (15), the `SKILL_NAMES`/`RACE_NAMES` of `src/data.js`,
+the affix bands, the gem rows, `THUNDERLOCK_TEMPLATE` (560, `characters/thunderlockIds.js`).
+
+### Field lists (what the ported code reads)
+
+- `save.js` (`liveStat`, `skillValue` and its helpers, `rebuildMods`, `rebuildEnchantMods`, `characterLabel`): character
+  `online`, `masterSkills`, `masteredSkills`, `skills`, `stats`, `activeEffects` (each entry `kind`, `ended`, `statMods`,
+  `stat`, `magnitude`, `skillMods`), `_mods` (`stats`, `statMax`, `skills`), `_enchantMods` (`skillMods`), `name`, `raceId`,
+  `race`, `career.name`, `level`. Items: `equipSlot`, `group`, `enchantments` (`type`, `param`), and the item fields of the
+  lines below.
+- The lines and sockets (`gearLines.js`, `sockets.js`, lootRarity): an item's `affixes` (each line `id`, `param`, `value`,
+  `gem`), `sockets` (a list) or `socket` (one string), `group`, `templateIndex`, `rarity`, `legendary` (a string on a
+  Legendary), `imprint` (a Rare's), `gilded`. `foeGroup` reads a target's `isPlayer`, `affinity`, `careerIndex`.
+- `model.js` and `blowOutcomes.js` (a grep survey of `ch.` reads, not a line-by-line read): `career.weaponArmorShieldsBitfield`,
+  `level`, `raceId`, `martialPath`, `_mods`, `_enchantMods.chanceToHitMod`, `skills`, `online`, `weapon`, `offWeapon`,
+  `wraps`, `firmamentDamagePct`. The weapon's `skillId`, `templateIndex`, `affixes`, `item` are read there too.
+- `dualWield.js` and `durability.js`: not surveyed in this round (the grep matched no character field in them); not ported.
+
+### Not ported, and why
+
+- `save.js` file and launcher I/O: `userDataDir`, `configPath`, `arena2Dir`, `savesDir`, `listSaves`, `resolveSave`,
+  `loadSave`. They read the file system and the launcher's config. `characterFromSave` is pure (no I/O), but the model's
+  inputs are built characters (the vectors build them with `theoryCharacter`, which calls it), so the port does not
+  re-derive a character from a save file in this round. Say if the model needs it before R5.
+- `lootRarity.js` beyond the call tree above: the rarity and pool draws (`rollRarity`, `rollAffixes`, `pickByLines`), the
+  kinds' params for techniques (`kindParams`, `techniquesFor`), the setters (`setGem`, `unsetGem`, `socketPass`,
+  `weaponSocketPass`), `affixFold`, `affixWeaponDamage` (the cap-free sum of `readLines`, ported as `weapon_damage_pct`).
+- `lootPowers.js` beyond `foeGroup`: the blow, the strike, the fold through `equipTableOf` (`wornPieces`, `wornSum`).
+- The RRI custom classes 513..=526 (`customItemClass`): not registered in the port (see R3b). `WEAPON_SKILL_USED` and
+  `AMMUNITION_TEMPLATES` are probed with those ids excluded, so an RRI weapon's skill is not read here.
+- The registries: `_gilded` (`registerGildedRecords`, module-private) is unset on this path, so `powerOf`'s third step is
+  `undefined`; `registerLegendary` (custom legendaries) is empty. `allLegendaries()` is the shipped list (`LEGENDARIES`,
+  `WARDROBE_LEGENDARIES`, `ARCANE_LEGENDARIES`), 39 records, and `legendaryById` is its first match per id.
+
+### JS semantics decided here (review these)
+
+- `Value::Str` is a Rust `String`: a lone surrogate is refused by the codec and the generator. A JS field that holds one would
+  need a `Vec<u16>` variant; none of the vectors does. The one read that makes one is `prop` on a string at an index that
+  is half of an astral character (`'😀'[0]`): the port gives `undefined` for it, and the generator skips that case rather
+  than write it (`genValueFamily`, the `prop` loop). The `prop` count is therefore 2500 cases the Rust side sees.
+- Inherited reads (settled): a JS read of a name the receiver does not own, but a built-in prototype does, yields a function
+  or an object (`({}).constructor` is `Object`, `[].map` a function, `'a'.length` a number). A `Value` cannot hold a
+  function, so the port refuses those names by panicking (`value::refuse_inherited`, the lists in `js_prototypes.rs`):
+  `Value::prop` on an object, array, string, number or boolean; `obj_table_get`/`obj_table_has` on the object tables
+  (`WEAPON_SKILL`, `PROFICIENCY_FLAG`, `RACE_NAMES`, `WEAPON_HANDS`, `WEAPONS`); `powerOf`; `skillName`. Two exceptions are
+  exact, not refused: an array's `length` is its length (`skillName('length')` is 35, a number), and a Map read
+  (`map_table_get`, `WEAPON_SKILL_USED`) never sees a prototype. The vectors never pass an inherited name (the generator
+  filters them with the engine's own list), and the unit tests pin the refusal.
+- `skillName`: `SKILL_NAMES` is an array: an index names a skill; `length` is 35; any other inherited name refuses; anything
+  else is its string. (Returns a `Value`, since `length` is a number.)
+- `powerOf` (settled, see `loot::power_of`): `LEGENDARY_POWERS[id]` first, then the legendary's own `power` (nine records), then
+  null. `_gilded` is unset on this path. An inherited name in `LEGENDARY_POWERS` is the Object.prototype member (a function,
+  or for `__proto__` the prototype object): refused. Reachable from a save whose legendary item carries such an id.
+- `foeGroup` reads no object table.
+- `addMap`'s guard (`save.js:184`): a `null` or `''` key, or a non-finite value, is skipped; `rebuildEnchantMods` keys by the
+  number's string form (`number_to_string`, so `-0` is `"0"`).
+- A stat or skill key is the property key of its param (`to_js_string`): an `undefined` param makes the key `"undefined"`, as
+  the JS does (the valid lines always carry a param for these kinds).
+- `readLines`: the gem-cap sum is kept per kind and param in the list's order; a line whose value does not change is the same
+  record (the JS returns the same object).
+- `laidLines` drops falsy entries only in the socketed case (the JS `.filter(Boolean)` runs on the concatenation); the
+  unsocketed list is returned as it is (falsy entries kept).
+- `skillValue` and `masterCappedSkill` coerce a raw skill with `Math.min` (a numeric string gives a number) but return a
+  mastered raw unchanged (a string then reads 0 in `effectiveSkill`, as `Number.isFinite` says). Both are in the vectors.
+- `socketCount` takes a number as a template and anything else as an item (`typeof itemOrTemplate === 'number'`): a string
+  template reads as an item with no `templateIndex`, so 0 sockets (the vectors cover it).
+
+### Vectors (`tools/rust-vectors.mjs`, R4a)
+
+Every family is at least 2000 cases (the Rust tests assert it per kind; the generator prints the counts).
+
+| File | Kinds (cases) | Inputs |
+|---|---|---|
+| `value.txt` | `value` 3000, `tonum` 2500, `tostr` 2500, `truthy` 2000, `prop` 2500 | random nested values (depth 3): undefined, null, booleans, the number pool (signed zeros, NaN, infinities, 5e-324, 2^53+2, 1e21, 1e-7, random bits), string pool (numeric forms, whitespace, astral, surrogate-free unicode, separators), keys (integer-like, the index limit, `ünï`, `x;y`) |
+| `save.txt` | `eff` `msa` `mcs` `smo` `sv` `ls` `rem` `rm` `cl` `sn` `wsk` `pf`, 2000 each | defs: 40 characters from `theoryCharacter` over the grid (levels 1/2/9/45, races 1..8, blades, gear and star lines, vampirism, mastery switches varied, mastered lists with odd entries) and 60 synthetic characters (effects of every kind with `ended`, missing and string fields); 80 item lists |
+| `gear.txt` | `laid` `ril` `vil` `wdp` `bl` `fl` `sf`, 2000 each | defs: 400 items (every group and rarity, templates from the weapon table and the armour, sockets, gem lines with values past the cap, legendaries, imprints, enchantments with type 10); 80 lists with null entries |
+| `sockets.txt` | `scount` `saff` `pgem` `psock`, 2000 each | the same items; templates and string templates |
+| `loot.txt` | `rl` `va` `gl` `sg` `so` `sm` `cp` `pio` `po` `fg`, 2000 each | the same items and lists; affixes at each band's edges (`1`, `max-1`, `max`, `max+1`, the Rare top and its neighbours, `0`, `-1`, `1.5`, `NaN`, `'5'`, `undefined`), gem ids and junk, legendary ids; targets with odd affinity and career indices |
+
+Inputs that are not in the vectors (a stat name outside the eight, a skill id above 35 with a `masteredSkills` hit, an RRI
+template, a Map keyed by a string) are not proven.
+
+### Run (R4a)
+
+```
+node tools/rust-data.mjs            # REQUIRED first: save_tables.rs, gem_grades.rs, item_facts.rs, the extended loot_rarity.rs
+                                    # and loot_powers.rs (LEGENDARY_POWER_TOKENS)
+node tools/rust-data.mjs --check
+node tools/rust-vectors.mjs         # writes value.txt, save.txt, gear.txt, sockets.txt, loot.txt (and the earlier modules)
+cd rust && cargo test && cargo fmt --check && cargo clippy --all-targets -- -D warnings
+```
+
+Until `node tools/rust-data.mjs` runs, the crate does not compile (the new generated modules are missing).
+
 ## Plan after R2 (R2 is done; the rest is a plan)
 
 Order chosen by dependency; each step ships only with vectors (or the upstream goldens) that fail first.

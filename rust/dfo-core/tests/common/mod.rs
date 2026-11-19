@@ -7,6 +7,8 @@
 //! A missing or empty vector file is a hard failure, never a silent pass.
 #![allow(dead_code)]
 
+use dfo_core::value::{self, Value};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -189,6 +191,53 @@ pub fn same(exp: f64, got: f64) -> bool {
         got.is_nan()
     } else {
         exp.to_bits() == got.to_bits()
+    }
+}
+
+/// The definitions of a vector file (R4a): `def <index> <value token>` lines, which a case refers to as `@<index>`.
+pub type Defs = HashMap<usize, Value>;
+
+/// [`load`], with the `def` lines taken out: returns the definitions and the other cases, in file order.
+pub fn load_with_defs(module: &str) -> (Defs, Vec<Case>) {
+    let mut defs = Defs::new();
+    let mut cases = Vec::new();
+    for mut c in load(module) {
+        if c.kind == "def" {
+            let idx = c.u64() as usize;
+            let tok = c.word();
+            let v = value::parse(&tok).unwrap_or_else(|e| c.fail(&format!("bad definition: {e}")));
+            defs.insert(idx, v);
+        } else {
+            cases.push(c);
+        }
+    }
+    (defs, cases)
+}
+
+impl Case {
+    /// The next token as a value: `@<index>` is a definition, anything else is an inline value token.
+    pub fn value(&mut self, defs: &Defs) -> Value {
+        let t = self.word();
+        if let Some(i) = t.strip_prefix('@') {
+            let idx: usize = i
+                .parse()
+                .unwrap_or_else(|_| self.fail(&format!("bad definition reference `{t}`")));
+            return defs
+                .get(&idx)
+                .cloned()
+                .unwrap_or_else(|| self.fail(&format!("undefined definition {idx}")));
+        }
+        value::parse(&t).unwrap_or_else(|e| self.fail(&format!("bad value token `{t}`: {e}")))
+    }
+
+    /// `=>` then the expected output token, compared with the canonical write of `got` (bit for bit; NaN canonical).
+    pub fn check_out(&mut self, what: &str, got: &Value) {
+        self.expect("=>");
+        let exp = self.word();
+        let text = value::write(got);
+        if exp != text {
+            self.fail(&format!("{what}: expected {exp}, got {text}"));
+        }
     }
 }
 

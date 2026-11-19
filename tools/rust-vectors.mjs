@@ -62,6 +62,26 @@ import { isShieldTemplate, itemArmorValue, materialArmorValue } from '../vendor/
 import { armorBodyParts, slotForBodyPart } from '../vendor/upstream/a3eb1605/src/systems/equip.js';
 import { conditionPercentage } from '../vendor/upstream/a3eb1605/src/systems/item/itemTemplates.js';
 import { enemyCareerIndex, enemyEntityType } from '../vendor/upstream/a3eb1605/src/characters/enemy/enemyBasics.js';
+// R4a: the value codec (tools/rust-codec.mjs, re-exported below), the save helpers, the gear and socket readers, the
+// lootRarity readers and foeGroup
+import { encodeValue, numToken } from './rust-codec.mjs';
+import {
+  effectiveSkill, masterCappedSkill, masterSkillsActive, PROFICIENCY_FLAG, rebuildEnchantMods, rebuildMods,
+  characterLabel, skillModOf, skillName, skillValue, WEAPON_SKILL,
+} from '../src/save.js';
+import {
+  bladeLines, foldLines, laidLines, readItemLines, socketsFor, validItemLines, weaponDamagePct,
+} from '../src/gearLines.js';
+import { perfectGem, perfectSockets, socketAffixes, socketCount } from '../src/sockets.js';
+import {
+  allLegendaries, AFFIX_KINDS, AFFIX_RANGES, countedPieces, gemLine, LEGENDARY_POWERS, powerIdsOf, powerOf, readLines,
+  socketGems, socketMax, socketsOf, validAffix,
+} from '../vendor/upstream/a3eb1605/src/systems/loot/lootRarity.js';
+import { foeGroup } from '../vendor/upstream/a3eb1605/src/systems/loot/lootPowers.js';
+import { ALL_GEM_IDS } from '../vendor/upstream/a3eb1605/src/systems/loot/gemGrades.js';
+import { theoryCharacter } from '../src/theory.js';
+
+export { encodeValue };
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outDir = join(here, '..', 'rust', 'tests', 'vectors');
@@ -1983,6 +2003,595 @@ function gearOutTokens(eq, poison) {
   t.push(O(poison));
   return t;
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// R4a: the value codec, the save helpers, the gearLines and sockets readers, the lootRarity readers and foeGroup.
+// Inputs are DEFINITIONS (`def <index> <value>`, written once) that cases refer to as `@<index>`, so a character or an
+// item list is written once and read by many cases. Each case's expected output is the JS value's encoding; the Rust
+// compares the canonical write of its own value with that token. Every family has at least 2000 cases (the Rust test
+// asserts it); the generator prints the counts.
+// ---------------------------------------------------------------------------------------------------------------
+const STAT_NAMES = ['strength', 'intelligence', 'willpower', 'agility', 'endurance', 'personality', 'speed', 'luck'];
+const NUM_POOL = [
+  0, -0, 1, -1, 0.5, 1.5, 2.5, -2.5, 3, 7, 49.5, 50, 99, 100, 100.5, 101, 124.9, 125, 149, 150, 174, 175, 199, 200, 201,
+  255, 1e6, 1e21, 1e-7, 1e-6, 123456789012345680000, 0.1, 5e-324, Number.MAX_SAFE_INTEGER, 2 ** 53 + 2, NaN, Infinity,
+  -Infinity, 1.7976931348623157e308, -3e-300,
+];
+const STR_POOL = [
+  '', 'a', '0', '5', ' 12 ', '0x1f', '-0x1f', '0b101', '0o17', '1e3', '.5', '5.', '+7', '-0', '1e', 'Infinity', '-Infinity',
+  'infinity', '1_000', '  42  ', '﻿7', '\u0085 7', 'Hello', 'é', '漢字', '😀', '\u0000', ' ',
+  'multi\nline', 'a;b:c,d[e]{f}', 'undefined', 'null', 'true', '1e400', '4.9e-324', '00012', '+.5', '-.5e-3', '1.e2',
+  'e5', '0x',
+  // radix forms past 2^53 (exact up to 128 bits in the port; rounding to nearest even): 120-bit hex, a tie, binary, octal
+  '0x' + 'f'.repeat(30), '0x1' + '0'.repeat(15) + '1', '0b' + '1'.repeat(70), '0o' + '7'.repeat(40), '0X' + 'ab'.repeat(15),
+];
+const KEY_POOL = ['a', 'b', 'c', '0', '7', '10', '4294967294', '4294967295', 'name', 'ünï', 'x;y', '', 'Fire', '1.5', '-1', '01'];
+
+function randomCodePoint(R) {
+  const band = R.u32() % 5;
+  if (band === 0) return R.int(0x20, 0x7e);
+  if (band === 1) return R.int(0xa0, 0x2fff);
+  if (band === 2) return R.int(0x3040, 0x9fff);
+  if (band === 3) return R.int(0x10000, 0x1f9ff);
+  return R.int(0, 0x1f);
+}
+
+function randomString(R) {
+  let s = '';
+  const n = R.int(0, 6);
+  for (let i = 0; i < n; i++) s += String.fromCodePoint(randomCodePoint(R));
+  return s;
+}
+
+/** A random JS value of the codec's kinds, nested up to `depth`. */
+function genValue(R, depth) {
+  const r = R.u32() % 100;
+  if (depth <= 0 || r < 40) {
+    switch (R.u32() % 6) {
+      case 0: return undefined;
+      case 1: return null;
+      case 2: return R.chance(0.5);
+      case 3: return R.chance(0.6) ? R.pick(NUM_POOL) : R.bits();
+      case 4: return R.chance(0.6) ? R.pick(STR_POOL) : randomString(R);
+      default: return R.pick(NUM_POOL);
+    }
+  }
+  if (r < 65) {
+    const n = R.int(0, 4);
+    return Array.from({ length: n }, () => genValue(R, depth - 1));
+  }
+  const o = {};
+  const n = R.int(0, 4);
+  for (let i = 0; i < n; i++) o[R.pick(KEY_POOL)] = genValue(R, depth - 1);
+  return o;
+}
+
+function genValueFamily() {
+  const out = new Out(
+    'value',
+    'kinds: value <tok> (write(parse(tok)) = tok) | tonum <v> => <f64> (Number) | tostr <v> => <s> (String) | truthy <v> => <b> (!!) | prop <v> <k> => <tok> (v?.[k]); tokens: rust/README.md, R4a',
+  );
+  const R = makeLcg(0x7a1e01);
+  const fam = {};
+  const add = (kind, ...t) => {
+    out.add(kind, ...t);
+    fam[kind] = (fam[kind] ?? 0) + 1;
+  };
+  for (let i = 0; i < 3000; i++) add('value', encodeValue(genValue(R, 3)));
+  for (let i = 0; i < 2500; i++) {
+    const v = genValue(R, 3);
+    add('tonum', encodeValue(v), '=>', numToken(Number(v)));
+  }
+  for (let i = 0; i < 2500; i++) {
+    const v = genValue(R, 3);
+    add('tostr', encodeValue(v), '=>', encodeValue(String(v)));
+  }
+  for (let i = 0; i < 2000; i++) {
+    const v = genValue(R, 3);
+    add('truthy', encodeValue(v), '=>', v ? 'b1' : 'b0');
+  }
+  // A read of one half of an astral character is a lone surrogate, which is not a value (the codec refuses it): such a
+  // read is skipped, not written, so the count below is the number of cases the Rust side sees.
+  for (let n = 0; n < 2500; ) {
+    const v = genValue(R, 3);
+    const k = R.chance(0.5) ? R.pick(KEY_POOL) : genValue(R, 1);
+    let got;
+    try {
+      got = encodeValue(v?.[k]);
+    } catch {
+      continue;
+    }
+    add('prop', encodeValue(v), encodeValue(k), '=>', got);
+    n++;
+  }
+  console.log(`value: ${Object.entries(fam).map(([k, v]) => `${k} ${v}`).join(', ')}`);
+  return out.write();
+}
+
+// ---- items, affixes and characters: the inputs of the save, gear, sockets and loot families ----------------------
+const ITEM_GROUPS = ['Weapons', 'Armor', 'Jewellery', 'MensClothing', 'WomensClothing', 'Gems', 'Clothing', 'Potions'];
+const ITEM_TEMPLATES = [113, 114, 115, 118, 120, 124, 127, 129, 131, 560, 563, 102, 103, 109, 110, 111, 112, 513, 15, 1900, 1924, 7, 131];
+const RARITIES = ['common', 'magic', 'rare', 'legendary', 'gilded', 'artifact', undefined, null];
+const AFFIX_KIND_IDS = Object.keys(AFFIX_KINDS);
+const LEGENDARY_IDS = allLegendaries().map((l) => l.id);
+const LEGENDARY_FEW = LEGENDARY_IDS.slice(0, 6);
+
+/** One affix record, valid or not: a kind, a param its kind may name (or not), and a value at the band's edges. */
+function genAffix(R) {
+  const id = R.pick(AFFIX_KIND_IDS);
+  const k = AFFIX_KINDS[id];
+  const range = AFFIX_RANGES[id];
+  const max = range.legendary[1];
+  const a = { id };
+  if (Array.isArray(k.params)) {
+    a.param = R.chance(0.93) ? R.pick(k.params) : R.pick([undefined, null, 'bogus', 999]);
+  } else if (R.chance(0.1)) {
+    a.param = R.pick([null, 'extra', 0]);
+  }
+  a.value = R.pick([
+    1, 2, 3, max - 1, max, max + 1, 0, -1, 1.5, NaN, '5', undefined, Math.floor(max / 2), range.rare[1],
+    range.rare[1] + 1, range.rare[1] - 1, range.magic[0], range.magic[1], range.legendary[0], 1e9,
+  ]);
+  return a;
+}
+
+/** A piece of equipment, shaped as the fields the readers read (any of them may be missing or odd). */
+function genItem(R) {
+  const it = {
+    group: R.chance(0.95) ? R.pick(ITEM_GROUPS) : undefined,
+    templateIndex: R.chance(0.9) ? R.pick(ITEM_TEMPLATES) : R.pick([undefined, null, 0, 7.5, '113']),
+    material: R.pick([0, 9, 256, 512, 520, undefined]),
+    rarity: R.pick(RARITIES),
+    equipSlot: R.pick([19, 21, 12, 18, 26, null, undefined, -1, '19']),
+    artifact: R.chance(0.1),
+  };
+  if (R.chance(0.1)) it.affixes = undefined;
+  else if (R.chance(0.03)) it.affixes = null;
+  else it.affixes = Array.from({ length: R.int(0, 5) }, () => (R.chance(0.03) ? null : genAffix(R)));
+  if (R.chance(0.3)) it.legendary = R.pick(LEGENDARY_FEW);
+  if (R.chance(0.3)) it.sockets = Array.from({ length: R.int(0, 3) }, () => R.pick(['empty', ...ALL_GEM_IDS, 'junk', null]));
+  else if (R.chance(0.1)) it.socket = R.pick(['ruby', 'empty', 'bogus', 'perfect-amber']);
+  if (R.chance(0.3)) it.imprint = R.pick(LEGENDARY_FEW);
+  if (R.chance(0.5)) it.enchantments = Array.from({ length: R.int(0, 3) }, () => ({
+    type: R.pick([10, 10, 3, 9]),
+    param: R.pick([0, 5, 14, 34, 35, -1, 1.5, '7', NaN, undefined]),
+  }));
+  // A set gem's own line (gemLine is the JS's), sometimes with a value past its cap (law 6 reads the cap).
+  if (Array.isArray(it.sockets) && R.chance(0.7)) {
+    for (const g of it.sockets) {
+      const line = gemLine(it, g);
+      if (!line) continue;
+      if (!Array.isArray(it.affixes)) it.affixes = [];
+      it.affixes.push(R.chance(0.2) ? { ...line, value: R.pick([0, 1, 40, 100, 3.5]) } : line);
+    }
+  }
+  return it;
+}
+
+/** A list of pieces (null entries and repeated legendaries included: the readers must skip or count them). */
+function genItemList(R) {
+  return Array.from({ length: R.int(0, 5) }, () => (R.chance(0.05) ? null : genItem(R)));
+}
+
+const SAVE_BLADES = [113, 114, 115, 118, 120, 121, 124, 127, 129, 131];
+/** A character from the theory builder, over the grid of levels, races, blades, skill and gear lines. */
+function theoryPick(R) {
+  return theoryCharacter({
+    level: R.pick([1, 2, 9, 45]),
+    race: R.pick([1, 2, 3, 4, 5, 6, 7, 8]),
+    blade: R.pick(SAVE_BLADES),
+    material: R.pick([0, 9, 256]),
+    gearLB: R.pick([0, 1, -1, 15, 40]),
+    gearCS: R.pick([0, 5, -5]),
+    rawBlade: R.pick([0, 50, 99, 100, 100.5, 101, 124.9, 125, 150, 175, 200, 201, -5, 300]),
+    rawCrit: R.pick([0, 100, 150, 200]),
+    rawBackstab: R.pick([100, 175, 200]),
+    vampire: R.chance(0.3),
+    starStats: { strength: R.pick([0, 20, -30, 100]), luck: R.pick([0, 10, -20]) },
+    starSkills: R.chance(0.5) ? {} : { 5: R.pick([15, -15, 3]), 10: R.pick([-20, 0]), 28: 15 },
+    starDamage: R.pick([0, 20, 50]),
+    sockets: R.chance(0.3) ? ['ruby', 'empty'] : [],
+    martialPath: null,
+  });
+}
+
+/** The same character with the mastery switches and the mastered skills varied (online, offline, a list with odd entries). */
+function saveVariant(R, ch) {
+  const c = structuredClone(ch);
+  const mode = R.u32() % 4;
+  if (mode === 0) c.online = false;
+  if (mode === 1) {
+    c.online = false;
+    c.masterSkills = true;
+  }
+  if (mode === 2) {
+    c.online = undefined;
+    c.masterSkills = false;
+  }
+  c.masteredSkills = R.chance(0.2)
+    ? undefined
+    : Array.from({ length: R.int(0, 5) }, () => R.pick([5, 28, 29, 30, 33, 34, 0, NaN, '28', 1.5]));
+  return c;
+}
+
+/** A character with odd fields: the values the readers must read as JS reads them (strings, missing, null, NaN). */
+function syntheticChar(R) {
+  const skills = Array.from({ length: R.chance(0.8) ? 35 : R.int(0, 40) }, () => (
+    R.chance(0.1) ? R.pick([undefined, null, '150', ' 50 ', 'x']) : R.pick(NUM_POOL)
+  ));
+  const effectKinds = ['disease', 'poison', 'artifact', 'racialOverride', 'fortifyAttribute', 'drainAttribute',
+    'transferAttribute', 'spellShield'];
+  const activeEffects = Array.from({ length: R.int(0, 5) }, () => {
+    const e = {};
+    if (R.chance(0.9)) e.kind = R.pick(effectKinds);
+    if (R.chance(0.2)) e.ended = R.chance(0.5);
+    if (R.chance(0.7)) e.statMods = Object.fromEntries(STAT_NAMES.filter(() => R.chance(0.5)).map((s) => [s, R.pick(NUM_POOL)]));
+    if (R.chance(0.5)) e.stat = R.pick([...STAT_NAMES, 'bogus', undefined]);
+    if (R.chance(0.5)) e.magnitude = R.pick(NUM_POOL);
+    if (R.chance(0.5)) e.skillMods = Object.fromEntries(Array.from({ length: R.int(0, 3) }, () => [String(R.int(0, 34)), R.pick(NUM_POOL)]));
+    return e;
+  });
+  return {
+    name: R.pick(['', 'Syn', 'Ünï', '😀 x', 'A;B', undefined, null, 3]),
+    raceId: R.pick([1, 2, 8, 9, 0, undefined, null, '1', -1, 1.5, NaN]),
+    race: R.pick(['', 'Nord', undefined, null, 5]),
+    career: R.pick([null, undefined, { name: 'Mage' }, { name: '' }, { name: 0 }, {}]),
+    level: R.pick([1, 2.5, -0, NaN, 1e21, undefined, null, 7]),
+    skills,
+    stats: Object.fromEntries(STAT_NAMES.map((s) => [s, R.chance(0.9) ? R.pick(NUM_POOL) : R.pick([undefined, null, '60'])])),
+    activeEffects,
+    online: R.pick([true, false, undefined]),
+    masterSkills: R.pick([true, false, undefined]),
+    masteredSkills: Array.from({ length: R.int(0, 4) }, () => R.pick([5, 28, 33, NaN, 1.5, 0])),
+    _mods: {
+      stats: Object.fromEntries(STAT_NAMES.filter(() => R.chance(0.4)).map((s) => [s, R.pick(NUM_POOL)])),
+      statMax: Object.fromEntries(STAT_NAMES.filter(() => R.chance(0.3)).map((s) => [s, R.pick(NUM_POOL)])),
+      skills: Object.fromEntries(Array.from({ length: R.int(0, 4) }, () => [String(R.int(0, 34)), R.pick(NUM_POOL)])),
+    },
+    _enchantMods: {
+      skillMods: Object.fromEntries(Array.from({ length: R.int(0, 4) }, () => [String(R.int(0, 34)), R.pick(NUM_POOL)])),
+      chanceToHitMod: 0,
+    },
+  };
+}
+
+/** The fields the save helpers read, copied only when present (a missing key stays missing). */
+const SAVE_KEYS = [
+  'online', 'masterSkills', 'masteredSkills', 'skills', 'stats', 'activeEffects', '_mods', '_enchantMods', 'name',
+  'raceId', 'race', 'career', 'level',
+];
+function saveProjection(ch) {
+  const p = {};
+  for (const k of SAVE_KEYS) if (k in ch) p[k] = ch[k];
+  return p;
+}
+
+function genSaveFamily() {
+  const out = new Out(
+    'save',
+    'defs: `def <i> <value>` (a character projection or an item list); kinds: eff <v> => f64 | msa @ch => b | mcs @ch <id> <raw> => v | smo @ch <id> => f64 | sv @ch <id> => f64 | ls @ch <stat> => f64 | rem @items => v | rm @items => v | cl @ch => s | sn <id> => s | wsk <id> => v | pf <id> => v',
+  );
+  const R = makeLcg(0x5a0e01);
+  const fam = {};
+  const add = (kind, ...t) => {
+    out.add(kind, ...t);
+    fam[kind] = (fam[kind] ?? 0) + 1;
+  };
+  const chars = [];
+  const charIdx = [];
+  let di = 0;
+  for (let i = 0; i < 40; i++) {
+    const ch = saveProjection(saveVariant(R, theoryPick(R)));
+    out.add('def', String(di), encodeValue(ch));
+    chars.push(ch);
+    charIdx.push(di++);
+  }
+  for (let i = 0; i < 60; i++) {
+    const ch = saveProjection(syntheticChar(R));
+    out.add('def', String(di), encodeValue(ch));
+    chars.push(ch);
+    charIdx.push(di++);
+  }
+  const lists = [];
+  const listIdx = [];
+  for (let i = 0; i < 80; i++) {
+    const list = genItemList(R);
+    out.add('def', String(di), encodeValue(list));
+    lists.push(list);
+    listIdx.push(di++);
+  }
+  const ch = () => {
+    const i = R.u32() % chars.length;
+    return { ref: `@${charIdx[i]}`, val: chars[i] };
+  };
+  const pickList = () => {
+    const i = R.u32() % lists.length;
+    return { ref: `@${listIdx[i]}`, val: lists[i] };
+  };
+  const SKILL_IDS = [0, 1, 5, 10, 16, 28, 29, 30, 31, 32, 33, 34];
+  const idOf = () => (R.chance(0.7) ? R.pick(SKILL_IDS) : R.pick([NaN, null, undefined, '5', -1, 35, 1.5, 0, 34]));
+  for (let i = 0; i < 2000; i++) {
+    const v = R.chance(0.7) ? R.pick(NUM_POOL) : genValue(R, 0);
+    add('eff', encodeValue(v), '=>', numToken(effectiveSkill(v)));
+  }
+  for (let i = 0; i < 2000; i++) {
+    const c = ch();
+    add('msa', c.ref, '=>', encodeValue(masterSkillsActive(c.val)));
+  }
+  for (let i = 0; i < 2000; i++) {
+    const c = ch();
+    const id = idOf();
+    const raw = R.chance(0.8) ? R.pick(NUM_POOL) : genValue(R, 0);
+    add('mcs', c.ref, encodeValue(id), encodeValue(raw), '=>', encodeValue(masterCappedSkill(c.val, id, raw)));
+  }
+  for (let i = 0; i < 2000; i++) {
+    const c = ch();
+    const id = idOf();
+    add('smo', c.ref, encodeValue(id), '=>', numToken(skillModOf(c.val, id)));
+  }
+  for (let i = 0; i < 2000; i++) {
+    const c = ch();
+    const id = idOf();
+    add('sv', c.ref, encodeValue(id), '=>', numToken(skillValue(c.val, id)));
+  }
+  for (let i = 0; i < 2000; i++) {
+    const c = ch();
+    const stat = R.pick(STAT_NAMES);
+    add('ls', c.ref, encodeValue(stat), '=>', numToken(liveStat(c.val, stat)));
+  }
+  for (let i = 0; i < 2000; i++) {
+    const l = pickList();
+    add('rem', l.ref, '=>', encodeValue(rebuildEnchantMods(l.val)));
+  }
+  for (let i = 0; i < 2000; i++) {
+    const l = pickList();
+    add('rm', l.ref, '=>', encodeValue(rebuildMods(l.val)));
+  }
+  for (let i = 0; i < 2000; i++) {
+    const c = ch();
+    add('cl', c.ref, '=>', encodeValue(characterLabel(c.val)));
+  }
+  for (let i = 0; i < 2000; i++) {
+    // 'length' is the SKILL_NAMES array's own length (a number, 35): JS returns it, not a name.
+    const id = R.chance(0.7) ? R.int(0, 36) : R.pick([NaN, -1, 1.5, '5', 'Medical', undefined, null, 1e21, '34', 35, 'length']);
+    add('sn', encodeValue(id), '=>', encodeValue(skillName(id)));
+  }
+  const TEMPLATE_KEYS = [113, 114, 115, 118, 120, 121, 124, 127, 129, 130, 131, 560, 563, 102, 0, 999, '113', NaN, undefined];
+  for (let i = 0; i < 2000; i++) {
+    const id = R.chance(0.8) ? R.pick(TEMPLATE_KEYS) : R.int(-1, 700);
+    add('wsk', encodeValue(id), '=>', encodeValue(WEAPON_SKILL[id]));
+  }
+  for (let i = 0; i < 2000; i++) {
+    const id = R.chance(0.8) ? R.int(0, 36) : R.pick([28, 29, 30, 31, 32, 33, 'Medical', NaN, undefined, '28']);
+    add('pf', encodeValue(id), '=>', encodeValue(PROFICIENCY_FLAG[id]));
+  }
+  console.log(`save: ${Object.entries(fam).map(([k, v]) => `${k} ${v}`).join(', ')}`);
+  return out.write();
+}
+
+function genGearFamily() {
+  const out = new Out(
+    'gear',
+    'defs: `def <i> <value>` (items, item lists); kinds: laid @item => arr | ril @item => arr | vil @item => arr | wdp @item => f64 | bl @item => obj | fl @items => obj | sf <template> => f64 (socketsFor)',
+  );
+  const R = makeLcg(0x6ea701);
+  const fam = {};
+  const add = (kind, ...t) => {
+    out.add(kind, ...t);
+    fam[kind] = (fam[kind] ?? 0) + 1;
+  };
+  let di = 0;
+  const items = [];
+  const itemIdx = [];
+  for (let i = 0; i < 400; i++) {
+    const it = genItem(R);
+    out.add('def', String(di), encodeValue(it));
+    items.push(it);
+    itemIdx.push(di++);
+  }
+  const lists = [];
+  const listIdx = [];
+  for (let i = 0; i < 80; i++) {
+    const list = genItemList(R);
+    out.add('def', String(di), encodeValue(list));
+    lists.push(list);
+    listIdx.push(di++);
+  }
+  const it = () => {
+    const i = R.u32() % items.length;
+    return { ref: `@${itemIdx[i]}`, val: items[i] };
+  };
+  const list = () => {
+    const i = R.u32() % lists.length;
+    return { ref: `@${listIdx[i]}`, val: lists[i] };
+  };
+  for (let i = 0; i < 2000; i++) {
+    const x = it();
+    add('laid', x.ref, '=>', encodeValue(laidLines(x.val)));
+  }
+  for (let i = 0; i < 2000; i++) {
+    const x = it();
+    add('ril', x.ref, '=>', encodeValue(readItemLines(x.val)));
+  }
+  for (let i = 0; i < 2000; i++) {
+    const x = it();
+    add('vil', x.ref, '=>', encodeValue(validItemLines(x.val)));
+  }
+  for (let i = 0; i < 2000; i++) {
+    const x = it();
+    add('wdp', x.ref, '=>', numToken(weaponDamagePct(x.val)));
+  }
+  for (let i = 0; i < 2000; i++) {
+    const x = it();
+    add('bl', x.ref, '=>', encodeValue(bladeLines(x.val)));
+  }
+  for (let i = 0; i < 2000; i++) {
+    const x = list();
+    add('fl', x.ref, '=>', encodeValue(foldLines(x.val)));
+  }
+  const TEMPLATES = [113, 114, 115, 118, 120, 121, 124, 127, 129, 130, 131, 560, 563, 102, 0, 7, 999, '113', '560', undefined, null, 7.5];
+  for (let i = 0; i < 2000; i++) {
+    const t = R.chance(0.85) ? R.pick(TEMPLATES) : R.int(0, 700);
+    add('sf', encodeValue(t), '=>', numToken(socketsFor(t)));
+  }
+  console.log(`gear: ${Object.entries(fam).map(([k, v]) => `${k} ${v}`).join(', ')}`);
+  return out.write();
+}
+
+function genSocketsFamily() {
+  const out = new Out(
+    'sockets',
+    'defs: `def <i> <value>` (items); kinds: scount <item|template> => f64 | saff @item => arr | pgem <kind> => s | psock <item|template> => arr',
+  );
+  const R = makeLcg(0x50c4e7);
+  const fam = {};
+  const add = (kind, ...t) => {
+    out.add(kind, ...t);
+    fam[kind] = (fam[kind] ?? 0) + 1;
+  };
+  let di = 0;
+  const items = [];
+  const itemIdx = [];
+  for (let i = 0; i < 400; i++) {
+    const it = genItem(R);
+    out.add('def', String(di), encodeValue(it));
+    items.push(it);
+    itemIdx.push(di++);
+  }
+  const it = () => {
+    const i = R.u32() % items.length;
+    return { ref: `@${itemIdx[i]}`, val: items[i] };
+  };
+  const TEMPLATES = [113, 114, 115, 118, 120, 121, 124, 127, 129, 130, 131, 560, 563, 102, 0, 7, '113', undefined, null];
+  const itemOrTemplate = () => {
+    if (R.chance(0.7)) {
+      const x = it();
+      return { ref: x.ref, val: x.val };
+    }
+    const t = R.chance(0.85) ? R.pick(TEMPLATES) : R.int(0, 700);
+    return { ref: encodeValue(t), val: t };
+  };
+  for (let i = 0; i < 2000; i++) {
+    const x = itemOrTemplate();
+    add('scount', x.ref, '=>', numToken(socketCount(x.val)));
+  }
+  for (let i = 0; i < 2000; i++) {
+    const x = it();
+    add('saff', x.ref, '=>', encodeValue(socketAffixes(x.val)));
+  }
+  const KINDS = ['diamond', 'ruby', 'amber', 'flawless', 0, 1, null, undefined, 'sapphire', ''];
+  for (let i = 0; i < 2000; i++) {
+    const k = R.pick(KINDS);
+    add('pgem', encodeValue(k), '=>', encodeValue(perfectGem(k)));
+  }
+  for (let i = 0; i < 2000; i++) {
+    const x = itemOrTemplate();
+    add('psock', x.ref, '=>', encodeValue(perfectSockets(x.val)));
+  }
+  console.log(`sockets: ${Object.entries(fam).map(([k, v]) => `${k} ${v}`).join(', ')}`);
+  return out.write();
+}
+
+function genLootFamily() {
+  const out = new Out(
+    'loot',
+    'defs: `def <i> <value>` (items, item lists, targets); kinds: rl @item => arr | va <affix> => b | gl @item <gem> => v | sg @item => arr | so @item => arr | sm @item => f64 | cp @list => arr | pio @item => arr | po <id> => v | fg @target => v',
+  );
+  const R = makeLcg(0x100711);
+  const fam = {};
+  const add = (kind, ...t) => {
+    out.add(kind, ...t);
+    fam[kind] = (fam[kind] ?? 0) + 1;
+  };
+  let di = 0;
+  const items = [];
+  const itemIdx = [];
+  for (let i = 0; i < 400; i++) {
+    const it = genItem(R);
+    out.add('def', String(di), encodeValue(it));
+    items.push(it);
+    itemIdx.push(di++);
+  }
+  const lists = [];
+  const listIdx = [];
+  for (let i = 0; i < 80; i++) {
+    const list = genItemList(R);
+    out.add('def', String(di), encodeValue(list));
+    lists.push(list);
+    listIdx.push(di++);
+  }
+  const it = () => {
+    const i = R.u32() % items.length;
+    return { ref: `@${itemIdx[i]}`, val: items[i] };
+  };
+  const list = () => {
+    const i = R.u32() % lists.length;
+    return { ref: `@${listIdx[i]}`, val: lists[i] };
+  };
+  for (let i = 0; i < 2000; i++) {
+    const x = it();
+    add('rl', x.ref, '=>', encodeValue(readLines(x.val)));
+  }
+  for (let i = 0; i < 2000; i++) {
+    const a = R.chance(0.8) ? genAffix(R) : R.pick([genValue(R, 2), null, undefined, 'damage', { id: 'constructor' }]);
+    add('va', encodeValue(a), '=>', validAffix(a) ? 'b1' : 'b0');
+  }
+  const GEMS = [...ALL_GEM_IDS, 'bogus', 'ruby ', null, 5, 'perfect-amber', 'chipped-empty', undefined];
+  for (let i = 0; i < 2000; i++) {
+    const x = it();
+    const g = R.pick(GEMS);
+    add('gl', x.ref, encodeValue(g), '=>', encodeValue(gemLine(x.val, g)));
+  }
+  for (let i = 0; i < 2000; i++) {
+    const x = it();
+    add('sg', x.ref, '=>', encodeValue(socketGems(x.val)));
+  }
+  for (let i = 0; i < 2000; i++) {
+    const x = it();
+    add('so', x.ref, '=>', encodeValue(socketsOf(x.val)));
+  }
+  for (let i = 0; i < 2000; i++) {
+    const x = it();
+    add('sm', x.ref, '=>', numToken(socketMax(x.val)));
+  }
+  for (let i = 0; i < 2000; i++) {
+    const l = list();
+    add('cp', l.ref, '=>', encodeValue(countedPieces(l.val)));
+  }
+  for (let i = 0; i < 2000; i++) {
+    const x = it();
+    add('pio', x.ref, '=>', encodeValue(powerIdsOf(x.val)));
+  }
+  // powerOf: every id either table holds, once each (the table's own and the legendaries' own powers), then the odd
+  // inputs, then random picks. An inherited name ('constructor', '__proto__') is left out: JS answers the Object.prototype
+  // member (a function, or the prototype object), which a codec value cannot hold; the port refuses it (rust/README.md).
+  const INHERITED = new Set(Object.getOwnPropertyNames(Object.prototype));
+  const OWN_POWER_IDS = allLegendaries().filter((l) => l.power !== undefined && l.power !== null).map((l) => l.id);
+  const POWER_TABLE_IDS = Object.keys(LEGENDARY_POWERS);
+  const POWER_IDS = [...new Set([...POWER_TABLE_IDS, ...OWN_POWER_IDS, ...LEGENDARY_IDS])].filter((id) => !INHERITED.has(id));
+  const BOTH_POWER_IDS = OWN_POWER_IDS.filter((id) => POWER_TABLE_IDS.includes(id));
+  console.log(`powerOf: ${POWER_IDS.length} ids (${POWER_TABLE_IDS.length} in LEGENDARY_POWERS, ${OWN_POWER_IDS.length} with an own power, ${BOTH_POWER_IDS.length} in both)`);
+  const ODD_POWER_INPUTS = [null, undefined, NaN, 5, true, ['wall-of-daggerfall'], { id: 'wyrmbane' }, '', 'nope', 'Foxglove', ' wyrmbane'];
+  for (const id of [...POWER_IDS, ...ODD_POWER_INPUTS]) add('po', encodeValue(id), '=>', encodeValue(powerOf(id)));
+  for (let i = 0; i < 2000; i++) {
+    const id = R.chance(0.9) ? R.pick(POWER_IDS) : R.pick(ODD_POWER_INPUTS);
+    add('po', encodeValue(id), '=>', encodeValue(powerOf(id)));
+  }
+  for (let i = 0; i < 2000; i++) {
+    const t = R.chance(0.8)
+      ? { isPlayer: R.pick([true, false, undefined]), affinity: R.pick(['Human', 'Undead', 'Animal', undefined, null]), careerIndex: R.pick([0, 6, 7, 8, 12, 15, 21, 24, 128, 130, 140, 146, 99, undefined, null, NaN]) }
+      : { isPlayer: false, affinity: 'Human', careerIndex: R.int(0, 60) };
+    add('fg', encodeValue(t), '=>', encodeValue(foeGroup(t)));
+  }
+  console.log(`loot: ${Object.entries(fam).map(([k, v]) => `${k} ${v}`).join(', ')}`);
+  return out.write();
+}
+
+counts.value = genValueFamily();
+counts.save = genSaveFamily();
+counts.gear = genGearFamily();
+counts.sockets = genSocketsFamily();
+counts.loot = genLootFamily();
 
 counts.maketarget = await genMaketarget();
 

@@ -64,6 +64,10 @@ import * as rriItems from '../vendor/upstream/a3eb1605/src/systems/roleplayReali
 import * as mobileTypes from '../vendor/upstream/a3eb1605/src/characters/mobile/mobileTypes.js';
 import * as poisons from '../vendor/upstream/a3eb1605/src/systems/poisons.js';
 import * as createItemRows from '../vendor/upstream/a3eb1605/src/systems/createItemRows.js';
+import * as gemGrades from '../vendor/upstream/a3eb1605/src/systems/loot/gemGrades.js';
+import * as thunderlockIds from '../vendor/upstream/a3eb1605/src/characters/thunderlockIds.js';
+import * as save from '../src/save.js';
+import { encodeValue } from './rust-codec.mjs';
 import { mintRow } from '../src/target.js';
 
 const V = 'vendor/upstream/a3eb1605/src';
@@ -175,6 +179,112 @@ function rriEnabledDefaults() {
   return { Enabled: def('Enabled'), newWeapons: def('newWeapons'), newArmor: def('newArmor'), realisticEnemyEquipment: def('realisticEnemyEquipment') };
 }
 
+/**
+ * R4a: the lootRarity tables the affix and socket readers read, as flat rows (the generator's struct names follow the
+ * key paths, so the Rust names fixed fields only). Every list is non-empty (the generator cannot type an empty one).
+ */
+function lootRarityTables() {
+  const K = lootRarity.AFFIX_KINDS;
+  const R = lootRarity.AFFIX_RANGES;
+  const strParams = [];
+  const numParams = [];
+  const noParams = [];
+  for (const [id, k] of Object.entries(K)) {
+    if (!Array.isArray(k.params)) {
+      noParams.push(id);
+    } else if (k.params.every((p) => typeof p === 'string')) {
+      strParams.push([id, [...k.params]]);
+    } else if (k.params.every((p) => typeof p === 'number')) {
+      numParams.push([id, [...k.params]]);
+    } else {
+      throw new Error(`rust-data: affix kind ${id} has a params list of two kinds`);
+    }
+  }
+  const gemRows = [];
+  for (const [kind, sides] of Object.entries(lootRarity.GEM_GRADE_LINES)) {
+    for (const side of ['weapon', 'other']) {
+      const row = sides[side];
+      gemRows.push([kind, side, row.id, row.param ?? null, [...row.values]]);
+    }
+  }
+  return {
+    AFFIX_KIND_NAMES: Object.keys(K),
+    AFFIX_PARAM_STR: strParams,
+    AFFIX_PARAM_NUM: numParams,
+    AFFIX_NO_PARAM: noParams,
+    AFFIX_RARE_TOP: Object.entries(R).map(([id, r]) => [id, r.rare[1]]),
+    AFFIX_LEGENDARY_TOP: Object.entries(R).map(([id, r]) => [id, r.legendary[1]]),
+    GEM_LINE_ROWS: gemRows,
+    SOCKET_GROUPS: [...lootRarity.SOCKET_GROUPS],
+    SOCKET_EMPTY: lootRarity.SOCKET_EMPTY,
+    WEAPON_SOCKETS: { ...lootRarity.WEAPON_SOCKETS },
+  };
+}
+
+/**
+ * R4a: `powerOf(id)` (lootRarity.js:1268) is `LEGENDARY_POWERS[id] ?? legendaryById(id)?.power ?? _gilded?.powerOf(id) ?? null`.
+ * Two tables are generated as codec tokens (the records are heterogeneous, so a typed struct would fix field names the
+ * generator cannot know): `LEGENDARY_POWER_TOKENS` (the table) and `LEGENDARY_OWN_POWER_TOKENS` (each legendary's own
+ * `power`, the first record of an id, as `legendaryById` finds it; a null power is skipped, as `??` skips it).
+ * `_gilded` is module-private and unset on this import path. The generator asserts powerOf answers null for an id no
+ * registry holds, which catches a registry that answers every id; a registry that answers only some ids is not caught.
+ */
+function legendaryPowerTokens() {
+  if (lootRarity.powerOf('no-such-gilded-id-for-the-rust-port') !== null) {
+    throw new Error('rust-data: powerOf answers a made-up id: a gilded registry is set on this import path; the port has none');
+  }
+  return Object.entries(lootRarity.LEGENDARY_POWERS).map(([id, p]) => [id, encodeValue(p)]);
+}
+
+function legendaryOwnPowerTokens() {
+  const first = new Map();
+  for (const l of lootRarity.allLegendaries()) if (!first.has(l.id)) first.set(l.id, l);
+  const rows = [];
+  for (const [id, l] of first) {
+    if (l.power === undefined || l.power === null) continue;
+    rows.push([id, encodeValue(l.power)]);
+  }
+  const both = rows.map(([id]) => id).filter((id) => Object.hasOwn(lootRarity.LEGENDARY_POWERS, id));
+  console.log(`rust-data: ${rows.length} legendaries carry their own power; ${both.length} of them also in LEGENDARY_POWERS${both.length ? `: ${both.join(', ')}` : ''}`);
+  return rows;
+}
+
+/**
+ * R4a: the own property names of the prototypes a plain JS object, array, string, number or boolean inherits. A read of
+ * one of these that the receiver does not own yields a function or an object in JS, which a Value cannot hold: the port
+ * refuses it (rust/README.md, R4a). Generated from the runtime, so the lists are the engine's own.
+ */
+function prototypeKeys() {
+  return {
+    OBJECT_PROTOTYPE_KEYS: Object.getOwnPropertyNames(Object.prototype),
+    ARRAY_PROTOTYPE_KEYS: Object.getOwnPropertyNames(Array.prototype),
+    STRING_PROTOTYPE_KEYS: Object.getOwnPropertyNames(String.prototype),
+    NUMBER_PROTOTYPE_KEYS: Object.getOwnPropertyNames(Number.prototype),
+    BOOLEAN_PROTOTYPE_KEYS: Object.getOwnPropertyNames(Boolean.prototype),
+  };
+}
+
+/**
+ * R4a: the weapon skill and the ammunition set of `characters/weapons.js` and `systems/item/itemTemplates.js`, probed over
+ * every template index 0..700 except the RRI custom classes 513..526 (not registered in the port; see rust/README.md).
+ * The probe answers what the JS answers with the registries as the import path leaves them.
+ */
+function buildItemFacts() {
+  const skillUsed = {};
+  const ammo = [];
+  for (let t = 0; t <= 700; t++) {
+    if (t >= 513 && t <= 526) continue;
+    const s = weapons.weaponSkillUsed(t);
+    if (s !== null && s !== undefined) skillUsed[t] = s;
+    if (itemTemplates.isAmmunition({ templateIndex: t })) ammo.push(t);
+  }
+  return {
+    WEAPON_SKILL_USED: skillUsed,
+    AMMUNITION_TEMPLATES: ammo,
+    THUNDERLOCK_TEMPLATE: thunderlockIds.THUNDERLOCK_TEMPLATE,
+  };
+}
+
 const SOURCES = [
   { file: 'data', from: 'src/data.js', mod: data, names: null },
   { file: 'enchant_data', from: 'src/enchantData.js', mod: enchantData, names: null },
@@ -227,8 +337,23 @@ const SOURCES = [
   { file: 'enchantments', from: `${V}/systems/enchantments.js`, mod: enchantments, names: ['ENCHANTMENT_TYPES', 'LOW_DAMAGE_VS', 'POTENT_VS_DAMAGE'] },
   { file: 'paperdoll', from: `${V}/characters/paperdoll/paperdoll.js`, mod: paperdoll, names: ['EQUIP_SLOTS'] },
   { file: 'level_cap', from: `${V}/systems/levelCap.js`, mod: levelCap, names: ['LEVEL_CAP'] },
-  { file: 'loot_rarity', from: `${V}/systems/loot/lootRarity.js`, mod: lootRarity, names: ['AFFIX_COUNTS', 'AFFIX_IDS', 'AFFIX_KINDS', 'AFFIX_RANGES'] },
-  { file: 'loot_powers', from: `${V}/systems/loot/lootPowers.js`, mod: lootPowers, names: ['POTENCY_CAP', 'SPELL_POWER_MOST'] },
+  {
+    file: 'loot_rarity',
+    from: `${V}/systems/loot/lootRarity.js`,
+    mod: { ...lootRarity, ...lootRarityTables() },
+    names: [
+      'AFFIX_COUNTS', 'AFFIX_IDS', 'AFFIX_KINDS', 'AFFIX_RANGES',
+      'AFFIX_KIND_NAMES', 'AFFIX_PARAM_STR', 'AFFIX_PARAM_NUM', 'AFFIX_NO_PARAM', 'AFFIX_RARE_TOP', 'AFFIX_LEGENDARY_TOP',
+      'GEM_LINE_ROWS', 'SOCKET_GROUPS', 'SOCKET_EMPTY', 'WEAPON_SOCKETS',
+    ],
+  },
+  {
+    file: 'loot_powers',
+    from: `${V}/systems/loot/lootPowers.js (LEGENDARY_POWERS and the legendaries' own power, lootRarity.js, as codec tokens)`,
+    mod: { ...lootPowers, LEGENDARY_POWER_TOKENS: legendaryPowerTokens(), LEGENDARY_OWN_POWER_TOKENS: legendaryOwnPowerTokens() },
+    names: ['POTENCY_CAP', 'SPELL_POWER_MOST', 'LEGENDARY_POWER_TOKENS', 'LEGENDARY_OWN_POWER_TOKENS'],
+  },
+  { file: 'js_prototypes', from: 'the JS engine: own names of Object, Array, String, Number and Boolean .prototype', mod: prototypeKeys(), names: ['OBJECT_PROTOTYPE_KEYS', 'ARRAY_PROTOTYPE_KEYS', 'STRING_PROTOTYPE_KEYS', 'NUMBER_PROTOTYPE_KEYS', 'BOOLEAN_PROTOTYPE_KEYS'] },
   { file: 'gate_boss', from: `${V}/world/gate/gateBoss.js`, mod: gateBoss, names: ['BOSS_ARMOR'] },
   { file: 'bow_bloom', from: `${V}/combat/bowBloom.js`, mod: bowBloom, names: ['BOW_FAST'] },
   { file: 'hands_law', from: `${V}/combat/twoHands/handsLaw.js`, mod: handsLaw, names: ['DUAL', 'OFF_HAND_BLOW'] },
@@ -247,6 +372,15 @@ const SOURCES = [
   { file: 'mobile_types', from: `${V}/characters/mobile/mobileTypes.js`, mod: mobileTypes, names: ['MOBILE_TYPES'] },
   { file: 'poisons', from: `${V}/systems/poisons.js`, mod: poisons, names: ['POISON_START_VALUE'] },
   { file: 'create_item_rows', from: `${V}/systems/createItemRows.js`, mod: createItemRows, names: ['MENS_PLAIN_ROBES', 'WOMENS_PLAIN_ROBES'] },
+  // R4a
+  { file: 'save_tables', from: 'src/save.js (SLOT, WEAPON_SKILL, PROFICIENCY_FLAG, ENHANCE_SKILL_MOD)', mod: save, names: ['SLOT', 'WEAPON_SKILL', 'PROFICIENCY_FLAG', 'ENHANCE_SKILL_MOD'] },
+  { file: 'gem_grades', from: `${V}/systems/loot/gemGrades.js`, mod: gemGrades, names: ['GEM_IDS', 'GEM_GRADES', 'GEM_ROW_GRADES', 'ALL_GEM_IDS', 'GEM_GRADE_TEMPLATE_BASE'] },
+  {
+    file: 'item_facts',
+    from: `${V}/characters/weapons.js weaponSkillUsed, ${V}/systems/item/itemTemplates.js isAmmunition (probed), ${V}/characters/thunderlockIds.js`,
+    mod: buildItemFacts(),
+    names: ['WEAPON_SKILL_USED', 'AMMUNITION_TEMPLATES', 'THUNDERLOCK_TEMPLATE'],
+  },
 ];
 
 const RUST_KEYWORDS = new Set([
@@ -574,7 +708,7 @@ function structText(d) {
 const header = (from) => [
   '// generated by tools/rust-data.mjs - do not edit',
   `// source: ${from}`,
-  '#![allow(clippy::approx_constant, clippy::excessive_precision)]',
+  '#![allow(clippy::approx_constant, clippy::excessive_precision, clippy::type_complexity)]',
 ].join('\n');
 
 function emitModule(src) {
