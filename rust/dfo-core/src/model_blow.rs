@@ -422,7 +422,7 @@ pub fn condition_multiplier(w: &Value, sharp_edge: bool) -> f64 {
     damage::condition_multiplier(w.truthy().then_some(&wear), sharp_edge)
 }
 
-fn swing_terms(key: &str) -> (f64, f64) {
+pub(crate) fn swing_terms(key: &str) -> (f64, f64) {
     macro_rules! pair {
         ($k:ident) => {
             (SWING_MODS.$k.damage, SWING_MODS.$k.to_hit)

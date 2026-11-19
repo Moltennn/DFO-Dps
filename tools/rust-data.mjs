@@ -74,6 +74,7 @@ import { MENTOR_SKILL_BASELINE } from '../vendor/upstream/a3eb1605/src/systems/m
 import * as save from '../src/save.js';
 import { encodeValue } from './rust-codec.mjs';
 import { mintRow } from '../src/target.js';
+import { GATE_BODY_LEVEL } from '../src/model.js';
 
 const V = 'vendor/upstream/a3eb1605/src';
 const here = dirname(fileURLToPath(import.meta.url));
@@ -377,7 +378,7 @@ const SOURCES = [
   { file: 'bow_bloom', from: `${V}/combat/bowBloom.js`, mod: bowBloom, names: ['BOW_FAST'] },
   { file: 'hands_law', from: `${V}/combat/twoHands/handsLaw.js`, mod: handsLaw, names: ['DUAL', 'OFF_HAND_BLOW', 'FLURRY_WINDOW'] },
   // R3b
-  { file: 'mint_rows', from: `${V}/characters/meanerMonsters.js (target.js mintRow over boot codes 0..7 x classic ids)`, mod: { MINT_ROWS: buildMintRows() }, names: ['MINT_ROWS'], force: true },
+  { file: 'mint_rows', from: `${V}/characters/meanerMonsters.js (target.js mintRow over boot codes 0..7 x classic ids)`, mod: { MINT_ROWS: buildMintRows(), STAND_IN_BASICS: Object.fromEntries(MINT_IDS.filter(id => mintRow(id) !== null).map(id => [id, encodeValue(mintRow(id))])), GATE_BODY_LEVEL }, names: ['MINT_ROWS', 'STAND_IN_BASICS', 'GATE_BODY_LEVEL'], force: true },
   { file: 'dex_equipment', from: `${V}/systems/enemyExpansion/dexInstall.js (classic props.equipmentTable, per mudex)`, mod: { DEX_EQUIPMENT_TABLE: buildDexEquipment() }, names: ['DEX_EQUIPMENT_TABLE'], hints: { DEX_EQUIPMENT_TABLE: { t: 'skeyed', of: { t: 'str' } } } },
   { file: 'item_templates', from: `${V}/systems/item/itemTemplates.js ITEM_TEMPLATES (hitPoints, variants)`, mod: { ITEM_TEMPLATE_FACTS: buildTemplateFacts() }, names: ['ITEM_TEMPLATE_FACTS'], force: true },
   { file: 'weapons', from: `${V}/characters/weapons.js`, mod: weapons, names: ['WEAPON_MATERIALS', 'conditionMultipliersByMaterial', 'WEAPON_CONDITION_POOL'] },

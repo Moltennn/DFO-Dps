@@ -933,6 +933,62 @@ node tools/gate.mjs mutate boss_traits.rs --tests spells --count 1000 --seed 1 -
 node tools/gate.mjs mutate generated/spell_tables.rs --tests spells --count 1000 --seed 1 --timeout 120
 ```
 
+## R5b: analysis cards, target builders and what-if ranks
+
+`dfo_core::analyze::analyze(&character, &scenario, &spellbook)` returns an `Analysis`.
+`Analysis::to_value()` writes its enumerable shape in JS insertion order. The existing hit,
+damage, cadence and proc records retain their `Value` encoding. The Rust `analyze_with` function
+takes the original inputs and an edit, including appending an imprint; it is the equivalent of
+JS's non-enumerable `with` closure, not part of the vector output.
+
+| `src/model.js` | Field list (JS names) |
+|---|---|
+| 1583 | `core`, `weapon`, `target`, `swing`, `swingDirections`, `swingMix`, `hit`, `damage`, `cadence` |
+| 1584–1585 | `perSwing`, `perSwingMin`, `perSwingMax`, `dps`, `dpsMin`, `dpsMax`, `cappedPerSwing`, `cappedPerSwingMin`, `cappedPerSwingMax`, `cappedDps`, `cappedDpsMin`, `cappedDpsMax`, `cap`, `capSource`, `capLoss` |
+| 1586 | `enchantPerSwing`, `enchantDps`, `enchantDpsMin`, `enchantDpsMax`, `totalDps`, `totalDpsMin`, `totalDpsMax`, `enchantProcs`, `enchantDotDps`, `enchantDotDpsMin`, `enchantDotDpsMax`, `procsBeforeBreak`, `procsBeforeBreakBasis` |
+| 1587 | `resist`, `health`, `ward`, `shields`, `ttk`, `ttkCapOnly`, `totalTtkCapOnly`, `allowance`, `wrath`, `wrathAt` |
+| 1588 / 1386–1395 | `targetDefense` (`careerIndex`, `mobileType`, `natural`, `material`, `hideAt100`, `wornArmour`, `shield`, `combatLevel`) |
+| 1589–1602 | `backstab` (`skill`, `chance`, `probability`, `toHit`, `multiplier`, `uptime`, `expectedMult`, `watchful`, `min`, `max`, `critMin`, `critMax`) |
+| 1603–1609 | `traits`, `healthShare`, `notes` (`preWornArmor`, `targetIntrinsic`, `condition`, `softMaterial`) |
+| 1246–1252 / 1287–1303 | Optional `dual`, `offHand` (a nested card), `schedule`; or `pair`. The cadence retains its original fields with the appropriate dual/pair overrides. |
+| 1121–1135 | `carriedPerSwing`, `carriedCappedPerSwing`, `carriedDps`, `carriedCappedDps`, `ceilingTotalDps`, `ceilingTotalDpsMin`, `ceilingTotalDpsMax`, `ceilingTotalTtk`, `claimTotalTtk`, `claimSustainedDps`, `totalTtk` |
+
+The single card keeps the exact order of the JS reductions: per outcome, roll, body part,
+direction, then ordinary/back-facing blends. `patch_allowance` (1064–1089) runs the existing
+claim and allowance engine separately for the weapon and combined proc lanes; when an allowance
+run exists, sustained DPS replaces the reported total DPS, but the old band is still in the
+ceiling fields. The dual card sequences the lead and off lanes, weighting direct off-hand procs
+and assigning the DoT to one host. The pair card keeps the separate JS claim law. No call reaches
+`src/fight.js`, so `fight`, `fightRelay` and `healthThresholds` remain out of scope.
+
+`reference_foe`, `boss_target`, `GATE_BODY_LEVEL` and `gate_target` port 1614–1716. Stand-in
+combat fields come from the R3 typed mint at the shipped boot; the `basics` object echoed by
+the analysis uses ordered raw rows from `tools/rust-data.mjs`, which also probes `GATE_BODY_LEVEL`.
+`marginals`, `rank_weapons`, `rank_affixes` and `current_weapon_row` port 1719–1842, keeping JS
+weapon table order and stable ties. The two JSON-clone sites (1722,1782) use a recursive owned
+clone over plain `Value`: undefined object keys are omitted, undefined array entries and
+non-finite numbers become null, and both signs of zero become positive zero. Finite nonzero
+numbers round-trip unchanged. Functions, custom prototypes and `toJSON` hooks are outside the
+plain game-record boundary, as in R4a.
+
+`tools/rust-analysis-vectors.mjs` generates `analysis.txt` using the actual JS functions, with a
+required stock `SPELLS.STD` and three explicit proc probes. Reference, boss, gate and relay
+families each have 2,048 cases, comparing the whole ordered card (including nested off cards,
+cap-only and allowance numbers, target, hit/damage arrays and proc streams) as f64 bits.
+The 525 focused probes cover adjacent doubles at the backstab, cap/curb/ward, material,
+condition, and TTK boundaries, plus paired proc lanes with instant-only, DoT-only, and mixed
+payloads. The generator asserts the stock book is nonempty and the strike probes actually
+proc. The 28 what-if cases compare the full ordered rank results and `with` cards. Tests fail
+on missing files, a missing book or missing families.
+
+```
+node tools/gate.mjs rust
+node tools/gate.mjs mutate analyze.rs --tests analyze --count 1000 --seed 1 --timeout 120 --jobs 8
+```
+
+Mutation result (seed 1): 323 candidates, 303 killed, 7 invalid, and 13 equivalent survivors
+with local proofs in `analyze.rs`. The mutation gate reports `FAIL` for equivalent survivors too.
+
 ## Plan after R2 (R2 is done; the rest is a plan)
 
 Order chosen by dependency; each step ships only with vectors (or the upstream goldens) that fail first.

@@ -82,6 +82,7 @@ import { ALL_GEM_IDS } from '../vendor/upstream/a3eb1605/src/systems/loot/gemGra
 import { theoryCharacter } from '../src/theory.js';
 import { genBlowFamilies } from './rust-blow-vectors.mjs';
 import { genSpellFamilies } from './rust-spell-vectors.mjs';
+import { genAnalysisFamilies } from './rust-analysis-vectors.mjs';
 
 export { encodeValue };
 
@@ -2781,6 +2782,7 @@ counts.sockets = genSocketsFamily();
 counts.loot = genLootFamily();
 Object.assign(counts, genBlowFamilies(Out, makeLcg));
 Object.assign(counts, genSpellFamilies(Out, makeLcg));
+Object.assign(counts, genAnalysisFamilies(Out, makeLcg));
 
 counts.maketarget = await genMaketarget();
 

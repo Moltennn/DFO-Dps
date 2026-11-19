@@ -93,7 +93,7 @@ fn reference_foe(level: &Value) -> Value {
 
 // Hit reads the original Value; the defence arm needs the R3 projection. Its stat reads are
 // already clamped by save::live_stat, so keep them as modifiers with no second upper ceiling.
-fn defence_target(v: &Value) -> Target {
+pub(crate) fn defence_target(v: &Value) -> Target {
     let opt = |v: &Value| (!v.is_nullish()).then(|| v.num_or(f64::NAN));
     let career = |k| opt(v.get("career").get(k));
     let slots = v.get("equip").get("slots");
