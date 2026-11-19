@@ -13,6 +13,7 @@ fn career5(c: &mut Case) -> Career {
         low_tolerance_flags: c.opt(),
         critical_weakness_flags: c.opt(),
         attack_modifier_flags: c.opt(),
+        ..Default::default()
     }
 }
 
@@ -91,7 +92,7 @@ fn effect(c: &mut Case) -> Effect {
                 magnitude,
             }
         }
-        _ => Effect::Other,
+        _ => Effect::Other { ended },
     }
 }
 
@@ -146,6 +147,7 @@ fn target_def(c: &mut Case) -> (i64, Target) {
         live,
         armor_values,
         equip_slots,
+        ..Default::default()
     };
     (id, target)
 }

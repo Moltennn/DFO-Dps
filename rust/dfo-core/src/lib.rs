@@ -6,11 +6,16 @@
 //! bit-exact against golden vectors written by `tools/rust-vectors.mjs`.
 
 pub mod allowance;
+pub mod boot;
 pub mod damage;
+pub mod gear;
 pub mod generated;
+pub mod mint;
 pub mod relay_claim;
 pub mod rng;
+pub mod rolls;
 pub mod round;
 pub mod swing;
 pub mod target;
+pub mod vectors_canon;
 pub mod vendored;

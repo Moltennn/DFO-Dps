@@ -310,6 +310,193 @@ cd rust && cargo test && cargo fmt --check && cargo clippy --all-targets -- -D w
 
 Until `node tools/rust-data.mjs` is run, the crate does not compile (the new generated modules are missing).
 
+## R3b: the builders, gearEnemy and the enemy equipment (written; the lead runs the gates)
+
+Written without a shell: the generator, the vectors and the crate are unrun. The gate order is in "Run (R3b)".
+
+### Files
+
+- `dfo-core/src/mint.rs`: `mint_row` (target.js:640), `make_target` (:713, `MakeFields`), `enemy_target` (:758, `EnemyOpts`),
+  `stand_in_target` (:803), the private `minted_body` (:669), `skills_at_level` (enemyEntity.js:111-114 over every skill),
+  `material_requirement_multiplier` (:574), `target_group_of` (:595), `enemy_row_of` (:607), `career_index_of` (:709),
+  `is_class_enemy_of` (:710).
+- `dfo-core/src/gear.rs`: `gear_enemy` (target.js:555), `assign_enemy_equipment` (enemyEquipment.js:228),
+  `roll_enemy_equipment` (:238), `equipment_variant_for` (:397), `assign_rri_enemy_equipment` (rriEnemyEquipment.js:240,
+  reached through the Enemy Expansion delegate, dexEquipment.js:104), `roll_enemy_weapon_poison` (poisons.js:250),
+  `convert_orcish` (rriEnemyEquipment.js:434, private), the DEX copy's reads (`dex_class_table` dexEquipment.js:39,
+  `dex_armour_template` :83), the equip table (characters/equipTable.js:33-129; systems/equip.js:404), `mint_armour`
+  (target.js:489 `armourPiece` over `armorOfMaterial`, combat/enemyEquipment.js:210).
+- `dfo-core/src/boot.rs`: `Boot` and `RriSwitches` (below).
+- `dfo-core/src/rolls.rs`: the `Rolls` trait (`roll() -> f64`, one call per JS `rolls()`), and the blanket impl for closures.
+- `dfo-core/src/vectors_canon.rs`: the token forms the vectors compare (`f`, `b`, `s`, `list`, `opt`, `join`).
+- `dfo-core/src/vendored.rs` (extended): `CustomClass` and `custom_item_class` (rriItems.js:626), gate-aware
+  `armor_body_parts_with`, `enemy_armor_values_with`, `piece_body_part` (enemyEquipment.js:290). The R3a names are
+  wrappers with the RRI gate off, so the R3a vectors are unchanged.
+- `dfo-core/src/target.rs` (extended): `Career` gains `weapon_armor_shields_bitfield` and `stats`; `Target` gains
+  `has_career`, `mobile_type`, `affinity`, `group`, `skills`, `min_metal_to_hit`, `spare_gear`, `health`, `max_health`,
+  `relay_body`, `level_source`, `basics`; `Effect::Other` gains `ended` (liveStat skips an ended effect of any kind,
+  save.js:171). `equip_armour_with` takes the RRI gate. `math_round` moved to `round.rs` (pub).
+- `dfo-core/src/round.rs`: `math_round` (JS `Math.round`: ties toward +Infinity, `-0` for `-0.5 <= x < 0`), with a
+  `math_round` vector family and tests.
+- `tests/maketarget.rs`: reads `tests/vectors/maketarget.txt`; `tests/round.rs` and `tests/target.rs` updated (R3a green).
+- Generated (`tools/rust-data.mjs`; the generator is the only writer):
+  - `mint_rows.rs`: `MINT_ROWS`, keyed `"<boot code>/<mobile id>"`, the row `mintRow` returns for every integer classic id
+    (0..=42, 128..=146) under every boot code 0..7. `force`: every record field is an `Option`.
+  - `dex_equipment.rs`: `DEX_EQUIPMENT_TABLE`, keyed `"<mudex 0|1>/<id>"`: the classic row's `equipmentTable` (dexRead).
+  - `item_templates.rs`: `ITEM_TEMPLATE_FACTS` (hitPoints, variants) for the 288 DFU templates. Force: all Option.
+  - `weapons.rs`: `WEAPON_MATERIALS`, `CONDITION_MULTIPLIERS_BY_MATERIAL`, `WEAPON_CONDITION_POOL` (weapons.js:90-123).
+  - `rri_items.rs`: `RRI_CLASSES` (513..=526; `group`, `equip_slot`, `item_hands`), `RRI_CHAIN_FOLD` (a probe of each
+    class's `onVariantSet`: the light set folds Chain to Leather with `message` 1), `RRI_ENABLED_DEFAULTS` (the four
+    switches' shipped defaults, modSettings.js:1423-1523). Force: all Option.
+  - `mobile_types.rs` (`MOBILE_TYPES`), `poisons.rs` (`POISON_START_VALUE`), `create_item_rows.rs` (the robes' indices),
+    `equip_rules.rs` (now also `ITEM_GROUPS`, `WEAPON_HANDS`, `SHIELD_INDICES`).
+  - `canon_rows.rs`: `canon_mint_row` and `canon_enemy_basics_row`, the token form of the two row records (generated
+    from the same type tree as the tables, `canonStmt`/`recInto`; `#[rustfmt::skip]`).
+
+### Ported functions and the JS they cite
+
+| Rust | JS |
+|---|---|
+| `mint::mint_row` | `src/target.js:640-647` (the table is `mintRow` evaluated, see below) |
+| `mint::make_target` | `src/target.js:713-742` |
+| `mint::enemy_target` | `src/target.js:758-792` (`wholeLevel` :651, the override and `levelSource`) |
+| `mint::stand_in_target` | `src/target.js:803-812` (the roll is `() => 0.5`, :804) |
+| `mint::minted_body` | `src/target.js:669-707`, `characters/enemy/enemyEntity.js:160-233` (the level and the City Watch roll :207) |
+| `mint::skills_at_level` | `enemyEntity.js:111-114`, `target.js:589-592` |
+| `mint::material_requirement_multiplier` | `src/target.js:574-582` |
+| `mint::target_group_of` | `src/target.js:595-603` |
+| `mint::enemy_row_of` | `src/target.js:607` (the shipped table) |
+| `mint::career_index_of`, `is_class_enemy_of` | `src/target.js:709-710` |
+| `gear::gear_enemy` | `src/target.js:555-567` |
+| `gear::assign_enemy_equipment`, `roll_enemy_equipment`, `equipment_variant_for` | `combat/enemyEquipment.js:228-276, :397-403` |
+| `gear::assign_rri_enemy_equipment` and `assign_class` | `combat/rriEnemyEquipment.js:240-425` with `dexEquipment.js:94-99` |
+| `gear::convert_orcish` | `combat/rriEnemyEquipment.js:434-466` (the armour and weapon materials; `items` not visited) |
+| `gear::roll_enemy_weapon_poison` | `systems/poisons.js:250-263` |
+| `gear::dex_class_table`, `dex_armour_template`, `class_by_name` | `systems/enemyExpansion/dexEquipment.js:31-90` |
+| `gear::get_equip_slot`, `item_hands`, `wear_leavers`, `Table::first_slot` | `characters/equipTable.js:33-129`, `systems/equip.js:404-414` |
+| `gear::mint_armour` | `src/target.js:489-494` over `combat/enemyEquipment.js:210`; the template by `itemTemplates.js:336-350` |
+| `vendored::custom_item_class` | `systems/roleplayRealismItems/rriItems.js:626-631` |
+
+### The mint row is generated, not re-run
+
+`mintRow` reads the vendored CSV tables of Enemy Expansion (`dexRead`, the 50 mobile records and their lines) and applies
+Meaner Monsters' and PCAAO's folded edits. The input domain is finite and vendored: every integer classic id under every
+boot switch combination (8 codes). `tools/rust-data.mjs` evaluates the real `mintRow` over that domain (`buildMintRows`),
+and the Rust looks the row up. So `dexRead`, `dexClassicRow`, `writeEnemyLine`, `applyMeanerMonsters`,
+`pcaaoMeanerMonstersRow` and `DEX_VENDOR` are not ported; their output is. The generator throws if a row lacks
+`minMetalToHit` (the body reads it, and a JS `undefined` there would differ). The DEX `equipmentTable` the copy reads per
+mudex is generated the same way (`buildDexEquipment`).
+
+### The boot (`Boot`)
+
+`UPSTREAM_BOOT` (target.js:629) is the shipped boot: each mod's `Enabled` default (`shippedOn`, target.js:626), so `pcaao`,
+`meanerMonsters` and `enemyExpansion` are all true (`systems/modSettings.js`). In the JS, a builder's `boot` argument is one
+such set of mods, and `gearEnemy` reads the module-level `UPSTREAM_BOOT` (it has no boot argument). `Boot` replaces both:
+three mod switches, the four RRI switches (`RRI_ENABLED_DEFAULTS`), and `bow_left_hand` (the settings read
+`Enhancements.BowLeftHandWithSwitching`, default `False`, settingsDefaults.js:204). `Boot::code` is the row-table key.
+No settings store or global is read by the port.
+
+### Scripted rolls
+
+Every JS `rolls` argument is an explicit input. The generator (`rollScript`) draws a script of 512 values from its PRNG
+(with 0 and the largest double below 1 as edges), passes it to the JS, and writes the values the JS consumed, as f64
+bits, before the `=>`. The Rust replays exactly those values through `Rolls` and asserts it drew the same number
+(`rolls_done`). A case where the JS draws more or fewer than the port is a failure. An absent roll function (JS null) is
+`-` (a third of the enemy cases); the City Watch knight then refuses unless `exactLevel`, as in the JS.
+
+### gearEnemy under each boot
+
+`gearEnemy` reads `UPSTREAM_BOOT`, so the generator loads one copy of `src/target.js` per boot code (`targetUnderBoot`): the
+copy has the same source with every import rewritten to an absolute URL (so every vendored module is the same instance)
+and the single `UPSTREAM_BOOT` line replaced by the boot under test. The copy is written to the OS temp directory and
+removed after the import. Only that one line differs.
+
+### Vectors: `tools/rust-vectors.mjs` writes `maketarget.txt`
+
+Grammar (one case per line, `kind tokens... => output`; the output of a target, row or career is ONE token, its fields
+joined by `,` for a target and `;` for a row; `!` is a JS RangeError, the refusal):
+
+| Kind | Inputs | Output | Floor (cases) |
+|---|---|---|---|
+| `mint` | `F id`, `I code` | row token or `-` | `mint` 2000: 311 ids x 8 codes = 2488 |
+| `make` | the fields in `makeTokens` order (see below) | target | `make` 2000: 2400 |
+| `enemy` | `F id`, `I code`, `O playerLevel`, `O level`, career, `a` armorValues or `-`, `O health`, `O maxHealth`, `B exact`, ROLLS | target or `!` | with `stand`: `enemy` 2000: 3968 + 496 |
+| `stand` | `F id`, `I code` | target or `!` | (counted with `enemy`) |
+| `gear` | `F id`, `I code`, `O L` (the class's player level), `O PL` (gearEnemy's), career, ROLLS | target after gearEnemy, or `!` | `gear` 2000: 3968 |
+| `mrm` | `O min`, `-` or `w O material`, `B soft` | `F` | `scalar` 2000: 1200+400+200+200+200 |
+| `tgo`, `erow`, `cidx`, `iscl` | (see the generator) | `O` name, row, `F`, `B` | (counted with `scalar`) |
+| `classic` | `F id`, `B isClass`, `O variant`, `F armor`, `F playerLevel`, ROLLS | GEAR_OUT | `classic` 2000: 2400 |
+| `rri` | `F id`, `B isClass`, `O variant`, `F playerLevel`, `O level`, `F armor`, `B mudex`, `O team`, `O bitfield`, ROLLS | GEAR_OUT | `rri` 2000: 2400 |
+
+ROLLS is `I n` then n f64 (the consumed values), or `-` (no roll function). GEAR_OUT is `right` (`-` or `W tmpl mat`),
+`left` (`-`, `S tmpl` for a shield marker, or `W tmpl mat`), `I n` then n x `(F piece, F material, B shield)`, seven f64
+armour values, and the poison (`O`). A career is `-` or `c` and fourteen opts (six flag bytes, eight stats). A make field
+is `-` when the key is absent; `minMetalToHit` is `u` for a key present with `undefined`. The grammars the Rust reader
+(`tests/maketarget.rs`) accepts are these, token for token.
+
+The canonical target (`canonTarget` in the generator, `canon_target` in the test) is: `isPlayer`, `isClass`,
+`careerIndex`, the career (or `-`), `level`, `combatLevel`, `mobileType`, `affinity`, `group`, the eight stats (a missing
+one is NaN), `skills` (count, then id and value), `armorValues`, the worn items by slot id ascending (group Armor, template,
+material, artifact, max and current condition), `minMetalToHit`, `spareGear`, `health`, `maxHealth`, `relayBody`,
+`levelSource`, the effects (tag `M` disease/poison/artifact, `R` racialOverride, `F` fortify, `D` drain/transfer, `X`
+other; `ended`; the payload), the eight `_mods` stats and eight `statMax` values (missing is 0), and the `basics` row.
+
+### Not ported, and why (provably unreachable or unobservable on the target path)
+
+- `dexRead`, `dexClassicRow`, the CSV readers, `writeEnemyLine`, `applyMeanerMonsters`, `pcaaoMeanerMonstersRow`: replaced by
+  the generated mint rows and DEX tables (above). Their domain is finite and the generator covers all of it.
+- `mintedBody` is private in the JS (reached only through `enemyTarget` and `standInTarget`), so the vectors test it through
+  those.
+- `markFound` (systems/item/foundMark.js): a mark on a piece, never read by a target field.
+- The item names and values (`setItemFields`'s `name` and `value`, `itemBaseValue`): not on the target.
+- A weapon's condition (`wornCondition` draws its roll, ported; the result is not read). The archer's arrow pile: its two
+  draws are ported, the pile is in `items` and never worn. The loot `items` and `equipmentItems`.
+- `getArmorTemplateIndex` and `RRI_READ` (rriEnemyEquipment.js:125, :227): the non-DEX reads. `gearEnemy` reaches the RRI
+  arm only through the DEX delegate, so the copy's reads are the only ones on the path.
+- The thunderlock, pistolet and hand-wrap rows of `getItemHands`: their templates are never minted by the enemy arms.
+- `materialRequirementMultiplier`'s callers and the formula-override registry (`formulas.js` `formulaOverride`): empty on
+  this path (no mod registers one; see the R3a registries section).
+
+### The RRI class templates
+
+The RRI rows 513..=526 are not registered in the port (the mod's ItemTemplates.json is not read), so `templateByIndex`
+answers null for them and the minter gives `maxCondition` 0 (itemTemplates.js:340, `t?.hitPoints ?? 0`). `buildTemplateFacts`
+asserts the null, so a registration would fail the generator instead of silently changing the port. The class's material
+value is the armour ladder (`itemArmorValue`: `_customArmorValue` is never registered, armorMaterials.js:110-123).
+
+### JS semantics decided here (review these)
+
+- `gearEnemy` reads `UPSTREAM_BOOT`: the port takes the boot explicitly; the vectors cover all eight boots with module
+  copies, so the module-level boot is exercised, not assumed.
+- The DEX delegate answers first when Enemy Expansion is on (dexEquipment.js:104); it answers `null` (so ItemHelper's arm
+  runs) only when `realisticEnemyEquipment` is off. The `mudex` it reads is `enemyExpansion && meanerMonsters` (target.js:539).
+- `equipArmour` re-mints each armour piece from its template and material (target.js:507): a piece's condition is its
+  maximum, and a Chain light piece is Leather with `message` 1 (the fold), so the target's material can differ from the arm's
+  piece. `enemyArmorValues` reads the arm's own material. Both are ported.
+- `enemyArmorValues` uses `itemArmorValue(a.item)` for an RRI piece; with no custom armour value registered that is the
+  material ladder of the piece's material, equal to `materialArmorValue(a.material)` (the port uses the latter).
+- `ARROW_TEMPLATE` is 131 (`systems/inventory.js:142`, `WEAPONS.Arrow`; `scenes/corpseMarker.js:29`), written as a Rust
+  constant, not generated (`WEAPONS` in `data.js` is keyed by index). The vectors check it: only the arrow draws a roll.
+- `getItemHands` reads the setting (`getBool`, default false); the port's `bow_left_hand` is false. The vectors do not vary
+  it, so the `true` branch (LeftOnly bow) is unexercised by the vectors (a stated gap).
+- `Math.random` defaults: every JS call in the path is passed its roll; no default is taken (checked by reading each call).
+- `skillsLevel` (enemyEntity.js:111) is re-stated in `mint.rs` (`skills_at_level`), not imported, because it is a
+  vendored helper that R3a did not port.
+- `minMetalToHit`: the generator asserts every mint row has it, so a body always carries a number; `Target` keeps the
+  `Option` so a JS `undefined` would still read as one.
+
+### Run (R3b)
+
+```
+node tools/rust-data.mjs            # REQUIRED first: the new generated modules and the extended equip_rules.rs
+node tools/rust-data.mjs --check
+node tools/rust-vectors.mjs         # writes rust/tests/vectors/maketarget.txt (and round.txt with math_round)
+cd rust && cargo test && cargo fmt --check && cargo clippy --all-targets -- -D warnings
+```
+
+Until `node tools/rust-data.mjs` runs, the crate does not compile (the new generated modules are missing). The vector
+files are not committed; the maketarget file is the largest of the set (several MB; the size is not measured here).
+
 ## Plan after R2 (R2 is done; the rest is a plan)
 
 Order chosen by dependency; each step ships only with vectors (or the upstream goldens) that fail first.

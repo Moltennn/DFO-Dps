@@ -13,6 +13,7 @@
 //! JS `undefined` is `None`. A JS career index that is `undefined` is passed as NaN where a lookup is made, since
 //! no table key equals NaN and no key is `undefined` (the same miss in JS).
 
+use crate::boot::RriSwitches;
 use crate::generated::armor_materials::{
     ARMOR_MATERIAL, BODY_PARTS, PLATE_ARMOR_VALUES, SHIELD_PARTS, SHIELD_VALUES,
 };
@@ -24,8 +25,67 @@ use crate::generated::equip::{EQUIP_SLOT_NAMES, SLOT_FOR_BODY_PART};
 use crate::generated::equip_rules::SLOT_RULES;
 use crate::generated::formulas::GROUP_BITS;
 use crate::generated::paperdoll::EQUIP_SLOTS;
+use crate::generated::rri_items::{RRI_CHAIN_FOLD, RRI_CLASSES};
 use crate::round::{is_integer, to_int32, trunc};
 use crate::target::Item;
+
+/// The custom item class of a template a mod registers (`customItemClass`, rriItems.js:626-631), as the port reads it:
+/// the RRI rows 513..=526 (`RRI_CLASSES`, rriItems.js:581). `None` when the mod's switch for the class's kind is off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CustomClass {
+    /// `group`: `Weapons` or `Armor`.
+    pub group: &'static str,
+    /// `equipSlot` of an armour class (the slot name, which the equip table reads through `EQUIP_SLOTS`).
+    pub equip_slot: Option<&'static str>,
+    /// `itemHands` of a weapon class (`Either` for both weapons).
+    pub item_hands: Option<&'static str>,
+    /// The light set folds Chain (0x0100) to Leather with `message` 1 when minted (`lightVariant`, probed in the
+    /// generator). Only the light set (520..=526) does.
+    pub folds_chain_to_fur: bool,
+}
+
+/// `customItemClass(templateIndex)` (rriItems.js:626-631): the class of an RRI template, or `None`. `rri` `None` is
+/// the classic table alone (the R3a behaviour: no RRI class answers); `Some` gates the class on `Enabled` and the
+/// group's switch (`newWeapons` for a weapon, `newArmor` for armour) as `rriModule` does.
+pub fn custom_item_class(template: f64, rri: Option<&RriSwitches>) -> Option<CustomClass> {
+    let rri = rri?;
+    let (_, v) = RRI_CLASSES.iter().find(|(k, _)| *k as f64 == template)?;
+    let group = v.group?;
+    let on = if group == "Weapons" {
+        rri.module(rri.new_weapons)
+    } else {
+        rri.module(rri.new_armor)
+    };
+    if !on {
+        return None;
+    }
+    let folds = RRI_CHAIN_FOLD
+        .iter()
+        .find(|(k, _)| *k as f64 == template)
+        .is_some_and(|(_, f)| *f);
+    Some(CustomClass {
+        group,
+        equip_slot: v.equip_slot,
+        item_hands: v.item_hands,
+        folds_chain_to_fur: folds,
+    })
+}
+
+/// The body part an equip slot name covers (`SLOT_BODY_PART`, equip.js:437-442, read by the custom class arm of
+/// `pieceBodyPart`, combat/enemyEquipment.js:281-289). Any other slot name is none.
+fn body_part_of_slot_name(name: &str) -> Option<f64> {
+    use crate::generated::armor_materials::BODY_PARTS as BP;
+    match name {
+        "Head" => Some(BP.head),
+        "RightArm" => Some(BP.right_arm),
+        "LeftArm" => Some(BP.left_arm),
+        "ChestArmor" => Some(BP.chest),
+        "Gloves" => Some(BP.hands),
+        "LegsArmor" => Some(BP.legs),
+        "Feet" => Some(BP.feet),
+        _ => None,
+    }
+}
 
 /// `careerAttackModifier(attackModifierFlags, group)` (combat/formulas.js:191-197): +1 when the group's bonus bit
 /// is set in `flags`, else -1 when its phobia bit is set (bonus first), else 0. A group with no bit pair is 0.
@@ -150,8 +210,12 @@ fn body_part_of_slot(slot: f64) -> Option<f64> {
 
 /// `armorSlotRule(templateIndex).slot` (systems/equip.js:436) for a classic armour template: the slot name in
 /// SLOT_RULES.Armor. (A custom class's slot comes first in JS; no custom class answers here, see the module doc.)
-fn armor_slot_name(template: Option<f64>) -> Option<&'static str> {
+/// `armorSlotRule(templateIndex).slot` (equip.js:436): a custom class's own slot first, then the classic table.
+fn armor_slot_name(template: Option<f64>, rri: Option<&RriSwitches>) -> Option<&'static str> {
     let t = template?;
+    if let Some(slot) = custom_item_class(t, rri).and_then(|c| c.equip_slot) {
+        return Some(slot);
+    }
     SLOT_RULES
         .armor
         .iter()
@@ -159,9 +223,14 @@ fn armor_slot_name(template: Option<f64>) -> Option<&'static str> {
         .map(|(_, rule)| rule.slot)
 }
 
+/// `armorBodyParts(item)` (systems/equip.js:452-458) for the classic table alone (R3a).
+pub fn armor_body_parts(item: Option<&Item>) -> Vec<f64> {
+    armor_body_parts_with(item, None)
+}
+
 /// `armorBodyParts(item)` (systems/equip.js:452-458): the body parts an Armor-group piece covers. A shield covers
 /// its SHIELD_PARTS; any other piece covers the one part its slot maps to, and nothing when that is no part.
-pub fn armor_body_parts(item: Option<&Item>) -> Vec<f64> {
+pub fn armor_body_parts_with(item: Option<&Item>, rri: Option<&RriSwitches>) -> Vec<f64> {
     let Some(item) = item else {
         return Vec::new();
     };
@@ -172,7 +241,7 @@ pub fn armor_body_parts(item: Option<&Item>) -> Vec<f64> {
     if is_shield_template(template) {
         return shield_parts(template).to_vec();
     }
-    let part = armor_slot_name(template)
+    let part = armor_slot_name(template, rri)
         .and_then(equip_slot_by_name)
         .and_then(body_part_of_slot);
     part.map_or_else(Vec::new, |p| vec![p])
@@ -248,6 +317,16 @@ pub struct ArmourPieceRef {
 /// subtracts its material's value x5 on its body part (`PIECE_BODY_PART`, :74-82), except the Feet, which the Feet
 /// bound leaves alone (:314). A class is clamped to 60, a monster to its own `armor` (its `armorValue x 5`, :318-323).
 pub fn enemy_armor_values(is_class: bool, armor: f64, pieces: &[ArmourPieceRef]) -> [f64; 7] {
+    enemy_armor_values_with(is_class, armor, pieces, None)
+}
+
+/// [`enemy_armor_values`] with the RRI switches the custom piece classes read (`None`: the classic table alone).
+pub fn enemy_armor_values_with(
+    is_class: bool,
+    armor: f64,
+    pieces: &[ArmourPieceRef],
+    rri: Option<&RriSwitches>,
+) -> [f64; 7] {
     let mut av = [100.0; 7];
     for a in pieces {
         if a.shield {
@@ -256,7 +335,7 @@ pub fn enemy_armor_values(is_class: bool, armor: f64, pieces: &[ArmourPieceRef])
                 av[*part as usize] -= bonus * 5.0;
             }
         } else {
-            let Some(part) = a.piece.and_then(piece_body_part) else {
+            let Some(part) = a.piece.and_then(|p| piece_body_part(p, rri)) else {
                 continue;
             };
             if part == BODY_PARTS.feet {
@@ -304,12 +383,15 @@ fn enemy_shield_parts(piece: Option<f64>) -> &'static [f64] {
         .unwrap_or(&[])
 }
 
-/// `PIECE_BODY_PART[piece]` (enemyEquipment.js:74-82): the body part a classic piece covers, else none.
-fn piece_body_part(piece: f64) -> Option<f64> {
-    PIECE_BODY_PART
-        .iter()
-        .find(|(k, _)| *k as f64 == piece)
-        .map(|(_, p)| *p)
+/// `PIECE_BODY_PART[piece] ?? SLOT_BODY_PART[customItemClass(piece)?.equipSlot] ?? null` (enemyEquipment.js:290): the
+/// body part a classic piece covers, else a custom class's slot's part (`rri` `None`: classic only, as R3a).
+fn piece_body_part(piece: f64, rri: Option<&RriSwitches>) -> Option<f64> {
+    if let Some((_, p)) = PIECE_BODY_PART.iter().find(|(k, _)| *k as f64 == piece) {
+        return Some(*p);
+    }
+    custom_item_class(piece, rri)
+        .and_then(|c| c.equip_slot)
+        .and_then(body_part_of_slot_name)
 }
 
 #[cfg(test)]

@@ -9,12 +9,13 @@ fn round_matches_js_vectors() {
     for mut c in common::load("round") {
         let kind = c.kind.clone();
         match kind.as_str() {
-            "unity_round" | "fround" | "trunc" | "floor" => {
+            "unity_round" | "fround" | "trunc" | "floor" | "math_round" => {
                 let (x, r) = (c.f64(), c.f64());
                 let got = match kind.as_str() {
                     "unity_round" => unity_round(x),
                     "fround" => fround(x),
                     "trunc" => trunc(x),
+                    "math_round" => math_round(x),
                     _ => floor(x),
                 };
                 c.check_f64(&format!("{kind}({x:?})"), r, got);
@@ -77,6 +78,7 @@ fn round_matches_js_vectors() {
         ("fround", 1000),
         ("trunc", 1000),
         ("floor", 1000),
+        ("math_round", 1000),
         ("uint32", 1000),
         ("int32", 1000),
         ("is_integer", 1000),

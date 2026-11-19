@@ -25,9 +25,12 @@
  *       word  a bare ASCII word (`ok`, `err`, `null`, a reason such as `accepted-clipped`).
  *   - Each kind is documented where its generator is written below.
  */
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { bootOfCode, canonOf, DESCS } from './rust-data.mjs';
 
 import { createRng, _initialStateForTests } from '../src/rng.js';
 import {
@@ -44,7 +47,12 @@ import {
   equipArmour, hasWornEquipment, intrinsicDamage, isSkeletalTarget, leftHandShield, makeTarget, monsterHideDamage,
   naturalDamageResistance, shieldBeatsUnderArmour, shieldBlockChance, shieldReduction, silverApplies,
   skeletalSilverDamage, standInTarget, struckSlotItem, targetExpectedDamage, targetPartDamage, targetPartOutcomes,
+  enemyRowOf, careerIndexOf, isClassEnemyOf, materialRequirementMultiplier, mintRow, targetGroupOf,
 } from '../src/target.js';
+import { assignEnemyEquipment } from '../vendor/upstream/a3eb1605/src/combat/enemyEquipment.js';
+import { createDexEquipmentAssigner } from '../vendor/upstream/a3eb1605/src/systems/enemyExpansion/dexEquipment.js';
+import { dexRead } from '../vendor/upstream/a3eb1605/src/systems/enemyExpansion/dexInstall.js';
+import { ENEMY_BASICS } from '../vendor/upstream/a3eb1605/src/characters/enemy/enemyBasics.js';
 import { liveStat } from '../src/save.js';
 import { careerAttackModifier, silverDoubles } from '../vendor/upstream/a3eb1605/src/combat/formulas.js';
 import { enemyEntityGroup } from '../vendor/upstream/a3eb1605/src/combat/enemyGroups.js';
@@ -179,6 +187,7 @@ function genRound() {
     out.add('fround', F(x), F(Math.fround(x)));
     out.add('trunc', F(x), F(Math.trunc(x)));
     out.add('floor', F(x), F(Math.floor(x)));
+    out.add('math_round', F(x), F(Math.round(x)));
     out.add('uint32', F(x), I(x >>> 0));
     out.add('int32', F(x), I(x | 0));
     out.add('is_integer', F(x), B(Number.isInteger(x)));
@@ -1217,6 +1226,416 @@ function genTarget() {
   for (const [k, n] of Object.entries(perKind)) console.log(`target:   ${k}: ${n} cases`);
   return out.write();
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// maketarget (R3b): the target builders, gearEnemy, and the enemy equipment, through the REAL JS. Every random input
+// is a roll the JS draws from a scripted sequence; the values it consumed are written (as f64 bits), so the Rust
+// replays the same rolls and must consume exactly as many. Files: maketarget.txt. Kinds and grammars are in
+// rust/README.md (R3b); the Rust reader is tests/maketarget.rs.
+// ---------------------------------------------------------------------------------------------------------------
+const MT_IDS = [...Array.from({ length: 43 }, (_, i) => i), ...Array.from({ length: 19 }, (_, i) => 128 + i)];
+const MT_STATS = ['strength', 'intelligence', 'willpower', 'agility', 'endurance', 'personality', 'speed', 'luck'];
+const MT_FLAGS = ['resistanceFlags', 'immunityFlags', 'lowToleranceFlags', 'criticalWeaknessFlags', 'attackModifierFlags', 'weaponArmorShieldsBitfield'];
+const MT_EFFECT_KINDS = ['disease', 'poison', 'artifact', 'racialOverride', 'fortifyAttribute', 'drainAttribute', 'transferAttribute', 'spellShield'];
+const MT_SLOTS = [12, 13, 15, 18, 19, 20, 21, 23, 26];
+const MT_MATERIALS = [0, 256, 259, 512, 513, 514, 515, 516, 517, 518, 519, 520, 521];
+const OB = (b) => (b === null || b === undefined ? '-' : B(b));
+const OS = (s) => (s === null || s === undefined ? '-' : N(s));
+const MINT_DESC = DESCS.get('mint_rows:MINT_ROWS').of;
+const ENEMY_DESC = DESCS.get('enemy_basics:ENEMY_BASICS').of;
+
+/** The target's canonical tokens (the Rust `canon_target` writes the same, in the same order). */
+function effTokens(a, o) {
+  const k = a.kind;
+  const tag = ['disease', 'poison', 'artifact'].includes(k) ? 'M' : k === 'racialOverride' ? 'R' : k === 'fortifyAttribute' ? 'F'
+    : (k === 'drainAttribute' || k === 'transferAttribute') ? 'D' : 'X';
+  o.push(tag, B(!!a.ended));
+  if (tag === 'M' || tag === 'R') for (const s of MT_STATS) o.push(F(a.statMods?.[s] ?? 0));
+  else if (tag === 'F' || tag === 'D') {
+    const i = MT_STATS.indexOf(a.stat);
+    o.push(i < 0 ? '-' : I(i), F(a.magnitude ?? 0));
+  }
+}
+function canonTarget(t) {
+  const o = [B(!!t.isPlayer), OB(t.isClass), O(t.careerIndex)];
+  if (t.career === null || t.career === undefined) o.push('-');
+  else {
+    for (const k of MT_FLAGS) o.push(O(t.career[k]));
+    for (const k of MT_STATS) o.push(O(t.career[k]));
+  }
+  o.push(O(t.level), O(t.combatLevel), O(t.mobileType), OS(t.affinity), OS(t.group));
+  for (const k of MT_STATS) o.push(F(t.stats?.[k] ?? NaN));
+  const sk = Object.keys(t.skills ?? {}).map(Number).sort((a, b) => a - b);
+  o.push(I(sk.length));
+  for (const id of sk) o.push(I(id), F(t.skills[id]));
+  o.push(I(t.armorValues.length));
+  for (const v of t.armorValues) o.push(F(v));
+  const slots = t.equip?.slots ?? {};
+  const keys = Object.keys(slots).map(Number).filter((s) => slots[s]).sort((a, b) => a - b);
+  o.push(I(keys.length));
+  for (const s of keys) {
+    const it = slots[s];
+    o.push(F(s), B(it.group === 'Armor'), O(it.templateIndex), O(it.material), B(!!it.artifact), O(it.maxCondition), O(it.currentCondition));
+  }
+  o.push(O(t.minMetalToHit), B(!!t.spareGear), F(t.health), F(t.maxHealth), OB(t.relayBody), OS(t.levelSource));
+  const effs = t.activeEffects ?? [];
+  o.push(I(effs.length));
+  for (const a of effs) effTokens(a, o);
+  for (const s of MT_STATS) o.push(F(t._mods?.stats?.[s] ?? 0));
+  for (const s of MT_STATS) o.push(F(t._mods?.statMax?.[s] ?? 0));
+  if (t.basics === null || t.basics === undefined) o.push('-');
+  else o.push(...canonOf(MINT_DESC, t.basics, []));
+  return o.join(',');
+}
+const rowCanon = (row) => (row === null || row === undefined ? '-' : canonOf(MINT_DESC, row, []).join(';'));
+const enemyRowCanon = (row) => (row === null || row === undefined ? '-' : canonOf(ENEMY_DESC, row, []).join(';'));
+
+/** A roll script: values from a local PRNG, with the 0 and the largest double below 1 as edges. */
+function rollScript(R, n = 512) {
+  const script = Array.from({ length: n }, () => (R.chance(1 / 16) ? (R.chance(0.5) ? 0 : 1 - 2 ** -53) : R.unit()));
+  let i = 0;
+  const used = [];
+  return {
+    rolls: () => {
+      if (i >= script.length) throw new Error('maketarget: the roll script ran out');
+      const v = script[i++];
+      used.push(v);
+      return v;
+    },
+    used: () => used,
+  };
+}
+/** The ROLLS block: `-` for no roll function, else the count and the consumed values. */
+const rollsTokens = (used) => (used === null ? ['-'] : [I(used.length), ...used.map(F)]);
+
+/** The target module as gearEnemy reads it under one boot: a copy of src/target.js whose UPSTREAM_BOOT is the boot
+ *  (the only ambient input gearEnemy has, target.js:562 and :539). Every import is rewritten to an absolute URL, so the
+ *  copy shares every vendored module instance with this generator. The copy is written to the OS temp directory. */
+async function targetUnderBoot(code) {
+  const srcDir = join(here, '..', 'src');
+  const b = bootOfCode(code);
+  let text = readFileSync(join(srcDir, 'target.js'), 'utf8');
+  text = text.replace(/from '(\.\.?\/[^']+)'/g, (_, p) => `from '${pathToFileURL(resolve(srcDir, p)).href}'`);
+  const head = 'export const UPSTREAM_BOOT = Object.freeze({';
+  const at = text.indexOf(head);
+  if (at < 0 || text.indexOf(head, at + 1) >= 0) throw new Error('maketarget: target.js must hold one UPSTREAM_BOOT');
+  const end = text.indexOf('});', at) + 3;
+  const boot = `export const UPSTREAM_BOOT = Object.freeze({ pcaao: ${b.pcaao}, meanerMonsters: ${b.meanerMonsters}, enemyExpansion: ${b.enemyExpansion} });`;
+  text = text.slice(0, at) + boot + text.slice(end);
+  const file = join(tmpdir(), `dfo-target-boot-${code}-${process.pid}.mjs`);
+  writeFileSync(file, text);
+  try {
+    return await import(pathToFileURL(file).href);
+  } finally {
+    rmSync(file, { force: true });
+  }
+}
+const MT_CODES_ALL = [0, 1, 2, 3, 4, 5, 6, 7];
+
+/** A career object: its flag bytes and stats, each present or absent. */
+function randomCareer(R) {
+  const c = {};
+  for (const k of MT_FLAGS) if (R.chance(0.7)) c[k] = R.int(0, 127);
+  for (const k of MT_STATS) if (R.chance(0.85)) c[k] = R.chance(0.1) ? R.range(0, 100) : R.int(0, 100);
+  return c;
+}
+/** The CAREER input tokens: `-` for none, else `c` and 14 opts (6 flag bytes, 8 stats). */
+const careerTokens = (c) => (c === null || c === undefined ? ['-'] : ['c', ...MT_FLAGS.map((k) => O(c[k])), ...MT_STATS.map((k) => O(c[k]))]);
+
+/** A synthetic makeTarget's fields: each present or absent, the JS object holds only the present keys. */
+function synthMake(R) {
+  const f = {};
+  if (R.chance(0.3)) f.isPlayer = R.chance(0.5);
+  if (R.chance(0.5)) f.isClass = R.chance(0.5);
+  if (R.chance(0.6)) f.level = R.int(1, 45);
+  if (R.chance(0.3)) f.combatLevel = R.int(1, 45);
+  if (R.chance(0.5)) f.mobileType = R.pick(MT_IDS);
+  if (R.chance(0.5)) f.careerIndex = R.int(-1, 40);
+  if (R.chance(0.4)) f.career = randomCareer(R);
+  if (R.chance(0.4)) f.affinity = R.pick(['Human', 'Animal', 'Undead', 'Daedra', 'Daylight', 'Darkness']);
+  if (R.chance(0.4)) f.group = R.pick(['humanoid', 'undead', 'daedra', 'animal']);
+  if (R.chance(0.3)) f.stats = Object.fromEntries(MT_STATS.filter(() => R.chance(0.9)).map((k) => [k, R.chance(0.1) ? R.range(-5, 120) : R.int(0, 120)]));
+  if (R.chance(0.3)) f.skills = Object.fromEntries(Array.from({ length: R.int(0, 6) }, () => [R.int(0, 34), R.int(0, 100)]));
+  if (R.chance(0.3)) f.armorValues = Array.from({ length: 7 }, () => (R.chance(0.2) ? R.range(-50, 100) : R.int(-50, 100)));
+  if (R.chance(0.4)) {
+    const slots = {};
+    for (const s of MT_SLOTS) if (R.chance(0.3)) slots[s] = { group: R.chance(0.8) ? 'Armor' : 'Weapons', templateIndex: R.pick([102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112]), material: R.pick(MT_MATERIALS), artifact: R.chance(0.1), maxCondition: R.int(0, 400), currentCondition: R.int(0, 400) };
+    f.equip = { slots };
+  }
+  if (R.chance(0.2)) f.minMetalToHit = R.chance(0.2) ? undefined : R.int(-1, 6);
+  if (R.chance(0.3)) f.spareGear = R.chance(0.5);
+  if (R.chance(0.3)) f.health = R.int(1, 500);
+  if (R.chance(0.3)) f.maxHealth = R.int(1, 500);
+  if (R.chance(0.3)) {
+    f.activeEffects = Array.from({ length: R.int(0, 3) }, () => {
+      const kind = R.pick(MT_EFFECT_KINDS);
+      const a = { kind, ended: R.chance(0.2) };
+      if (['disease', 'poison', 'artifact', 'racialOverride'].includes(kind)) a.statMods = Object.fromEntries(MT_STATS.map((k) => [k, R.int(-20, 20)]));
+      else if (kind === 'fortifyAttribute' || kind === 'drainAttribute' || kind === 'transferAttribute') {
+        if (R.chance(0.8)) a.stat = R.pick(MT_STATS);
+        a.magnitude = R.int(0, 30);
+      }
+      return a;
+    });
+  }
+  if (R.chance(0.2)) f._mods = { stats: Object.fromEntries(MT_STATS.map((k) => [k, R.int(-10, 10)])), statMax: Object.fromEntries(MT_STATS.map((k) => [k, R.int(0, 20)])) };
+  if (R.chance(0.3)) {
+    const id = R.pick(MT_IDS);
+    const code = R.int(0, 7);
+    f.basics = mintRow(id, { boot: bootOfCode(code) }) ?? undefined;
+    f.__basicsId = [id, code];
+  }
+  if (R.chance(0.2)) f.relayBody = true;
+  if (R.chance(0.2)) f.levelSource = R.pick(['player', 'override', 'mint']);
+  return f;
+}
+/** The make input tokens (the Rust reader is `read_make_fields`). */
+function makeTokens(f) {
+  const t = [OB(f.isPlayer), OB(f.isClass), O(f.level), O(f.combatLevel), O(f.mobileType), O(f.careerIndex)];
+  t.push(...careerTokens(f.career ?? null));
+  t.push(OS(f.affinity), OS(f.group));
+  if (f.stats === undefined) t.push('-');
+  else t.push('s', ...MT_STATS.map((k) => O(f.stats[k])));
+  if (f.skills === undefined) t.push('-');
+  else {
+    const ks = Object.keys(f.skills).map(Number).sort((a, b) => a - b);
+    t.push('k', I(ks.length));
+    for (const k of ks) t.push(I(k), F(f.skills[k]));
+  }
+  if (f.armorValues === undefined) t.push('-');
+  else t.push('a', I(f.armorValues.length), ...f.armorValues.map((v) => F(v)));
+  if (f.equip === undefined) t.push('-');
+  else {
+    const ks = Object.keys(f.equip.slots).map(Number).sort((a, b) => a - b);
+    t.push('e', I(ks.length));
+    for (const s of ks) {
+      const it = f.equip.slots[s];
+      t.push(F(s), B(it.group === 'Armor'), O(it.templateIndex), O(it.material), B(!!it.artifact), O(it.maxCondition), O(it.currentCondition));
+    }
+  }
+  if (!('minMetalToHit' in f)) t.push('-');
+  else if (f.minMetalToHit === undefined) t.push('u');
+  else t.push(F(f.minMetalToHit));
+  t.push(OB(f.spareGear), O(f.health), O(f.maxHealth));
+  if (f.activeEffects === undefined) t.push('-');
+  else {
+    t.push('v', I(f.activeEffects.length));
+    for (const a of f.activeEffects) {
+      t.push(a.kind, B(!!a.ended));
+      if (['disease', 'poison', 'artifact', 'racialOverride'].includes(a.kind)) t.push(...MT_STATS.map((k) => F(a.statMods[k])));
+      else if (a.kind !== 'spellShield') t.push(OS(a.stat), F(a.magnitude));
+    }
+  }
+  if (f._mods === undefined) t.push('-');
+  else t.push('m', ...MT_STATS.map((k) => F(f._mods.stats[k])), ...MT_STATS.map((k) => F(f._mods.statMax[k])));
+  if (f.__basicsId === undefined) t.push('-');
+  else t.push('b', I(f.__basicsId[0]), I(f.__basicsId[1]));
+  t.push(OB(f.relayBody), OS(f.levelSource));
+  return t;
+}
+/** The JS object for a make input: the basics key is the minted row (or absent), `__basicsId` is generator-only. */
+function makeFields(f) {
+  const { __basicsId, ...rest } = f;
+  return rest;
+}
+
+const ENEMY_SPECS = [
+  {}, { level: 1 }, { playerLevel: 9 }, { level: 21 }, { playerLevel: 37, exactLevel: true }, { level: 45 },
+  { level: 0 }, { playerLevel: 1.5 },
+];
+
+/** A RangeError is the JS refusing a build (target.js:651-690); any other throw is a bug and is not swallowed. */
+const refused = (e) => {
+  if (!(e instanceof RangeError)) throw e;
+  return null;
+};
+
+async function genMaketarget() {
+  const out = new Out('maketarget', 'families: mint (rows) | make (synthetic makeTarget) | enemy, stand (enemyTarget, standInTarget) | gear (gearEnemy) | scalar (materialRequirementMultiplier, targetGroupOf, enemyRowOf, careerIndexOf, isClassEnemyOf) | classic (assignEnemyEquipment) | rri (the Enemy Expansion delegate). Grammar: rust/README.md R3b');
+  const R = makeLcg(0x3b01);
+  const fam = {};
+  const bump = (k) => { fam[k] = (fam[k] ?? 0) + 1; };
+  // gearEnemy reads UPSTREAM_BOOT: one module copy per boot (see targetUnderBoot).
+  const TARGET_UNDER = [];
+  for (const code of MT_CODES_ALL) TARGET_UNDER[code] = await targetUnderBoot(code);
+
+  // mint
+  for (const code of MT_CODES_ALL) {
+    for (let id = -10; id <= 300; id++) {
+      const row = mintRow(id, { boot: bootOfCode(code) });
+      out.add('mint', F(id), I(code), '=>', rowCanon(row));
+      bump('mint');
+    }
+  }
+
+  // make: synthetic fields through the real makeTarget
+  for (let i = 0; i < 2400; i++) {
+    const f = synthMake(R);
+    const target = makeTarget(makeFields(f));
+    out.add('make', ...makeTokens(f), '=>', canonTarget(target));
+    bump('make');
+  }
+
+  // enemy and stand: enemyTarget / standInTarget per boot, mobile id and option set
+  for (const code of MT_CODES_ALL) {
+    for (const id of MT_IDS) {
+      ENEMY_SPECS.forEach((spec, si) => {
+        const career = (id + code + si) % 2 === 0 ? randomCareer(R) : null;
+        const armorValues = si === 3 ? [60, 60, 60, 60, 60, 60, 60] : undefined;
+        // Absent rolls (JS null) for a third of the cases: the City Watch knight then refuses unless exact.
+        const withRolls = (id + code + si) % 3 !== 0;
+        const rs = rollScript(R);
+        let result = null;
+        try {
+          result = enemyTarget(id, {
+            level: spec.level, playerLevel: spec.playerLevel, career: career ?? undefined, armorValues,
+            health: si === 1 ? 50 : undefined, maxHealth: si === 2 ? 80 : undefined,
+            rolls: withRolls ? rs.rolls : undefined, exactLevel: spec.exactLevel ?? false, boot: bootOfCode(code),
+          });
+        } catch (e) {
+          result = refused(e);
+        }
+        const used = withRolls ? rollsTokens(rs.used()) : ['-'];
+        out.add('enemy', F(id), I(code), O(spec.playerLevel), O(spec.level), ...careerTokens(career), ...(armorValues ? ['a', I(7), ...armorValues.map((v) => F(v))] : ['-']),
+          O(si === 1 ? 50 : undefined), O(si === 2 ? 80 : undefined), B(spec.exactLevel ?? false), ...used,
+          '=>', result ? canonTarget(result) : '!');
+        bump('enemy');
+      });
+      {
+        let result = null;
+        try {
+          result = standInTarget(id, { boot: bootOfCode(code) });
+        } catch (e) {
+          result = refused(e);
+        }
+        out.add('stand', F(id), I(code), '=>', result ? canonTarget(result) : '!');
+        bump('enemy');
+      }
+    }
+  }
+
+  // gear: gearEnemy under each boot (the copy), two roll scripts per case
+  for (const code of MT_CODES_ALL) {
+    const T = TARGET_UNDER[code];
+    for (const id of MT_IDS) {
+      for (const L of [undefined, 9, 21, 37]) {
+        for (const seed of [0, 1]) {
+          const career = seed === 1 ? randomCareer(R) : null;
+          const pl = seed === 0 ? undefined : L;
+          let target = null;
+          try {
+            target = enemyTarget(id, { playerLevel: L, career: career ?? undefined, exactLevel: true, boot: bootOfCode(code) });
+          } catch (e) {
+            target = refused(e);
+          }
+          const rs = rollScript(R);
+          if (target !== null) T.gearEnemy(target, { playerLevel: pl, rolls: rs.rolls });
+          const used = target !== null ? rs.used() : [];
+          out.add('gear', F(id), I(code), O(L), O(pl), ...careerTokens(career), ...rollsTokens(used), '=>', target !== null ? canonTarget(target) : '!');
+          bump('gear');
+        }
+      }
+    }
+  }
+
+  // scalar: the small target helpers
+  for (let i = 0; i < 1200; i++) {
+    const min = R.chance(0.2) ? undefined : R.pick([-1, 0, 1, 2, 3, 4, 5, 6, 2.5, NaN, 0.5]);
+    const weaponNull = R.chance(0.2);
+    const wmat = R.chance(0.2) ? undefined : R.pick([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 2.5]);
+    const soft = R.chance(0.7);
+    const target = min === undefined ? {} : { minMetalToHit: min };
+    const weapon = weaponNull ? null : (wmat === undefined ? {} : { material: wmat });
+    const r = materialRequirementMultiplier(target, weapon, { soft });
+    out.add('mrm', O(min), weaponNull ? '-' : 'w', ...(weaponNull ? [] : [O(wmat)]), B(soft), '=>', F(r));
+    bump('scalar');
+  }
+  for (let i = 0; i < 400; i++) {
+    const careerIndex = R.chance(0.2) ? undefined : R.int(-1, 40);
+    const affinity = R.chance(0.3) ? null : R.pick(['Human', 'Animal', 'Undead']);
+    const isClass = R.chance(0.3);
+    const args = { affinity, isClass };
+    if (careerIndex !== undefined) args.careerIndex = careerIndex;
+    const g = targetGroupOf(args);
+    out.add('tgo', O(careerIndex), OS(affinity), B(isClass), '=>', OS(g));
+    bump('scalar');
+  }
+  for (let i = 0; i < 200; i++) {
+    const id = R.chance(0.7) ? R.pick(MT_IDS) : R.int(-5, 150);
+    out.add('erow', F(id), '=>', enemyRowCanon(enemyRowOf(id)));
+    bump('scalar');
+  }
+  for (let i = 0; i < 200; i++) {
+    const id = R.chance(0.7) ? R.pick(MT_IDS) : R.int(-5, 200);
+    out.add('cidx', F(id), '=>', F(careerIndexOf(id)));
+    bump('scalar');
+  }
+  for (let i = 0; i < 200; i++) {
+    const id = R.chance(0.7) ? R.pick(MT_IDS) : R.int(-5, 200);
+    out.add('iscl', F(id), '=>', B(isClassEnemyOf(id)));
+    bump('scalar');
+  }
+
+  // classic: assignEnemyEquipment, the classic loadout and its armour values
+  for (let i = 0; i < 2400; i++) {
+    const id = R.pick(MT_IDS);
+    const isClass = id >= 128;
+    const variant = R.pick([null, 0, 1, 2]);
+    const armor = R.pick([0, 5, 30, 60, 100, -10]);
+    const pl = R.int(1, 45);
+    const rs = rollScript(R);
+    const eq = assignEnemyEquipment({ mobileType: id, isClass, armor }, variant, pl, rs.rolls);
+    out.add('classic', F(id), B(isClass), O(variant), F(armor), F(pl), ...rollsTokens(rs.used()), '=>', ...gearOutTokens(eq, null));
+    bump('classic');
+  }
+
+  // rri: the Enemy Expansion delegate (the copy of RRI's arm), per mudex set
+  const propsByMudex = new Map();
+  for (const mudex of [false, true]) {
+    const read = dexRead({ mudex, log: () => {} });
+    propsByMudex.set(mudex, (id) => read.classic.get(Number(id))?.props ?? read.enemies.get(Number(id))?.props ?? null);
+  }
+  for (let i = 0; i < 2400; i++) {
+    const id = R.pick(MT_IDS);
+    const isClass = id >= 128;
+    const variant = R.pick([null, 0, 1, 2]);
+    const pl = R.int(1, 45);
+    const level = R.chance(0.6) ? R.int(1, 45) : undefined;
+    const armor = R.pick([0, 5, 30, 60, 100]);
+    const mudex = R.chance(0.5);
+    const team = R.pick(['Orcs', 'Centaurs', 'KnightsAndMages', 'Criminals', 'PlayerEnemy']);
+    const bitfield = R.chance(0.5) ? R.int(0, 0xffff) : undefined;
+    const career = bitfield === undefined ? null : { weaponArmorShieldsBitfield: bitfield };
+    const assign = createDexEquipmentAssigner(propsByMudex.get(mudex));
+    const entity = { mobileType: id, isClass, armor, career, basics: { team } };
+    if (level !== undefined) entity.level = level;
+    const rs = rollScript(R);
+    const eq = assign(entity, variant, pl, { rolls: rs.rolls });
+    if (eq === null) throw new Error('maketarget: the Enemy Expansion arm answered null with the switches at their defaults');
+    out.add('rri', F(id), B(isClass), O(variant), F(pl), O(level), F(armor), B(mudex), OS(team), O(bitfield), ...rollsTokens(rs.used()), '=>', ...gearOutTokens(eq, eq.rightHand?.poisonType ?? null));
+    bump('rri');
+  }
+
+  console.log(`maketarget: ${Object.entries(fam).map(([k, v]) => `${k} ${v}`).join(', ')}`);
+  return out.write();
+}
+
+/** The GEAR_OUT tokens of an arm's answer: right, left, the armour pieces, the armour values, the poison. */
+function gearOutTokens(eq, poison) {
+  const t = [];
+  if (eq.rightHand) t.push('W', F(eq.rightHand.templateIndex), F(eq.rightHand.material));
+  else t.push('-');
+  if (!eq.leftHand) t.push('-');
+  else if (eq.leftHand.shield) t.push('S', F(eq.leftHand.templateIndex));
+  else t.push('W', F(eq.leftHand.templateIndex), F(eq.leftHand.material));
+  t.push(I(eq.armorPieces.length));
+  for (const p of eq.armorPieces) t.push(F(p.piece), F(p.material), B(!!p.shield));
+  for (const v of eq.armorValues) t.push(F(v));
+  t.push(O(poison));
+  return t;
+}
+
+counts.maketarget = await genMaketarget();
 
 counts.round = genRound();
 counts.rng = genRng();

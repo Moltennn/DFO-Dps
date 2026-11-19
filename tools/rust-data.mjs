@@ -28,7 +28,7 @@
  * are spelled out). Each table carries `#[rustfmt::skip]`, so `cargo fmt --check` accepts the files as written.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import * as data from '../src/data.js';
@@ -58,6 +58,13 @@ import * as modSettings from '../vendor/upstream/a3eb1605/src/systems/modSetting
 import * as races from '../vendor/upstream/a3eb1605/src/systems/races.js';
 import * as dexInstall from '../vendor/upstream/a3eb1605/src/systems/enemyExpansion/dexInstall.js';
 import * as gateBoss from '../vendor/upstream/a3eb1605/src/world/gate/gateBoss.js';
+import * as itemTemplates from '../vendor/upstream/a3eb1605/src/systems/item/itemTemplates.js';
+import * as weapons from '../vendor/upstream/a3eb1605/src/characters/weapons.js';
+import * as rriItems from '../vendor/upstream/a3eb1605/src/systems/roleplayRealismItems/rriItems.js';
+import * as mobileTypes from '../vendor/upstream/a3eb1605/src/characters/mobile/mobileTypes.js';
+import * as poisons from '../vendor/upstream/a3eb1605/src/systems/poisons.js';
+import * as createItemRows from '../vendor/upstream/a3eb1605/src/systems/createItemRows.js';
+import { mintRow } from '../src/target.js';
 
 const V = 'vendor/upstream/a3eb1605/src';
 const here = dirname(fileURLToPath(import.meta.url));
@@ -88,6 +95,84 @@ function equipSlotNames() {
     return `(${rustStr(k)}, ${fLit(v)})`;
   });
   return `#[rustfmt::skip]\npub static EQUIP_SLOT_NAMES: &[(&str, f64)] = &[${rows.join(', ')}];`;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// R3b tables. Each one is the real JS evaluated over a finite, vendored input domain (the mint rows over every
+// boot switch combination and every classic mobile id; the DEX classic props per mudex flag), so the Rust side
+// looks them up instead of re-running the mod's CSV reader. `force` (see forceOpt) makes every record field an
+// Option, so the Rust that reads a row is written against one known shape.
+// ---------------------------------------------------------------------------------------------------------------
+/** Every (vendored) mobile id a classic row exists for: 0..=42 and 128..=146, ascending. */
+const MINT_IDS = Object.keys(enemyBasics.VANILLA_ENEMY_BASICS).map(Number).filter((n) => Number.isInteger(n)).sort((a, b) => a - b);
+/** Boot code: bit 0 pcaao, bit 1 Meaner Monsters, bit 2 Daggerfall Enemy Expansion (the boot arguments of target.js). */
+export const bootOfCode = (code) => ({ pcaao: (code & 1) !== 0, meanerMonsters: (code & 2) !== 0, enemyExpansion: (code & 4) !== 0 });
+
+function buildMintRows() {
+  const rows = {};
+  for (let code = 0; code < 8; code++) {
+    for (const id of MINT_IDS) {
+      const row = mintRow(id, { boot: bootOfCode(code) });
+      if (row === null) continue;
+      if (typeof row.minMetalToHit !== 'number') throw new Error(`rust-data: mint row ${id} under boot ${code} has no minMetalToHit`);
+      rows[`${code}/${id}`] = row;
+    }
+  }
+  return rows;
+}
+
+/** The DEX classic `equipmentTable` each id names (dexEquipment.js dexClassTable reads it through propsOf), per mudex. */
+function buildDexEquipment() {
+  const out = {};
+  for (const mudex of [false, true]) {
+    const read = dexInstall.dexRead({ mudex, log: () => {} });
+    for (const id of MINT_IDS) {
+      const props = read.classic.get(id)?.props ?? read.enemies.get(id)?.props ?? null;
+      const table = props?.equipmentTable;
+      if (!table) continue;
+      if (typeof table !== 'string') throw new Error(`rust-data: equipmentTable of ${id} is not a string`);
+      out[`${mudex ? 1 : 0}/${id}`] = table;
+    }
+  }
+  return out;
+}
+
+/** The DFU item template fields the minters read (mintCondition: hitPoints; clothing: variants), by index. */
+function buildTemplateFacts() {
+  for (let i = 513; i <= 526; i++) {
+    // The RRI rows are not registered by the port (no mod ItemTemplates.json is read): the minters answer null, so the
+    // mint gives maxCondition 0. A registration would change that, so it is checked, not assumed.
+    if (itemTemplates.templateByIndex(i) !== null) throw new Error(`rust-data: template ${i} is registered; the port's RRI model assumes it is not`);
+  }
+  const facts = {};
+  for (const t of itemTemplates.ITEM_TEMPLATES) {
+    if (!t) continue;
+    facts[String(t.index)] = { hitPoints: t.hitPoints, variants: t.variants };
+  }
+  return facts;
+}
+
+/** RRI_CLASSES' light set folds Chain (0x0100) to Leather with `message` 1 when it is minted (rriItems.js lightVariant). */
+function probeChainFolds() {
+  const out = {};
+  for (const [k, cls] of Object.entries(rriItems.RRI_CLASSES)) {
+    const probe = typeof cls.onVariantSet === 'function'
+      ? cls.onVariantSet({ group: 'Armor', templateIndex: Number(k), material: 0x0100, name: '' })
+      : null;
+    out[k] = probe?.material === 0 && probe?.message === 1;
+  }
+  return out;
+}
+
+/** The four RRI switches the minters and the enemy arm read, at the mod's shipped defaults (modSettings.js). */
+function rriEnabledDefaults() {
+  const keys = modSettings.MOD_SETTINGS['roleplay-realism-items'].keys;
+  const def = (k) => {
+    const on = keys[k]?.default;
+    if (typeof on !== 'boolean') throw new Error(`rust-data: roleplay-realism-items ${k}.default is not a boolean`);
+    return on;
+  };
+  return { Enabled: def('Enabled'), newWeapons: def('newWeapons'), newArmor: def('newArmor'), realisticEnemyEquipment: def('realisticEnemyEquipment') };
 }
 
 const SOURCES = [
@@ -129,7 +214,7 @@ const SOURCES = [
     names: ['SHIELD_PARTS', 'SHIELD_VALUES', 'BODY_PARTS', 'NUMBER_BODY_PARTS', 'ARMOR_MATERIAL', 'PLATE_ARMOR_VALUES'],
   },
   { file: 'formulas', from: `${V}/combat/formulas.js`, mod: formulas, names: ['GROUP_BITS'] },
-  { file: 'equip_rules', from: `${V}/characters/equipRules.js`, mod: equipRules, names: ['SLOT_RULES'] },
+  { file: 'equip_rules', from: `${V}/characters/equipRules.js`, mod: equipRules, names: ['SLOT_RULES', 'ITEM_GROUPS', 'WEAPON_HANDS', 'SHIELD_INDICES'] },
   {
     file: 'equip',
     from: `${V}/systems/equip.js`,
@@ -147,6 +232,21 @@ const SOURCES = [
   { file: 'gate_boss', from: `${V}/world/gate/gateBoss.js`, mod: gateBoss, names: ['BOSS_ARMOR'] },
   { file: 'bow_bloom', from: `${V}/combat/bowBloom.js`, mod: bowBloom, names: ['BOW_FAST'] },
   { file: 'hands_law', from: `${V}/combat/twoHands/handsLaw.js`, mod: handsLaw, names: ['DUAL', 'OFF_HAND_BLOW'] },
+  // R3b
+  { file: 'mint_rows', from: `${V}/characters/meanerMonsters.js (target.js mintRow over boot codes 0..7 x classic ids)`, mod: { MINT_ROWS: buildMintRows() }, names: ['MINT_ROWS'], force: true },
+  { file: 'dex_equipment', from: `${V}/systems/enemyExpansion/dexInstall.js (classic props.equipmentTable, per mudex)`, mod: { DEX_EQUIPMENT_TABLE: buildDexEquipment() }, names: ['DEX_EQUIPMENT_TABLE'], hints: { DEX_EQUIPMENT_TABLE: { t: 'skeyed', of: { t: 'str' } } } },
+  { file: 'item_templates', from: `${V}/systems/item/itemTemplates.js ITEM_TEMPLATES (hitPoints, variants)`, mod: { ITEM_TEMPLATE_FACTS: buildTemplateFacts() }, names: ['ITEM_TEMPLATE_FACTS'], force: true },
+  { file: 'weapons', from: `${V}/characters/weapons.js`, mod: weapons, names: ['WEAPON_MATERIALS', 'conditionMultipliersByMaterial', 'WEAPON_CONDITION_POOL'] },
+  {
+    file: 'rri_items',
+    from: `${V}/systems/roleplayRealismItems/rriItems.js (RRI_CLASSES, the chain fold probe, the module switches' defaults)`,
+    mod: { RRI_CLASSES: rriItems.RRI_CLASSES, RRI_CHAIN_FOLD: probeChainFolds(), RRI_ENABLED_DEFAULTS: rriEnabledDefaults() },
+    names: ['RRI_CLASSES', 'RRI_CHAIN_FOLD', 'RRI_ENABLED_DEFAULTS'],
+    force: true,
+  },
+  { file: 'mobile_types', from: `${V}/characters/mobile/mobileTypes.js`, mod: mobileTypes, names: ['MOBILE_TYPES'] },
+  { file: 'poisons', from: `${V}/systems/poisons.js`, mod: poisons, names: ['POISON_START_VALUE'] },
+  { file: 'create_item_rows', from: `${V}/systems/createItemRows.js`, mod: createItemRows, names: ['MENS_PLAIN_ROBES', 'WOMENS_PLAIN_ROBES'] },
 ];
 
 const RUST_KEYWORDS = new Set([
@@ -159,6 +259,8 @@ const RUST_KEYWORDS = new Set([
 const SKIP = Symbol('skip');
 /** Slots whose data carries no type (always null / always empty); reported at the end of a run. */
 const PLACEHOLDERS = [];
+/** Every emitted table's type tree, by `file:NAME` (the golden-vector writer reads the canonical form through it). */
+export const DESCS = new Map();
 const where = (path) => path.join('.') || '<root>';
 const isIntKey = (k) => String(Number(k)) === k && Number.isSafeInteger(Number(k));
 const isIdentKey = (k) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k);
@@ -188,7 +290,7 @@ function checkText(s, path) {
 }
 
 /** Plain data only: Map becomes pairs, function-valued fields and undefined fields are dropped. */
-function normalize(v, path) {
+export function normalize(v, path) {
   if (typeof v === 'function') return SKIP;
   if (v === null || v === undefined) return v;
   if (typeof v === 'number' || typeof v === 'boolean') return v;
@@ -221,7 +323,7 @@ function normalize(v, path) {
 const kindOf = (v) => (Array.isArray(v) ? 'array' : typeof v === 'object' ? 'object' : typeof v);
 
 /** The type of one slot, from every value that fills it. `nullish` means some owner lacks the slot. */
-function describe(vals, path, nullish = false) {
+export function describe(vals, path, nullish = false) {
   const present = vals.filter((v) => v !== null && v !== undefined);
   if (present.length === 0) {
     // Every owner has null here, so the data carries no type. An inert Option<f64> that is always None, and the path
@@ -349,6 +451,98 @@ function lit(d, v, path) {
   }
 }
 
+/** `force`: every record field becomes an Option (a field present in every row is still `Option`), so the Rust reading a
+ *  table is written against one shape whatever the data holds. Applied recursively; lists and tuples keep their elements. */
+const wrapOpt = (d) => (d.t === 'opt' ? d : { t: 'opt', of: d });
+export function forceOpt(d) {
+  switch (d.t) {
+    case 'rec': return { ...d, fields: d.fields.map((f) => ({ key: f.key, d: wrapOpt(forceOpt(f.d)) })) };
+    case 'opt': return { t: 'opt', of: forceOpt(d.of) };
+    case 'list': return { t: 'list', of: forceOpt(d.of) };
+    case 'keyed': case 'skeyed': return { ...d, of: forceOpt(d.of) };
+    case 'tuple': return { t: 'tuple', of: d.of.map(forceOpt) };
+    default: return d;
+  }
+}
+
+// ---- the canonical token form (one token per value; a row is its tokens joined with ';', see rust/README.md) ----
+const canonDv = new DataView(new ArrayBuffer(8));
+const tokF = (x) => {
+  if (typeof x !== 'number') throw new Error(`rust-data: canon: not a number: ${String(x)}`);
+  if (Number.isNaN(x)) return '7ff8000000000000';
+  canonDv.setFloat64(0, x);
+  return canonDv.getBigUint64(0).toString(16).padStart(16, '0');
+};
+/** Pushes the tokens of value `v` of type `d` onto `out`. An absent optional is `-`; a record is its fields in order. */
+export function canonOf(d, v, out = []) {
+  switch (d.t) {
+    case 'opt':
+      if (v === null || v === undefined) out.push('-');
+      else canonOf(d.of, v, out);
+      return out;
+    case 'f64': out.push(tokF(v)); return out;
+    case 'bool':
+      if (typeof v !== 'boolean') throw new Error('rust-data: canon: not a boolean');
+      out.push(v ? '1' : '0');
+      return out;
+    case 'str':
+      if (typeof v !== 'string') throw new Error('rust-data: canon: not a string');
+      out.push(`n:${Array.from({ length: v.length }, (_, i) => v.charCodeAt(i).toString(16).padStart(4, '0')).join('')}`);
+      return out;
+    case 'list':
+      if (!Array.isArray(v) || d.of.t !== 'f64') throw new Error('rust-data: canon: a list of numbers only');
+      out.push(String(v.length));
+      for (const x of v) out.push(tokF(x));
+      return out;
+    case 'rec':
+      for (const f of d.fields) canonOf(f.d, v?.[f.key], out);
+      return out;
+    default: throw new Error(`rust-data: canon: no form for ${d.t}`);
+  }
+}
+
+const snake = (s) => s.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+function canonStmt(d, e) {
+  switch (d.t) {
+    case 'opt': return `match ${e} { None => out.push("-".to_string()), Some(v) => { ${canonStmt(d.of, 'v')} } }`;
+    case 'f64': return `out.push(vc::f(${e}));`;
+    case 'bool': return `out.push(vc::b(${e}));`;
+    case 'str': return `out.push(vc::s(${e}));`;
+    case 'list':
+      if (d.of.t !== 'f64') throw new Error('rust-data: canon: a list that is not numbers');
+      return `vc::list(${e}, out);`;
+    case 'rec': return `${snake(d.name)}_into(&${e}, out);`;
+    default: throw new Error(`rust-data: canon: no Rust form for ${d.t}`);
+  }
+}
+function recInto(r) {
+  const body = r.fields.length === 0 ? '    let _ = (r, out);' : r.fields.map((f) => `    ${canonStmt(f.d, `r.${fieldName(f.key)}`)}`).join('\n');
+  return `#[rustfmt::skip]\nfn ${snake(r.name)}_into(r: &${r.name}, out: &mut Vec<String>) {\n${body}\n}`;
+}
+/** canon_rows.rs: the token form of the two row records the target carries (the mint rows and the shipped table). */
+function emitCanon() {
+  const specs = [
+    { rec: DESCS.get('mint_rows:MINT_ROWS').of, fn: 'canon_mint_row', mod: 'mint_rows' },
+    { rec: DESCS.get('enemy_basics:ENEMY_BASICS').of, fn: 'canon_enemy_basics_row', mod: 'enemy_basics' },
+  ];
+  const uses = [];
+  const items = [];
+  for (const sp of specs) {
+    const recs = [];
+    collectRecs(sp.rec, recs, new Set());
+    for (const r of recs) uses.push(`${sp.mod}::${r.name}`);
+    items.push(`#[rustfmt::skip]\npub fn ${sp.fn}(r: &${sp.rec.name}) -> String {\n    let mut out = Vec::new();\n    ${snake(sp.rec.name)}_into(r, &mut out);\n    out.join(";")\n}`);
+    for (const r of recs) items.push(recInto(r));
+  }
+  const imports = uses.map((u) => `#[rustfmt::skip]\nuse crate::generated::${u};`);
+  return `${[
+    header('the canonical token form of the mint rows and the shipped enemy rows (the golden vectors write these tokens)'),
+    ...imports,
+    '#[rustfmt::skip]\nuse crate::vectors_canon as vc;',
+    ...items,
+  ].join('\n\n')}\n`;
+}
+
 /** Every struct a type uses, once each, in creation order. */
 function collectRecs(d, out, seen) {
   if (d.t === 'rec') {
@@ -397,7 +591,9 @@ function emitModule(src) {
       continue;
     }
     const v = normalize(raw, [name]);
-    const d = describe([v], [name]);
+    // `hints` fixes the type of a table whose data cannot show it (an object that is empty today but is a keyed list).
+    const d = src.hints?.[name] ?? (src.force ? forceOpt(describe([v], [name])) : describe([v], [name]));
+    DESCS.set(`${src.file}:${name}`, d);
     collectRecs(d, recs, seen);
     const scalar = d.t === 'f64' || d.t === 'bool' || d.t === 'str';
     items.push(`#[rustfmt::skip]\n${scalar ? 'pub const' : 'pub static'} ${toConst(name)}: ${ty(d).replaceAll("&'static ", '&')} = ${lit(d, v, [name])};`);
@@ -433,6 +629,7 @@ function buildFiles() {
     if (d.length) dropped.push(`${src.file}: ${d.join(', ')}`);
   }
   files.set('mod_settings.rs', emitModSettings());
+  files.set('canon_rows.rs', emitCanon());
   const modules = [...files.keys()].map((f) => f.slice(0, -3)).sort();
   files.set('mod.rs', [
     '// generated by tools/rust-data.mjs - do not edit',
@@ -445,7 +642,10 @@ function buildFiles() {
 
 const { files, dropped } = buildFiles();
 
-if (process.argv.includes('--check')) {
+// Importing this module (tools/rust-vectors.mjs does) evaluates the tables above but writes nothing: only a direct run does.
+const isMain = process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isMain && process.argv.includes('--check')) {
   const stale = [...files].filter(([name, text]) => {
     const p = join(genDir, name);
     return !existsSync(p) || readFileSync(p, 'utf8') !== text;
@@ -460,7 +660,7 @@ if (process.argv.includes('--check')) {
     process.exit(1);
   }
   console.log(`rust-data: ${files.size} generated files are up to date`);
-} else {
+} else if (isMain) {
   mkdirSync(genDir, { recursive: true });
   for (const [name, text] of files) writeFileSync(join(genDir, name), text);
   console.log(`rust-data: wrote ${files.size} files to rust/dfo-core/src/generated/`);

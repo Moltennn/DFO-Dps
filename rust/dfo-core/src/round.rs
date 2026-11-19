@@ -138,6 +138,24 @@ pub fn is_safe_integer(x: f64) -> bool {
     is_integer(x) && x.abs() <= 9007199254740991.0
 }
 
+/// JS `Math.round`: the nearest integer, a tie toward +Infinity (so `-2.5` gives `-2`), and `-0` for `-0.5 <= x < 0`
+/// (ECMAScript 21.3.2.28). Not [`f64::round`], which rounds ties away from zero. Used by `src/target.js`
+/// (`armourPiece`, the Math.round of the condition) and moved here (R3b) so every module shares one copy.
+pub fn math_round(x: f64) -> f64 {
+    if x == 0.0 {
+        return x;
+    }
+    if (-0.5..0.0).contains(&x) {
+        return -0.0;
+    }
+    let f = x.floor();
+    if x - f >= 0.5 {
+        f + 1.0
+    } else {
+        f
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,6 +188,18 @@ mod tests {
         assert_eq!(js_rem(-1.0, 4294967296.0), -1.0);
         assert!(js_rem(1.0, 0.0).is_nan());
         assert_eq!(js_rem(-4.0, 2.0).to_bits(), (-0.0f64).to_bits());
+    }
+
+    #[test]
+    fn math_round_ties_go_up_and_zero_keeps_its_sign() {
+        assert_eq!(math_round(0.5), 1.0);
+        assert_eq!(math_round(-0.5).to_bits(), (-0.0f64).to_bits());
+        assert_eq!(math_round(-1.5), -1.0);
+        assert_eq!(math_round(-2.5), -2.0);
+        assert_eq!(math_round(2.5), 3.0);
+        assert_eq!(math_round(-0.0).to_bits(), (-0.0f64).to_bits());
+        assert_eq!(math_round(0.49999999999999994), 0.0);
+        assert!(math_round(f64::NAN).is_nan());
     }
 
     #[test]

@@ -2,28 +2,27 @@
 //! elemental share, the enemy-type bonus, silver and the Skeletal Warrior, the monster hide, the worn armour and the
 //! shield, and the per-part outcomes a blow resolves to.
 //!
-//! Ported in JS order from `src/target.js:53-523` (up to `gearEnemy`), with `liveStat` from `src/save.js:167-181`
-//! and `NUM` from `src/save.js:107`. Not ported here (R3b): `gearEnemy`, `materialRequirementMultiplier` and
-//! `targetGroupOf` (after `gearEnemy`), the builders (`mintRow`, `mintedBody`, `makeTarget`, `enemyTarget`,
-//! `standInTarget`), the item minter behind `armourPiece` (`armorOfMaterial`, whose `mintCondition` and
-//! `setItemFields` read the item templates), and `equipArmour`'s descriptor path (a piece that is not yet an item).
+//! Ported in JS order from `src/target.js:53-523` (R3a), with `liveStat` from `src/save.js:167-181` and `NUM` from
+//! `src/save.js:107`. The rest of the file is R3b: the builders and the gear are in `mint.rs` and `gear.rs`, and
+//! `equip_armour_with` takes the RRI switches for the custom armour classes (see `rust/README.md`, R3b).
 //!
 //! The target value: each struct keeps only the fields these functions read, and its doc names the JS property.
 //! JS `undefined` and `null` are `None`, except where the JS tests the value itself (`=== false`, `??`, `!!`); the
 //! doc of each field says which. A JS value that is not a number, or a string where a number is read, is not
 //! representable; the vectors never pass one (the README lists it). Every rounding and clamp is [`crate::round`]'s.
 
+use crate::boot::RriSwitches;
 use crate::generated::armor_materials::SHIELD_PARTS;
 use crate::generated::data::{PCAAO_BODY_PARTS, SKILLS, STRUCK_BODY_PARTS};
 use crate::generated::enemy_groups::ENEMY_GROUPS;
 use crate::generated::paperdoll::EQUIP_SLOTS;
 use crate::generated::pcaao::{PCAAO_REDUCTION_ROWS, SILVER_DOUBLED_CAREERS};
 use crate::round::{
-    finite_or, fround, is_integer, js_clamp, js_max, js_min, or_default, to_int32, trunc,
-    unity_round,
+    finite_or, fround, is_integer, js_clamp, js_max, js_min, math_round, or_default, to_int32,
+    trunc, unity_round,
 };
 use crate::vendored::{
-    armor_body_parts, career_attack_modifier, condition_percentage, enemy_armor_values,
+    armor_body_parts_with, career_attack_modifier, condition_percentage, enemy_armor_values_with,
     enemy_entity_group, is_shield_template, item_armor_value, silver_doubles, slot_for_body_part,
     ArmourPieceRef,
 };
@@ -100,8 +99,9 @@ pub enum Effect {
         stat: Option<Stat>,
         magnitude: f64,
     },
-    /// Any other kind. It reads no stat.
-    Other,
+    /// Any other kind (`spellShield` and the rest). It reads no stat, but `ended` is read for every kind: liveStat
+    /// skips an ended effect before it looks at the kind (save.js:171).
+    Other { ended: bool },
 }
 
 impl Effect {
@@ -110,8 +110,8 @@ impl Effect {
             Effect::StatMods { ended, .. }
             | Effect::RacialOverride { ended, .. }
             | Effect::Fortify { ended, .. }
-            | Effect::Drain { ended, .. } => *ended,
-            Effect::Other => false,
+            | Effect::Drain { ended, .. }
+            | Effect::Other { ended } => *ended,
         }
     }
 }
@@ -119,7 +119,7 @@ impl Effect {
 /// What `liveStat(ch, name)` reads from an entity (save.js:167-181): the base `stats`, the `activeEffects`, and the
 /// gear's `_mods` (`stats` and `statMax`). A base stat that is missing or not finite reads 0 (`NUM`), so a missing
 /// base is stored as NaN. A mod that is missing reads 0 (`?? 0`), so it is stored as 0.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Live {
     /// `stats[name]`, indexed by [`Stat`] (NaN for a JS missing key).
     pub stats: [f64; 8],
@@ -145,6 +145,11 @@ pub struct Career {
     pub critical_weakness_flags: Option<f64>,
     /// `career.attackModifierFlags` (read for an attacker, see [`attack_modifier_flags_of`]).
     pub attack_modifier_flags: Option<f64>,
+    /// `career.weaponArmorShieldsBitfield` (R3b: the forbidden armour of the DEX copy, dexEquipment.js:83-89).
+    pub weapon_armor_shields_bitfield: Option<f64>,
+    /// `career.strength` .. `career.luck` (R3b: `targetStats`, target.js:584-586, in [`Stat`] order). `None` is a
+    /// missing key, which `targetStats` reads as the default 50.
+    pub stats: [Option<f64>; 8],
 }
 
 /// A worn piece, as the fields the armour functions read (an `item` in JS).
@@ -179,7 +184,7 @@ pub struct Weapon {
 }
 
 /// A struck body part's target: the fields the target functions read (`makeTarget`'s shape, target.js:713-742).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Target {
     /// `isPlayer` (JS truthiness). Every builder sets it.
     pub is_player: bool,
@@ -201,6 +206,30 @@ pub struct Target {
     /// `equip.slots`: the worn piece in each slot id. A JS key whose value is null or undefined is not worn, so
     /// only the worn pieces are listed. An empty list is both `slots` absent and `slots` empty.
     pub equip_slots: Vec<(f64, Item)>,
+    /// Whether `career` is an object (R3b). A JS `null` career has no fields, so `career` is then the default.
+    pub has_career: bool,
+    /// `mobileType` (`None` is undefined or null).
+    pub mobile_type: Option<f64>,
+    /// `affinity` (`None` is null or undefined).
+    pub affinity: Option<String>,
+    /// `group` (the target group a career names; `None` is null).
+    pub group: Option<String>,
+    /// `skills`: the (skill id, level) pairs of the object, in id order (`{}` is empty).
+    pub skills: Vec<(i64, f64)>,
+    /// `minMetalToHit`. `None` is undefined (`Number(undefined)` is NaN in `materialRequirementMultiplier`).
+    pub min_metal_to_hit: Option<f64>,
+    /// `spareGear` (JS truthiness).
+    pub spare_gear: bool,
+    /// `health`.
+    pub health: f64,
+    /// `maxHealth`.
+    pub max_health: f64,
+    /// `relayBody` (`Some(true)` for a relay stand-in; `None` is undefined).
+    pub relay_body: Option<bool>,
+    /// `levelSource`: `player`, `override` or `mint` (`None` is undefined).
+    pub level_source: Option<String>,
+    /// `basics`: the enemy row the body was minted from (`mintRow`'s row). `None` is undefined.
+    pub basics: Option<&'static crate::generated::mint_rows::MintRowsValue>,
 }
 
 /// The attacker of the enemy-type bonus: the player's build (target.js:143, `attacker`). A JS `null` attacker is a
@@ -296,7 +325,7 @@ pub fn live_stat(live: &Live, name: Stat) -> f64 {
                     m -= magnitude;
                 }
             }
-            Effect::Other => {}
+            Effect::Other { .. } => {}
         }
     }
     m += live.stat_mods[i];
@@ -1003,6 +1032,16 @@ fn part_weights(parts: &[f64]) -> Vec<f64> {
 /// body part names (a shield to the left hand), if that slot is empty. With `armor_values`, the struck-part
 /// `armorValues` are recomputed from the pieces (`enemyArmorValues`, :516-520).
 pub fn equip_armour(target: &mut Target, pieces: &[Item], armor_values: bool) {
+    equip_armour_with(target, pieces, armor_values, None);
+}
+
+/// [`equip_armour`] with the RRI switches the custom armour classes read (`None`: the classic table alone, as R3a).
+pub fn equip_armour_with(
+    target: &mut Target,
+    pieces: &[Item],
+    armor_values: bool,
+    rri: Option<&RriSwitches>,
+) {
     let mut slots = target.equip_slots.clone();
     let mut armour_pieces: Vec<ArmourPieceRef> = Vec::new();
     for item in pieces {
@@ -1010,7 +1049,7 @@ pub fn equip_armour(target: &mut Target, pieces: &[Item], armor_values: bool) {
         let slot = if shield {
             EQUIP_SLOTS.left_hand
         } else {
-            match armor_body_parts(Some(item)).first() {
+            match armor_body_parts_with(Some(item), rri).first() {
                 Some(part) => slot_for_body_part(*part),
                 None => EQUIP_SLOTS.none,
             }
@@ -1029,7 +1068,8 @@ pub fn equip_armour(target: &mut Target, pieces: &[Item], armor_values: bool) {
     if armor_values {
         let armor = target.armor_values.first().copied().unwrap_or(0.0);
         let is_class = target.is_class == Some(true);
-        target.armor_values = enemy_armor_values(is_class, armor, &armour_pieces).to_vec();
+        target.armor_values =
+            enemy_armor_values_with(is_class, armor, &armour_pieces, rri).to_vec();
     }
 }
 
@@ -1041,21 +1081,4 @@ pub fn armour_piece_current(max: Option<f64>, condition: f64) -> f64 {
         0.0,
         js_min(max, math_round(max * js_clamp(condition, 0.0, 1.0))),
     )
-}
-
-/// `Math.round`: the nearest integer, a tie toward +Infinity, and `-0` for `-0.5 <= x < 0` (the spec's rule). Not
-/// [`f64::round`], which rounds ties away from zero.
-fn math_round(x: f64) -> f64 {
-    if x == 0.0 {
-        return x;
-    }
-    if (-0.5..0.0).contains(&x) {
-        return -0.0;
-    }
-    let f = x.floor();
-    if x - f >= 0.5 {
-        f + 1.0
-    } else {
-        f
-    }
 }

@@ -32,5 +32,48 @@ pub struct SlotRulesWomensClothingValue {
     pub pair: Option<&'static [&'static str]>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ItemGroups {
+    pub none: f64,
+    pub drugs: f64,
+    pub useless_items1: f64,
+    pub armor: f64,
+    pub weapons: f64,
+    pub magic_items: f64,
+    pub artifacts: f64,
+    pub mens_clothing: f64,
+    pub books: f64,
+    pub furniture: f64,
+    pub useless_items2: f64,
+    pub religious_items: f64,
+    pub maps: f64,
+    pub womens_clothing: f64,
+    pub paintings: f64,
+    pub gems: f64,
+    pub plant_ingredients1: f64,
+    pub plant_ingredients2: f64,
+    pub creature_ingredients1: f64,
+    pub creature_ingredients2: f64,
+    pub creature_ingredients3: f64,
+    pub miscellaneous_ingredients1: f64,
+    pub metal_ingredients: f64,
+    pub miscellaneous_ingredients2: f64,
+    pub transportation: f64,
+    pub deeds: f64,
+    pub jewellery: f64,
+    pub quest_items: f64,
+    pub misc_items: f64,
+    pub currency: f64,
+}
+
 #[rustfmt::skip]
 pub static SLOT_RULES: SlotRules = SlotRules { armor: &[(102, SlotRulesArmorValue { slot: "ChestArmor" }), (103, SlotRulesArmorValue { slot: "Gloves" }), (104, SlotRulesArmorValue { slot: "LegsArmor" }), (105, SlotRulesArmorValue { slot: "LeftArm" }), (106, SlotRulesArmorValue { slot: "RightArm" }), (107, SlotRulesArmorValue { slot: "Head" }), (108, SlotRulesArmorValue { slot: "Feet" }), (109, SlotRulesArmorValue { slot: "LeftHand" }), (110, SlotRulesArmorValue { slot: "LeftHand" }), (111, SlotRulesArmorValue { slot: "LeftHand" }), (112, SlotRulesArmorValue { slot: "LeftHand" })], jewellery: &[(133, SlotRulesJewelleryValue { pair: &["Amulet0", "Amulet1"] }), (134, SlotRulesJewelleryValue { pair: &["Bracer0", "Bracer1"] }), (135, SlotRulesJewelleryValue { pair: &["Ring0", "Ring1"] }), (136, SlotRulesJewelleryValue { pair: &["Bracelet0", "Bracelet1"] }), (137, SlotRulesJewelleryValue { pair: &["Mark0", "Mark1"] }), (138, SlotRulesJewelleryValue { pair: &["Amulet0", "Amulet1"] }), (139, SlotRulesJewelleryValue { pair: &["Amulet0", "Amulet1"] })], mens_clothing: &[(141, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (142, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (143, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (144, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (145, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (146, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (147, SlotRulesMensClothingValue { slot: Some("Feet"), pair: None }), (148, SlotRulesMensClothingValue { slot: Some("Feet"), pair: None }), (149, SlotRulesMensClothingValue { slot: Some("Feet"), pair: None }), (150, SlotRulesMensClothingValue { slot: Some("Feet"), pair: None }), (151, SlotRulesMensClothingValue { slot: Some("LegsClothes"), pair: None }), (152, SlotRulesMensClothingValue { slot: Some("LegsClothes"), pair: None }), (153, SlotRulesMensClothingValue { slot: Some("LegsClothes"), pair: None }), (154, SlotRulesMensClothingValue { slot: None, pair: Some(&["Cloak2", "Cloak1"]) }), (155, SlotRulesMensClothingValue { slot: None, pair: Some(&["Cloak2", "Cloak1"]) }), (156, SlotRulesMensClothingValue { slot: Some("LegsClothes"), pair: None }), (157, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (158, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (159, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (160, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (161, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (162, SlotRulesMensClothingValue { slot: Some("LegsClothes"), pair: None }), (163, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (164, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (165, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (166, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (167, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (168, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (169, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (170, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (171, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (172, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (173, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (174, SlotRulesMensClothingValue { slot: Some("LegsClothes"), pair: None }), (175, SlotRulesMensClothingValue { slot: Some("LegsClothes"), pair: None }), (176, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (177, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (178, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (179, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (180, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None }), (181, SlotRulesMensClothingValue { slot: Some("ChestClothes"), pair: None })], womens_clothing: &[(182, SlotRulesWomensClothingValue { slot: Some("ChestClothes"), pair: None }), (183, SlotRulesWomensClothingValue { slot: Some("ChestClothes"), pair: None }), (184, SlotRulesWomensClothingValue { slot: Some("ChestClothes"), pair: None }), (185, SlotRulesWomensClothingValue { slot: Some("ChestClothes"), pair: None }), (186, SlotRulesWomensClothingValue { slot: Some("Feet"), pair: None }), (187, SlotRulesWomensClothingValue { slot: Some("Feet"), pair: None }), (188, SlotRulesWomensClothingValue { slot: Some("Feet"), pair: None }), (189, SlotRulesWomensClothingValue { slot: Some("Feet"), pair: None }), (190, SlotRulesWomensClothingValue { slot: Some("LegsClothes"), pair: None }), (191, SlotRulesWomensClothingValue { slot: None, pair: Some(&["Cloak2", "Cloak1"]) }), (192, SlotRulesWomensClothingValue { slot: None, pair: Some(&["Cloak2", "Cloak1"]) }), (193, SlotRulesWomensClothingValue { slot: Some("LegsClothes"), pair: None }), (194, SlotRulesWomensClothingValue { slot: Some("ChestClothes"), pair: None }), (195, SlotRulesWomensClothingValue { slot: Some("ChestClothes"), pair: None }), (196, SlotRulesWomensClothingValue { slot: Some("ChestClothes"), pair: None }), (197, SlotRulesWomensClothingValue { slot: Some("ChestClothes"), pair: None }), (198, SlotRulesWomensClothingValue { slot: Some("ChestClothes"), pair: None }), (199, SlotRulesWomensClothingValue { slot: Some("LegsClothes"), pair: None }), (200, SlotRulesWomensClothingValue { slot: Some("ChestClothes"), pair: None }), (201, SlotRulesWomensClothingValue { slot: Some("ChestClothes"), pair: None }), (202, SlotRulesWomensClothingValue { slot: Some("ChestClothes"), pair: None }), (203, SlotRulesWomensClothingValue { slot: Some("ChestClothes"), pair: None }), (204, SlotRulesWomensClothingValue { slot: Some("ChestClothes"), pair: None }), (205, SlotRulesWomensClothingValue { slot: Some("ChestClothes"), pair: None }), (206, SlotRulesWomensClothingValue { slot: Some("ChestClothes"), pair: None }), (207, SlotRulesWomensClothingValue { slot: Some("ChestClothes"), pair: None }), (208, SlotRulesWomensClothingValue { slot: Some("ChestClothes"), pair: None }), (209, SlotRulesWomensClothingValue { slot: Some("ChestClothes"), pair: None }), (210, SlotRulesWomensClothingValue { slot: Some("ChestClothes"), pair: None }), (211, SlotRulesWomensClothingValue { slot: Some("LegsClothes"), pair: None }), (212, SlotRulesWomensClothingValue { slot: Some("LegsClothes"), pair: None }), (213, SlotRulesWomensClothingValue { slot: Some("LegsClothes"), pair: None }), (214, SlotRulesWomensClothingValue { slot: Some("ChestClothes"), pair: None }), (215, SlotRulesWomensClothingValue { slot: Some("ChestClothes"), pair: None }), (216, SlotRulesWomensClothingValue { slot: Some("ChestClothes"), pair: None })] };
+
+#[rustfmt::skip]
+pub static ITEM_GROUPS: ItemGroups = ItemGroups { none: -1.0, drugs: 0.0, useless_items1: 1.0, armor: 2.0, weapons: 3.0, magic_items: 4.0, artifacts: 5.0, mens_clothing: 6.0, books: 7.0, furniture: 8.0, useless_items2: 9.0, religious_items: 10.0, maps: 11.0, womens_clothing: 12.0, paintings: 13.0, gems: 14.0, plant_ingredients1: 15.0, plant_ingredients2: 16.0, creature_ingredients1: 17.0, creature_ingredients2: 18.0, creature_ingredients3: 19.0, miscellaneous_ingredients1: 20.0, metal_ingredients: 21.0, miscellaneous_ingredients2: 22.0, transportation: 23.0, deeds: 24.0, jewellery: 25.0, quest_items: 26.0, misc_items: 27.0, currency: 28.0 };
+
+#[rustfmt::skip]
+pub static WEAPON_HANDS: &[(i64, &str)] = &[(113, "Either"), (114, "Either"), (115, "Both"), (116, "Either"), (117, "Either"), (118, "Either"), (119, "Either"), (120, "Either"), (121, "Either"), (122, "Both"), (123, "Both"), (124, "Either"), (125, "Both"), (126, "Both"), (127, "Either"), (128, "Both"), (129, "Both"), (130, "Both")];
+
+#[rustfmt::skip]
+pub static SHIELD_INDICES: &[f64] = &[109.0, 110.0, 111.0, 112.0];
