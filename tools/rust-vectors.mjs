@@ -84,6 +84,7 @@ import { genBlowFamilies } from './rust-blow-vectors.mjs';
 import { genSpellFamilies } from './rust-spell-vectors.mjs';
 import { genAnalysisFamilies } from './rust-analysis-vectors.mjs';
 import { genFightFamilies } from './rust-fight-vectors.mjs';
+import { genPlanningFamilies } from './rust-planning-vectors.mjs';
 
 export { encodeValue };
 
@@ -2785,6 +2786,7 @@ Object.assign(counts, genBlowFamilies(Out, makeLcg));
 Object.assign(counts, genSpellFamilies(Out, makeLcg));
 Object.assign(counts, genAnalysisFamilies(Out, makeLcg));
 Object.assign(counts, genFightFamilies(Out, makeLcg));
+Object.assign(counts, genPlanningFamilies(Out, makeLcg));
 
 counts.maketarget = await genMaketarget();
 

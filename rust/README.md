@@ -1,5 +1,27 @@
 # dfo-core (Rust), milestones R1 and R2
 
+## R5c: theory builds, legal budgets, and imprint rankings
+
+`theory` produces the ordered character records that `analyze` consumes. It
+always applies the online save rules, even if the input has an `online` key.
+`gear_profile` preserves the last plan at duplicate Pareto points and uses the
+shipped Legendary registry (no runtime mod registration). `maxprofile::Profiles`
+owns its evaluated-frontier cache, shares one explicit `Spellbook` for its
+lifetime, and never shares results between callers. Its key uses the JS
+template and shield coercions, including null and undefined sharing a key.
+`imprints::power_dps` takes the original character and options explicitly to
+replay JS's non-enumerable `base.with` method.
+
+`tools/rust-planning-vectors.mjs` compares full ordered theory characters, gear
+plans, max characters/runs, and imprint rows. The theory grid crosses eight
+races, 17 sampled levels, and all 23 templates, varying the remaining options.
+The budget grid crosses every
+weapon with 35 skills and five shield configurations. The evaluated-frontier
+grid covers the baseline scenarios for all 23 templates and all five
+shield configurations; there are three result metrics per configuration. The
+built-in imprint ranking domain is six families × two Firmament settings × two
+vampire settings × three sort modes (72 rankings), plus custom-family probes.
+
 ## R7: relay fights and ranking
 
 `relay_fight` reuses the ordinary attack scheduler and relay claim engine. Each

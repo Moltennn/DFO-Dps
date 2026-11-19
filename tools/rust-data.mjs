@@ -72,6 +72,9 @@ import * as spells from '../src/spells.js';
 import { RELAY_BOSSES } from '../src/bossTraits.js';
 import { MENTOR_SKILL_BASELINE } from '../vendor/upstream/a3eb1605/src/systems/mentorMode.js';
 import * as save from '../src/save.js';
+import * as theory from '../src/theory.js';
+import * as gearProfile from '../src/gearProfile.js';
+import { IMPRINT_FAMILIES, WEAPON_IMPRINTS } from '../src/imprints.js';
 import { encodeValue } from './rust-codec.mjs';
 import { mintRow } from '../src/target.js';
 import { GATE_BODY_LEVEL } from '../src/model.js';
@@ -375,6 +378,20 @@ const SOURCES = [
   },
   { file: 'js_prototypes', from: 'the JS engine: own names of Object, Array, String, Number and Boolean .prototype', mod: prototypeKeys(), names: ['OBJECT_PROTOTYPE_KEYS', 'ARRAY_PROTOTYPE_KEYS', 'STRING_PROTOTYPE_KEYS', 'NUMBER_PROTOTYPE_KEYS', 'BOOLEAN_PROTOTYPE_KEYS'] },
   { file: 'gate_boss', from: `${V}/world/gate/gateBoss.js`, mod: gateBoss, names: ['BOSS_ARMOR'] },
+  { file: 'theory', from: 'src/theory.js', mod: theory, names: ['THEORY_LEVEL', 'THEORY_STATS', 'THEORY_RACES', 'LONG_BLADES', 'DEFAULT_BLADE', 'GEAR_LINE_MAX', 'DAMAGE_AFFIX_MAX', 'GEAR_MASTERY_CAP', 'GEAR_MASTERY_POINTS', 'GEAR_LB_LINES', 'GEAR_CS_LINES', 'GEAR_SKILL_LINES', 'GEAR_H2H_LINES', 'THEORY_CAPS'] },
+  { file: 'gear_profile', from: 'src/gearProfile.js', mod: gearProfile, names: ['ARMOUR_SLOTS', 'JEWEL_SLOTS', 'SKILL_BAND_TOP', 'AFFIX_DAMAGE_TOP', 'EXALTED_SKILL_FLOOR', 'SKILL_IDS'] },
+  { file: 'planning', from: 'src/imprints.js and vendored lootRarity.js', mod: {
+    IMPRINT_FAMILIES: encodeValue(IMPRINT_FAMILIES), WEAPON_IMPRINTS: encodeValue(WEAPON_IMPRINTS),
+    LEGENDARIES: encodeValue(lootRarity.allLegendaries()), AFFIX_KINDS: encodeValue(lootRarity.AFFIX_KINDS),
+    AFFIX_RANGES: encodeValue(lootRarity.AFFIX_RANGES),
+    WEAPON_KIN: Array.from({ length: 564 }, (_, i) => [i, weapons.weaponSkillUsed(i)]).filter(([, skill]) => Number.isFinite(skill)),
+    STRIKE_KIN: lootRarity.skillKin({ group: 'Weapons' }).kin,
+    BODY_KIN: lootRarity.skillKin({ group: 'Armor' }).kin,
+    JEWEL_KIN: lootRarity.skillKin({ group: 'Jewellery' }).kin,
+    STREET_KIN: lootRarity.skillKin({ group: 'MensClothing' }).kin,
+    FEET_KIN: lootRarity.skillKin({ group: 'MensClothing', templateIndex: 147 }).kin,
+    SKILL_KEYS: Object.keys(data.SKILLS),
+  }, names: ['IMPRINT_FAMILIES', 'WEAPON_IMPRINTS', 'LEGENDARIES', 'AFFIX_KINDS', 'AFFIX_RANGES', 'WEAPON_KIN', 'STRIKE_KIN', 'BODY_KIN', 'JEWEL_KIN', 'STREET_KIN', 'FEET_KIN', 'SKILL_KEYS'] },
   { file: 'bow_bloom', from: `${V}/combat/bowBloom.js`, mod: bowBloom, names: ['BOW_FAST'] },
   { file: 'hands_law', from: `${V}/combat/twoHands/handsLaw.js`, mod: handsLaw, names: ['DUAL', 'OFF_HAND_BLOW', 'FLURRY_WINDOW'] },
   // R3b

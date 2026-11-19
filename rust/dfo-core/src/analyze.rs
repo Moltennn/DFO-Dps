@@ -1526,7 +1526,7 @@ pub fn analyze_with(ch: &Value, args: &Value, edit: &Value, book: &Spellbook) ->
 }
 
 // JSON.parse(JSON.stringify(ch)) for plain Value records (no JS toJSON hooks).
-fn json_clone(v: &Value) -> Value {
+pub(crate) fn json_clone(v: &Value) -> Value {
     match v {
         Obj(xs) => Obj(xs
             .iter()
