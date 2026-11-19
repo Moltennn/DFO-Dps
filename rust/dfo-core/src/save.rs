@@ -28,8 +28,9 @@ pub fn proficiency_flag(skill: &Value) -> Option<f64> {
 /// `effectiveSkill(v)` (save.js:132-137), SOFTCAP1: a point past 100 is worth a quarter, plus the milestones. A
 /// value that is not a finite number reads as 0 (`Number.isFinite`), and the raw skill is clamped to 0..=200.
 pub fn effective_skill(v: &Value) -> f64 {
+    // mutation: equivalent - for every raw in [200, 201] the result is floor(100 + (raw - 100) * 0.25 + 15) = floor(140 + d) with 0 <= d <= 0.25, which is 140: the 200 milestone's +15 absorbs the extra quarter point, so a clamp at 200 or at 201 gives the same effective skill for every input.
     let raw = js_max(0.0, js_min(200.0, v.finite_or(0.0)));
-    // mutation: equivalent - at raw == 100 the milestone arm gives floor(100 + 0 + 0) = 100 = raw, so `< 100.0` agrees.
+    // mutation: equivalent - at raw == 100 the milestone arm computes floor(100 + (100 - 100) * 0.25 + 0) = floor(100) = 100 = raw exactly, so `< 100.0` gives the same value at the one point where the two tests differ.
     if raw <= 100.0 {
         return raw;
     }
@@ -118,7 +119,7 @@ pub fn live_stat(ch: &Value, name: &str) -> f64 {
             }
             Some("racialOverride") => {
                 let v = a.get("statMods").get(name).num_or(0.0);
-                // mutation: equivalent - at v == 0 the arm adds 0, and m + 0.0 is m, so `v >= 0.0` agrees.
+                // mutation: equivalent - m is never -0.0 (it starts at +0.0 and changes only by adding or subtracting finite values, which never yield -0 from +0), so at v == +-0 the added term leaves m unchanged, and `v >= 0.0` agrees with `v > 0.0` on the values that differ.
                 if v > 0.0 {
                     m += v;
                 }

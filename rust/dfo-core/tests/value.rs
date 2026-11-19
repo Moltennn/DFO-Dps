@@ -36,6 +36,16 @@ fn value_codec_and_js_reads_match_the_vectors() {
                 let k = c.value(&defs);
                 c.check_out("v?.[k]", &v.prop(&k));
             }
+            "seq" => {
+                let a = c.value(&defs);
+                let b = c.value(&defs);
+                c.check_out("a === b", &Value::Bool(a.strict_eq(&b)));
+            }
+            "svz" => {
+                let a = c.value(&defs);
+                let b = c.value(&defs);
+                c.check_out("[a].includes(b)", &Value::Bool(a.same_value_zero(&b)));
+            }
             other => c.fail(&format!("unknown kind `{other}`")),
         }
         c.done();
@@ -47,6 +57,8 @@ fn value_codec_and_js_reads_match_the_vectors() {
         ("tostr", 2000),
         ("truthy", 1000),
         ("prop", 2000),
+        ("seq", 2000),
+        ("svz", 1000),
     ] {
         let n = seen.get(kind).copied().unwrap_or(0);
         assert!(

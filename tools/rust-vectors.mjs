@@ -2019,6 +2019,8 @@ const NUM_POOL = [
   // the number-to-string windows (n = exponent + 1: fixed for 1..=21 and -5..=0, exponent form outside), both sides of each
   1e-5, 1.5e-5, 9.99e-7, 1.5e-6, -1.5e-6, 1.5e-7, 9.99e-7, 1e15, 1e16, 9.99e20, 1e20, 12345.678, 0.0001, 0.001,
   4294967294, 4294967295, 4294967296, 2.5e-300, 1e-300, 1e308, 0.30000000000000004,
+  // the negatives of the exponent-window and range boundaries (the sign arm of number_to_string)
+  -1e21, -1e-7, -123456789012345680000, -5e-324, -1.7976931348623157e308, -1e-6, -1e20, -0.1,
 ];
 const STR_POOL = [
   '', 'a', '0', '5', ' 12 ', '0x1f', '-0x1f', '0b101', '0o17', '1e3', '.5', '5.', '+7', '-0', '1e', 'Infinity', '-Infinity',
@@ -2033,6 +2035,10 @@ const STR_POOL = [
   '0x1' + '0'.repeat(13) + '801', '0x8000000000000400', '0x8000000000000401', '0x20000000000001', '0x20000000000003',
   '0b' + '1'.repeat(64), '0b' + '1'.repeat(65), '0b' + '10'.repeat(40), '0o' + '1' + '0'.repeat(21), '0o' + '7'.repeat(21),
   '0x' + 'f'.repeat(40), '0x' + 'f'.repeat(256), '0x' + 'f'.repeat(300),
+  // uppercase radix prefixes and digits (each prefix is its own table row), mixed case digits
+  '0O17', '0B101', '0X1F', '0x1F', '0XaB', '0Xab', '0O' + '7'.repeat(40), '0B' + '1'.repeat(70), '0X' + 'AB'.repeat(15),
+  // decimal scanner: a '.' at either end, an exponent in either case and with each sign, and forms with no digits
+  '+.5e1', '.5E1', '1.E2', '5E-1', '1E3', '1E+3', '1e+3', '5.', '.e3', 'E5', '5E', '+', '-', '.', '+.', '-.5', '5e-1',
 ];
 const KEY_POOL = ['a', 'b', 'c', '0', '7', '10', '4294967294', '4294967295', 'name', 'ünï', 'x;y', '', 'Fire', '1.5', '-1', '01'];
 
@@ -2098,6 +2104,24 @@ function genValueFamily() {
     add('tonum', encodeValue(v), '=>', numToken(Number(v)));
     add('tostr', encodeValue(v), '=>', encodeValue(String(v)));
     add('truthy', encodeValue(v), '=>', v ? 'b1' : 'b0');
+  }
+  // Identity and comparison: `===` and SameValueZero (`[a].includes(b)`) over every pool entry paired with an equal copy
+  // (a fresh copy of an object: JS identity is never shared with the encoded value) and with a different entry.
+  const copyOf = (v) => (typeof v === 'object' && v !== null ? structuredClone(v) : v);
+  const POOL = [...STR_POOL, ...NUM_POOL, undefined, null, true, false, [], {}, ['5'], { a: 1 }];
+  for (let i = 0; i < POOL.length; i++) {
+    const x = POOL[i];
+    const y = POOL[(i + 1) % POOL.length];
+    add('seq', encodeValue(x), encodeValue(copyOf(x)), '=>', encodeValue(x === copyOf(x)));
+    add('seq', encodeValue(x), encodeValue(y), '=>', encodeValue(x === y));
+    add('svz', encodeValue(x), encodeValue(copyOf(x)), '=>', encodeValue([x].includes(copyOf(x))));
+    add('svz', encodeValue(x), encodeValue(y), '=>', encodeValue([x].includes(y)));
+  }
+  for (let i = 0; i < 2200; i++) {
+    const x = genValue(R, 2);
+    const y = R.chance(0.5) ? copyOf(x) : genValue(R, 2);
+    add('seq', encodeValue(x), encodeValue(y), '=>', encodeValue(x === y));
+    if (i < 1000) add('svz', encodeValue(x), encodeValue(y), '=>', encodeValue([x].includes(y)));
   }
   for (let i = 0; i < 3000; i++) add('value', encodeValue(genValue(R, 3)));
   for (let i = 0; i < 2500; i++) {
@@ -2385,6 +2409,9 @@ function genSaveFamily() {
     (s) => ({ statMods: { [s]: 0 } }),
     (s) => ({ statMods: { [s]: 2 } }),
     (s) => ({ statMods: { [s]: -4 }, magnitude: 1, ended: false }),
+    // the positive threshold of a racialOverride is `> 0`: a value of 0.5 or 1 must be read as above it
+    (s) => ({ statMods: { [s]: 0.5 } }),
+    (s) => ({ statMods: { [s]: 1 } }),
   ];
   for (const kind of SWEEP_KINDS) {
     for (const stat of STAT_NAMES) {
@@ -2462,7 +2489,7 @@ function genSaveFamily() {
   }
   for (let i = 0; i < 2000; i++) {
     // 'length' is the SKILL_NAMES array's own length (a number, 35): JS returns it, not a name.
-    const id = R.chance(0.7) ? R.int(0, 36) : R.pick([NaN, -1, 1.5, '5', 'Medical', undefined, null, 1e21, '34', 35, 'length']);
+    const id = R.chance(0.7) ? R.int(0, 36) : R.pick([NaN, -1, 1.5, '5', 'Medical', undefined, null, 1e21, '34', 35, 'length', 4294967295, '4294967295', 4294967296]);
     add('sn', encodeValue(id), '=>', encodeValue(skillName(id)));
   }
   const TEMPLATE_KEYS = [113, 114, 115, 118, 120, 121, 124, 127, 129, 130, 131, 560, 563, 102, 0, 999, '113', NaN, undefined];

@@ -52,7 +52,7 @@ pub fn weapon_damage_pct(item: &Value) -> f64 {
         if a.get("id").is_str("damage") {
             n + f64::from(to_int32(a.get("value").to_number()))
         } else {
-            // mutation: equivalent - `n + 0.0` and `n - 0.0` are both n: n is never -0 here (it starts at +0 and sums integers).
+            // mutation: equivalent - n starts at +0.0 and is only ever replaced by n + (an integer as f64); IEEE round-to-nearest gives +0 for every sum whose operands are both +0 or cancel (x + -x = +0), so n is never -0.0, and then n + 0.0 and n - 0.0 are both n.
             n + 0.0
         }
     })

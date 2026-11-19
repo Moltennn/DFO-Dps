@@ -127,7 +127,7 @@ fn parse_radix(digits: &str, radix: u32) -> f64 {
         .iter()
         .take(64)
         .fold(0, |acc, b| (acc << 1) | u64::from(*b));
-    // mutation: equivalent - at exactly 64 significant bits the sticky path gives the same value (its tail is empty), so `< 64` agrees.
+    // mutation: equivalent - at exactly 64 significant bits sig[64..] is empty, so the sticky is false, mantissa = top and the scale is 2^0, which is `top as f64` exactly.
     if sig.len() <= 64 {
         return top as f64;
     }
@@ -142,15 +142,13 @@ fn is_decimal_literal(t: &str) -> bool {
         Some(b'+') | Some(b'-') => &t.as_bytes()[1..],
         _ => t.as_bytes(),
     };
-    // mutation: equivalent - the final `parse` is the arbiter: a start at 1 (or a frac count of 1 or an `i + start`
-    // count) admits only strings that `f64::from_str` rejects (a sign, a '.', or a lone e/E with no digit), which then
-    // give NaN as the correct path does; no grammar-valid decimal is rejected by these mutants.
+    // mutation: equivalent - with i = 1 every grammar-valid string still scans to its end (its b[0] is a digit or '.', the rest scans identically, and int_digits >= 1 only skips the zero check), and each string the start-at-1 scan admits that the grammar rejects has no mantissa digit or is one of inf/nan/infinity, which never reaches the end of the scan; from_str rejects the former and the latter is rejected here, so both sides give NaN.
     let mut i = 0;
     while i < b.len() && b[i].is_ascii_digit() {
         i += 1;
     }
     let int_digits = i;
-    // mutation: equivalent - see the note above `let mut i`: the frac count is only tested for zero, and parse rejects it.
+    // mutation: equivalent - frac is overwritten whenever a '.' is scanned, so the init matters only with no '.', and then the zero check admits only a span with no integer digit and no '.', i.e. a lone e-part, which from_str rejects.
     let mut frac_digits = 0;
     if i < b.len() && b[i] == b'.' {
         i += 1;
@@ -158,7 +156,7 @@ fn is_decimal_literal(t: &str) -> bool {
         while i < b.len() && b[i].is_ascii_digit() {
             i += 1;
         }
-        // mutation: equivalent - see the note above `let mut i`: `i + start` only changes a '.' with no digits, which parse rejects.
+        // mutation: equivalent - `i + start` differs from `i - start` only when the frac count is zero, which matters only with no integer digit (the zero check), i.e. a '.' with no digit at all, which from_str rejects.
         frac_digits = i - start;
     }
     if int_digits == 0 && frac_digits == 0 {
@@ -190,10 +188,10 @@ pub fn number_to_string(x: f64) -> String {
         return "0".to_owned();
     }
     if x.is_infinite() {
-        // mutation: equivalent - x is infinite here, so `x > 0.0`, `x > 1.0` and `x >= 0.0` all agree on it.
+        // mutation: equivalent - this arm runs only when x.is_infinite(), so x is +inf or -inf, and `x > 0.0`, `x >= 0.0` and `x > 1.0` each hold exactly for +inf.
         return if x > 0.0 { "Infinity" } else { "-Infinity" }.to_owned();
     }
-    // mutation: equivalent - x == 0 returned above, so `x < 0.0` and `x <= 0.0` agree on every x that reaches this line.
+    // mutation: equivalent - NaN, zero and the infinities returned above, so x is finite and nonzero here, and for such x `x < 0.0` and `x <= 0.0` are the same test.
     let sign = if x < 0.0 { "-" } else { "" };
     let sci = format!("{:e}", x.abs());
     let (mant, exp) = sci.split_once('e').expect("{:e} always has an exponent");
@@ -205,12 +203,12 @@ pub fn number_to_string(x: f64) -> String {
         format!("{digits}{}", "0".repeat((n - k) as usize))
     } else if (1..=21).contains(&n) {
         format!("{}.{}", &digits[..n as usize], &digits[n as usize..])
-    // mutation: equivalent - the exponent test below is never reached with n == 1 (the (1..=21) branch takes it), so a bound of 1 here is unobservable.
+    // mutation: equivalent - n == 1 always matches the (1..=21) arm above (or the (k..=21) arm before it, since k >= 1), so the (-5..=1) window never tests n == 1.
     } else if (-5..=0).contains(&n) {
         format!("0.{}{digits}", "0".repeat((-n) as usize))
     } else {
         let e = n - 1;
-        // mutation: equivalent - this arm is reached only with n <= -6 or n >= 22, so e = n - 1 is never 0 (and `e < 1` agrees with `e < 0`).
+        // mutation: equivalent - this arm is reached only with n <= -6 or n >= 22 (the arms above cover [k..=21], [1..=21] and [-5..=0], and k >= 1), so e = n - 1 is <= -7 or >= 21: never 0, and `e < 0`, `e <= 0`, `e < 1` agree.
         let es = if e < 0 { "-" } else { "+" };
         if k == 1 {
             format!("{digits}e{es}{}", e.abs())
@@ -265,7 +263,7 @@ impl Value {
                 .iter()
                 .position(|(k, _)| match index_key(k) {
                     None => true,
-                    // mutation: equivalent - a key with the same index n is found by the existing-key search above, so `m >= n` never differs.
+                    // mutation: equivalent - the existing-key search above returned for any entry whose canonical index is n, so no entry here has index m == n and `m > n` is `m >= n`.
                     Some(m) => m > n,
                 })
                 .unwrap_or(entries.len()),
@@ -457,7 +455,7 @@ impl Value {
     pub fn array_index(&self) -> Option<usize> {
         match self {
             Value::Num(n)
-                // mutation: equivalent - the only consumer (save.rs skill_name) indexes SKILL_NAMES, which misses at any index >= 35, so the bound is unobservable.
+                // mutation: equivalent - the only consumer (save.rs skill_name) does SKILL_NAMES.get(i), which is None for every i >= 35, and at n = 2^32 - 1 the mutant's Some(n) also misses, so skill_name falls through to the same String either way.
                 if n.is_finite() && n.trunc() == *n && *n >= 0.0 && *n < 4_294_967_295.0 =>
             {
                 Some(*n as usize)
@@ -607,7 +605,7 @@ impl Parser<'_> {
 
     /// Exactly `n` lowercase hex digits.
     fn hex(&mut self, n: usize) -> Result<u64, CodecError> {
-        // mutation: equivalent - a start of 1 is shifted out of the u64 after 16 digits (the `d` tokens) and sits above bit 15 for the 4-digit unit, which `as u16` drops.
+        // mutation: equivalent - hex(4) gives (1 << 16) | x, which `as u16` reduces to x, and hex(16) gives (1 << 64) | x where the 1 is shifted out of the u64 by the sixteen `<< 4`, so both return x.
         let mut acc: u64 = 0;
         for _ in 0..n {
             let c = self.bump()?;
@@ -789,6 +787,22 @@ mod tests {
     fn an_inherited_read_is_refused_not_answered() {
         // JS: ({})['constructor'] is the Object function, which a Value cannot hold.
         let _ = Value::Obj(Vec::new()).prop(&Value::Str("constructor".into()));
+    }
+
+    #[test]
+    fn uppercase_forms_and_string_identity() {
+        // Number('0O17') is 15, Number('0B101') is 5, Number('0X1F') is 31, Number('1E3') is 1000 (JS).
+        assert_eq!(string_to_number("0O17"), 15.0);
+        assert_eq!(string_to_number("0B101"), 5.0);
+        assert_eq!(string_to_number("0X1F"), 31.0);
+        assert_eq!(string_to_number("1E3"), 1000.0);
+        assert_eq!(string_to_number("1e3"), 1000.0);
+        assert_eq!(string_to_number("5E-1"), 0.5);
+        assert!(Value::Str(String::new()).strict_eq(&Value::Str(String::new())));
+        assert!(Value::Str("é😀".into()).strict_eq(&Value::Str("é😀".into())));
+        assert!(!Value::Str("a".into()).strict_eq(&Value::Str("b".into())));
+        assert_eq!(number_to_string(-1e21), "-1e+21");
+        assert_eq!(number_to_string(-1e-7), "-1e-7");
     }
 
     #[test]
