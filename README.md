@@ -187,12 +187,14 @@ Use `./dfo-dps --help` for every flag, or see
   `spendBlow` sequence, or the phase-ward lifecycle (a fixed `shieldUntil` is
   the caller's). Wear needs no model (a relay body is `spareGear` and the game
   wears nothing on it), and `durability: true` is refused (Stage 3.5.3g). CWS
-  procs and DoT rounds ARE modelled since Stage 3.7d-3.7f (see above). A static
-  Warded trait/ward pool is not modelled. A synthetic two-echo build, an unarmed
+  procs and DoT rounds ARE modelled since Stage 3.7d-3.7f (see above). The relay
+  engine does not simulate a Warded trait's health pool (the card prices it; see
+  Ward below). A synthetic two-echo build, an unarmed
   build, and bow/gun builds (whose release/landing timing is not modelled) are
   refused rather than approximated. Flow and one Many Endings power are
   supported; an echo build requires `target.relayBody === true` up front.
-- Per-blow ward suppression and the full proc/DoT budget.
+- The full proc/DoT budget. Per-blow ward suppression exists only as the
+  caller-set `target.warded` flag (see Ward below), not as a derived ward state.
 - Elite Breach, and non-English boss-trait seeding.
 - Exact reproduction of a live client's frame timing or RNG sequence.
 

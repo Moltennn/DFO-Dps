@@ -289,13 +289,8 @@ const cli = (cmd, extra = [], json = false) => execFileSync(
   [path.join(REPO, 'bin', 'dfo-dps.js'), cmd, '--theory', ...extra, ...(json ? ['--json'] : [])],
   { env: { ...process.env, HOME: os.tmpdir() }, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' },
 );
-/** `build --json` prints one document; `enchant --json` prints its table first (existing behaviour). */
-const cliJson = (cmd, extra = []) => {
-  const out = cli(cmd, extra, true);
-  const at = out.startsWith('{') ? 0 : out.indexOf('\n{') + 1;
-  assert.ok(at >= 0, `${cmd}: a JSON document in the output`);
-  return JSON.parse(out.slice(at));
-};
+/** `--json` prints exactly one JSON document and no text card. */
+const cliJson = (cmd, extra = []) => JSON.parse(cli(cmd, extra, true));
 
 test('M44: the ceiling aliases are the same numbers as the fields they name', () => {
   const g30 = gateTarget(30);
@@ -361,8 +356,8 @@ test('M44: the ceiling can promise a kill the allowance refuses - named, and pri
   assert.equal(typeof build.ceilingTotalTtk, 'number', 'ceilingTotalTtk is exported');
   assert.ok(build.claimTotalTtk >= build.ceilingTotalTtk, 'the saturated theory build: the claim figure is not shorter than the ceiling');
   assert.equal(typeof build.claimSustainedDps, 'number', 'claimSustainedDps is exported');
-  const enchantText = cli('enchant', [], true);
-  const enchant = JSON.parse(enchantText.slice(enchantText.indexOf('\n{') + 1)).result;
+  const enchantText = cli('enchant');
+  const enchant = cliJson('enchant').result;
   assert.equal(enchant.totalDps, enchant.claimSustainedDps);
   assert.equal(enchant.totalTtk, enchant.claimTotalTtk);
   assert.ok(enchant.ceilingTotalDps > enchant.totalDps);

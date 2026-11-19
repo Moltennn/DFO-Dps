@@ -46,7 +46,7 @@ import {
   characterFromSave, characterLabel, effectiveSkill, listSaves, liveStat, loadSave,
   skillName, skillValue,
 } from './save.js';
-import { UsageError } from './usageError.js';
+import { isUsageFailure, UsageError } from './usageError.js';
 
 const CLI_OBJECTIVE_IDS = [...OBJECTIVE_IDS, ...STOCHASTIC_OBJECTIVE_IDS];
 
@@ -100,7 +100,7 @@ Common options:
   --build <id,...>                    firmament build(s): longblade, shortblade, axe, blunt, bow, fists, destruction, tank
   --stars <n>                         firmament stars to spend (default 98)
   --refresh                           recompute firmament plans instead of using the cache
-  --all                               enchant-plan: both uncapped and cap-aware weapon-type matrices
+  --all                               enchant-plan: both matrices (--uncapped or --cap-aware picks one instead)
   --uncapped                          imprints: rank by uncapped DPS; enchant-plan: uncapped theory setup
   --family <key>                      imprints family: LongBlade, ShortBlade, Axe, BluntWeapon, Archery, HandToHand
   --sort <boss|uncapped|conditional>  imprints order (default boss)
@@ -128,7 +128,7 @@ Common options:
   --skill <id>                        scale one raw skill id (with scale)
   --gear-skill <id>                   scale one gear skill affix (with scale)
   --from <n> --to <n> --step <n>      scale range (default: current to cap)
-  --all                               scale/compare every relevant channel
+  --all                               scale: every relevant channel at once
   --theory                            use the level-45 theory character (caster for spell/spells)
   --race <name>                       theory race (darkelf, redguard, nord, ...)
   --blade <template>                  theory long blade (default 123, Dai-katana)
@@ -150,7 +150,7 @@ Common options:
   --magicka <n>                       override the magicka pool
   --seconds <n>                       fight length for spell sustain (default 30)
   --mana-limit                        price the magicka pool (default: mana is solved)
-  --data <dir>                        ARENA2 directory holding SPELLS.STD
+  --data <dir>                        ARENA2 directory holding SPELLS.STD (spell, spells); probe: a capture file
   --series <a,b>                      graph series: stat:strength,skill:29,gear:29,star:strength
   --uncapped                          graph raw DPS instead of gate-capped DPS
   --no-rri                            use the vanilla swing law instead of RRI weapon balance
@@ -268,6 +268,8 @@ const optsSpec = {
 
 const weaponLabel = (w) => (w ? (String(w.name).startsWith(String(w.materialName)) ? w.name : `${w.materialName} ${w.name}`) : 'bare hands');
 const n = (v, d = 0) => (v != null && Number.isFinite(Number(v)) ? Number(v) : d);
+/** Print a text card unless `--json` is set, so a JSON run writes JSON and nothing else to stdout. */
+const textOut = (values, ...parts) => { if (!values.json) console.log(...parts); };
 
 function rangeText(what, min, max, exclusiveMin) {
   const one = what === 'integer' ? 'an' : 'a';
@@ -470,20 +472,20 @@ function starOptions(values) {
   const pairs = (v) => (Array.isArray(v) ? v : v == null ? [] : [v]).flatMap((x) => String(x).split(',')).map((x) => x.trim()).filter(Boolean);
   for (const part of pairs(values['star-stat'])) {
     const m = /^([a-z]+)=(-?\d+)$/i.exec(part);
-    if (!m) throw new Error(`--star-stat expects name=value, got ${part}`);
+    if (!m) throw new UsageError(`--star-stat expects name=value, got ${part}`);
     const key = m[1].toLowerCase();
-    if (!STAT_KEYS.includes(key)) throw new Error(`unknown attribute ${key}`);
+    if (!STAT_KEYS.includes(key)) throw new UsageError(`unknown attribute ${key}`);
     const v = Number(m[2]);
-    if (!(v >= -FIRM_CHANNEL_MAX && v <= FIRM_CHANNEL_MAX)) throw new Error(`Firmament attribute channel is capped at +-${FIRM_CHANNEL_MAX}`);
+    if (!(v >= -FIRM_CHANNEL_MAX && v <= FIRM_CHANNEL_MAX)) throw new UsageError(`Firmament attribute channel is capped at +-${FIRM_CHANNEL_MAX}`);
     starStats[key] = v;
   }
   for (const part of pairs(values['star-skill'])) {
     const m = /^(\d+)=(-?\d+)$/.exec(part);
-    if (!m) throw new Error(`--star-skill expects id=value, got ${part}`);
+    if (!m) throw new UsageError(`--star-skill expects id=value, got ${part}`);
     const id = Number(m[1]);
-    if (!(id >= 0 && id < 35)) throw new Error(`bad skill id ${id}`);
+    if (!(id >= 0 && id < 35)) throw new UsageError(`bad skill id ${id}`);
     const v = Number(m[2]);
-    if (!(v >= -FIRM_CHANNEL_MAX && v <= FIRM_CHANNEL_MAX)) throw new Error(`Firmament skill channel is capped at +-${FIRM_CHANNEL_MAX}`);
+    if (!(v >= -FIRM_CHANNEL_MAX && v <= FIRM_CHANNEL_MAX)) throw new UsageError(`Firmament skill channel is capped at +-${FIRM_CHANNEL_MAX}`);
     starSkills[id] = v;
   }
   return { starStats, starSkills };
@@ -577,12 +579,12 @@ function sampledOptions(values) {
 function printObjective(values) {
   const { objective = 'snapshot' } = values;
   if (!CLI_OBJECTIVE_IDS.includes(objective)) {
-    throw new Error(`unknown objective: ${objective} (choose ${CLI_OBJECTIVE_IDS.join(', ')})`);
+    throw new UsageError(`unknown objective: ${objective} (choose ${CLI_OBJECTIVE_IDS.join(', ')})`);
   }
   const sampling = sampledOptions(values);
   const { seed } = sampling;
   const pool = values.health === undefined ? null : Number(values.health);
-  if (pool !== null && (!Number.isFinite(pool) || pool <= 0)) throw new Error('a positive target pool is required (set --health)');
+  if (pool !== null && (!Number.isFinite(pool) || pool <= 0)) throw new UsageError('a positive target pool is required (set --health)');
 
   const { ch } = loadCharacter(values);
   const traits = traitsOf(values);
@@ -597,7 +599,7 @@ function printObjective(values) {
     throw new UsageError(`${objective} needs a plain ordinary foe; supported targets: soft, tough, armoured, human (use stochastic-relay for gate or breach)`);
   }
   const health = pool ?? target.maxHealth;
-  if (!(health > 0)) throw new Error('a positive target pool is required (set --health)');
+  if (!(health > 0)) throw new UsageError('a positive target pool is required (set --health)');
   const carry = !values['no-carry'];
   // A stochastic-relay body simulates one player's share of the pool (relayFight.js: health / players).
   const relayPlayers = objective === 'stochastic-relay' ? Math.max(1, Number(target.allowance?.players) || 1) : null;
@@ -633,7 +635,7 @@ function printObjective(values) {
 
 function printLoadoutShortlist(values, modes, encounters, k) {
   if (values.objective !== undefined && modes.length > 1) {
-    throw new Error('--objective requires one shortlist mode: --uncapped for stochastic-ttk or kill-probability; --cap-aware for stochastic-relay');
+    throw new UsageError('--objective requires one shortlist mode: --uncapped for stochastic-ttk or kill-probability; --cap-aware for stochastic-relay');
   }
   const health = values.health === undefined ? null : Number(values.health);
   if (health !== null && !(health > 0)) throw new RangeError('--health must be a positive number');
@@ -862,6 +864,39 @@ function saveFirmamentCache(cache) {
   } catch { /* a cache is an optimization, never a failure */ }
 }
 
+/** Every page write goes through here, so a bad --out is a usage error, not a stack. */
+function writePage(out, page) {
+  try {
+    fs.writeFileSync(out, page, 'utf8');
+  } catch (e) {
+    throw new UsageError(`cannot write ${out}: ${e.message}`);
+  }
+}
+
+const COMMANDS = [
+  'build', 'objective', 'rank', 'weapons', 'report', 'compare', 'scale', 'tradeoff', 'theory',
+  'spell', 'spells', 'enchant', 'firmament', 'imprints', 'probe', 'enchant-plan', 'gear-plan',
+  'loadout', 'real-dps', 'skills', 'graph', 'saves', 'doctor',
+];
+// Which commands read --out and --json, from each branch below.
+const FILE_COMMANDS = ['report', 'spells', 'weapons', 'skills', 'firmament', 'imprints', 'probe', 'enchant-plan', 'gear-plan', 'loadout', 'real-dps', 'graph'];
+const JSON_COMMANDS = ['build', 'objective', 'rank', 'scale', 'tradeoff', 'theory', 'spell', 'spells', 'enchant', 'weapons', 'skills', 'firmament', 'imprints', 'probe', 'enchant-plan', 'gear-plan', 'loadout', 'real-dps', 'graph'];
+
+/** Reject flags the command would ignore instead of accepting them silently. */
+function checkOutputFlags(cmd, argv, values) {
+  const given = (name) => argv.includes(`--${name}`) || argv.some((a) => a.startsWith(`--${name}=`));
+  if (given('out') && !FILE_COMMANDS.includes(cmd)) {
+    throw new UsageError(`--out is only for commands that write a file (${FILE_COMMANDS.join(', ')}), not "${cmd}"`);
+  }
+  if (!values.json) return;
+  const unsupported = cmd === 'spell' && values.list ? 'spell --list'
+    : cmd === 'scale' && values.all ? 'scale --all'
+      : JSON_COMMANDS.includes(cmd) ? null : cmd;
+  if (unsupported) {
+    throw new UsageError(`--json is not supported by "${unsupported}"; commands with JSON output: ${JSON_COMMANDS.join(', ')}`);
+  }
+}
+
 export async function main(argv = process.argv.slice(2)) {
   let parsed;
   try {
@@ -875,12 +910,21 @@ export async function main(argv = process.argv.slice(2)) {
   if (values.help) { console.log(HELP); return; }
   validateFlags(values);
   const cmd = parsed.positionals[0] ?? 'build';
+  if (!COMMANDS.includes(cmd)) {
+    console.error(`unknown command "${cmd}"\n\n${HELP}`);
+    process.exit(2);
+  }
+  checkOutputFlags(cmd, argv, values);
+  if (cmd === 'compare' && values.all) {
+    throw new UsageError('compare does not take --all; use scale --all for every channel');
+  }
   if (cmd === 'theory' || cmd === 'weapons' || cmd === 'skills') values.theory = true;
 
   if (cmd === 'objective') {
     try {
       printObjective(values);
     } catch (e) {
+      if (!isUsageFailure(e)) throw e;
       console.error(e.message);
       process.exit(2);
     }
@@ -914,164 +958,6 @@ export async function main(argv = process.argv.slice(2)) {
     return;
   }
 
-  const { ch } = loadCharacter(values);
-  const traits = traitsOf(values);
-  const target = targetOf(ch, values, traits);
-  const scenario = scenarioOf(ch, values, traits, target);
-  const r = analyze(ch, scenario);
-
-  if (cmd === 'enchant') {
-    const item = ch.weapon;
-    if (!item) {
-      console.log('No weapon equipped. Pass --weapon or load a save with a weapon.');
-      return;
-    }
-    const enchantTarget = values.target === 'armoured' ? gateTarget(n(values.level, ch.level), { traits }) : target;
-    const opts = { level: n(values.level, ch.level), potencyPct: n(values.potency, 0), pierce: n(values.pierce, 0) };
-    const rows = (item.enchantments ?? []).filter((e) => e && e.type >= 0);
-    const names = Object.fromEntries(Object.entries(ENCHANTMENT_TYPES).map(([k, v]) => [v, k]));
-    const strike = strikeEnchantments(item, ch, enchantTarget, opts);
-    const r = analyze(ch, { ...scenario, target: enchantTarget, health: enchantTarget.isBoss ? enchantTarget.maxHealth : 0, potencyPct: opts.potencyPct, pierce: opts.pierce });
-    console.log(`${characterLabel(ch)}  |  ${item.name ?? 'weapon'}`);
-    console.log(table(rows.map((e) => [names[e.type] ?? e.type, e.param ?? '-', e.type === 2 ? (strike.procs.find((p) => p.index === Number(e.param))?.name ?? 'spell') : '-']), ['Enchantment', 'Param', 'Spell'], ['left', 'right', 'left']));
-    console.log(table([
-      ['Uncapped weapon DPS', fmt(r.dps)],
-      ['Enchant per landed hit', `${fmt(strike.procDamage + strike.flat)}${strike.procDot ? ` + ${fmt(strike.procDot / 5)} DoT DPS` : ''}`],
-      ['Enchant DPS (ceiling component)', fmt(r.enchantDps)],
-      ['Total (per-hit-capped ceiling)', fmt(r.ceilingTotalDps)],
-      ...(r.target.allowance ? [
-        ['Allowance-sustained DPS', fmt(r.claimSustainedDps)],
-        ['Time to kill (allowance-sustained)', r.totalTtk != null ? `${fmt(r.totalTtk)} s` : r.allowance ? 'no kill' : 'no allowance run'],
-        ['Time to kill (per-hit-capped ceiling)', r.ceilingTotalTtk ? `${fmt(r.ceilingTotalTtk)} s` : '-'],
-      ] : []),
-      ['CWS bills covered (bill-only)', r.procsBeforeBreak ?? '-'],
-      ['Procs', strike.procs.map((p) => `${p.name} ${p.dotTick ? `DoT ${fmt(p.dotTick)}/round` : fmt(p.damage)}`).join(', ') || '-'],
-    ], ['Metric', 'Value']));
-    if (values.json) console.log(JSON.stringify({ enchantments: rows, strike, result: { weaponDps: r.dps, enchantDps: r.enchantDps, totalDps: r.totalDps, totalTtk: r.totalTtk, ceilingTotalDps: r.ceilingTotalDps, ceilingTotalTtk: r.ceilingTotalTtk, claimTotalTtk: r.claimTotalTtk, claimSustainedDps: r.claimSustainedDps, procsBeforeBreak: r.procsBeforeBreak, procsBeforeBreakBasis: r.procsBeforeBreakBasis } }, null, 2));
-    return;
-  }
-
-  if (cmd === 'spells') {
-    if (values.theory) { ch.skills[22] = 200; ch.masteredSkills = [...new Set([...(ch.masteredSkills ?? []), 22])]; ch.maxMagicka = ch.maxMagicka || Math.floor((ch.stats.intelligence ?? 100) * 3); ch.name = 'Level 45 theory caster'; }
-    const level = n(values.level, ch.level);
-    const standard = standardSpells(values.data ?? undefined);
-    const known = resolveSpells(ch.spells, standard);
-    const pool = [...standard.values(), ...known.filter((sp) => !standard.has(sp.index))];
-    const spellTarget = values.target === 'armoured' ? gateTarget(level, { traits }) : target;
-    const opts = {
-      level, online: ch.online !== false, potencyPct: n(values.potency, 0), pierce: n(values.pierce, 0),
-      castSpeedPct: n(values['cast-speed'], 0), manaSolved: !values['mana-limit'], magicka: values.magicka != null ? n(values.magicka, 0) : undefined,
-      health: spellTarget.isBoss ? spellTarget.maxHealth : 0, traits: spellTarget.bossTraits ?? [],
-    };
-    const list = pool.map((sp) => ({ sp, r: spellRotation(sp, ch, spellTarget, { ...opts, seconds: n(values.seconds, 30) }) }))
-      .filter((x) => x.r.damage > 0 && !/^(Lvl |!)/i.test(String(x.sp.name)))
-      .sort((a, b) => b.r.windowDps - a.r.windowDps);
-    if (!list.length) { console.log('No standard damage spells found. Check --data / ARENA2.'); return; }
-    const top = list.slice(0, 20);
-    const dpsChart = barChart({ title: 'Sustained spell DPS (30s window)', labels: top.map((x) => x.sp.name), series: [{ name: 'DPS', values: top.map((x) => x.r.windowDps) }] });
-    const effChart = barChart({ title: 'Damage per spell point', labels: top.map((x) => x.sp.name), series: [{ name: 'dmg/SP', values: top.map((x) => x.r.damage / Math.max(1, x.r.cost)) }] });
-    const tableHtml = `<table><thead><tr><th>Spell</th><th>School</th><th>Cost</th><th>Damage</th><th>Window DPS</th><th>Cast DPS</th><th>DoT DPS</th><th>dmg/SP</th><th>DoT</th></tr></thead><tbody>${top.map(({ sp, r }) => `<tr><td class="k">${sp.name}</td><td>${skillName(r.school)}</td><td>${r.cost}</td><td>${fmt(r.damage)}</td><td>${fmt(r.windowDps)}</td><td>${fmt(r.manaDps)}</td><td>${fmt(r.dotDps ?? 0)}</td><td>${fmt(r.damage / Math.max(1, r.cost))}</td><td>${r.dotRounds ? `${r.dotRounds} r` : '-'}</td></tr>`).join('')}</tbody></table>`;
-    const subtitle = `${characterLabel(ch)} | ${list.length} standard damage spells | ${spellTarget.isBoss ? `Breach ${spellTarget.maxHealth.toLocaleString()} HP` : `level ${spellTarget.level}`} | ${n(values.seconds, 30)}s window | potency ${n(values.potency, 0)}% | pierce ${n(values.pierce, 0)}`;
-    const html = multiGraphPage({
-      title: 'DFO spell ceiling',
-      subtitle,
-      sections: [
-        { title: 'Sustained DPS', note: 'Mana is treated as solved by default; --mana-limit prices the pool. A DoT is one instance per target and renews, never stacks. DPS cells are averages; the bar is the average.', chart: dpsChart, table: tableHtml },
-        { title: 'Damage per spell point', note: 'The metric that binds a long fight. A 30s window may not spend the whole pool.', chart: effChart },
-      ],
-    });
-    const out = path.resolve(values.out === 'dfo-dps-report.html' ? 'spells.html' : values.out);
-    fs.writeFileSync(out, html, 'utf8');
-    if (!values.json) console.log(`spells page written: ${out}`);
-    if (values.json) console.log(JSON.stringify(list.map(({ sp, r }) => ({ index: sp.index, name: sp.name, ...r })), null, 2));
-    return;
-  }
-
-  if (cmd === 'spell') {
-    if (values.theory) { ch.skills[22] = 200; ch.masteredSkills = [...new Set([...(ch.masteredSkills ?? []), 22])]; ch.maxMagicka = ch.maxMagicka || Math.floor((ch.stats.intelligence ?? 100) * 3); ch.name = 'Level 45 theory caster'; }
-    const level = n(values.level, ch.level);
-    const dataDir = values.data ?? undefined;
-    const standard = standardSpells(dataDir);
-    const known = resolveSpells(ch.spells, standard);
-    const standardList = [...standard.values()];
-    const pool = values.standard ? standardList : (known.length ? known : standardList);
-    const searchPool = values.spell != null
-      ? [...pool, ...standardList.filter((sp) => !pool.some((p) => p.index === sp.index))]
-      : pool;
-    const spellTarget = values.target === 'armoured' ? gateTarget(level, { traits }) : target;
-    const opts = {
-      level,
-      online: ch.online !== false,
-      potencyPct: n(values.potency, 0),
-      pierce: n(values.pierce, 0),
-      castSpeedPct: n(values['cast-speed'], 0),
-      manaSolved: !values['mana-limit'],
-      magicka: values.magicka != null ? n(values.magicka, 0) : undefined,
-      health: spellTarget.isBoss ? spellTarget.maxHealth : 0,
-      traits: spellTarget.bossTraits ?? [],
-    };
-    const debugName = (sp) => /^(Lvl |!)/i.test(String(sp?.name ?? ''));
-    const priced = pool.map((sp) => ({ sp, r: analyzeSpell(sp, ch, spellTarget, opts) }))
-      .filter((x) => x.r.damage > 0 && !debugName(x.sp))
-      .sort((a, b) => b.r.dps - a.r.dps);
-    const searchPriced = searchPool.map((sp) => ({ sp, r: analyzeSpell(sp, ch, spellTarget, opts) }))
-      .filter((x) => x.r.damage > 0)
-      .sort((a, b) => b.r.dps - a.r.dps);
-    if (!priced.length && values.spell == null && !values.standard) {
-      console.log('No damaging spells in the spellbook. Pass --spell <index|name> or --standard.');
-      return;
-    }
-    if (values.list) {
-      console.log(`${characterLabel(ch)}  |  ${pool.length} spell(s)`);
-      console.log(table(pool.map((sp) => [sp.index ?? '-', sp.name, spellCost(sp, ch), fmt(analyzeSpell(sp, ch, spellTarget, opts).damage)]), ['Index', 'Spell', 'Cost', 'Damage'], ['right', 'left', 'right', 'right']));
-      return;
-    }
-    if (values['all-spells']) {
-      console.log(table(priced.map(({ sp, r }) => [sp.name, skillName(r.school), r.cost, fmt(r.damage), fmt(r.dps), `${fmt2(r.castSeconds)}s`, r.castsPerPool, fmt(r.poolDamage)]), ['Spell', 'School', 'Cost', 'Damage', 'DPS', 'Cast', 'Casts', 'Pool dmg'], ['left', 'left', 'right', 'right', 'right', 'right', 'right', 'right']));
-      if (values.json) console.log(JSON.stringify(priced.map(({ sp, r }) => ({ index: sp.index, name: sp.name, ...r })), null, 2));
-      return;
-    }
-    let chosen = priced[0];
-    if (values.spell != null) {
-      const q = String(values.spell).trim();
-      const found = searchPriced.find(({ sp }) => String(sp.index) === q || String(sp.name).toLowerCase() === q.toLowerCase())
-        ?? searchPriced.find(({ sp }) => String(sp.name).toLowerCase().includes(q.toLowerCase()));
-      if (!found) throw new Error(`spell "${values.spell}" not found in the resolved spellbook`);
-      chosen = found;
-    }
-    const { sp } = chosen;
-    const r = spellRotation(sp, ch, spellTarget, { ...opts, seconds: n(values.seconds, 30) });
-    console.log(`${characterLabel(ch)}  |  ${sp.name} (${skillName(r.school)})`);
-    console.log(table([
-      ['Spell cost', `${r.cost} SP`],
-      ['Instant damage', fmt(r.instant)],
-      ...(r.dotRounds ? [['DoT per tick', fmt(r.dotPerTick)], ['DoT duration', `${r.dotRounds} rounds (${fmt(r.dotSeconds)} s)`], ['DoT total', fmt(r.dotTotal)]] : []),
-      ['Damage / cast', fmt(r.damage)],
-      ['Cast time', `${fmt2(r.castSeconds)} s`],
-      ['Burst DPS', fmt(r.burstDps)],
-      ['DPS', fmt(r.dps)],
-      ['Magicka pool', r.magicka],
-      ['Fight window', `${fmt(r.seconds)} s`],
-      ['Casts used', r.casts],
-      ['Total damage', fmt(r.totalDamage)],
-      ['Cast DPS', fmt(r.manaDps)],
-      ['Window DPS', fmt(r.windowDps)],
-      ...(r.dotRounds ? [['DoT DPS', fmt(r.dotDps)]] : []),
-      ['Mana solved', r.manaSolved ? 'yes' : 'no'],
-      ...(r.manaSolved ? [] : [['Time to empty', `${fmt(r.timeToEmpty)} s`], ['Pool kill', r.poolKill == null ? '-' : (r.poolKill ? 'yes' : 'no')], ['Mana left', fmt(r.manaLeft)]]),
-      ['Saving throw', `${pc(r.saving)} lands`],
-      ['Power multiplier', `x${fmt2(r.powerMult)}`],
-      ['Target', `${spellTarget.isBoss ? 'Breach' : values.target}, level ${spellTarget.level}${spellTarget.isBoss ? `, ${spellTarget.maxHealth.toLocaleString()} HP` : ''}`],
-      ['Time to kill', r.ttk ? `${fmt(r.ttk)} s` : '-'],
-    ], ['Metric', 'Value']));
-    if (r.elements?.length) {
-      console.log('\nEffects');
-      console.log(table(r.elements.map((e) => [e.key, e.magnitude != null ? fmt(e.magnitude) : '-', e.rounds ?? 1, fmt(e.damage), e.note ?? '']), ['Effect', 'Magnitude', 'Rounds', 'Damage', 'Note'], ['left', 'right', 'right', 'right', 'left']));
-    }
-    if (values.json) console.log(JSON.stringify({ index: sp.index, name: sp.name, ...r }, null, 2));
-    return;
-  }
-
   if (cmd === 'loadout' || cmd === 'real-dps') {
     const modes = values.uncapped ? ['uncapped'] : values['cap-aware'] ? ['cap'] : ['uncapped', 'cap'];
     const requested = values['all-encounters'] ? [...ENCOUNTER_IDS] : [String(values.encounter ?? 'breach').toLowerCase()];
@@ -1083,10 +969,11 @@ export async function main(argv = process.argv.slice(2)) {
     const k = Number(values.shortlist);
     if (k !== 0 || !values.shortlist.trim()) {
       try {
-        if (!Number.isSafeInteger(k) || k < 1) throw new Error('--shortlist must be a positive integer (0 disables it)');
-        if (values['no-carry']) throw new Error('--no-carry does not apply to --shortlist: shortlist sampling always uses carry');
+        if (!Number.isSafeInteger(k) || k < 1) throw new UsageError('--shortlist must be a positive integer (0 disables it)');
+        if (values['no-carry']) throw new UsageError('--no-carry does not apply to --shortlist: shortlist sampling always uses carry');
         printLoadoutShortlist(values, modes, requested, k);
       } catch (e) {
+        if (!isUsageFailure(e)) throw e;
         console.error(e.message);
         process.exitCode = 2;
       }
@@ -1188,7 +1075,7 @@ export async function main(argv = process.argv.slice(2)) {
       subtitle: `Tree + enchants + best eligible positive imprint. Every weapon template, 1H / 2H / DW / Fists, in ${wantsUncapped ? 'uncapped' : ''}${wantsUncapped && wantsCap ? ' and ' : ''}${wantsCap ? requested.map((id) => ENCOUNTERS[id].name).join(' / ') : ''} modes. Monster-type damage imprints are excluded.`,
       sections,
     });
-    fs.writeFileSync(out, html, 'utf8');
+    writePage(out, html);
     if (!values.json) console.log(`loadout page written: ${out}`);
     if (values.json) console.log(JSON.stringify(rows.map(({ enchPlan, ...r }) => r), null, 2));
     return;
@@ -1265,7 +1152,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
         subtitle: `${values['soul-gem'] ? `Soul gem +${SOUL_GEM_POINTS} on every piece` : 'Template points only'} | uncapped theory and cap-aware setups side by side.`,
         sections,
       });
-      fs.writeFileSync(out, html, 'utf8');
+      writePage(out, html);
       if (!values.json) console.log(`enchant plans page written: ${out}`);
       if (values.json) console.log(JSON.stringify({ modes: results.map((r) => ({ mode: r.key, label: r.label, summary: r.summary, plans: r.matrix.map((x) => ({ family: x.family, weapon: x.weapon, rows: x.plan?.rows })) })) }, null, 2));
       return;
@@ -1323,7 +1210,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       subtitle: `${plan.weaponName}${plan.rows.find((r) => /Shield|Buckler/.test(r.slot)) ? ` + ${plan.rows.find((r) => /Shield|Buckler/.test(r.slot)).item}` : ''}; ${plan.soulGem ? `soul gem +${SOUL_GEM_POINTS} on every piece` : 'template enchantment points only'}. Budgets are the game's ItemTemplates enchantmentPoints plus the stated soul gem; a POWER is positive, a side effect negative.`,
       sections: [{ title: 'Per piece', note: `Boss-first fill against the level-45 Breach (${group}, 600 per-hit cap). Backstabbing is not planned: its ×3 is capped after the roll, so +15 Backstabbing adds no capped DPS on the capped weapons. Uncapped theory puts weapon skill and Critical Strike on every piece; cap-aware buys only what the current cap pays. One-piece effects go out once; Repairs Objects is a player-chosen count (default 1); Regens Health is optional and off by default (heal spells are stronger). Empty pieces have no remaining effect that added capped DPS. Strike procs are capped per hit too; the weapon holds ${plan.maxProcs} proc row${plan.maxProcs === 1 ? '' : 's'} over its ${plan.swings}-swing Breach fight (10 condition a proc). ${plan.soulGem ? 'The soul gem is applied to every piece.' : 'No soul gem: base template points only.'}${plan.imprint?.base ? ` The weapon's imprint is separate from this budget: best boss ${plan.imprint.base.power.name} (${fmt(plan.imprint.base.carriedDps)} carried DPS), best uncapped ${plan.imprint.uncapped.power.name} (${fmt(plan.imprint.uncapped.carriedUncappedDps)} carried DPS).` : ''}`, chart: '', table: pieceTable + oneTable + stackTable + weaponTable + ratingTable }],
     });
-    fs.writeFileSync(out, html, 'utf8');
+    writePage(out, html);
     if (!values.json) console.log(`enchant plan written: ${out}`);
     if (values.json) console.log(JSON.stringify(plan, null, 2));
     return;
@@ -1370,7 +1257,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       subtitle: `The Reforge's Rare imprints on each family's best max-profile weapon${values.firmament ? ', +Firmament' : ''}. Boss is the level-45 Breach with its 600 cap; Uncapped is the same weapon without it. DPS is the carried mean (the held item's long-run share, not the card's per-blow floor). Ranked by ${sort === 'uncapped' ? 'uncapped' : sort === 'conditional' ? 'trigger' : 'boss'} carried DPS.`,
       sections,
     });
-    fs.writeFileSync(out, html, 'utf8');
+    writePage(out, html);
     if (!values.json) console.log(`imprints page written: ${out}`);
     if (values.json) console.log(JSON.stringify(rows.map((f) => ({ family: f.key, weapon: f.weapon, template: f.template, baseDps: f.base.carriedCappedDps, cardBaseDps: f.base.cappedDps, metric: 'carried', rows: f.rows.map((r) => ({ id: r.id, record: r.name, power: r.power.name, weapon: r.weapon, baseDps: r.baseDps, conditionalDps: r.conditionalDps, uncappedDps: r.uncappedDps, delta: r.delta, uncappedDelta: r.uncappedDelta, triggerDelta: r.triggerDelta, trigger: r.trigger, hit: r.hit, effect: r.power.brief })) })), null, 2));
     return;
@@ -1494,7 +1381,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       subtitle: `Read-only boss-bar capture. Level ${summary.level}, ${summary.players} player${summary.players === 1 ? '' : 's'}. HP-derived figures; the fight-end chart is shown only as a cross-check.`,
       sections: sections.length ? sections : [{ title: 'No fights', note: 'No boss health samples found.', chart: '', table: '' }],
     });
-    fs.writeFileSync(out, html, 'utf8');
+    writePage(out, html);
     if (!values.json) console.log(`probe page written: ${out}`);
     if (values.json) console.log(JSON.stringify(summary, null, 2));
     return;
@@ -1547,9 +1434,167 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       subtitle: `The game's own ${FIRMAMENT_NODES} stars, ${stars} Stars per build, no Craft points assumed. One deterministic channel-coverage plan per build; keystones are never walked through. The weapons page +Firmament column is the flat channel ceiling, not this allocation.`,
       sections: plans.map(firmamentSection),
     });
-    fs.writeFileSync(out, html, 'utf8');
+    writePage(out, html);
     if (!values.json) console.log(`firmament page written: ${out}`);
     if (values.json) console.log(JSON.stringify(plans.map((p) => ({ build: p.build.id, name: p.build.name, start: p.tree.start, startName: p.startName, stars: p.stars, budget: p.starBudget, freeStars: p.freeStars, keys: p.tree.keys, totals: p.totals })), null, 2));
+    return;
+  }
+
+  const { ch } = loadCharacter(values);
+  const traits = traitsOf(values);
+  const target = targetOf(ch, values, traits);
+  const scenario = scenarioOf(ch, values, traits, target);
+  const r = analyze(ch, scenario);
+
+  if (cmd === 'enchant') {
+    const item = ch.weapon;
+    if (!item) {
+      console.log('No weapon equipped. Pass --weapon or load a save with a weapon.');
+      return;
+    }
+    const enchantTarget = values.target === 'armoured' ? gateTarget(n(values.level, ch.level), { traits }) : target;
+    const opts = { level: n(values.level, ch.level), potencyPct: n(values.potency, 0), pierce: n(values.pierce, 0) };
+    const rows = (item.enchantments ?? []).filter((e) => e && e.type >= 0);
+    const names = Object.fromEntries(Object.entries(ENCHANTMENT_TYPES).map(([k, v]) => [v, k]));
+    const strike = strikeEnchantments(item, ch, enchantTarget, opts);
+    const r = analyze(ch, { ...scenario, target: enchantTarget, health: enchantTarget.isBoss ? enchantTarget.maxHealth : 0, potencyPct: opts.potencyPct, pierce: opts.pierce });
+    textOut(values, `${characterLabel(ch)}  |  ${item.name ?? 'weapon'}`);
+    textOut(values, table(rows.map((e) => [names[e.type] ?? e.type, e.param ?? '-', e.type === 2 ? (strike.procs.find((p) => p.index === Number(e.param))?.name ?? 'spell') : '-']), ['Enchantment', 'Param', 'Spell'], ['left', 'right', 'left']));
+    textOut(values, table([
+      ['Uncapped weapon DPS', fmt(r.dps)],
+      ['Enchant per landed hit', `${fmt(strike.procDamage + strike.flat)}${strike.procDot ? ` + ${fmt(strike.procDot / 5)} DoT DPS` : ''}`],
+      ['Enchant DPS (ceiling component)', fmt(r.enchantDps)],
+      ['Total (per-hit-capped ceiling)', fmt(r.ceilingTotalDps)],
+      ...(r.target.allowance ? [
+        ['Allowance-sustained DPS', fmt(r.claimSustainedDps)],
+        ['Time to kill (allowance-sustained)', r.totalTtk != null ? `${fmt(r.totalTtk)} s` : r.allowance ? 'no kill' : 'no allowance run'],
+        ['Time to kill (per-hit-capped ceiling)', r.ceilingTotalTtk ? `${fmt(r.ceilingTotalTtk)} s` : '-'],
+      ] : []),
+      ['CWS bills covered (bill-only)', r.procsBeforeBreak ?? '-'],
+      ['Procs', strike.procs.map((p) => `${p.name} ${p.dotTick ? `DoT ${fmt(p.dotTick)}/round` : fmt(p.damage)}`).join(', ') || '-'],
+    ], ['Metric', 'Value']));
+    if (values.json) console.log(JSON.stringify({ enchantments: rows, strike, result: { weaponDps: r.dps, enchantDps: r.enchantDps, totalDps: r.totalDps, totalTtk: r.totalTtk, ceilingTotalDps: r.ceilingTotalDps, ceilingTotalTtk: r.ceilingTotalTtk, claimTotalTtk: r.claimTotalTtk, claimSustainedDps: r.claimSustainedDps, procsBeforeBreak: r.procsBeforeBreak, procsBeforeBreakBasis: r.procsBeforeBreakBasis } }, null, 2));
+    return;
+  }
+
+  if (cmd === 'spells') {
+    if (values.theory) { ch.skills[22] = 200; ch.masteredSkills = [...new Set([...(ch.masteredSkills ?? []), 22])]; ch.maxMagicka = ch.maxMagicka || Math.floor((ch.stats.intelligence ?? 100) * 3); ch.name = 'Level 45 theory caster'; }
+    const level = n(values.level, ch.level);
+    const standard = standardSpells(values.data ?? undefined);
+    const known = resolveSpells(ch.spells, standard);
+    const pool = [...standard.values(), ...known.filter((sp) => !standard.has(sp.index))];
+    const spellTarget = values.target === 'armoured' ? gateTarget(level, { traits }) : target;
+    const opts = {
+      level, online: ch.online !== false, potencyPct: n(values.potency, 0), pierce: n(values.pierce, 0),
+      castSpeedPct: n(values['cast-speed'], 0), manaSolved: !values['mana-limit'], magicka: values.magicka != null ? n(values.magicka, 0) : undefined,
+      health: spellTarget.isBoss ? spellTarget.maxHealth : 0, traits: spellTarget.bossTraits ?? [],
+    };
+    const list = pool.map((sp) => ({ sp, r: spellRotation(sp, ch, spellTarget, { ...opts, seconds: n(values.seconds, 30) }) }))
+      .filter((x) => x.r.damage > 0 && !/^(Lvl |!)/i.test(String(x.sp.name)))
+      .sort((a, b) => b.r.windowDps - a.r.windowDps);
+    if (!list.length) { console.log('No standard damage spells found. Check --data / ARENA2.'); return; }
+    const top = list.slice(0, 20);
+    const dpsChart = barChart({ title: 'Sustained spell DPS (30s window)', labels: top.map((x) => x.sp.name), series: [{ name: 'DPS', values: top.map((x) => x.r.windowDps) }] });
+    const effChart = barChart({ title: 'Damage per spell point', labels: top.map((x) => x.sp.name), series: [{ name: 'dmg/SP', values: top.map((x) => x.r.damage / Math.max(1, x.r.cost)) }] });
+    const tableHtml = `<table><thead><tr><th>Spell</th><th>School</th><th>Cost</th><th>Damage</th><th>Window DPS</th><th>Cast DPS</th><th>DoT DPS</th><th>dmg/SP</th><th>DoT</th></tr></thead><tbody>${top.map(({ sp, r }) => `<tr><td class="k">${sp.name}</td><td>${skillName(r.school)}</td><td>${r.cost}</td><td>${fmt(r.damage)}</td><td>${fmt(r.windowDps)}</td><td>${fmt(r.manaDps)}</td><td>${fmt(r.dotDps ?? 0)}</td><td>${fmt(r.damage / Math.max(1, r.cost))}</td><td>${r.dotRounds ? `${r.dotRounds} r` : '-'}</td></tr>`).join('')}</tbody></table>`;
+    const subtitle = `${characterLabel(ch)} | ${list.length} standard damage spells | ${spellTarget.isBoss ? `Breach ${spellTarget.maxHealth.toLocaleString()} HP` : `level ${spellTarget.level}`} | ${n(values.seconds, 30)}s window | potency ${n(values.potency, 0)}% | pierce ${n(values.pierce, 0)}`;
+    const html = multiGraphPage({
+      title: 'DFO spell ceiling',
+      subtitle,
+      sections: [
+        { title: 'Sustained DPS', note: 'Mana is treated as solved by default; --mana-limit prices the pool. A DoT is one instance per target and renews, never stacks. DPS cells are averages; the bar is the average.', chart: dpsChart, table: tableHtml },
+        { title: 'Damage per spell point', note: 'The metric that binds a long fight. A 30s window may not spend the whole pool.', chart: effChart },
+      ],
+    });
+    const out = path.resolve(values.out === 'dfo-dps-report.html' ? 'spells.html' : values.out);
+    writePage(out, html);
+    if (!values.json) console.log(`spells page written: ${out}`);
+    if (values.json) console.log(JSON.stringify(list.map(({ sp, r }) => ({ index: sp.index, name: sp.name, ...r })), null, 2));
+    return;
+  }
+
+  if (cmd === 'spell') {
+    if (values.theory) { ch.skills[22] = 200; ch.masteredSkills = [...new Set([...(ch.masteredSkills ?? []), 22])]; ch.maxMagicka = ch.maxMagicka || Math.floor((ch.stats.intelligence ?? 100) * 3); ch.name = 'Level 45 theory caster'; }
+    const level = n(values.level, ch.level);
+    const dataDir = values.data ?? undefined;
+    const standard = standardSpells(dataDir);
+    const known = resolveSpells(ch.spells, standard);
+    const standardList = [...standard.values()];
+    const pool = values.standard ? standardList : (known.length ? known : standardList);
+    const searchPool = values.spell != null
+      ? [...pool, ...standardList.filter((sp) => !pool.some((p) => p.index === sp.index))]
+      : pool;
+    const spellTarget = values.target === 'armoured' ? gateTarget(level, { traits }) : target;
+    const opts = {
+      level,
+      online: ch.online !== false,
+      potencyPct: n(values.potency, 0),
+      pierce: n(values.pierce, 0),
+      castSpeedPct: n(values['cast-speed'], 0),
+      manaSolved: !values['mana-limit'],
+      magicka: values.magicka != null ? n(values.magicka, 0) : undefined,
+      health: spellTarget.isBoss ? spellTarget.maxHealth : 0,
+      traits: spellTarget.bossTraits ?? [],
+    };
+    const debugName = (sp) => /^(Lvl |!)/i.test(String(sp?.name ?? ''));
+    const priced = pool.map((sp) => ({ sp, r: analyzeSpell(sp, ch, spellTarget, opts) }))
+      .filter((x) => x.r.damage > 0 && !debugName(x.sp))
+      .sort((a, b) => b.r.dps - a.r.dps);
+    const searchPriced = searchPool.map((sp) => ({ sp, r: analyzeSpell(sp, ch, spellTarget, opts) }))
+      .filter((x) => x.r.damage > 0)
+      .sort((a, b) => b.r.dps - a.r.dps);
+    if (!priced.length && values.spell == null && !values.standard) {
+      console.log('No damaging spells in the spellbook. Pass --spell <index|name> or --standard.');
+      return;
+    }
+    if (values.list) {
+      console.log(`${characterLabel(ch)}  |  ${pool.length} spell(s)`);
+      console.log(table(pool.map((sp) => [sp.index ?? '-', sp.name, spellCost(sp, ch), fmt(analyzeSpell(sp, ch, spellTarget, opts).damage)]), ['Index', 'Spell', 'Cost', 'Damage'], ['right', 'left', 'right', 'right']));
+      return;
+    }
+    if (values['all-spells']) {
+      console.log(table(priced.map(({ sp, r }) => [sp.name, skillName(r.school), r.cost, fmt(r.damage), fmt(r.dps), `${fmt2(r.castSeconds)}s`, r.castsPerPool, fmt(r.poolDamage)]), ['Spell', 'School', 'Cost', 'Damage', 'DPS', 'Cast', 'Casts', 'Pool dmg'], ['left', 'left', 'right', 'right', 'right', 'right', 'right', 'right']));
+      if (values.json) console.log(JSON.stringify(priced.map(({ sp, r }) => ({ index: sp.index, name: sp.name, ...r })), null, 2));
+      return;
+    }
+    let chosen = priced[0];
+    if (values.spell != null) {
+      const q = String(values.spell).trim();
+      const found = searchPriced.find(({ sp }) => String(sp.index) === q || String(sp.name).toLowerCase() === q.toLowerCase())
+        ?? searchPriced.find(({ sp }) => String(sp.name).toLowerCase().includes(q.toLowerCase()));
+      if (!found) throw new UsageError(`spell "${values.spell}" not found in the resolved spellbook`);
+      chosen = found;
+    }
+    const { sp } = chosen;
+    const r = spellRotation(sp, ch, spellTarget, { ...opts, seconds: n(values.seconds, 30) });
+    textOut(values, `${characterLabel(ch)}  |  ${sp.name} (${skillName(r.school)})`);
+    textOut(values, table([
+      ['Spell cost', `${r.cost} SP`],
+      ['Instant damage', fmt(r.instant)],
+      ...(r.dotRounds ? [['DoT per tick', fmt(r.dotPerTick)], ['DoT duration', `${r.dotRounds} rounds (${fmt(r.dotSeconds)} s)`], ['DoT total', fmt(r.dotTotal)]] : []),
+      ['Damage / cast', fmt(r.damage)],
+      ['Cast time', `${fmt2(r.castSeconds)} s`],
+      ['Burst DPS', fmt(r.burstDps)],
+      ['DPS', fmt(r.dps)],
+      ['Magicka pool', r.magicka],
+      ['Fight window', `${fmt(r.seconds)} s`],
+      ['Casts used', r.casts],
+      ['Total damage', fmt(r.totalDamage)],
+      ['Cast DPS', fmt(r.manaDps)],
+      ['Window DPS', fmt(r.windowDps)],
+      ...(r.dotRounds ? [['DoT DPS', fmt(r.dotDps)]] : []),
+      ['Mana solved', r.manaSolved ? 'yes' : 'no'],
+      ...(r.manaSolved ? [] : [['Time to empty', `${fmt(r.timeToEmpty)} s`], ['Pool kill', r.poolKill == null ? '-' : (r.poolKill ? 'yes' : 'no')], ['Mana left', fmt(r.manaLeft)]]),
+      ['Saving throw', `${pc(r.saving)} lands`],
+      ['Power multiplier', `x${fmt2(r.powerMult)}`],
+      ['Target', `${spellTarget.isBoss ? 'Breach' : values.target}, level ${spellTarget.level}${spellTarget.isBoss ? `, ${spellTarget.maxHealth.toLocaleString()} HP` : ''}`],
+      ['Time to kill', r.ttk ? `${fmt(r.ttk)} s` : '-'],
+    ], ['Metric', 'Value']));
+    if (r.elements?.length) {
+      textOut(values, '\nEffects');
+      textOut(values, table(r.elements.map((e) => [e.key, e.magnitude != null ? fmt(e.magnitude) : '-', e.rounds ?? 1, fmt(e.damage), e.note ?? '']), ['Effect', 'Magnitude', 'Rounds', 'Damage', 'Note'], ['left', 'right', 'right', 'right', 'left']));
+    }
+    if (values.json) console.log(JSON.stringify({ index: sp.index, name: sp.name, ...r }, null, 2));
     return;
   }
 
@@ -1752,7 +1797,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     });
     const defaultOut = cmd === 'weapons' ? 'weapons.html' : 'skills.html';
     const out = path.resolve(values.out === 'dfo-dps-report.html' ? defaultOut : values.out);
-    fs.writeFileSync(out, html, 'utf8');
+    writePage(out, html);
     if (!values.json) console.log(`weapons page written: ${out}`);
     if (values.json) console.log(JSON.stringify({ level, firmCharts, rows: values.categories ? displayRows : rows, cs: csSeries }, null, 2));
     return;
@@ -2074,7 +2119,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     const subtitle = `${characterLabel(ch)} | ${values.core}${ch.online ? ' / online' : ' / offline'} | ${values.target}${target.health ? ` ${target.maxHealth.toLocaleString()} HP` : ''}${flags ? ` | ${flags}` : ''}`;
     const html = graphPage({ title, subtitle, chart: lineChart({ title, xLabel: 'Value', yLabel: values.uncapped ? 'DPS' : 'Capped DPS', series }) });
     const out = path.resolve(values.out === 'dfo-dps-report.html' ? 'graph.html' : values.out);
-    fs.writeFileSync(out, html, 'utf8');
+    writePage(out, html);
     if (!values.json) console.log(`graph written: ${out}`);
     if (values.json) console.log(JSON.stringify(series, null, 2));
     return;
@@ -2150,8 +2195,8 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     } else {
       throw new UsageError('scale needs --stat <name>, --skill <id>, --gear-skill <id>, or --all');
     }
-    console.log(`${characterLabel(ch)}  |  target ${values.target}  |  ${values.core}${ch.online ? ' / online' : ' / offline'}`);
-    printScale(rows, values);
+    textOut(values, `${characterLabel(ch)}  |  target ${values.target}  |  ${values.core}${ch.online ? ' / online' : ' / offline'}`);
+    if (!values.json) printScale(rows, values);
     if (values.json) console.log(JSON.stringify(rows, null, 2));
     return;
   }
@@ -2183,14 +2228,14 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       else verdict = `damage until +${fmt((headroom - 1) * 100)}%`;
       out.push({ label, hp: t.maxHealth, cap, perHit, headroom, speed: speed.cappedDps, speedMin: speed.cappedDpsMin, speedMax: speed.cappedDpsMax, dmg: dmg.cappedDps, dmgMin: dmg.cappedDpsMin, dmgMax: dmg.cappedDpsMax, verdict });
     }
-    console.log(`${characterLabel(ch)}  |  ${values.core}${ch.online ? ' / online' : ' / offline'}  |  real pools`);
-    console.log(table(out.map((x) => [x.label, x.hp.toLocaleString(), x.cap || '-', fmt(x.perHit), x.headroom ? `${fmt(x.headroom)}x` : '-', fmt(x.speed), fmt(x.dmg), x.verdict]), ['Boss', 'HP', 'Cap', 'Per hit', 'Headroom', '+5% speed', '+5% dmg', 'Verdict'], ['left', 'right', 'right', 'right', 'right', 'right', 'right', 'left']));
-    console.log('\n+5% speed and +5% damage are separate one-change DPS runs against each pool.');
-    console.log('Headroom = cap / expected landed hit. Above 1x, damage can grow that many times before the cap makes speed strictly better; at or below 1x, speed is already better.');
+    textOut(values, `${characterLabel(ch)}  |  ${values.core}${ch.online ? ' / online' : ' / offline'}  |  real pools`);
+    textOut(values, table(out.map((x) => [x.label, x.hp.toLocaleString(), x.cap || '-', fmt(x.perHit), x.headroom ? `${fmt(x.headroom)}x` : '-', fmt(x.speed), fmt(x.dmg), x.verdict]), ['Boss', 'HP', 'Cap', 'Per hit', 'Headroom', '+5% speed', '+5% dmg', 'Verdict'], ['left', 'right', 'right', 'right', 'right', 'right', 'right', 'left']));
+    textOut(values, '\n+5% speed and +5% damage are separate one-change DPS runs against each pool.');
+    textOut(values, 'Headroom = cap / expected landed hit. Above 1x, damage can grow that many times before the cap makes speed strictly better; at or below 1x, speed is already better.');
     for (const [label, t] of [['Breach', gate], ['Curbing 1,000 HP', targets[1].t]]) {
       const rows = rankWeapons(ch, { ...scenarioOf(ch, values, traits, t), target: t, health: t.maxHealth, traits: t.bossTraits ?? [] }, { top: 5 });
-      console.log(`\nTop weapons - ${label}`);
-      console.log(table(rows.map((x) => [`${x.materialName} ${x.name}`, x.twoHanded ? '2H' : '1H', fmt(x.cappedDps), fmt(x.perSwing), fmt2(x.aps)]), ['Weapon', 'Hands', 'Capped DPS', 'Per swing', 'APS'], ['left', 'left', 'right', 'right', 'right']));
+      textOut(values, `\nTop weapons - ${label}`);
+      textOut(values, table(rows.map((x) => [`${x.materialName} ${x.name}`, x.twoHanded ? '2H' : '1H', fmt(x.cappedDps), fmt(x.perSwing), fmt2(x.aps)]), ['Weapon', 'Hands', 'Capped DPS', 'Per swing', 'APS'], ['left', 'left', 'right', 'right', 'right']));
     }
     const crossover = [];
     for (const hp of [500, 750, 1000, 1500, 2000, 2500, 3000, 4000, 5000, 6000, 8400, 12000]) {
@@ -2200,8 +2245,8 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       const a = analyze(ch, sc);
       crossover.push({ hp, cap: a.cap, best: best ? `${best.materialName} ${best.name}` : '-', dps: best?.cappedDps ?? 0, perHit: best?.perHit ?? 0 });
     }
-    console.log('\nBest weapon by Curbing boss health (the speed/damage crossover)');
-    console.log(table(crossover.map((x) => [x.hp.toLocaleString(), x.cap, x.best, fmt(x.dps), fmt(x.perHit)]), ['Boss HP', 'Cap', 'Best weapon', 'Capped DPS', 'Best landed hit'], ['right', 'right', 'left', 'right', 'right']));
+    textOut(values, '\nBest weapon by Curbing boss health (the speed/damage crossover)');
+    textOut(values, table(crossover.map((x) => [x.hp.toLocaleString(), x.cap, x.best, fmt(x.dps), fmt(x.perHit)]), ['Boss HP', 'Cap', 'Best weapon', 'Capped DPS', 'Best landed hit'], ['right', 'right', 'left', 'right', 'right']));
     if (values.json) console.log(JSON.stringify({ pools: out, crossover }, null, 2));
     return;
   }
@@ -2224,11 +2269,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       rri: !values['no-rri'], pair: values.pair, bowSpam: values.spam, potencyPct: n(values.potency, 0), pierce: n(values.pierce, 0), weapon: scenario.weapon,
     });
     const out = path.resolve(values.out);
-    try {
-      fs.writeFileSync(out, html, 'utf8');
-    } catch (e) {
-      throw new UsageError(`cannot write report to ${out}: ${e.message}`);
-    }
+    writePage(out, html);
     console.log(`report written: ${out}`);
     return;
   }
@@ -2262,10 +2303,6 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     return;
   }
 
-  if (cmd !== 'build') {
-    console.error(`unknown command "${cmd}"\n\n${HELP}`);
-    process.exit(2);
-  }
   if (values.json) {
     console.log(JSON.stringify(summary(ch, r, {
       preset: values.target,

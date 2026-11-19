@@ -467,7 +467,10 @@ HTML pages default to the current directory:
 | `probe` | `probe.html` |
 
 Use `--out <file>` to override. Many table commands accept `--json`; use
-`--help` for the exact command.
+`--help` for the exact command. With `--json` stdout is exactly one JSON document
+(no text card before it). `enchant`, `scale`, `spell` and `tradeoff` used to print the
+text table first and then the JSON; parse their stdout directly now. A command that
+writes no file or has no JSON form rejects `--out` / `--json` with exit 2.
 
 `build --json` and `enchant --json` carry the **ceiling vs claim** split in
 `result`. These commands use the plain card and its deterministic

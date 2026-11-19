@@ -1,11 +1,21 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { encounterTarget } from '../src/encounters.js';
+import { isUsageFailure, UsageError } from '../src/usageError.js';
 
 const bin = fileURLToPath(new URL('../bin/dfo-dps.js', import.meta.url));
 const cli = (...args) => spawnSync(process.execPath, [bin, ...args], { encoding: 'utf8' });
+const cliWith = (args, env) => spawnSync(process.execPath, [bin, ...args], { encoding: 'utf8', env: { ...process.env, ...env } });
+
+// An empty DFO user-data folder (and home, so probe finds no captures): no save can be found there.
+const emptyHome = fs.mkdtempSync(path.join(os.tmpdir(), 'dfo-dps-nosave-'));
+const noSaveEnv = { DAGGER_USER_DATA: emptyHome, HOME: emptyHome };
+const tmpOut = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'dfo-dps-out-')), 'page.html');
 
 function usageError(args, message) {
   const result = cli(...args);
@@ -34,7 +44,7 @@ test('validation errors exit 2 without a stack', () => {
   usageError(['graph', '--theory', '--series', 'foo'], /graph series must be/);
   usageError(['graph', '--theory', '--series', 'stat'], /needs an attribute name/);
   usageError(['build', '--theory', '--weapon', '999:9'], /unknown weapon template 999/);
-  usageError(['report', '--theory', '--out', '/no/such/dir/x.html'], /cannot write report/);
+  usageError(['report', '--theory', '--out', '/no/such/dir/x.html'], /cannot write \/no\/such\/dir\/x\.html/);
 });
 
 test('an unknown core exits 2', () => {
@@ -110,4 +120,144 @@ test('theory --gear-cs 300 leaves the weapon-skill line at its legal default', (
   const doc = JSON.parse(result.stdout);
   assert.equal(doc.character.maxCs, 300);
   assert.equal(doc.character.maxLb, doc.character.legal.lb);
+});
+
+const pageCommands = [
+  ['graph', '--theory', '--series', 'stat:strength,stat:agility'],
+  ['enchant-plan', '--theory'],
+  ['imprints', '--theory'],
+  ['firmament', '--build', 'bow'],
+];
+
+test('an unwritable --out is a usage error on every page command', () => {
+  for (const args of pageCommands) {
+    usageError([...args, '--out', '/no/such/dir/x.html'], /cannot write \/no\/such\/dir\/x\.html/);
+  }
+});
+
+const noFileCommands = [
+  ['build', '--theory'],
+  ['objective', '--theory', '--target', 'soft'],
+  ['rank', '--theory'],
+  ['compare', '--theory', '--stat', 'strength=110'],
+  ['scale', '--theory', '--stat', 'strength'],
+  ['tradeoff', '--theory'],
+  ['theory'],
+  ['spell', '--theory'],
+  ['enchant', '--theory'],
+  ['doctor'],
+  ['saves'],
+];
+
+test('--out is rejected where the command writes no file', () => {
+  for (const args of noFileCommands) {
+    const result = usageError([...args, '--out', '/no/such/dir/x.html'], /--out is only for commands that write a file/);
+    assert.match(result.stderr, new RegExp(`not "${args[0]}"`), result.stderr);
+    assert.match(result.stderr, /report, spells, weapons, skills, firmament, imprints, probe/);
+  }
+});
+
+const noJsonCommands = [
+  ['compare', '--theory', '--stat', 'strength=110'],
+  ['doctor'],
+  ['report', '--theory'],
+  ['saves'],
+];
+
+test('--json is rejected where the command prints no JSON', () => {
+  for (const args of noJsonCommands) {
+    const result = usageError([...args, '--json'], /--json is not supported by/);
+    assert.match(result.stderr, new RegExp(`"${args[0]}"`), result.stderr);
+    assert.match(result.stderr, /commands with JSON output: build, objective, rank/);
+  }
+});
+
+test('--json is rejected in the modes that ignore it', () => {
+  usageError(['spell', '--theory', '--list', '--json'], /--json is not supported by "spell --list"/);
+  usageError(['scale', '--theory', '--all', '--json'], /--json is not supported by "scale --all"/);
+});
+
+test('compare rejects --all and points at scale --all', () => {
+  usageError(['compare', '--theory', '--stat', 'strength=110', '--all'], /compare does not take --all.*scale --all/);
+});
+
+test('help describes --all, --data and compare accurately', () => {
+  const result = cli('--help');
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /scale: every relevant channel/);
+  assert.doesNotMatch(result.stdout, /scale\/compare every relevant channel/);
+  assert.match(result.stdout, /probe: a capture file/);
+  assert.match(result.stdout, /--uncapped or --cap-aware picks one instead/);
+});
+
+test('commands that read no save run with an empty save folder', () => {
+  const out = tmpOut();
+  for (const args of [
+    ['imprints', '--out', out],
+    ['enchant-plan', '--out', out],
+    ['firmament', '--build', 'bow', '--out', out],
+    ['loadout', '--uncapped', '--target', 'bogus', '--out', out],
+    ['weapons', '--out', out],
+    ['saves'],
+    ['doctor'],
+  ]) {
+    const result = cliWith(args, noSaveEnv);
+    assert.equal(result.status, 0, `${args.join(' ')}\n${result.stderr}`);
+  }
+});
+
+test('probe without a capture fails as a usage error, not a save lookup', () => {
+  const result = cliWith(['probe'], noSaveEnv);
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /probe: no capture/);
+  assert.doesNotMatch(result.stderr, /no saves found/);
+  assert.doesNotMatch(result.stderr, /\n\s+at /);
+});
+
+test('an unknown command is reported before any save lookup', () => {
+  const result = cliWith(['buidl'], noSaveEnv);
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /unknown command "buidl"/);
+  assert.doesNotMatch(result.stderr, /no saves found/);
+  assert.doesNotMatch(result.stderr, /\n\s+at /);
+});
+
+test('a missing or named-away save is a usage error', () => {
+  const missing = cliWith(['build', '--target', 'soft'], noSaveEnv);
+  assert.equal(missing.status, 2, missing.stderr);
+  assert.match(missing.stderr, /no saves found under .*Saves/);
+  assert.doesNotMatch(missing.stderr, /\n\s+at /);
+  const named = cliWith(['rank', '--save', 'nope'], noSaveEnv);
+  assert.equal(named.status, 2, named.stderr);
+  assert.match(named.stderr, /save "nope" not found/);
+  assert.doesNotMatch(named.stderr, /\n\s+at /);
+});
+
+test('star channels and a missing spell are usage errors', () => {
+  usageError(['build', '--theory', '--star-stat', 'strength=99'], /Firmament attribute channel is capped/);
+  usageError(['build', '--theory', '--star-skill', '99=1'], /bad skill id/);
+  usageError(['spell', '--theory', '--spell', 'zzz-nope'], /not found in the resolved spellbook/);
+});
+
+test('isUsageFailure keeps internal bugs as crashes', () => {
+  assert.equal(isUsageFailure(new UsageError('bad flag')), true);
+  assert.equal(isUsageFailure(new RangeError('--shortlist must be positive')), true);
+  assert.equal(isUsageFailure(new Error('evaluateObjective("relay"): the target is not a relay body (no allowance)')), true);
+  assert.equal(isUsageFailure(new TypeError('Cannot read properties of undefined')), false);
+  assert.equal(isUsageFailure(new Error('evaluateObjective("stochastic-ttk"): the sampled fight did not run')), false);
+});
+
+test('--json writes JSON and nothing else to stdout for every command that supports it', () => {
+  for (const args of [
+    ['enchant', '--theory', '--json'],
+    ['scale', '--theory', '--stat', 'strength', '--json'],
+    ['tradeoff', '--theory', '--json'],
+    ['spell', '--theory', '--json'],
+    ['build', '--theory', '--json'],
+    ['theory', '--json'],
+  ]) {
+    const r = cli(...args);
+    assert.equal(r.status, 0, `${args.join(' ')}: ${r.stderr}`);
+    assert.doesNotThrow(() => JSON.parse(r.stdout), `${args.join(' ')} must print only JSON`);
+  }
 });
