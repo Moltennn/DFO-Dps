@@ -74,7 +74,7 @@ fn is_js_space(c: char) -> bool {
 
 /// `Number(string)` (ECMAScript StringToNumber): the empty string is 0; `0x`/`0o`/`0b` integers (no sign); `Infinity`
 /// with an optional sign; otherwise a StrDecimalLiteral, parsed with the correctly rounded `f64` parser. Anything else
-/// is NaN. Hex, octal and binary integers are exact up to 128 bits, then rounded to nearest-even (see `parse_radix`).
+/// is NaN. Hex, octal and binary integers are rounded to nearest-even at any length (see `parse_radix`).
 pub fn string_to_number(s: &str) -> f64 {
     let t = s.trim_matches(is_js_space);
     if t.is_empty() {
@@ -104,21 +104,36 @@ pub fn string_to_number(s: &str) -> f64 {
     }
 }
 
-/// The value of a radix-2/8/16 digit string, as JS rounds it: exact to nearest-even for up to 128 bits (`u128` is exact,
-/// and `as f64` rounds to nearest even). A longer string is accumulated in `f64`, which may round differently from JS
-/// (out of the vectors' range; rust/README.md, R4a).
+/// The value of a radix-2/8/16 digit string, rounded to nearest-even as JS rounds it, at any length. The bits of the digits
+/// are taken most significant first. The top 64 significant bits form the mantissa; every bit below them is folded into
+/// its lowest bit as a sticky bit. That bit sits far below the 53-bit rounding position, so `as f64` rounds the 64-bit
+/// value exactly as the full integer would round. The scale is an exact power of two (overflow gives infinity, as JS does).
 fn parse_radix(digits: &str, radix: u32) -> f64 {
     if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
         return f64::NAN;
     }
-    if let Ok(v) = u128::from_str_radix(digits, radix) {
-        return v as f64;
+    let per_digit = radix.trailing_zeros();
+    let mut bits: Vec<bool> = Vec::with_capacity(digits.len() * per_digit as usize);
+    for d in digits.chars().filter_map(|c| c.to_digit(radix)) {
+        for k in (0..per_digit).rev() {
+            bits.push(((d >> k) & 1) == 1);
+        }
     }
-    let mut acc = 0.0;
-    for c in digits.chars() {
-        acc = acc * f64::from(radix) + f64::from(c.to_digit(radix).unwrap_or(0));
+    let Some(first) = bits.iter().position(|b| *b) else {
+        return 0.0;
+    };
+    let sig = &bits[first..];
+    let top: u64 = sig
+        .iter()
+        .take(64)
+        .fold(0, |acc, b| (acc << 1) | u64::from(*b));
+    // mutation: equivalent - at exactly 64 significant bits the sticky path gives the same value (its tail is empty), so `< 64` agrees.
+    if sig.len() <= 64 {
+        return top as f64;
     }
-    acc
+    let sticky = sig[64..].iter().any(|b| *b);
+    let mantissa = top | u64::from(sticky);
+    (mantissa as f64) * 2f64.powi((sig.len() - 64) as i32)
 }
 
 /// `[+-]? (digits [. digits?] | . digits) ([eE] [+-]? digits)?`, at least one digit before or after the point.
@@ -127,11 +142,15 @@ fn is_decimal_literal(t: &str) -> bool {
         Some(b'+') | Some(b'-') => &t.as_bytes()[1..],
         _ => t.as_bytes(),
     };
+    // mutation: equivalent - the final `parse` is the arbiter: a start at 1 (or a frac count of 1 or an `i + start`
+    // count) admits only strings that `f64::from_str` rejects (a sign, a '.', or a lone e/E with no digit), which then
+    // give NaN as the correct path does; no grammar-valid decimal is rejected by these mutants.
     let mut i = 0;
     while i < b.len() && b[i].is_ascii_digit() {
         i += 1;
     }
     let int_digits = i;
+    // mutation: equivalent - see the note above `let mut i`: the frac count is only tested for zero, and parse rejects it.
     let mut frac_digits = 0;
     if i < b.len() && b[i] == b'.' {
         i += 1;
@@ -139,6 +158,7 @@ fn is_decimal_literal(t: &str) -> bool {
         while i < b.len() && b[i].is_ascii_digit() {
             i += 1;
         }
+        // mutation: equivalent - see the note above `let mut i`: `i + start` only changes a '.' with no digits, which parse rejects.
         frac_digits = i - start;
     }
     if int_digits == 0 && frac_digits == 0 {
@@ -170,8 +190,10 @@ pub fn number_to_string(x: f64) -> String {
         return "0".to_owned();
     }
     if x.is_infinite() {
+        // mutation: equivalent - x is infinite here, so `x > 0.0`, `x > 1.0` and `x >= 0.0` all agree on it.
         return if x > 0.0 { "Infinity" } else { "-Infinity" }.to_owned();
     }
+    // mutation: equivalent - x == 0 returned above, so `x < 0.0` and `x <= 0.0` agree on every x that reaches this line.
     let sign = if x < 0.0 { "-" } else { "" };
     let sci = format!("{:e}", x.abs());
     let (mant, exp) = sci.split_once('e').expect("{:e} always has an exponent");
@@ -183,10 +205,12 @@ pub fn number_to_string(x: f64) -> String {
         format!("{digits}{}", "0".repeat((n - k) as usize))
     } else if (1..=21).contains(&n) {
         format!("{}.{}", &digits[..n as usize], &digits[n as usize..])
+    // mutation: equivalent - the exponent test below is never reached with n == 1 (the (1..=21) branch takes it), so a bound of 1 here is unobservable.
     } else if (-5..=0).contains(&n) {
         format!("0.{}{digits}", "0".repeat((-n) as usize))
     } else {
         let e = n - 1;
+        // mutation: equivalent - this arm is reached only with n <= -6 or n >= 22, so e = n - 1 is never 0 (and `e < 1` agrees with `e < 0`).
         let es = if e < 0 { "-" } else { "+" };
         if k == 1 {
             format!("{digits}e{es}{}", e.abs())
@@ -241,6 +265,7 @@ impl Value {
                 .iter()
                 .position(|(k, _)| match index_key(k) {
                     None => true,
+                    // mutation: equivalent - a key with the same index n is found by the existing-key search above, so `m >= n` never differs.
                     Some(m) => m > n,
                 })
                 .unwrap_or(entries.len()),
@@ -411,6 +436,14 @@ impl Value {
         self.as_str() == Some(s)
     }
 
+    /// The own entries of an object in JS key order, or none (for a value that is not an object).
+    pub fn entries(&self) -> &[(String, Value)] {
+        match self {
+            Value::Obj(entries) => entries.as_slice(),
+            _ => &[],
+        }
+    }
+
     /// The items of an array, or none (`Array.isArray(v) ? v : []`, the `?? []` of a `for...of`).
     pub fn items(&self) -> &[Value] {
         match self {
@@ -424,6 +457,7 @@ impl Value {
     pub fn array_index(&self) -> Option<usize> {
         match self {
             Value::Num(n)
+                // mutation: equivalent - the only consumer (save.rs skill_name) indexes SKILL_NAMES, which misses at any index >= 35, so the bound is unobservable.
                 if n.is_finite() && n.trunc() == *n && *n >= 0.0 && *n < 4_294_967_295.0 =>
             {
                 Some(*n as usize)
@@ -573,6 +607,7 @@ impl Parser<'_> {
 
     /// Exactly `n` lowercase hex digits.
     fn hex(&mut self, n: usize) -> Result<u64, CodecError> {
+        // mutation: equivalent - a start of 1 is shifted out of the u64 after 16 digits (the `d` tokens) and sits above bit 15 for the 4-digit unit, which `as u16` drops.
         let mut acc: u64 = 0;
         for _ in 0..n {
             let c = self.bump()?;

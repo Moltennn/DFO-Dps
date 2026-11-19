@@ -29,6 +29,7 @@ pub fn proficiency_flag(skill: &Value) -> Option<f64> {
 /// value that is not a finite number reads as 0 (`Number.isFinite`), and the raw skill is clamped to 0..=200.
 pub fn effective_skill(v: &Value) -> f64 {
     let raw = js_max(0.0, js_min(200.0, v.finite_or(0.0)));
+    // mutation: equivalent - at raw == 100 the milestone arm gives floor(100 + 0 + 0) = 100 = raw, so `< 100.0` agrees.
     if raw <= 100.0 {
         return raw;
     }
@@ -117,6 +118,7 @@ pub fn live_stat(ch: &Value, name: &str) -> f64 {
             }
             Some("racialOverride") => {
                 let v = a.get("statMods").get(name).num_or(0.0);
+                // mutation: equivalent - at v == 0 the arm adds 0, and m + 0.0 is m, so `v >= 0.0` agrees.
                 if v > 0.0 {
                     m += v;
                 }
@@ -158,12 +160,10 @@ pub fn rebuild_enchant_mods(items: &Value) -> Value {
     out
 }
 
-/// `addMap(obj, key, value)` (save.js:183-186): a key that is null, `""`, or a value that is not finite is skipped;
-/// otherwise `obj[key] = (obj[key] ?? 0) + value`.
+/// `addMap(obj, key, value)` (save.js:183-186): `obj[key] = (obj[key] ?? 0) + value`. save.js also skips a null or `''`
+/// key and a non-finite value. The callers here pass only the validated lines' params (a stat, skill or slayer name:
+/// never null or empty) and integer values, so that skip is unreachable and is not ported.
 fn add_map(obj: &mut Value, key: &Value, value: f64) {
-    if key.is_nullish() || key.strict_eq(&Value::Str(String::new())) || !value.is_finite() {
-        return;
-    }
     let k = key.to_js_string();
     let prev = obj.get(&k).num_or(0.0);
     obj.set(&k, Value::Num(prev + value));

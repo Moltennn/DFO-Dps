@@ -9,14 +9,10 @@ use crate::loot::{gem_line, read_lines_list, socket_gems, socket_max, sockets_of
 use crate::round::to_int32;
 use crate::value::{obj_table_has, Value};
 
-/// `num(v, d = 0)` (gearLines.js:27): `Number(v)` when it is finite, else 0.
+/// `num(v, d = 0)` (gearLines.js:27): `Number(v)`, or the default 0 when that is not finite. Only validated lines reach it
+/// (`blade_lines`), and a validated value is an integer, so the default is never read and this is `Number(v)`.
 fn num(v: &Value) -> f64 {
-    let n = v.to_number();
-    if n.is_finite() {
-        n
-    } else {
-        0.0
-    }
+    v.to_number()
 }
 
 /// `laidLines(item)` (gearLines.js:33-37): the piece's own lines (no gem line), then one line per set socket in the
@@ -56,6 +52,7 @@ pub fn weapon_damage_pct(item: &Value) -> f64 {
         if a.get("id").is_str("damage") {
             n + f64::from(to_int32(a.get("value").to_number()))
         } else {
+            // mutation: equivalent - `n + 0.0` and `n - 0.0` are both n: n is never -0 here (it starts at +0 and sums integers).
             n + 0.0
         }
     })
@@ -71,10 +68,10 @@ pub fn blade_lines(item: &Value) -> Value {
         let prev = by_group.get(&key).num_or(0.0);
         by_group.set(&key, Value::Num(prev + num(a.get("value"))));
     }
-    let slayer = match &by_group {
-        Value::Obj(entries) => entries.iter().fold(0.0, |n, (_, v)| n + v.num_or(0.0)),
-        _ => 0.0,
-    };
+    let slayer = by_group
+        .entries()
+        .iter()
+        .fold(0.0, |n, (_, v)| n + v.to_number());
     let mut elemental_lines: Vec<Value> = Vec::new();
     for a in lines.iter().filter(|a| a.get("id").is_str("elemental")) {
         let mut l = Value::Obj(Vec::new());
@@ -84,7 +81,7 @@ pub fn blade_lines(item: &Value) -> Value {
     }
     let elemental = elemental_lines
         .iter()
-        .fold(0.0, |n, l| n + l.get("value").num_or(0.0));
+        .fold(0.0, |n, l| n + l.get("value").to_number());
     let mut out = Value::Obj(Vec::new());
     out.set("slayerByGroup", by_group);
     out.set("slayer", Value::Num(slayer));

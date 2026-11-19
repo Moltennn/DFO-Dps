@@ -2013,9 +2013,12 @@ function gearOutTokens(eq, poison) {
 // ---------------------------------------------------------------------------------------------------------------
 const STAT_NAMES = ['strength', 'intelligence', 'willpower', 'agility', 'endurance', 'personality', 'speed', 'luck'];
 const NUM_POOL = [
-  0, -0, 1, -1, 0.5, 1.5, 2.5, -2.5, 3, 7, 49.5, 50, 99, 100, 100.5, 101, 124.9, 125, 149, 150, 174, 175, 199, 200, 201,
-  255, 1e6, 1e21, 1e-7, 1e-6, 123456789012345680000, 0.1, 5e-324, Number.MAX_SAFE_INTEGER, 2 ** 53 + 2, NaN, Infinity,
+  0, -0, 1, -1, 0.5, 1.5, 2.5, -2.5, 3, 7, 49.5, 50, 99, 100, 100.5, 101, 124.9, 125, 149, 150, 174, 175, 199, 200, 200.5,
+  201, 255, 1e6, 1e21, 1e-7, 1e-6, 123456789012345680000, 0.1, 5e-324, Number.MAX_SAFE_INTEGER, 2 ** 53 + 2, NaN, Infinity,
   -Infinity, 1.7976931348623157e308, -3e-300,
+  // the number-to-string windows (n = exponent + 1: fixed for 1..=21 and -5..=0, exponent form outside), both sides of each
+  1e-5, 1.5e-5, 9.99e-7, 1.5e-6, -1.5e-6, 1.5e-7, 9.99e-7, 1e15, 1e16, 9.99e20, 1e20, 12345.678, 0.0001, 0.001,
+  4294967294, 4294967295, 4294967296, 2.5e-300, 1e-300, 1e308, 0.30000000000000004,
 ];
 const STR_POOL = [
   '', 'a', '0', '5', ' 12 ', '0x1f', '-0x1f', '0b101', '0o17', '1e3', '.5', '5.', '+7', '-0', '1e', 'Infinity', '-Infinity',
@@ -2024,6 +2027,12 @@ const STR_POOL = [
   'e5', '0x',
   // radix forms past 2^53 (exact up to 128 bits in the port; rounding to nearest even): 120-bit hex, a tie, binary, octal
   '0x' + 'f'.repeat(30), '0x1' + '0'.repeat(15) + '1', '0b' + '1'.repeat(70), '0o' + '7'.repeat(40), '0X' + 'ab'.repeat(15),
+  // zero in each radix (the empty mantissa), 64 bits exactly, 2^64, a tie at bit 11 of 65 bits and the same tie broken by
+  // a sticky bit, a 54-bit tie in 64 bits, long forms past 128 and past 1024 bits (overflow to Infinity)
+  '0x0', '0o0', '0b0', '0x00000000000000000000', '0x' + 'f'.repeat(16), '0x1' + '0'.repeat(16), '0x1' + '0'.repeat(13) + '800',
+  '0x1' + '0'.repeat(13) + '801', '0x8000000000000400', '0x8000000000000401', '0x20000000000001', '0x20000000000003',
+  '0b' + '1'.repeat(64), '0b' + '1'.repeat(65), '0b' + '10'.repeat(40), '0o' + '1' + '0'.repeat(21), '0o' + '7'.repeat(21),
+  '0x' + 'f'.repeat(40), '0x' + 'f'.repeat(256), '0x' + 'f'.repeat(300),
 ];
 const KEY_POOL = ['a', 'b', 'c', '0', '7', '10', '4294967294', '4294967295', 'name', 'ünï', 'x;y', '', 'Fire', '1.5', '-1', '01'];
 
@@ -2077,6 +2086,19 @@ function genValueFamily() {
     out.add(kind, ...t);
     fam[kind] = (fam[kind] ?? 0) + 1;
   };
+  // A deterministic sweep: every pool entry and each special shape at the top level, through each read. The random draws
+  // reach a top-level string or number only rarely, so a boundary of a pool (a radix prefix, an exponent window) would
+  // otherwise go unprobed.
+  const SWEEP = [
+    ...NUM_POOL, ...STR_POOL, undefined, null, true, false, [], {}, ['5'], [null, undefined, 1], { a: 0 }, ['x', ' 7 '],
+    [[' 0x1f ']], { 1: 'a', b: null },
+  ];
+  for (const v of SWEEP) {
+    add('value', encodeValue(v));
+    add('tonum', encodeValue(v), '=>', numToken(Number(v)));
+    add('tostr', encodeValue(v), '=>', encodeValue(String(v)));
+    add('truthy', encodeValue(v), '=>', v ? 'b1' : 'b0');
+  }
   for (let i = 0; i < 3000; i++) add('value', encodeValue(genValue(R, 3)));
   for (let i = 0; i < 2500; i++) {
     const v = genValue(R, 3);
@@ -2266,6 +2288,48 @@ function saveProjection(ch) {
   return p;
 }
 
+// ---- coverage: deterministic items the random draws would rarely hit ------------------------------------------------
+const COVER_TEMPLATE = { Weapons: 115, Armor: 102, Jewellery: 133, MensClothing: 163, WomensClothing: 200 };
+
+/**
+ * One item per affix kind, group, param and value at the band's edges (1, the Magic bottom, the Rare top and one past,
+ * the Legendary top and one past, 0). A skill's ~35 params take the kind's first group only, to keep the file small.
+ */
+function coverageItems() {
+  const items = [];
+  for (const id of AFFIX_KIND_IDS) {
+    const k = AFFIX_KINDS[id];
+    const r = AFFIX_RANGES[id];
+    const params = Array.isArray(k.params) ? k.params : [undefined];
+    const groups = params.length > 10 ? [k.groups[0]] : k.groups;
+    const values = [1, r.magic[0], r.rare[1], r.rare[1] + 1, r.legendary[1], r.legendary[1] + 1, 0];
+    for (const group of groups) {
+      for (const p of params) {
+        for (const value of values) {
+          const a = { id };
+          if (p !== undefined) a.param = p;
+          a.value = value;
+          items.push({ group, templateIndex: COVER_TEMPLATE[group], rarity: 'rare', equipSlot: 19, affixes: [a] });
+        }
+      }
+    }
+  }
+  return items;
+}
+
+/** A stack of three or four copies of each gem on a weapon or a piece of armour: the Rare cap of a kind binds on these. */
+function gemStackItems() {
+  const items = [];
+  for (const g of ALL_GEM_IDS) {
+    for (const [group, template, copies] of [['Weapons', 115, 3], ['Weapons', 113, 4], ['Armor', 102, 3]]) {
+      const it = { group, templateIndex: template, rarity: 'rare', equipSlot: 19, sockets: Array.from({ length: copies }, () => g) };
+      it.affixes = it.sockets.map((s) => gemLine(it, s));
+      items.push(it);
+    }
+  }
+  return items;
+}
+
 function genSaveFamily() {
   const out = new Out(
     'save',
@@ -2308,10 +2372,55 @@ function genSaveFamily() {
     const i = R.u32() % lists.length;
     return { ref: `@${listIdx[i]}`, val: lists[i] };
   };
+  // Effect sweep: every effect kind that reads a stat, with the magnitude or the statMods entry missing, zero, negative,
+  // ended, or on each attribute, at a base of 50 and of 0. The defaults (`?? 0`) and the arm of each sign are read here.
+  const SWEEP_KINDS = ['disease', 'poison', 'artifact', 'racialOverride', 'fortifyAttribute', 'drainAttribute', 'transferAttribute'];
+  const SWEEP_EFFECTS = [
+    (s) => ({}),
+    (s) => ({ magnitude: 0 }),
+    (s) => ({ magnitude: 3 }),
+    (s) => ({ magnitude: -2 }),
+    (s) => ({ magnitude: 60, ended: true }),
+    (s) => ({ statMods: {} }),
+    (s) => ({ statMods: { [s]: 0 } }),
+    (s) => ({ statMods: { [s]: 2 } }),
+    (s) => ({ statMods: { [s]: -4 }, magnitude: 1, ended: false }),
+  ];
+  for (const kind of SWEEP_KINDS) {
+    for (const stat of STAT_NAMES) {
+      for (const base of [50, 0]) {
+        for (const variant of SWEEP_EFFECTS) {
+          const e = { kind, stat, ...variant(stat) };
+          const ch = {
+            stats: Object.fromEntries(STAT_NAMES.map((s) => [s, base])),
+            activeEffects: [e],
+            _mods: { stats: {}, statMax: {} },
+          };
+          out.add('def', String(di), encodeValue(ch));
+          chars.push(ch);
+          charIdx.push(di);
+          const other = STAT_NAMES[(STAT_NAMES.indexOf(stat) + 3) % STAT_NAMES.length];
+          add('ls', `@${di}`, encodeValue(stat), '=>', numToken(liveStat(ch, stat)));
+          add('ls', `@${di}`, encodeValue(other), '=>', numToken(liveStat(ch, other)));
+          di++;
+        }
+      }
+    }
+  }
+  // Coverage: each item of every kind as a one-piece list (the stat, skill and armour folds of rebuildMods, one item each).
+  for (const it of [...coverageItems(), ...gemStackItems()]) {
+    const list = [it];
+    out.add('def', String(di), encodeValue(list));
+    add('rm', `@${di}`, '=>', encodeValue(rebuildMods(list)));
+    di++;
+  }
   const SKILL_IDS = [0, 1, 5, 10, 16, 28, 29, 30, 31, 32, 33, 34];
   const idOf = () => (R.chance(0.7) ? R.pick(SKILL_IDS) : R.pick([NaN, null, undefined, '5', -1, 35, 1.5, 0, 34]));
   for (let i = 0; i < 2000; i++) {
     const v = R.chance(0.7) ? R.pick(NUM_POOL) : genValue(R, 0);
+    add('eff', encodeValue(v), '=>', numToken(effectiveSkill(v)));
+  }
+  for (const v of [...NUM_POOL, '150', ' 50 ', undefined, null, true]) {
     add('eff', encodeValue(v), '=>', numToken(effectiveSkill(v)));
   }
   for (let i = 0; i < 2000; i++) {
@@ -2429,6 +2538,20 @@ function genGearFamily() {
     const x = list();
     add('fl', x.ref, '=>', encodeValue(foldLines(x.val)));
   }
+  // Coverage: every item of every kind (one affix each), and each gem stack, through each reader.
+  for (const v of [...coverageItems(), ...gemStackItems()]) {
+    const ref = `@${di}`;
+    out.add('def', String(di++), encodeValue(v));
+    const list = [v];
+    const lref = `@${di}`;
+    out.add('def', String(di++), encodeValue(list));
+    add('laid', ref, '=>', encodeValue(laidLines(v)));
+    add('ril', ref, '=>', encodeValue(readItemLines(v)));
+    add('vil', ref, '=>', encodeValue(validItemLines(v)));
+    add('wdp', ref, '=>', numToken(weaponDamagePct(v)));
+    add('bl', ref, '=>', encodeValue(bladeLines(v)));
+    add('fl', lref, '=>', encodeValue(foldLines(list)));
+  }
   const TEMPLATES = [113, 114, 115, 118, 120, 121, 124, 127, 129, 130, 131, 560, 563, 102, 0, 7, 999, '113', '560', undefined, null, 7.5];
   for (let i = 0; i < 2000; i++) {
     const t = R.chance(0.85) ? R.pick(TEMPLATES) : R.int(0, 700);
@@ -2478,6 +2601,14 @@ function genSocketsFamily() {
   for (let i = 0; i < 2000; i++) {
     const x = it();
     add('saff', x.ref, '=>', encodeValue(socketAffixes(x.val)));
+  }
+  // Coverage: every item of every kind and each gem stack, through the three item readers.
+  for (const v of [...coverageItems(), ...gemStackItems()]) {
+    const ref = `@${di}`;
+    out.add('def', String(di++), encodeValue(v));
+    add('scount', ref, '=>', numToken(socketCount(v)));
+    add('saff', ref, '=>', encodeValue(socketAffixes(v)));
+    add('psock', ref, '=>', encodeValue(perfectSockets(v)));
   }
   const KINDS = ['diamond', 'ruby', 'amber', 'flawless', 0, 1, null, undefined, 'sapphire', ''];
   for (let i = 0; i < 2000; i++) {
@@ -2561,6 +2692,19 @@ function genLootFamily() {
   for (let i = 0; i < 2000; i++) {
     const x = it();
     add('pio', x.ref, '=>', encodeValue(powerIdsOf(x.val)));
+  }
+  // Coverage: every item of every kind and each gem stack through the readers; every coverage affix through validAffix,
+  // and every set gem through gemLine.
+  for (const v of [...coverageItems(), ...gemStackItems()]) {
+    const ref = `@${di}`;
+    out.add('def', String(di++), encodeValue(v));
+    add('rl', ref, '=>', encodeValue(readLines(v)));
+    add('sg', ref, '=>', encodeValue(socketGems(v)));
+    add('so', ref, '=>', encodeValue(socketsOf(v)));
+    add('sm', ref, '=>', numToken(socketMax(v)));
+    add('pio', ref, '=>', encodeValue(powerIdsOf(v)));
+    for (const a of v.affixes ?? []) add('va', encodeValue(a), '=>', validAffix(a) ? 'b1' : 'b0');
+    for (const g of v.sockets ?? []) add('gl', ref, encodeValue(g), '=>', encodeValue(gemLine(v, g)));
   }
   // powerOf: every id either table holds, once each (the table's own and the legendaries' own powers), then the odd
   // inputs, then random picks. An inherited name ('constructor', '__proto__') is left out: JS answers the Object.prototype

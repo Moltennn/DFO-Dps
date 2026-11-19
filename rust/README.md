@@ -643,8 +643,8 @@ the index keys in ascending order, and any other new key last, as a JS object do
 - `num_or(d)`: `v ?? d` for a number. A non-number is NaN here: the JS would concatenate or coerce it in `+`, which the port
   never reads (out of domain; the vectors pass numbers, `undefined`, `null`, and for a skill raw value a string).
 - `to_number`: `Number(v)`. A string follows StringToNumber: whitespace (JS's set, not U+0085, plus U+FEFF) trimmed; empty is
-  0; `0x`/`0o`/`0b` integers with no sign (exact to nearest-even up to 128 bits, a `u128`; longer ones accumulate in f64 and
-  may differ from JS, outside the vectors); `Infinity` with an optional sign; else a
+  0; `0x`/`0o`/`0b` integers with no sign (rounded to nearest-even at any length: the top 64 significant bits, with a sticky
+  bit folded into the lowest, scaled by an exact power of two; overflow is Infinity); `Infinity` with an optional sign; else a
   decimal literal (`1.`, `.5`, `1.e2` and an exponent accepted; `e5`, `1e`, `1_000`, `inf` are NaN).
 - `to_js_string`: `String(v)`, the template literal, and a property key. An array joins with `,` (an `undefined` or `null`
   item is empty); an object is `[object Object]`; numbers follow `Number::toString` (`number_to_string`, shortest round-trip
