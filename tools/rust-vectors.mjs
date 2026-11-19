@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /*
- * Golden-vector generator for the Rust port (rust/dfo-core, milestone R1).
+ * Golden-vector generator for the Rust port (rust/dfo-core, milestones R1 and R2; R2 adds swing.txt).
  *
  *   node tools/rust-vectors.mjs
  *
@@ -34,7 +34,10 @@ import {
   allowanceLaw, allowanceSpec, BREACH_PHASES, claimStreams, refOf, runAllowance, simulateAllowance, steadyState,
 } from '../src/allowance.js';
 import { createRelayClaimEngine } from '../src/relayClaim.js';
-import { conditionMultiplier, damageModifier, pcaaoDamageModifier, SKILLS, unityRound } from '../src/model.js';
+import {
+  conditionMultiplier, damageModifier, pcaaoDamageModifier, SKILLS, swingFrameSeconds, swingHandling, swingHeft, unityRound,
+} from '../src/model.js';
+import { SWING_HANDLING, WEAPONS } from '../src/data.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outDir = join(here, '..', 'rust', 'tests', 'vectors');
@@ -691,9 +694,76 @@ function genRelay() {
   return out.write();
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// swing (src/model.js:381-399 and :179). swingFrameSeconds, swingHeft and swingHandling are exported; classicStrength
+// is module-private, so its exact source text is cut out of src/model.js and evaluated (it fails loudly if it moves).
+// ---------------------------------------------------------------------------------------------------------------
+const { classicStrength } = new Function(
+  'damageModifier', 'pcaaoDamageModifier',
+  `${grab(/function classicStrength\(str, opts = \{\}\) \{\n[^}]*\n\}/, 'classicStrength')}\nreturn { classicStrength };`,
+)(damageModifier, pcaaoDamageModifier);
+
+function genSwing() {
+  const out = new Out('swing', 'kinds: swing_frame speed(opt) heft(opt) handling(opt) r | swing_heft weight(opt) strength(opt) r | swing_handling has(bool) type(opt) shortBlade(bool) twoHanded(bool) r (has 0 = no weapon: the next three tokens are the placeholders - 0 0) | classic_strength str opts(- = opts lacks the key, 1 = true, 0 = false) r. opt: - for undefined (the JS default applies), else f64');
+  const R = makeLcg(0x6006);
+
+  // swingFrameSeconds: the full cross of the hand-picked values, then a sweep
+  const speeds = [undefined, NaN, Infinity, -Infinity, -0, 0, 0.5, 49.5, 50, 50.5, 100, 100.5, -5, 150, 1e300, -1e300, 5e-324, 1e-9];
+  for (let i = 0; i < 40; i++) speeds.push(R.range(-20, 120));
+  const hefts = [undefined, NaN, Infinity, -1, 0, 0.5, 1, 1.2, 2, 1e300];
+  const handlings = [undefined, NaN, -0.5, 0, 0.4, 1.5, ...Object.values(SWING_HANDLING)];
+  for (const s of speeds) {
+    for (const h of hefts) {
+      for (const hd of handlings) out.add('swing_frame', O(s), O(h), O(hd), F(swingFrameSeconds(s, { heft: h, handling: hd })));
+    }
+  }
+  const handlingPool = handlings.filter((x) => x !== undefined);
+  for (let i = 0; i < 300; i++) {
+    const s = R.range(-20, 120);
+    const h = R.range(0.5, 2);
+    const hd = R.pick(handlingPool);
+    out.add('swing_frame', F(s), F(h), F(hd), F(swingFrameSeconds(s, { heft: h, handling: hd })));
+  }
+
+  // swingHeft
+  const weights = [undefined, NaN, Infinity, -Infinity, -1, -0, 0, 0.5, 0.75, 2, 2.5, 3.5, 5, 7, 7.5, 1e9, 20];
+  const strengths = [undefined, NaN, -Infinity, -10, 0, 1, 20, 49, 50, 51, 99.9, 100, 101, 150, 1e9];
+  for (const w of weights) for (const s of strengths) out.add('swing_heft', O(w), O(s), F(swingHeft(w, s)));
+  for (let i = 0; i < 300; i++) {
+    const w = R.range(-2, 12);
+    const s = R.range(-10, 160);
+    out.add('swing_heft', F(w), F(s), F(swingHeft(w, s)));
+  }
+
+  // swingHandling: no weapon, every WEAPONS template, synthetic types (absent, NaN, -0, off-table, out-of-range), flags
+  const weaponCases = [null, undefined, ...Object.values(WEAPONS)];
+  for (const t of [undefined, NaN, -0, 0, 1, 2, 3, 4, 4.5, 5, 13, 14, 15, 16, 17, 18, 19, 20, 100, -4]) {
+    weaponCases.push({ type: t, shortBlade: false, twoHanded: false });
+  }
+  for (const t of [4, 0, 15, 17, undefined]) {
+    for (const sb of [false, true]) for (const th of [false, true]) weaponCases.push({ type: t, shortBlade: sb, twoHanded: th });
+  }
+  for (const w of weaponCases) {
+    if (!w) out.add('swing_handling', '0', '-', '0', '0', F(swingHandling(w)));
+    else out.add('swing_handling', '1', O(w.type), B(!!w.shortBlade), B(!!w.twoHanded), F(swingHandling(w)));
+  }
+
+  // classicStrength: the Strength term with the opts key absent, true, or false
+  const strs = [NaN, Infinity, -Infinity, 0, -0, 1e-9, 50, 49.5, 55, 75.5, 100, 150, -5, 1e300, -1e300];
+  for (let i = 0; i < 120; i++) strs.push(R.range(-20, 150));
+  for (const s of strs) {
+    for (const fixed of [undefined, true, false]) {
+      const opts = fixed === undefined ? {} : { fixedStrengthDamageModifier: fixed };
+      out.add('classic_strength', F(s), fixed === undefined ? '-' : B(fixed), F(classicStrength(s, opts)));
+    }
+  }
+  return out.write();
+}
+
 counts.round = genRound();
 counts.rng = genRng();
 counts.damage = genDamage();
 counts.allowance = genAllowance();
 counts.relay_claim = genRelay();
+counts.swing = genSwing();
 for (const [k, v] of Object.entries(counts)) console.log(`${k}: ${v} lines -> ${join('rust', 'tests', 'vectors', `${k}.txt`)}`);

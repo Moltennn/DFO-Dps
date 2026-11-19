@@ -7,6 +7,8 @@
 
 pub mod allowance;
 pub mod damage;
+pub mod generated;
 pub mod relay_claim;
 pub mod rng;
 pub mod round;
+pub mod swing;
