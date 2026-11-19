@@ -43,8 +43,14 @@ separate Assassin/Opening Strike scenario).
 
 - `soft`, `tough`, `armoured`, `human` are reference foes.
 - `boss` is a generic boss: pass `--health`, `--armor`, `--traits`, `--level`.
-- `breach` and `gate` are the real relay body and its per-player allowance.
-  Their default traits come from the game's relay selector.
+- `breach`, `gate`, `ruhn`, `skyketch` and `abyss` are the real relay bodies
+  and their per-player allowances. Their default traits come from the game's
+  relay selector.
+- `gate` and its alias `ruhn` are the solo gate boss, Valkynaz Ruhn.
+- `skyketch` is the Sky-ketch Warden: 600 s share per player, a 6.6 s opening
+  immunity and The Discord window.
+- `abyss` is the Abyss Remnant: the clock puzzle and gold/silver split, with an
+  uncalibrated share.
 - `--players` and `--blow-x` apply to the relay targets.
 
 Common combat switches:

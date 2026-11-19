@@ -32,7 +32,7 @@ test('objective CLI rejects invalid objective, trials, target, pool and seed wit
     [['--objective', 'stochastic-ttk', '--trials', '999'], /at least 1000 trials/],
     [['--trials', '1000.5'], /--trials.*integer/],
     [['--objective', 'stochastic-relay'], /not a relay body/],
-    [['--objective', 'fight', '--health', '0'], /positive.*--health/],
+    [['--objective', 'fight', '--health', '0'], /--health.*positive/],
     [['--seed', '1.25'], /--seed.*integer/],
   ];
   for (const [args, message] of cases) {

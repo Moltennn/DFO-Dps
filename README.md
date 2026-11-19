@@ -64,10 +64,14 @@ platform user-data location.
 - `report` writes a single-file HTML report.
 
 `--target` accepts the reference foes `soft`, `tough`, `armoured` and `human`,
-the synthetic `boss`, or the real relay targets `breach` and `gate`. `--target
-breach` uses the Breach body at the selected level (the character's level by
-default; `--level` overrides it) and its per-player allowance. `boss` is a
-generic boss with the health, armour and traits you pass.
+the synthetic `boss`, or the real relay targets `breach`, `gate`, `ruhn`,
+`skyketch` and `abyss`. `--target breach` uses the Breach body at the selected
+level (the character's level by default; `--level` overrides it) and its
+per-player allowance. `gate` and its alias `ruhn` are the solo gate boss,
+Valkynaz Ruhn; `skyketch` is the Sky-ketch Warden (600 s share per player, one
+6.6 s opening immunity and The Discord window); `abyss` is the Abyss Remnant
+(clock puzzle, gold/silver split, uncalibrated share). `boss` is a generic boss
+with the health, armour and traits you pass.
 
 ## Commands at a glance
 

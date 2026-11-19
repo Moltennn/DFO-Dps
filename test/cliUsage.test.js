@@ -45,3 +45,69 @@ test('--trials above 1,000,000 exits 2 in objective and loadout --shortlist', ()
   usageError(['objective', '--theory', '--target', 'soft', '--objective', 'stochastic-ttk', '--trials', '1000001'], /at most 1,000,000 trials/);
   usageError(['loadout', '--theory', '--shortlist', '1', '--trials', '1000001'], /at most 1,000,000 trials/);
 });
+
+const numericCases = [
+  [['--level', '0'], /--level.*integer.*1.*45/],
+  [['--level', '99999'], /--level.*integer.*1.*45/],
+  [['--level', ''], /--level/],
+  [['--level', 'abc'], /--level/],
+  [['--stacks', '9'], /--stacks.*0.*5/],
+  [['--stacks', 'x'], /--stacks/],
+  [['--players', '0'], /--players.*at least 1/],
+  [['--players', '1.5'], /--players.*integer/],
+  [['--players', 'abc'], /--players/],
+  [['--health', '0'], /--health.*positive/],
+  [['--health', 'abc'], /--health/],
+  [['--health', '1e400'], /--health/],
+  [['--armor', 'abc'], /--armor/],
+  [['--backstab', '2'], /--backstab.*0.*1/],
+  [['--backstab', 'abc'], /--backstab/],
+  [['--blow-x', '0'], /--blow-x.*positive/],
+  [['--blow-x', 'abc'], /--blow-x/],
+  [['--trials', '1.5'], /--trials.*integer/],
+  [['--trials', 'abc'], /--trials/],
+  [['--top', 'abc'], /--top/],
+  [['--potency', 'abc'], /--potency/],
+  [['--pierce', 'abc'], /--pierce/],
+  [['--repairs', 'abc'], /--repairs/],
+  [['--regen', 'abc'], /--regen/],
+  [['--seconds', 'abc'], /--seconds/],
+  [['--health-share', '2'], /--health-share.*0.*1/],
+  [['--self-health-share', 'abc'], /--self-health-share/],
+  [['--base-stats', 'abc'], /--base-stats/],
+  [['--star-damage', 'abc'], /--star-damage/],
+  [['--from', 'abc'], /--from/],
+  [['--to', 'abc'], /--to/],
+  [['--step', 'abc'], /--step/],
+];
+
+test('numeric flags reject junk instead of silently using the default', () => {
+  for (const [args, message] of numericCases) usageError(['build', '--theory', ...args], message);
+});
+
+test('enum and name flags reject unknown values with the valid list', () => {
+  usageError(['build', '--theory', '--swing', 'nope'], /--swing.*random.*StrikeLeft/);
+  usageError(['build', '--theory', '--traits', 'nope'], /--traits.*warded/);
+  usageError(['build', '--theory', '--passive', 'nope'], /--passive.*none.*blademaster/i);
+  usageError(['build', '--theory', '--race', 'nope'], /--race.*darkelf/);
+  usageError(['imprints', '--theory', '--sort', 'nope'], /--sort.*boss.*uncapped.*conditional/);
+  usageError(['enchant-plan', '--theory', '--shield', 'nope'], /--shield.*none.*auto/);
+  usageError(['loadout', '--theory', '--encounter', 'nope'], /--encounter.*breach.*skyketch.*abyss/);
+  usageError(['build', '--theory', '--weapon', '121:abc'], /--weapon.*material.*0.*9/);
+  usageError(['build', '--theory', '--weapon', '121:99'], /--weapon.*material.*0.*9/);
+  usageError(['build', '--theory', '--weapon', '121.5:9'], /unknown weapon template/);
+});
+
+test('help names every accepted target', () => {
+  const result = cli('--help');
+  assert.equal(result.status, 0, result.stderr);
+  for (const id of ['ruhn', 'skyketch', 'abyss']) assert.match(result.stdout, new RegExp(`\\b${id}\\b`));
+});
+
+test('theory --gear-cs 300 leaves the weapon-skill line at its legal default', () => {
+  const result = cli('theory', '--gear-cs', '300', '--json');
+  assert.equal(result.status, 0, result.stderr);
+  const doc = JSON.parse(result.stdout);
+  assert.equal(doc.character.maxCs, 300);
+  assert.equal(doc.character.maxLb, doc.character.legal.lb);
+});

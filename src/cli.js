@@ -14,7 +14,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import {
-  MARTIAL_PATHS, RACE_NAMES, SKILLS, SOURCE, WEAPONS,
+  BOSS_TRAITS, MATERIALS, MARTIAL_PATHS, RACE_NAMES, SKILLS, SOURCE, SWING_MODS, WEAPONS,
   gateHealth,
 } from './data.js';
 import { buildReport } from './report.js';
@@ -26,15 +26,16 @@ import { applyTree, realWeaponLoadouts } from './realBuild.js';
 import { shortlistLoadouts } from './loadoutShortlist.js';
 import { ENCOUNTERS, ENCOUNTER_IDS, encounterById, encounterTarget } from './encounters.js';
 import { evaluateObjective, MIN_STOCHASTIC_TRIALS, OBJECTIVE_IDS, STOCHASTIC_OBJECTIVE_IDS } from './objectives.js';
-import { enchantmentName as enchantmentNameOf } from './enchantData.js';
+import { enchantmentName as enchantmentNameOf, itemTemplate } from './enchantData.js';
 import { analyzeSpell, resolveSpells, spellCost, spellRotation, standardSpells } from './spells.js';
 import { chartTotals, probeConstants, summarizeProbe } from './probe.js';
 import { ENCHANTMENT_TYPES, billCapacityNote, enchantDps, procsBeforeBreak, strikeEnchantments } from './enchants.js';
 import { perfectSockets } from './sockets.js';
 import {
   DEFAULT_BLADE, GEAR_MASTERY_POINTS, LONG_BLADES,
-  THEORY_CAPS, THEORY_LEVEL, theoryBlade, theoryCharacter, theoryFists,
+  THEORY_CAPS, THEORY_LEVEL, THEORY_RACES, theoryBlade, theoryCharacter, theoryFists,
 } from './theory.js';
+import { LEVEL_CAP } from '../vendor/upstream/a3eb1605/src/systems/levelCap.js';
 import { legalFrontier, legalGear } from './maxprofile.js';
 import { AFFIX_DAMAGE_TOP, maxPointTotal, maxSingleSkill } from './gearProfile.js';
 import {
@@ -76,7 +77,8 @@ Usage:
 
 Common options:
   --save <SAVE4|path>                 save slot or SaveData.txt (default: newest)
-  --target <soft|tough|armoured|human|boss|breach|gate>  reference foe or the real Breach boss (default: armoured)
+  --target <soft|tough|armoured|human|boss|breach|gate|ruhn|skyketch|abyss>  reference foe, the gate boss or a real relay boss (default: armoured)
+                                      ruhn: gate boss; skyketch: 600 s share, Discord window; abyss: clock puzzle, uncalibrated
   --level <n>                         target level (default: character level)
   --armor <n>                         boss armor value (default: 0)
   --health <n>                        boss maximum health (default: 5000)
@@ -266,6 +268,119 @@ const optsSpec = {
 
 const weaponLabel = (w) => (w ? (String(w.name).startsWith(String(w.materialName)) ? w.name : `${w.materialName} ${w.name}`) : 'bare hands');
 const n = (v, d = 0) => (v != null && Number.isFinite(Number(v)) ? Number(v) : d);
+
+function rangeText(what, min, max, exclusiveMin) {
+  const one = what === 'integer' ? 'an' : 'a';
+  if (min === -Infinity && max === Infinity) return `${one} finite ${what}`;
+  if (max === Infinity) {
+    if (exclusiveMin) return min === 0 ? `${one} positive ${what}` : `${one} ${what} greater than ${min}`;
+    return min === 0 ? `${one} non-negative ${what}` : `${one} ${what} at least ${min}`;
+  }
+  if (min === -Infinity) return `${one} ${what} at most ${max}`;
+  return exclusiveMin ? `${one} ${what} greater than ${min} and at most ${max}` : `${one} ${what} from ${min} to ${max}`;
+}
+
+/** Strict flag parsing: absent keeps the default; present must be a real number in range. */
+function numFlag(values, name, def, { min = -Infinity, max = Infinity, int = false, exclusiveMin = false } = {}) {
+  const raw = values[name];
+  if (raw == null) return def;
+  const text = String(raw).trim();
+  const value = text === '' ? NaN : Number(text);
+  const what = int ? 'integer' : 'number';
+  if (!Number.isFinite(value) || (int && !Number.isInteger(value))
+    || (exclusiveMin ? !(value > min) : value < min) || value > max) {
+    throw new UsageError(`--${name} must be ${rangeText(what, min, max, exclusiveMin)}, got "${raw}"`);
+  }
+  return value;
+}
+
+const WEAPON_MATERIAL_MAX = MATERIALS.length - 1;
+
+function weaponFlag(value) {
+  const parts = String(value).split(':');
+  if (parts.length > 2) throw new UsageError(`--weapon expects template or template:material (e.g. 121:9), got "${value}"`);
+  const tpl = Number(parts[0]);
+  if (!Number.isSafeInteger(tpl) || !WEAPONS[tpl]) {
+    throw new UsageError(`--weapon: unknown weapon template ${parts[0]}. Melee templates: ${Object.keys(WEAPONS).join(', ')}`);
+  }
+  if (WEAPONS[tpl].ammo) throw new UsageError(`--weapon template ${tpl} is ammunition, not a weapon`);
+  let material = 9;
+  if (parts.length === 2) {
+    const raw = parts[1].trim();
+    material = Number(raw);
+    if (raw === '' || !Number.isInteger(material) || material < 0 || material > WEAPON_MATERIAL_MAX) {
+      throw new UsageError(`--weapon material must be an integer from 0 to ${WEAPON_MATERIAL_MAX}, got "${parts[1]}"`);
+    }
+  }
+  return { tpl, material };
+}
+
+function validateFlags(values) {
+  numFlag(values, 'level', THEORY_LEVEL, { min: 1, max: LEVEL_CAP, int: true });
+  numFlag(values, 'stacks', 5, { min: 0, max: 5, int: true });
+  numFlag(values, 'players', 1, { min: 1, int: true });
+  numFlag(values, 'health', 5000, { min: 0, exclusiveMin: true });
+  numFlag(values, 'armor', 0, { min: 0 });
+  numFlag(values, 'backstab', 0, { min: 0, max: 1 });
+  numFlag(values, 'blow-x', 1, { min: 0, exclusiveMin: true });
+  numFlag(values, 'trials', MIN_STOCHASTIC_TRIALS, { min: 1, int: true });
+  numFlag(values, 'top', 20, { min: 1, int: true });
+  numFlag(values, 'potency', 0);
+  numFlag(values, 'pierce', 0);
+  numFlag(values, 'repairs', 1, { min: 0, int: true });
+  numFlag(values, 'regen', 0, { min: 0, int: true });
+  numFlag(values, 'seconds', 30, { min: 0, exclusiveMin: true });
+  numFlag(values, 'health-share', 1, { min: 0, max: 1 });
+  numFlag(values, 'self-health-share', 1, { min: 0, max: 1 });
+  numFlag(values, 'base-stats', 50);
+  numFlag(values, 'star-damage', 0);
+  numFlag(values, 'from', 0);
+  numFlag(values, 'to', 0);
+  numFlag(values, 'step', 10, { min: 0, exclusiveMin: true });
+  numFlag(values, 'gear-lb', 0, { min: 0 });
+  numFlag(values, 'gear-cs', 0, { min: 0 });
+  numFlag(values, 'damage-pct', 0);
+  numFlag(values, 'cast-speed', 0);
+  numFlag(values, 'magicka', 0);
+  numFlag(values, 'stars', 98, { min: 0, max: 98, int: true });
+  numFlag(values, 'blade', DEFAULT_BLADE, { min: 1, int: true });
+  numFlag(values, 'skill', -1, { min: 0, max: 34, int: true });
+  numFlag(values, 'gear-skill', -1, { min: 0, max: 34, int: true });
+
+  if (values.blade != null && !WEAPONS[Number(values.blade)]) {
+    throw new UsageError(`--blade: unknown weapon template ${values.blade}. Melee templates: ${Object.keys(WEAPONS).join(', ')}`);
+  }
+  if (values.swing != null && String(values.swing) !== 'random' && !(String(values.swing) in SWING_MODS)) {
+    throw new UsageError(`--swing must be random or one of ${Object.keys(SWING_MODS).join(', ')}, got "${values.swing}"`);
+  }
+  if (values.traits != null) {
+    for (const trait of traitsOf(values)) {
+      if (!BOSS_TRAITS.includes(trait)) throw new UsageError(`--traits has no "${trait}"; choose ${BOSS_TRAITS.join(', ')}`);
+    }
+  }
+  if (values.passive != null) {
+    const passive = String(values.passive).toLowerCase();
+    if (passive !== 'none' && !MARTIAL_PATHS[passive]) {
+      throw new UsageError(`--passive must be none or one of ${Object.keys(MARTIAL_PATHS).join(', ')}, got "${values.passive}"`);
+    }
+  }
+  if (values.race != null && !THEORY_RACES[String(values.race).toLowerCase()]) {
+    throw new UsageError(`--race must be one of ${Object.keys(THEORY_RACES).join(', ')}, got "${values.race}"`);
+  }
+  if (values.sort != null && !['boss', 'uncapped', 'conditional'].includes(String(values.sort))) {
+    throw new UsageError(`--sort must be boss, uncapped or conditional, got "${values.sort}"`);
+  }
+  if (values.shield != null) {
+    const shield = String(values.shield).toLowerCase();
+    if (shield !== 'none' && shield !== 'auto' && (shield === '' || !itemTemplate(shield))) {
+      throw new UsageError(`--shield must be a template number, none or auto, got "${values.shield}"`);
+    }
+  }
+  if (values.weapon != null) weaponFlag(values.weapon);
+  if (values.encounter != null && !ENCOUNTER_IDS.includes(String(values.encounter).toLowerCase())) {
+    throw new UsageError(`--encounter must be one of ${ENCOUNTER_IDS.join(', ')}, got "${values.encounter}"`);
+  }
+}
 const fmt = (v) => (Number.isFinite(v) ? (Math.round(v * 10) / 10).toFixed(1) : '-');
 const fmt2 = (v) => (Number.isFinite(v) ? (Math.round(v * 100) / 100).toFixed(2) : '-');
 const pc = (v) => (Number.isFinite(v) ? `${Math.round(v * 100)}%` : '-');
@@ -313,12 +428,13 @@ function loadCharacter(values) {
     return { ch, entry: null, save: null };
   }
   const { entry, save } = loadSave(values.save);
+  const passive = values.passive?.toLowerCase();
   let ch = characterFromSave(save, {
     online: !values.offline,
     slot: entry.slot,
     file: entry.file,
-    martialPath: values.passive !== undefined
-      ? (values.passive === 'none' ? null : values.passive)
+    martialPath: passive !== undefined
+      ? (passive === 'none' ? null : passive)
       : undefined,
   });
   if (values.bare) ch = bareCharacter(ch);
@@ -757,6 +873,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
   const values = parsed.values;
   if (values.help) { console.log(HELP); return; }
+  validateFlags(values);
   const cmd = parsed.positionals[0] ?? 'build';
   if (cmd === 'theory' || cmd === 'weapons' || cmd === 'skills') values.theory = true;
 
@@ -1078,8 +1195,8 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   if (cmd === 'enchant-plan' || cmd === 'gear-plan') {
-    const weapon = Number(values.weapon ?? 123);
-    const shield = values.shield ?? 'auto';
+    const weapon = values.weapon != null ? weaponFlag(values.weapon).tpl : 123;
+    const shield = String(values.shield ?? 'auto').toLowerCase();
     const group = String(values.group ?? 'daedra').toLowerCase();
     if (!['undead', 'daedra', 'humanoid', 'animal'].includes(group)) {
       console.error(`unknown Potent Vs group: ${group}`);
@@ -1676,8 +1793,8 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       const r = run(c);
       return { lb: p.lb, cs: p.cs, dmg: p.dmg, total: p.lb + p.cs, dps: r.dps, cappedDps: r.cappedDps, perSwing: r.perSwing, ttk: r.ttk, ch: c, r };
     }).sort((a, b) => a.lb - b.lb);
-    const maxLb = explicitGear ? n(values['gear-lb'], 0) : legal.lb;
-    const maxCs = explicitGear ? n(values['gear-cs'], 0) : legal.cs;
+    const maxLb = numFlag(values, 'gear-lb', legal.lb, { min: 0 });
+    const maxCs = numFlag(values, 'gear-cs', legal.cs, { min: 0 });
     const keyOf = (x) => `${x.lb}/${x.cs}/${x.dmg}`;
     const onFrontier = frontierRows.find((x) => x.lb === maxLb && x.cs === maxCs);
     const maxCh = make({ rawBlade: 200, rawCrit: 200, gearLB: maxLb, gearCS: maxCs, damagePct: damage });
