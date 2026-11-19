@@ -847,6 +847,50 @@ compile); dual wield killed 43 of 45 (2 equivalent); durability killed 39 of 43 
 The surviving changes have proofs at the affected code. The tool still prints `FAIL` for
 proven-equivalent survivors.
 
+## R4c: exact joint blow outcomes and sampling
+
+`blow_outcomes.rs` ports `src/blowOutcomes.js:60–470`: full enumeration, fight and carry merges,
+moments, and the cumulative sampler. It calls R4b's `damage_model` and `echo_chances`;
+`blow_distribution` remains a separate R4b API. Nothing here runs the fight, schedules hands or
+draws randomness. The sampler takes a roll; `outcome_at` checks `[0, 1)`, whereas `sample` trusts
+the caller just like the JS stream entry point.
+
+- Enumeration follows direction → facing/backstab → crit → part → whole → roll → defence/echo
+  branch, then misses after the rolls of that whole branch. Each product keeps JS's left
+  association and uses the reciprocal of the card count, not division of the final product.
+  The full total is an ordinary left fold; the two merges, means, and CDF each use the JS
+  Neumaier accumulator in their own traversal order.
+- Defence uses the same per-part shield/armour functions as R3 only for geared overhaul targets;
+  all other targets use intrinsic defence. The target projection preserves raw hit inputs and
+  folds live stats only for defence. The omitted-target path constructs the fields read from
+  the tough `referenceFoe` preset. Explicit null weapon and omitted weapon do not coincide.
+- Merge keys are exact, not tolerance bins. Numeric keys identify both signs of zero and all
+  NaNs, like JS string keys. Groups retain the first atom's non-key fields and insertion order
+  before stable sorting. Sort fields are the JS lexicographic chain (never `p`); when subtraction
+  yields NaN, skip that comparison as JS's `||` does. An inconsistent comparator on fabricated
+  mixtures of NaN and finite damage has no specified cross-engine JS order.
+- Carry retains the part, pre-percentage base, and defence branch; `CarryResolve::resolve`
+  reruns the percentage channels with the caller's `Carry` item identities, then the finish and
+  defence pipeline. It leaves a miss/nonpositive base unchanged and falls back to the original
+  atom if the branch disappears. Rust represents the JS closure as an owned context and the
+  frozen records as owned atoms; direction is held once in the tier and referenced by index.
+- The CDF excludes nonpositive and NaN probabilities, uses its own total rather than the
+  tier's, and binary-searches with strict `cdf[mid] > roll * total`. It returns the last live
+  atom if rounding puts the product at or beyond the last prefix. `TOLERANCE` is an error
+  bound on probability drift, not a rule that discards small probabilities or nearby damage.
+
+`tools/rust-outcome-vectors.mjs` uses the real JS tier and sampler functions over the R4b
+character/target grid. The streamed `blow_outcomes.txt` encodes every ordered atom, tier metadata,
+means, and live carry traces. Each generated fight/carry CDF is checked at all normalized prefix
+edges and neighboring doubles, plus the first representable roll whose product reaches the edge.
+Synthetic tiers probe compensated prefixes, zero/NaN weights, short and empty CDFs, tolerance-scale
+damage keys, signed-zero and NaN merge keys, stable ties, and invalid rolls. Tests enforce the
+2,000-case floor per main family and fail on a missing file. Regenerate with `node tools/rust-vectors.mjs`.
+
+Mutation gate (seed 1, count 1000): 146 candidates, 124 killed, 19 equivalent survivors
+documented at the mutated expressions, and 3 invalid (did not compile). The gate reports `FAIL`
+for equivalent survivors too.
+
 ## Plan after R2 (R2 is done; the rest is a plan)
 
 Order chosen by dependency; each step ships only with vectors (or the upstream goldens) that fail first.

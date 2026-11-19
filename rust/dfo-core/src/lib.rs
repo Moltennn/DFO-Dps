@@ -6,6 +6,7 @@
 //! bit-exact against golden vectors written by `tools/rust-vectors.mjs`.
 
 pub mod allowance;
+pub mod blow_outcomes;
 pub mod boot;
 pub mod damage;
 pub mod dual_wield;

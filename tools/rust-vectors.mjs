@@ -25,7 +25,7 @@
  *       word  a bare ASCII word (`ok`, `err`, `null`, a reason such as `accepted-clipped`).
  *   - Each kind is documented where its generator is written below.
  */
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -146,22 +146,36 @@ function makeLcg(seed) {
 }
 
 class Out {
-  constructor(module, note) {
+  constructor(module, note, streaming = false) {
     this.module = module;
     this.lines = [];
     this.note = note;
+    this.path = join(outDir, `${module}.txt`);
+    if (streaming) {
+      mkdirSync(outDir, { recursive: true });
+      writeFileSync(this.path, `${this.header().join('\n')}\n`);
+      this.count = 0;
+    }
   }
   add(...tokens) {
-    this.lines.push(tokens.join(' '));
+    const line = tokens.join(' ');
+    if (this.count === undefined) this.lines.push(line);
+    else {
+      appendFileSync(this.path, `${line}\n`);
+      this.count++;
+    }
   }
-  write() {
-    const head = [
+  header() {
+    return [
       `# dfo-core golden vectors | generator: tools/rust-vectors.mjs | module: ${this.module} | format: v1`,
       `# ${this.note}`,
       '# tokens: f64 = 16 hex digits of IEEE bits; int = decimal; u32 = 8 hex; bool = 1/0; opt = - or f64; name = n:<4 hex per UTF-16 unit>',
     ];
+  }
+  write() {
+    if (this.count !== undefined) return this.count;
     mkdirSync(outDir, { recursive: true });
-    writeFileSync(join(outDir, `${this.module}.txt`), `${[...head, ...this.lines].join('\n')}\n`);
+    writeFileSync(this.path, `${[...this.header(), ...this.lines].join('\n')}\n`);
     return this.lines.length;
   }
 }

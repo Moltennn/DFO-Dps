@@ -10,6 +10,7 @@
 use dfo_core::value::{self, Value};
 use std::collections::HashMap;
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 /// `rust/tests/vectors/<module>.txt`.
@@ -24,36 +25,44 @@ pub fn vector_path(module: &str) -> PathBuf {
 /// Load every case of a vector file. Panics (failing the test) if the file is missing, has no
 /// generator header, or has no cases.
 pub fn load(module: &str) -> Vec<Case> {
+    let cases: Vec<_> = stream(module).collect();
+    assert!(!cases.is_empty(), "{module}: no cases");
+    cases
+}
+
+/// Streaming equivalent for large files. The caller must assert its case count/family floors.
+pub fn stream(module: &str) -> impl Iterator<Item = Case> {
     let path = vector_path(module);
-    let text = fs::read_to_string(&path).unwrap_or_else(|e| {
+    let file = fs::File::open(&path).unwrap_or_else(|e| {
         panic!(
             "golden vector file missing or unreadable: {} ({e}). Run `node tools/rust-vectors.mjs` \
              from the repository root to generate it; these tests do not pass without it.",
             path.display()
         )
     });
+    let mut lines = BufReader::new(file).lines().enumerate();
+    let first = lines.next().and_then(|(_, l)| l.ok()).unwrap_or_default();
     assert!(
-        text.starts_with("# dfo-core golden vectors | generator: tools/rust-vectors.mjs"),
+        first.starts_with("# dfo-core golden vectors | generator: tools/rust-vectors.mjs"),
         "{}: missing the generator header line",
         path.display()
     );
-    let mut cases = Vec::new();
-    for (i, line) in text.lines().enumerate() {
+    let file = format!("{module}.txt");
+    lines.filter_map(move |(i, line)| {
+        let line = line.unwrap_or_else(|e| panic!("{file}:{}: {e}", i + 1));
         if line.is_empty() || line.starts_with('#') {
-            continue;
+            return None;
         }
         let mut toks = line.split(' ').map(str::to_owned);
         let kind = toks.next().unwrap();
-        cases.push(Case {
-            file: format!("{module}.txt"),
+        Some(Case {
+            file: file.clone(),
             line: i + 1,
             kind,
             toks: toks.collect(),
             pos: 0,
-        });
-    }
-    assert!(!cases.is_empty(), "{}: no cases", path.display());
-    cases
+        })
+    })
 }
 
 /// One line, read token by token.

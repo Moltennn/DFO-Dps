@@ -760,7 +760,7 @@ fn optional_num(v: &Value, key: &str) -> Option<f64> {
     (!v.is_nullish()).then(|| v.num_or(f64::NAN))
 }
 
-fn target_weapon(w: &Value) -> Option<target::Weapon> {
+pub(crate) fn target_weapon(w: &Value) -> Option<target::Weapon> {
     w.truthy().then(|| target::Weapon {
         skill_id: optional_num(w, "skillId"),
         material: optional_num(w, "material"),

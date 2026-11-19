@@ -13,6 +13,7 @@ import { ELEMENT_TRAITS } from '../vendor/upstream/a3eb1605/src/systems/bossTrai
 import { HAND_WRAPS_TEMPLATE } from '../vendor/upstream/a3eb1605/src/characters/handWrapsIds.js';
 import { resistBlow } from '../src/bossTraits.js';
 import { encodeValue as V } from './rust-codec.mjs';
+import { outcomeVectors } from './rust-outcome-vectors.mjs';
 
 const bits = new DataView(new ArrayBuffer(8));
 function around(x) {
@@ -54,6 +55,7 @@ export function genBlowFamilies(Out, makeLcg) {
     const t = makeTarget({ isClass: true, stats: { strength: 90, endurance: 95, agility: 75, willpower: 76, speed: 80, luck: 65 }, skills: {[SKILLS.Dodging]: 60} });
     targets.push(equipArmour(t, [armourPiece(102, material), armourPiece(109, 512)]));
   }
+  const tiers = outcomeVectors(Out);
   for (let i = 0; i < 256; i++) {
     const blade = tpls[i % tpls.length];
     const raw = [99, 100, 101, 102, 110, 200, 1000, NaN][(i >> 1) % 8];
@@ -68,6 +70,7 @@ export function genBlowFamilies(Out, makeLcg) {
     if (i % 3) for (const id of [SKILLS.Archery, SKILLS.Axe, SKILLS.ShortBlade, SKILLS.BluntWeapon, SKILLS.HandToHand]) { ch.skills[id] = raw; ch.masteredSkills.push(id); }
     const it = { ...(ch.weapon ?? weapon(blade)), templateIndex: blade, currentCondition: edges[i % edges.length], material: i % 12 - 1, rarity: 'rare', imprint: Object.keys(LEGENDARY_POWERS)[i % Object.keys(LEGENDARY_POWERS).length], enchantments: [{type: 4, param: i % 4}, {type: [18, 19, 99, 20, -1, '20'][i % 6], param: i % 4}, {type: 20, param: (i >> 2) % 4}], affixes: [{ id: 'damage', value: 15 }, {id: 'slayer', param: 'animal', value: 10}, {id: 'elemental', param: 'fire', value: 5}], sockets: i % 2 ? ['perfect-ruby', 'perfect-ruby'] : [], __bonusDamage: i % 4 - 1 };
     const w = M.weaponOf(it, {rri: i % 2 !== 0});
+    tiers.build(i, ch, it, targets);
     const cRef = ref(ch), iRef = ref(it);
     for (let j = 0; j < 8; j++) {
       const z = i * 8 + j;
@@ -305,5 +308,5 @@ export function genBlowFamilies(Out, makeLcg) {
   for (const stacks of [undefined, NaN, ...around(5)]) {
     scalar({martialPath:'blademaster'}, null, neutral, {stacks}, 'strength', SKILLS.Dodging, 'overhaul', false);
   }
-  return {model_blow: model.write(), dual_wield: dual.write(), durability: dur.write()};
+  return {model_blow: model.write(), dual_wield: dual.write(), durability: dur.write(), ...tiers.write()};
 }

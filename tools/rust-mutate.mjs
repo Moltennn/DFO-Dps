@@ -12,13 +12,14 @@
  *   --tests   integration test names (rust/dfo-core/tests/<name>.rs) that cover the file; lib unit tests always run
  *   --count   how many mutants to try (default 40), drawn with a seeded shuffle so a run is reproducible
  *   --seed    shuffle seed (default 1)
+ *   --timeout seconds per mutant before it counts as a hang and is killed with its whole process group (default 180)
  *   --list    print the candidate mutants and exit
  *
  * Code under `#[cfg(test)]`, comments, doc comments and string literals are never mutated. The file is restored after
  * every mutant and on any exit; the final state is compared byte for byte with the original.
  */
 import { copyFileSync, readFileSync, writeFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -46,7 +47,11 @@ const backup = `/tmp/rust-mutate-${file.replace(/[^a-z0-9]/gi, '_')}.bak`;
 copyFileSync(path, backup);
 const restore = () => writeFileSync(path, original);
 process.on('exit', restore);
-for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => process.exit(130));
+// The run loop below is asynchronous on purpose: a signal handler can only run while the event loop is free, so a
+// SIGTERM now restores the file and kills the live test process group at once (a synchronous loop ignored it).
+let live = null;
+const killLive = () => { if (live?.pid) { try { process.kill(-live.pid, 'SIGKILL'); } catch { /* already gone */ } } };
+for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { killLive(); restore(); process.exit(130); });
 
 // ---- candidates -------------------------------------------------------------------------------------------------
 const lines = original.split('\n');
@@ -113,9 +118,22 @@ if (listOnly) {
 
 // ---- run ---------------------------------------------------------------------------------------------------------
 const cargoArgs = ['test', '-q', ...tests.flatMap((t) => ['--test', t]), '--lib'];
-const run = () => spawnSync('cargo', cargoArgs, { cwd: rustDir, encoding: 'utf8', timeout: 600000 });
+// A mutant may loop forever (for example a binary-search midpoint shift). Each run has a deadline; on expiry the whole
+// process group (cargo AND the test binary it started) is killed and the mutant counts as killed ("hang").
+const mutantTimeoutS = Number(flag('timeout', 180));
+const run = (timeoutS = 600) => new Promise((resolveRun) => {
+  const child = spawn('cargo', cargoArgs, { cwd: rustDir, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  live = child;
+  let out = '';
+  let hung = false;
+  child.stdout.on('data', (d) => { out += d; });
+  child.stderr.on('data', (d) => { out += d; });
+  const timer = setTimeout(() => { hung = true; killLive(); }, timeoutS * 1000);
+  child.on('close', (status) => { clearTimeout(timer); live = null; killLive(); resolveRun({ status: hung ? null : status, stdout: out, stderr: '', hung }); });
+  child.on('error', () => { clearTimeout(timer); live = null; resolveRun({ status: 127, stdout: out, stderr: '', hung }); });
+});
 
-const base = run();
+const base = await run();
 if (base.status !== 0) {
   console.error(`the unmutated file does not pass (${cargoArgs.join(' ')}):\n${(base.stdout + base.stderr).slice(-1500)}`);
   process.exit(1);
@@ -129,10 +147,13 @@ for (const [i, m] of picked.entries()) {
   const ls = original.split('\n');
   ls[m.line] = ls[m.line].slice(0, m.col) + m.repl + ls[m.line].slice(m.col + m.len);
   writeFileSync(path, ls.join('\n'));
-  const r = run();
+  const r = await run(mutantTimeoutS);
   const out = r.stdout + r.stderr;
   let verdict;
-  if (r.status === 0) {
+  if (r.hung) {
+    verdict = `killed (hang > ${mutantTimeoutS}s)`;
+    killed++;
+  } else if (r.status === 0) {
     verdict = 'SURVIVED';
     survivors.push({ ...m, text: original.split('\n')[m.line].trim() });
   } else if (/error(\[E\d+\])?:/.test(out) && /could not compile/.test(out)) {
