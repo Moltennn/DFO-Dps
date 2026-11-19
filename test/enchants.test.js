@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { NEEDS_SPELLBOOK } from './harness/spellbook.mjs';
 import assert from 'node:assert/strict';
 import { theoryCharacter } from '../src/theory.js';
 import { analyze, bossTarget } from '../src/model.js';
@@ -21,7 +22,7 @@ test('EnhancesSkill is +15 per row, on top of the softcap', () => {
   assert.equal(mods.skillMods[29], 30);
 });
 
-test('Cast When Strikes prices the spell and adds its DPS to the weapon', () => {
+test('Cast When Strikes prices the spell and adds its DPS to the weapon', NEEDS_SPELLBOOK, () => {
   const ch = weapon();
   const target = bossTarget({ level: 45, health: 12000, traits: [], group: 'daedra' });
   const strike = strikeEnchantments(ch.weapon, ch, target, { level: 45, potencyPct: 30 });
@@ -50,7 +51,7 @@ test('a weapon with no enchantments adds nothing', () => {
 });
 
 
-test('a Cast When Strikes DoT is priced per tick, not as its whole duration every hit', () => {
+test('a Cast When Strikes DoT is priced per tick, not as its whole duration every hit', NEEDS_SPELLBOOK, () => {
   const ch = weapon({ enchantments: [{ type: 2, param: 33 }] }); // Wildfire
   const target = bossTarget({ level: 45, health: 12000, traits: [], group: 'daedra' });
   const strike = strikeEnchantments(ch.weapon, ch, target, { level: 45 });

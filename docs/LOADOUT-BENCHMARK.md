@@ -11,7 +11,7 @@ invented for it.
 | Pinned upstream | `a3eb1605ea1dc391b691fe314377458a7e63e483` |
 | Run | 26 loadouts × 3 health pools × durability off/on, 200 seeds per cell |
 | Wall time | 247.7 s on the development machine |
-| Digest | `012cd593c77589f1ba3d4b729082d95206a2eb082a69750815dbf5b339edf5d` |
+| Digest | `63758b10abdee9a705b7aefd6b1768ba56ec132346b19400ad8a320a4e960c43` (the committed `docs/benchmark/results.json`; it needs the game's `SPELLS.STD`, see Determinism below) |
 
 ## Headline findings
 
@@ -45,8 +45,16 @@ node tools/benchmark-loadouts.mjs --charts-only    # redraw charts/tables from t
 files back: the JSON digest must match its payload, the leaderboard chart must contain the leaderboard's rounded
 values, the CSV must have one row per cell, and `RESULTS.md` must carry the top value.
 
-The run is deterministic: the seed list comes from `pairedFightSeeds(200, 20261117)`, and the script uses no
-`Math.random`, clock or environment value. A second run with the same inputs writes byte-identical files.
+The run is deterministic given its inputs: the seed list comes from `pairedFightSeeds(200, 20261117)`, and the script uses
+no `Math.random` or clock. A second run with the same inputs writes byte-identical files.
+
+**One input is not in this repository: the game's standard spells.** Cast When Strikes enchants read `SPELLS.STD`
+from the Daggerfall install named by `arena2Path` in the launcher config (`src/spells.js` `standardSpells()`). The
+committed artifacts were produced with that file present (88 spells). On a machine without it the Cast When Strikes
+rows are silently dropped and the run is a different, still deterministic, benchmark: with no launcher config the
+digest is `48d0d3814a4c799c41acc8795c639aa9d3b429b808c895b3a543af6889d826d1`. So `--check` and the digest above only
+reproduce on a machine that has the game data. The tests that need it are reported as skipped, with that reason,
+where it is absent (`test/harness/spellbook.mjs`).
 
 ## What is measured
 

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { encounterTarget } from '../src/encounters.js';
+import { NEEDS_SPELLBOOK } from './harness/spellbook.mjs';
 import { isUsageFailure, UsageError } from '../src/usageError.js';
 
 const bin = fileURLToPath(new URL('../bin/dfo-dps.js', import.meta.url));
@@ -252,7 +253,6 @@ test('--json writes JSON and nothing else to stdout for every command that suppo
     ['enchant', '--theory', '--json'],
     ['scale', '--theory', '--stat', 'strength', '--json'],
     ['tradeoff', '--theory', '--json'],
-    ['spell', '--theory', '--json'],
     ['build', '--theory', '--json'],
     ['theory', '--json'],
   ]) {
@@ -260,4 +260,10 @@ test('--json writes JSON and nothing else to stdout for every command that suppo
     assert.equal(r.status, 0, `${args.join(' ')}: ${r.stderr}`);
     assert.doesNotThrow(() => JSON.parse(r.stdout), `${args.join(' ')} must print only JSON`);
   }
+});
+
+test('spell --json writes JSON and nothing else to stdout', NEEDS_SPELLBOOK, () => {
+  const r = cli('spell', '--theory', '--json');
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotThrow(() => JSON.parse(r.stdout), 'spell --json must print only JSON');
 });
