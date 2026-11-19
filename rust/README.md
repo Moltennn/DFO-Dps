@@ -1,5 +1,19 @@
 # dfo-core (Rust), milestones R1 and R2
 
+## R7: relay fights and ranking
+
+`relay_fight` reuses the ordinary attack scheduler and relay claim engine. Each
+batch owns a tier cache keyed by health segment, hand and Flow stacks; explicit
+CWS rolls and caller-owned carry markers bypass sharing. Rust's fixed `Spellbook`
+cannot have an overridden map accessor. The `Value` codec does not represent
+mutable JS `Map` remainders; the relay loop owns its own per-fight carry state.
+Claim, attack and ward traces retain the JS wire-rounded amounts and event order.
+
+`encounters`, `purse`, and `objectives` cover the three encounters and seven
+ranking objectives. `loadoutShortlist` still needs the `realBuild`/`imprints`
+planners and is not ported. `tools/rust-relay-vectors.mjs` compares complete
+results to JS, including 216 ten-seed configurations and scripted spell draws.
+
 ## R6b: seeded ordinary fights
 
 `simulate_fight` ports the ordinary scheduler and trial loop. `simulate_fights` owns
