@@ -518,6 +518,7 @@ The bases (each a family of its own, under 10k lines each; the generator prints 
 |---|---|---|
 | `bclassic` | 12 classic loadouts: a monster (variants null, 0, 1, 2; player level 1, 2, 9, 10, 11, 45), a class (variant 0 or 1 or 2), the city watch | ~240 constant; 8 x ~53 per indexed base |
 | `brri` | 19 classes (variant 0, bitfield 0 or 256 for plate), 7 combat classes with variant 1, orcs/centaurs with their variants (Orcs convert), a monster with none | ~240; indexed for 4 |
+| `borcish` | the four Orcs-team types (7 orc, 12 orc sergeant, 21 orc shaman, 24 orc warlord) at levels 1, 8, 9, 10, 45 (the Warlord 1, 5, 6, 9, 45) | ~200 constant per level; at level 9 every decision index (~20 x ~50) over an Ebony (Mithril for the Warlord) background the 80% test leaves unconverted; at level 45 the conversion roll's index alone over a Mithril background. The generator checks the last roll is the conversion roll (it flips at 0.80) |
 | `bgear` | 19 classes (code 7, city watch level 9), 4 classes (code 5, DEX on and Meaner Monsters off), 7 monsters (career indices 0, 6, 7, 8, 12, 21, 24) | ~240; indexed for 4 |
 | `benemy` | the City Watch knight (146) at player levels 1, 2, 9, 45, boots 0 and 7 | ~240 |
 | `bpoison` | `rollEnemyWeaponPoison` (poisons.js:250) for mobs 0, 7, 8, 12, 21, 24, 135, 139, 141, 146 at player levels 1, 2, 9 | ~240 constant at levels 1 and 9; at level 9 also a PAIR per boundary value (the chance roll 0, which passes both the 5 and the 60 percent tests, then the value as the type roll) and the chance's index probes |
@@ -543,7 +544,10 @@ Every threshold the arms test a roll against (JS line and the Rust function that
 | `1 + floor(r x 100)`, `roll >= 70`, `roll >= 90` | `enemyEquipment.js:119-124`, `random_armor_material` | N = 100 edges (69, 70, 71, 89, 90, 91) |
 | `variant === 0`, `=== 1` (75), `=== 2` (90) | `enemyEquipment.js:246-262` | `bclassic`, `brri`, `bgear` |
 | career 7/21 -> 0, 8/12 -> 1, 24 -> 2; class `floor(r x 2)` | `enemyEquipment.js:398-401`, `equipment_variant_for` | `bgear` (monsters 0, 6, 7, 8, 12, 21, 24; classes); N = 2 edges |
-| convertOrcish dice100 80 | `rriEnemyEquipment.js:435`, `convert_orcish` | constants (79, 80, 81), `brri` orcs |
+| convertOrcish dice100 80 (drawn last, only for team `Orcs`) | `rriEnemyEquipment.js:435`, `convert_orcish` | constants (79, 80, 81); `borcish`: every decision at 79/80/81 (and nextUp of 0.80) over an Ebony background, and the conversion index alone over a Mithril one |
+| convertOrcish `convertFrom`: Ebony 7, Warlord (24) Mithril 5; `(material & 0xff) >= convertFrom` | `rriEnemyEquipment.js:436-437`, `convert_orcish` | `borcish` (Ebony background: a Mithril one stays Mithril; Warlord's Mithril background converts), levels 8/9 and 5/6 |
+| convertOrcish `orcish` target: `WM.orcish` (8) weapons, `ARMOR_MATERIAL.orcish` (520) plate | `rriEnemyEquipment.js:440, 447`, `convert_orcish` | `borcish` (every converted output carries the Orcish material) |
+| Ebony reach: combined `>= 250` (ladder step 7); Mithril `>= 237` (step 5) | `enemyEquipment.js:99-112`, `random_material` | `bclassic` and `borcish` at levels 8, 9 (Ebony) and 5, 6 (Mithril) |
 | poison: `playerLevel <= 1`; dice100 5; Assassin 60; `128 + floor(r x 8)` | `poisons.js:251-262`, `roll_enemy_weapon_poison` | `bpoison` (all 3 levels, mobs incl. 139), N = 8 edges |
 | DEX coin `floor(r x 2) == 0`; forbidden plate/chain/leather bits | `dexEquipment.js:50-89`, `dex_armour_template` | N = 2 edges, `brri` bitfields 0 / 256 / 448 |
 | class arm: dice100 chance 50 (the class's chance) | `rriEnemyEquipment.js:277`, `assign_class` | constants 49/50/51, `brri` |

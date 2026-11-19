@@ -612,6 +612,7 @@ const FLOORS: &[(&str, &[&str], usize)] = &[
     // The boundary families (tools/rust-vectors.mjs, boundary probes): each is a floor against truncation only.
     ("bclassic", &["bclassic"], 1000),
     ("brri", &["brri"], 1000),
+    ("borcish", &["borcish"], 1000),
     ("bgear", &["bgear"], 1000),
     ("benemy", &["benemy"], 1000),
     ("bpoison", &["bpoison"], 1000),
@@ -795,7 +796,8 @@ fn maketarget_matches_js_vectors() {
                 rolls_done(&c, &rolls);
                 check_gear_out(&c, &exp, &got, None);
             }
-            "rri" | "brri" => {
+            // `borcish` (the Orcish conversion's probes) is the same grammar as `brri`: the orcs' team is the input.
+            "rri" | "brri" | "borcish" => {
                 let id = c.f64();
                 let is_class = c.bool();
                 let variant = c.opt();

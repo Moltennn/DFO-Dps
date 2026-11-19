@@ -1516,6 +1516,36 @@ const wantLeftWeapon = (tk) => {
 /** The Dai-Katana in the right hand (EnemyEntity's big weapon, rriEnemyEquipment.js:88-89: a 90% re-roll follows it). */
 const wantDaiKatana = (tk) => tk[0] === 'W' && fromF(tk[1]) === 123;
 const WANT = { left: wantLeftWeapon, dai: wantDaiKatana };
+const hashText = (text) => [...text].reduce((h, ch) => Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0, 0x811c9dc5);
+/** The material of every hand and armour piece a GEAR_OUT token list carries (after any conversion). */
+const materialsOf = (tk) => {
+  const out = [];
+  let i = 0;
+  if (tk[i] === 'W') {
+    out.push(fromF(tk[i + 2]));
+    i += 3;
+  } else i += 1;
+  if (tk[i] === 'W') {
+    out.push(fromF(tk[i + 2]));
+    i += 3;
+  } else if (tk[i] === 'S') i += 2;
+  else i += 1;
+  const n = Number(tk[i]);
+  i += 1;
+  for (let p = 0; p < n; p++) {
+    out.push(fromF(tk[i + 1]));
+    i += 3;
+  }
+  return out;
+};
+/** A Mithril or Adamantium material (5 or 6): converted by the Warlord's Mithril-or-better rule, not by the Ebony one. */
+const wantIn56 = (tk) => materialsOf(tk).some((x) => (x & 0xff) === 5 || (x & 0xff) === 6);
+/** A material at least `m`, and no Orcish one: the arm did not convert it, so the conversion at the 0.80 edge flips the
+ *  answer (a converted piece is Orcish, 8, and a converting roll leaves no piece at least `m` unconverted). */
+const wantFlip = (m) => (tk) => {
+  const ms = materialsOf(tk).map((x) => x & 0xff);
+  return ms.some((x) => x >= m) && !ms.includes(8);
+};
 
 /** Runs one case with `rolls`; a RangeError is the refusal (null), any other throw is a bug. */
 const runRefusable = (run, rolls) => {
@@ -1722,22 +1752,21 @@ async function genMaketarget() {
     out.add(kind, ...inputs, ...rollTok, '=>', ...(result ?? ['!']));
     bump(kind);
   };
-  const probeBase = (kind, inputs, run, indexed, want = null) => {
-    const hashOf = (text) => [...text].reduce((h, ch) => Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0, 0x811c9dc5);
+  const probeBase = (kind, inputs, run, indexed, want = null, all = false, attempts = 256) => {
     const backgroundOf = (attempt) => {
-      const R2 = makeLcg(hashOf(`${kind}|${inputs.join('|')}|${attempt}`));
+      const R2 = makeLcg(hashText(`${kind}|${inputs.join('|')}|${attempt}`));
       const s = Array.from({ length: 512 }, () => R2.unit());
       return { s, b: scriptRun(s, run) };
     };
     // The background: the first seed whose run takes the wanted branch (attempt 0 when nothing is wanted).
     let chosen = null;
-    for (let attempt = 0; attempt < 256 && chosen === null; attempt++) {
+    for (let attempt = 0; attempt < attempts && chosen === null; attempt++) {
       const c = backgroundOf(attempt);
       if (want === null || (c.b.result !== null && want(c.b.result))) chosen = c;
       if (want === null) break;
     }
     if (chosen === null) {
-      console.warn(`maketarget: no background of ${kind} ${inputs.join(' ')} takes the wanted branch in 256 seeds`);
+      console.warn(`maketarget: no background of ${kind} ${inputs.join(' ')} takes the wanted branch in ${attempts} seeds`);
       chosen = backgroundOf(0);
     }
     const { s: script, b: base } = chosen;
@@ -1746,7 +1775,9 @@ async function genMaketarget() {
       emitProbe(kind, inputs, ['K', F(v), I(c.n)], c.result);
     }
     if (indexed) {
-      for (let k = 0; k < Math.min(base.used.length, 8); k++) {
+      // `all` covers every decision of the base; otherwise the first 8.
+      const span = all ? base.used.length : Math.min(base.used.length, 8);
+      for (let k = 0; k < span; k++) {
         for (const v of IDX_VALUES) {
           const s = script.slice();
           s[k] = v;
@@ -1755,6 +1786,7 @@ async function genMaketarget() {
         }
       }
     }
+    return { script, base };
   };
 
   // bclassic: assignEnemyEquipment (the classic loadout). Variants null/0/1/2, the city watch (146), a class, a monster.
@@ -1802,6 +1834,70 @@ async function genMaketarget() {
         return gearOutTokens(eq, eq.rightHand?.poisonType ?? null);
       },
       b.indexed === true, WANT[b.want] ?? null);
+  }
+
+  // borcish: the Orcish conversion (rriEnemyEquipment.js:434-466) over the four Orcs-team types (enemyBasics.js: 7 orc,
+  // 12 orc sergeant, 21 orc shaman, 24 orc warlord). An Ebony-and-up material (a Warlord's Mithril-and-up) is Orcish 80%
+  // of the time. The 80% roll is the LAST roll the arm draws: the poison (:253) and every equipment roll come first, and
+  // convertOrcish (:255) draws only for an Orcs-team foe. So the last consumed value is the conversion roll, and
+  // checkConversionRoll asserts it. Reach (enemyEquipment.js:99-112): the combined value is (level - 10) x 4 below level
+  // 10, (level - 10) x 2 from 10, plus floor(roll x 256), clamped to 0..256. Ebony needs 250 or more and Mithril 237 or
+  // more, so Ebony is reached from level 9 and Mithril from level 6; levels 8 and 5 cannot reach them.
+  const ORC_BASES = [
+    { id: 7, variant: 0, threshold: 7, levels: [1, 8, 9, 10, 45] },
+    { id: 21, variant: 0, threshold: 7, levels: [1, 8, 9, 10, 45] },
+    { id: 12, variant: 1, threshold: 7, levels: [1, 8, 9, 10, 45] },
+    { id: 24, variant: 2, threshold: 5, levels: [1, 5, 6, 9, 45] },
+  ];
+  const orcInputs = (b, pl) => [F(b.id), B(false), O(b.variant), F(pl), '-', F(60), B(false), OS('Orcs'), O(0)];
+  const orcRun = (b, pl) => (rolls) => {
+    const assign = createDexEquipmentAssigner(propsByMudex.get(false));
+    const eq = assign({ mobileType: b.id, isClass: false, armor: 60, career: { weaponArmorShieldsBitfield: 0 }, basics: { team: 'Orcs' } }, b.variant, pl, { rolls });
+    return gearOutTokens(eq, eq.rightHand?.poisonType ?? null);
+  };
+  /** The sequence with its last roll (the conversion roll) replaced by `v`. */
+  const lastRollAt = (script, base, run, v) => {
+    const s = script.slice();
+    s[base.used.length - 1] = v;
+    return scriptRun(s, run);
+  };
+  /** The conversion roll is the last value drawn: overwritten at the 0.80 edges it keeps the consumed count, and the edge
+   *  below (0.79, which passes the 80% test) converts where the edge at 0.80 (which fails it) does not. */
+  const checkConversionRoll = (script, base, run, id, pl) => {
+    const pass = lastRollAt(script, base, run, prevDownOf(bucketStart(80, 100)));
+    const fail = lastRollAt(script, base, run, bucketStart(80, 100));
+    if (pass.used.length !== base.used.length || fail.used.length !== base.used.length) {
+      throw new Error(`maketarget: borcish ${id} at level ${pl}: the last roll changes the consumed count`);
+    }
+    if (JSON.stringify(pass.result) === JSON.stringify(fail.result)) {
+      throw new Error(`maketarget: borcish ${id} at level ${pl}: the last roll is not the conversion roll`);
+    }
+  };
+  for (const b of ORC_BASES) {
+    for (const pl of b.levels) {
+      const inputs = orcInputs(b, pl);
+      const run = orcRun(b, pl);
+      // Each call also emits the constant fills (every roll the same edge value), once per level.
+      if (pl === 9) {
+        // Every decision index, over a background whose material is Ebony (Mithril for the Warlord) and not converted.
+        // About 1 seed in 100 has an Ebony roll at level 9 that the 80% test leaves unconverted, hence 4096 seeds.
+        const { script, base } = probeBase('borcish', inputs, run, true, wantFlip(b.threshold), true, 4096);
+        checkConversionRoll(script, base, run, b.id, pl);
+      } else if (pl === 45) {
+        // The conversion roll alone, over a background holding a Mithril or Adamantium material: the Ebony rule leaves it
+        // Mithril and the Warlord's Mithril rule converts it, so a swap of the two thresholds changes the answer.
+        const { script, base } = probeBase('borcish', inputs, run, false, wantIn56);
+        const last = base.used.length - 1;
+        for (const v of IDX_VALUES) {
+          const s = script.slice();
+          s[last] = v;
+          const r = scriptRun(s, run);
+          emitProbe('borcish', inputs, [I(r.used.length), ...r.used.map((x) => F(x))], r.result);
+        }
+      } else {
+        probeBase('borcish', inputs, run, false);
+      }
+    }
   }
 
   // bgear: gearEnemy under a boot (the copy). Classes at the city watch's player level (code 7, and 5 with DEX on and
