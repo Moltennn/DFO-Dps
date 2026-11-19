@@ -201,6 +201,7 @@ pub fn make_target(f: MakeFields) -> Target {
         health: f.health.unwrap_or(100.0),
         max_health: f.max_health.unwrap_or(100.0),
         relay_body: f.relay_body,
+        warded: false,
         level_source: f.level_source,
         basics: f.basics,
     }

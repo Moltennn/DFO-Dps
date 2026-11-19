@@ -66,6 +66,8 @@ import * as poisons from '../vendor/upstream/a3eb1605/src/systems/poisons.js';
 import * as createItemRows from '../vendor/upstream/a3eb1605/src/systems/createItemRows.js';
 import * as gemGrades from '../vendor/upstream/a3eb1605/src/systems/loot/gemGrades.js';
 import * as thunderlockIds from '../vendor/upstream/a3eb1605/src/characters/thunderlockIds.js';
+import { HAND_WRAPS_TEMPLATE } from '../vendor/upstream/a3eb1605/src/characters/handWrapsIds.js';
+import { REGISTERED_ENCHANTMENT_TYPES } from '../src/enchants.js';
 import * as save from '../src/save.js';
 import { encodeValue } from './rust-codec.mjs';
 import { mintRow } from '../src/target.js';
@@ -334,7 +336,10 @@ const SOURCES = [
     extra: () => [equipSlotNames()],
   },
   { file: 'boss_traits', from: `${V}/systems/bossTraits.js`, mod: bossTraits, names: ['ELEMENT_TRAITS', 'RESIST_SHARE', 'WEAPON_RESIST_SHARE'] },
-  { file: 'enchantments', from: `${V}/systems/enchantments.js`, mod: enchantments, names: ['ENCHANTMENT_TYPES', 'LOW_DAMAGE_VS', 'POTENT_VS_DAMAGE'] },
+  { file: 'enchantments', from: `${V}/systems/enchantments.js`, mod: { ...enchantments,
+    AFFINITY_PARAM: cutLiteral(`${V}/systems/enchantments.js`, 'AFFINITY_PARAM', '})'),
+    REGISTERED_ENCHANTMENT_TYPES: [...REGISTERED_ENCHANTMENT_TYPES],
+  }, names: ['ENCHANTMENT_TYPES', 'LOW_DAMAGE_VS', 'POTENT_VS_DAMAGE', 'AFFINITY_PARAM', 'REGISTERED_ENCHANTMENT_TYPES'] },
   { file: 'paperdoll', from: `${V}/characters/paperdoll/paperdoll.js`, mod: paperdoll, names: ['EQUIP_SLOTS'] },
   { file: 'level_cap', from: `${V}/systems/levelCap.js`, mod: levelCap, names: ['LEVEL_CAP'] },
   {
@@ -356,7 +361,7 @@ const SOURCES = [
   { file: 'js_prototypes', from: 'the JS engine: own names of Object, Array, String, Number and Boolean .prototype', mod: prototypeKeys(), names: ['OBJECT_PROTOTYPE_KEYS', 'ARRAY_PROTOTYPE_KEYS', 'STRING_PROTOTYPE_KEYS', 'NUMBER_PROTOTYPE_KEYS', 'BOOLEAN_PROTOTYPE_KEYS'] },
   { file: 'gate_boss', from: `${V}/world/gate/gateBoss.js`, mod: gateBoss, names: ['BOSS_ARMOR'] },
   { file: 'bow_bloom', from: `${V}/combat/bowBloom.js`, mod: bowBloom, names: ['BOW_FAST'] },
-  { file: 'hands_law', from: `${V}/combat/twoHands/handsLaw.js`, mod: handsLaw, names: ['DUAL', 'OFF_HAND_BLOW'] },
+  { file: 'hands_law', from: `${V}/combat/twoHands/handsLaw.js`, mod: handsLaw, names: ['DUAL', 'OFF_HAND_BLOW', 'FLURRY_WINDOW'] },
   // R3b
   { file: 'mint_rows', from: `${V}/characters/meanerMonsters.js (target.js mintRow over boot codes 0..7 x classic ids)`, mod: { MINT_ROWS: buildMintRows() }, names: ['MINT_ROWS'], force: true },
   { file: 'dex_equipment', from: `${V}/systems/enemyExpansion/dexInstall.js (classic props.equipmentTable, per mudex)`, mod: { DEX_EQUIPMENT_TABLE: buildDexEquipment() }, names: ['DEX_EQUIPMENT_TABLE'], hints: { DEX_EQUIPMENT_TABLE: { t: 'skeyed', of: { t: 'str' } } } },
@@ -378,8 +383,11 @@ const SOURCES = [
   {
     file: 'item_facts',
     from: `${V}/characters/weapons.js weaponSkillUsed, ${V}/systems/item/itemTemplates.js isAmmunition (probed), ${V}/characters/thunderlockIds.js`,
-    mod: buildItemFacts(),
-    names: ['WEAPON_SKILL_USED', 'AMMUNITION_TEMPLATES', 'THUNDERLOCK_TEMPLATE'],
+    mod: { ...buildItemFacts(), HAND_WRAPS_TEMPLATE, PISTOLET_TEMPLATE: thunderlockIds.PISTOLET_TEMPLATE,
+      CONDITION_HIT_POINTS: Object.fromEntries(Array.from({ length: 701 }, (_, i) => [i, itemTemplates.templateByIndex(i)])
+        .filter(([, t]) => t != null).map(([i, t]) => [i, t.hitPoints ?? 0])),
+    },
+    names: ['WEAPON_SKILL_USED', 'AMMUNITION_TEMPLATES', 'THUNDERLOCK_TEMPLATE', 'HAND_WRAPS_TEMPLATE', 'PISTOLET_TEMPLATE', 'CONDITION_HIT_POINTS'],
   },
 ];
 

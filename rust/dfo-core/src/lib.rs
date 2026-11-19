@@ -8,11 +8,14 @@
 pub mod allowance;
 pub mod boot;
 pub mod damage;
+pub mod dual_wield;
+pub mod durability;
 pub mod gear;
 pub mod gear_lines;
 pub mod generated;
 pub mod loot;
 pub mod mint;
+pub mod model_blow;
 pub mod relay_claim;
 pub mod rng;
 pub mod rolls;

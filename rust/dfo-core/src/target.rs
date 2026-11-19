@@ -226,6 +226,8 @@ pub struct Target {
     pub max_health: f64,
     /// `relayBody` (`Some(true)` for a relay stand-in; `None` is undefined).
     pub relay_body: Option<bool>,
+    /// The current ward suppresses per-blow powers, but not Strikes payloads.
+    pub warded: bool,
     /// `levelSource`: `player`, `override` or `mint` (`None` is undefined).
     pub level_source: Option<String>,
     /// `basics`: the enemy row the body was minted from (`mintRow`'s row). `None` is undefined.

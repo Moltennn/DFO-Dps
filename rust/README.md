@@ -787,6 +787,66 @@ cd rust && cargo test && cargo fmt --check && cargo clippy --all-targets -- -D w
 
 Until `node tools/rust-data.mjs` runs, the crate does not compile (the new generated modules are missing).
 
+## R4b: combat cards and per-blow resolution
+
+`model_blow.rs` builds weapon descriptors, cadence, hit and damage cards, and resolves the
+damage distribution of one landed blow. `dual_wield.rs` supplies the two-hand timing and damage
+law; `durability.rs` supplies wear and the fight-local break operation. This milestone does not
+port `analyze`, its target builders, rankers or marginals (R5), or `blowOutcomes.js` and
+`createBlowSampler` (R4c). `blow_distribution` is the deterministic, per-part landed-blow
+distribution; it does not sample a hit, choose a struck part, or run a fight.
+
+| Rust functions | JS source |
+|---|---|
+| `unity_round`, `swing_directions` | `model.js:57-63,77-78` (`round.rs`, generated click directions and direction map) |
+| `weapon_of`, `synthetic_weapon`, `is_blade`, `is_blunt`, `weapon_to_hit` | `model.js:107-169` |
+| `adrenaline`, `proficiency`, `racial`, `racial_modifiers`, `combat_stat`, `skill` | `model.js:186-378` |
+| `martial_pace`, `mastery_pace`, `cadence`, `ranged_cadence`, `weapon_resist_factor`, `expected_capped` | `model.js:402-502`; Thunderlock reload `data.js:192` |
+| `crit_model`, `hit_model` | `model.js:504-585` |
+| `martial_blow_pct`, `mastery_pct` | `model.js:598-630` |
+| `create_carry_state`, `carried_amount`, `finish_blow`, `condition_multiplier` | `model.js:642-673,690-713`; existing `damage.rs` implements the condition bands |
+| `weapon_blow`, `loot_power_terms` | `model.js:725-831`; existing `loot::foe_group` supplies the target classification |
+| `strikes_net`, `payload_rows`, `mobile_affinity_matches` | `model.js:838-846`, `enchants.js:49-70`, `systems/enchantments.js:414-423` |
+| `bow_of`, `bow_blow`, `bow_fast_damage`, `backstab_damage` | `model.js:850-860`; `combat/bowBloom.js:73-79` |
+| `resolve_blow`, `after_share`, `resist_blow` | `model.js:868-918`, `src/bossTraits.js:89-92`, `systems/bossTraits.js:192-224` (landed damage only) |
+| `additions_to`, `weapon_powers`, `echo_chances`, `blow_distribution`, `damage_model` | `model.js:924-1051` |
+| `average_off_hand_hold`, `dual_schedule`, `swings_ratio`, `damage_ratio` | `dualWield.js:46,58,78,84` |
+| `strike_hand_of`, `off_hand_to_hit`, `off_hand_burden`, `off_hand_hold`, `off_hand_damage` | `combat/twoHands/handsLaw.js:144,253,261,273,281` |
+| `wear_amount`, `dice100`, `blow_wear`, `cws_bill`, `make_owner`, `wear_item`, `condition_pct`, `clone_item` | `durability.js:41,44,51,58,65,73,78,81`; `itemTemplates.js:277-279` |
+| `lower_condition`, `mint_condition` | `systems/equip.js:570-608,117-140`; `systems/item/itemTemplates.js:336-350` |
+
+**Boundary.** Characters, descriptors, items and scenarios are `Value` records; hit math also
+reads its target as `Value` for skill/passive/health fields. Damage, element, shield and armour
+reuse the R3 typed `Target` and `Weapon` projection; `Target.warded` holds the live ward flag.
+The damage card reads base/live STR, AGI, END, SPD, LUC and WIL, level, race, career bits, mastery,
+martial path, skill and enchant deltas, health/maxHealth, item affixes, sockets, flags, condition
+and damage limits. The target stages read armour by part, affinity/mobile ids, career, group,
+relay and ward state. Carry and durability use caller-supplied stable item keys, not value
+equality; a distinct but identical item needs its own key. `Carry` separates weapon and loot
+identities and never mutates live remainders in the exact-share pricing pass. Backstab math
+takes the already drawn `roll01`; the only draw in the durability module uses `Rolls`.
+
+**Vendored scope.** No host callbacks, localised break text, collection removal or item hooks in
+the synthetic owner's break operation. `repoolWeapon` is inert on the vendored graph:
+`QUALITY_EFFECTS` is a poisoned proxy, so each old-row pool is `NaN` and cannot match by `===`.
+The mint probes cover IDs 0..700 (the shipped combat equipment domain). `Value` represents an
+owned clone and does not represent frozen records, functions, custom runtime registrations, or
+JS prototype effects. String or object coercion on fields that normally carry numeric addends
+is not a supported substitute for a game record.
+
+**Vectors.** `tools/rust-blow-vectors.mjs` runs the real JS, called by `rust-vectors.mjs`, with
+`encodeValue` for exact numeric bits and object order. It covers theory builds, test fixture
+characters, R3 enemies and relay stand-ins, armour and shields, weapon classes, sockets,
+affixes, powers, enchantment abort order, swing directions, carry across distinct identities,
+and single/dual/fist/bow/gun paths. There are at least 2,000 cases per model family (`weapon`,
+`scalar`, `cadence`, `hit`, `damage`, `live`, `loot`, `outcomes`, `misc`, `resist`), dual timing (`hands`),
+and durability (`wear`, `break`). The wear vectors assert exact scripted roll consumption.
+
+Mutation checks (seed 1, count 1000): model blow killed 708 of 731 (22 equivalent, 1 did not
+compile); dual wield killed 43 of 45 (2 equivalent); durability killed 39 of 43 (4 equivalent).
+The surviving changes have proofs at the affected code. The tool still prints `FAIL` for
+proven-equivalent survivors.
+
 ## Plan after R2 (R2 is done; the rest is a plan)
 
 Order chosen by dependency; each step ships only with vectors (or the upstream goldens) that fail first.

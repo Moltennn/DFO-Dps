@@ -80,6 +80,7 @@ import {
 import { foeGroup } from '../vendor/upstream/a3eb1605/src/systems/loot/lootPowers.js';
 import { ALL_GEM_IDS } from '../vendor/upstream/a3eb1605/src/systems/loot/gemGrades.js';
 import { theoryCharacter } from '../src/theory.js';
+import { genBlowFamilies } from './rust-blow-vectors.mjs';
 
 export { encodeValue };
 
@@ -2763,6 +2764,7 @@ counts.save = genSaveFamily();
 counts.gear = genGearFamily();
 counts.sockets = genSocketsFamily();
 counts.loot = genLootFamily();
+Object.assign(counts, genBlowFamilies(Out, makeLcg));
 
 counts.maketarget = await genMaketarget();
 

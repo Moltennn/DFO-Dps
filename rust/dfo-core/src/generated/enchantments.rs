@@ -38,6 +38,14 @@ pub struct EnchantmentTypes {
     pub special_artifact_effect: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AffinityParam {
+    pub undead: f64,
+    pub daedra: f64,
+    pub humanoid: f64,
+    pub animals: f64,
+}
+
 #[rustfmt::skip]
 pub static ENCHANTMENT_TYPES: EnchantmentTypes = EnchantmentTypes { none: -1.0, cast_when_used: 0.0, cast_when_held: 1.0, cast_when_strikes: 2.0, extra_spell_pts: 3.0, potent_vs: 4.0, regens_health: 5.0, vampiric_effect: 6.0, increased_weight_allowance: 7.0, repairs_objects: 8.0, absorbs_spells: 9.0, enhances_skill: 10.0, feather_weight: 11.0, strengthens_armor: 12.0, improves_talents: 13.0, good_rep_with: 14.0, soul_bound: 15.0, item_deteriorates: 16.0, user_takes_damage: 17.0, vision_problems: 18.0, walking_problems: 19.0, low_damage_vs: 20.0, health_leech: 21.0, bad_reactions_from: 22.0, extra_weight: 23.0, weakens_armor: 24.0, bad_rep_with: 25.0, special_artifact_effect: 26.0 };
 
@@ -46,3 +54,9 @@ pub const LOW_DAMAGE_VS: f64 = -5.0;
 
 #[rustfmt::skip]
 pub const POTENT_VS_DAMAGE: f64 = 5.0;
+
+#[rustfmt::skip]
+pub static AFFINITY_PARAM: AffinityParam = AffinityParam { undead: 0.0, daedra: 1.0, humanoid: 2.0, animals: 3.0 };
+
+#[rustfmt::skip]
+pub static REGISTERED_ENCHANTMENT_TYPES: &[f64] = &[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 20.0, 21.0, 22.0, 23.0, 24.0, 25.0, 26.0];

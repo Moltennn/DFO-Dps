@@ -27,3 +27,6 @@ pub static DUAL: Dual = Dual { flurry_from_frame: 1.0, off_damage: 0.8, off_to_h
 
 #[rustfmt::skip]
 pub static OFF_HAND_BLOW: OffHandBlow = OffHandBlow { blow_weight: 0.8 };
+
+#[rustfmt::skip]
+pub const FLURRY_WINDOW: f64 = 0.75;
