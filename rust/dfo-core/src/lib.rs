@@ -12,3 +12,5 @@ pub mod relay_claim;
 pub mod rng;
 pub mod round;
 pub mod swing;
+pub mod target;
+pub mod vendored;

@@ -180,6 +180,136 @@ line of `grep -n "vendor/upstream" src/*.js` was read). Data symbols are in the 
 - `systems/bossTraits.js`: `bossStrike`, `bossTraitsOf`, `relayBossTraits` (`src/bossTraits.js`)
 - `characters/weaponStates.js`, `characters/paperdoll/paperdoll.js`, `systems/levelCap.js`, `combat/pcaao.js`, `systems/armorMaterials.js` (partly), `systems/modSettings.js`: data only (the table above)
 
+## R3a: the pure half of `src/target.js` (done; the builders are R3b)
+
+Written, not yet run in this session (the author had no shell): the lead runs the gates. The generated
+files must be regenerated before `cargo` builds (see below).
+
+### Files
+
+- `dfo-core/src/target.rs`: the target as the hit path reads it. `Target`, `Live` (base stats, `activeEffects`,
+  gear `_mods`), `Effect`, `Stat`, `Career`, `Item`, `Weapon`, `Attacker`; each struct field names its JS
+  property. Functions are literal ports in JS order (table below).
+- `dfo-core/src/vendored.rs`: the small vendored helpers that target.js calls, ported as functions (table below).
+- `tests/target.rs` with `tests/common/mod.rs`: reads `tests/vectors/target.txt`.
+- Generated tables (`tools/rust-data.mjs`; the generator is the only writer):
+  - new `formulas.rs` (`GROUP_BITS`, formulas.js:178);
+  - new `equip.rs`: `SLOT_FOR_BODY_PART` (probed from the exported `slotForBodyPart` over the Map's keys 0..6,
+    equip.js:496; the Map is the inverse of the module-private `SLOT_BODY_PART`), and `EQUIP_SLOT_NAMES` (the
+    paperdoll's names with their ids, so a SLOT_RULES name can be read);
+  - new `equip_rules.rs`: `SLOT_RULES` (characters/equipRules.js:44);
+  - `armor_materials.rs` gains `SHIELD_VALUES`, `BODY_PARTS`, `NUMBER_BODY_PARTS`, `ARMOR_MATERIAL` (exported),
+    and `PLATE_ARMOR_VALUES` (module-private, cut from the source text, armorMaterials.js:52);
+  - `enemy_groups.rs` gains `ENEMY_GROUP_BY_CAREER` (module-private, cut, enemyGroups.js:18-58);
+  - `enemy_equipment.rs` gains `PIECE_BODY_PART` (enemyEquipment.js:74), `SHIELD_VALUE` and `SHIELD_PARTS`
+    (enemyEquipment.js:83-89; the same values as armorMaterials' copies, kept as the vendored file's own).
+  - Cut literals are read with the R1 method: the text from `const NAME = ` to its closing bracket, evaluated.
+    The generator throws if the text moves or the name is not unique.
+
+### Ported (Rust function: JS file:line)
+
+| Rust | JS |
+|---|---|
+| `target::career_tolerance`, `element_share` | `src/target.js:94-111` (spellcast.js:61-68; loot power :164-167) |
+| `target::live_stat` | `src/save.js:167-181` (with `NUM`, save.js:107) |
+| `target::natural_damage_resistance` | `src/target.js:113-120` (pcaao.js:1594-1605, float32) |
+| `target::enemy_type_group`, `attack_modifier_flags_of`, `enemy_type_bonus_range`, `enemy_type_bonus_value`, `enemy_type_bonus_values` | `src/target.js:128-169` |
+| `target::is_skeletal_target`, `silver_applies`, `skeletal_silver_damage` | `src/target.js:178-193` |
+| `target::monster_hide_damage`, `intrinsic_damage` | `src/target.js:200-250` (pcaao.js:1447-1471) |
+| `target::armour_material_id`, `armour_condition_multiplier`, `armour_reduction`, `shield_reduction` | `src/target.js:272-323` |
+| `target::struck_slot_item`, `left_hand_shield`, `has_worn_equipment` | `src/target.js:326-346` |
+| `target::shield_block_chance`, `shield_beats_under_armour` | `src/target.js:352-402` |
+| `target::target_part_outcomes`, `target_part_damage`, `target_expected_damage` | `src/target.js:416-475` |
+| `target::body_part_weights` | `src/target.js:478-485` |
+| `target::equip_armour` (pieces already minted) | `src/target.js:503-523` |
+| `target::armour_piece_current` (the condition half of `armourPiece`) | `src/target.js:489-493` |
+
+Vendored helpers (`vendored.rs`): `career_attack_modifier` (combat/formulas.js:191), `silver_doubles` (:468),
+`enemy_entity_group` (combat/enemyGroups.js:69), `is_shield_template` (systems/armorMaterials.js:74),
+`material_armor_value` (:53), `item_armor_value` (:114), `slot_for_body_part` (systems/equip.js:496),
+`armor_body_parts` (:452), with `armorSlotRule` (equip.js:436), `condition_percentage`
+(systems/item/itemTemplates.js:277), `enemy_entity_type` and `enemy_career_index` (characters/enemy/enemyBasics.js:108,
+:117), `enemy_armor_values` (combat/enemyEquipment.js:298).
+
+### Not ported (R3b)
+
+- `gearEnemy` (target.js:555) and everything that builds a target: `mintRow`, `mintedBody`, `makeTarget`,
+  `enemyTarget`, `standInTarget`, `careerIndexOf`, `isClassEnemyOf`, `wholeLevel`, `targetStats`, `skillsAtLevel`.
+- `materialRequirementMultiplier` (target.js:574) and `targetGroupOf` (:595): after `gearEnemy` in the file.
+- The item minter behind `armourPiece`: `armorOfMaterial` (combat/enemyEquipment.js:210) is
+  `mintCondition(setItemFields(...))`, which reads the 288-template data (`itemTemplates.json`), the RRI and
+  weapon tables and the value ladder. `armourPiece` is therefore ported only as its condition arithmetic
+  (`armour_piece_current`); `equip_armour` takes pieces that are already items. The descriptor path of
+  `equipArmour` (`piece?.group === 'Armor' ? piece : armourPiece(...)`) needs the minter and is R3b.
+- The enemy equipment rolls: `rollEnemyEquipment`, `assignEnemyEquipment`, `equipmentVariantFor`
+  (enemyEquipment.js), and `bootedEquipmentAssigner` (target.js:538).
+
+### Registries and domains (decisions)
+
+- Registries are modelled EMPTY. On the import path `src/target.js` reaches, nothing registers an answer:
+  `registerEnemyGroup` is called only inside `installEnemyExpansion` (dexInstall.js:241), and nothing
+  calls `registerSilverDoubleVeto`, `registerCustomArmorValue`, or the custom-enemy/custom-item registries
+  at import. A mod that registers one would change the port; the port has no hook for it.
+- `customItemClass` (rriItems.js:626) reads the built-in `RRI_CLASSES`, whose keys are 513..=526 only.
+  `armorSlotRule` and `pieceBodyPart` therefore use the classic rule table for every template outside 513..=526.
+  The vectors stay outside that range. Inside it, the port is NOT exact (it would need the RRI class table).
+
+### JS semantics decided here (review these)
+
+- `undefined` vs `null`: `isClass` is `Option<bool>` because the JS tests `=== false`; `None` (undefined) and
+  `Some(false)` differ, and `!!isClass` reads both as false. Other `?? x` reads treat `null` and `undefined` alike.
+- An item is `Option<&Item>`: a JS `null` item is NOT the same as `{}` (`armourConditionMultiplier(null)` is 1,
+  `armourConditionMultiplier({})` with `sharpEdge` is 0.85).
+- A career: `null` and an object without the flag bytes read identically in every function here, so the
+  port takes `Career` (a default is the null career).
+- A missing base stat is NaN in `Live::stats` (`NUM` reads it as 0), and a missing mod is 0 (`?? 0`).
+- `Weapon.item_flags` is `weapon.item?.flags` flattened: the functions read nothing else of `item`.
+- `Item.is_armor` is `group === 'Armor'`: every other group name compares unequal to it.
+- `Effect::Other` covers every kind that reads no stat; `ended` is read for all kinds, as liveStat does.
+- `element_share`'s element is lower-cased with Rust `to_lowercase`; for the five names it equals JS
+  `toLowerCase`. A prototype name (`constructor`, `__proto__`) is a truthy non-flag in JS and reads as 1, the same as a miss.
+- `monster_hide_damage`'s `nat` is `Option`: `None` is the JS default parameter (`naturalDamageResistance(target)`).
+- The `monsterHideDamage` switch: the JS `case 26` and the Daedra default both return `r(1)`; the port returns
+  `1` for them without a separate arm (the result is the same multiplier).
+- `target_expected_damage` returns `Option<f64>`: JS `null` (no part with a weight) is `None`.
+- `body_part_weights`' `counts[part]++` is asserted to index 0..=6 (`debug_assert`); the data is.
+
+### Not representable (the vectors never pass these)
+
+A JS value that is not a number where a number is read (a string stat, a boolean flag byte, an array
+where a number is read), a JS `null` for `nat` (JS would read it as 0; the port takes `None` as the default),
+a `core` other than `'overhaul'` (any other string is the classic list; the vectors pass `overhaul`,
+`struck` and `undef`), a `map` other than the four the vectors name, a lone surrogate in an element name,
+and a `weights` value that is `null`.
+
+### Vectors (`tools/rust-vectors.mjs`, `target.txt`)
+
+- Targets come from the REAL builders: `enemyTarget` for every mobile id 0..=42 and the classes 128..=146 at
+  player levels 1, 9 and 37 (refused rows are counted, not skipped silently), `standInTarget` (31, 36),
+  `makeTarget` synthetic foes (with random stats, effects, `_mods`, careers, armour), and gear worn through the
+  REAL `armourPiece` and `equipArmour`. Attackers are `makeTarget`-style records with random stats and
+  effects. Each target and attacker is written once as a `tgt`/`atk` definition; cases refer to them by id.
+- Ten families, each at least 2000 cases (the test asserts it): `career`, `natural`, `enemy_type`, `silver`,
+  `hide`, `armour`, `shield`, `outcome`, `equip`, `scalar`. The generator prints the targets and the count of
+  each kind. The floors are per family, so `body_part_weights` (three cases) counts toward `scalar`.
+- Damage grids include 0, -0, 1, fractions, 2.5/3.5/4.5 ties, huge values, 5e-324, 1e-9, NaN and infinities.
+  Armour covers the templates 102..112 (plate, chain and leather rows, the shields, the cuirass, both pauldrons)
+  against materials and conditions, with and without sharp edge. Shield rows cover block and no-block parts.
+- Format: the `=>` token separates inputs from outputs (as in the other kinds); `-` is JS null/undefined
+  for an opt; `ITEMOPT` is `0` or `1` and an ITEM; `WOPT` is `0` or `1` and four opts.
+
+### Run (R3a)
+
+```
+node tools/rust-data.mjs            # REQUIRED first: writes formulas.rs, equip.rs, equip_rules.rs and the
+                                    # extended armor_materials.rs, enemy_groups.rs, enemy_equipment.rs
+node tools/rust-data.mjs --check
+node tools/rust-vectors.mjs         # writes rust/tests/vectors/target.txt (and the other modules)
+cd rust && cargo test && cargo fmt --check && cargo clippy --all-targets -- -D warnings
+```
+
+Until `node tools/rust-data.mjs` is run, the crate does not compile (the new generated modules are missing).
+
 ## Plan after R2 (R2 is done; the rest is a plan)
 
 Order chosen by dependency; each step ships only with vectors (or the upstream goldens) that fail first.

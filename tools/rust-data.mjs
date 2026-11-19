@@ -43,6 +43,8 @@ import * as meanerMonsters from '../vendor/upstream/a3eb1605/src/characters/mean
 import * as pcaao from '../vendor/upstream/a3eb1605/src/combat/pcaao.js';
 import * as enemyGroups from '../vendor/upstream/a3eb1605/src/combat/enemyGroups.js';
 import * as enemyEquipment from '../vendor/upstream/a3eb1605/src/combat/enemyEquipment.js';
+import * as formulas from '../vendor/upstream/a3eb1605/src/combat/formulas.js';
+import * as equipRules from '../vendor/upstream/a3eb1605/src/characters/equipRules.js';
 import * as bowBloom from '../vendor/upstream/a3eb1605/src/combat/bowBloom.js';
 import * as handsLaw from '../vendor/upstream/a3eb1605/src/combat/twoHands/handsLaw.js';
 import * as armorMaterials from '../vendor/upstream/a3eb1605/src/systems/armorMaterials.js';
@@ -62,6 +64,32 @@ const here = dirname(fileURLToPath(import.meta.url));
 const genDir = join(here, '..', 'rust', 'dfo-core', 'src', 'generated');
 
 /** One generated module per entry. `names: null` takes every export (sorted); otherwise the listed exports, in order. */
+/**
+ * A module-private `const NAME = <literal>` cut out of a vendored source file and evaluated (the method
+ * tools/rust-vectors.mjs uses for functions it cannot import). `close` is the bracket that ends the literal, `})` or
+ * `]`. The literal must be self-contained (numbers and nested literals). Fails loudly if the text moves.
+ */
+function cutLiteral(relPath, name, close) {
+  const text = readFileSync(join(here, '..', relPath), 'utf8');
+  const head = `const ${name} = `;
+  const start = text.indexOf(head);
+  if (start < 0 || text.indexOf(head, start + 1) >= 0) {
+    throw new Error(`rust-data: ${relPath} must hold exactly one \`${head.trim()}\``);
+  }
+  const end = text.indexOf(`${close};`, start);
+  if (end < 0) throw new Error(`rust-data: ${relPath}: no \`${close};\` ends \`${name}\``);
+  return new Function(`return (${text.slice(start + head.length, end + close.length)});`)();
+}
+
+/** EQUIP_SLOT_NAMES: the paperdoll's slot names (the `EQUIP_SLOTS` keys) with their ids, for the names SLOT_RULES holds. */
+function equipSlotNames() {
+  const rows = Object.entries(paperdoll.EQUIP_SLOTS).map(([k, v]) => {
+    if (typeof v !== 'number') throw new Error(`rust-data: EQUIP_SLOTS.${k} is not a number`);
+    return `(${rustStr(k)}, ${fLit(v)})`;
+  });
+  return `#[rustfmt::skip]\npub static EQUIP_SLOT_NAMES: &[(&str, f64)] = &[${rows.join(', ')}];`;
+}
+
 const SOURCES = [
   { file: 'data', from: 'src/data.js', mod: data, names: null },
   { file: 'enchant_data', from: 'src/enchantData.js', mod: enchantData, names: null },
@@ -76,14 +104,40 @@ const SOURCES = [
   { file: 'enemy_entity', from: `${V}/characters/enemy/enemyEntity.js`, mod: enemyEntity, names: ['KNIGHT_CITYWATCH_ID'] },
   { file: 'races', from: `${V}/systems/races.js`, mod: races, names: ['FACES_PER_RACE', 'RACES', 'RACE_KEYS', 'RACE_TEMPLATES'] },
   { file: 'pcaao', from: `${V}/combat/pcaao.js`, mod: pcaao, names: ['PCAAO_REDUCTION_ROWS', 'SILVER_DOUBLED_CAREERS'] },
-  { file: 'enemy_groups', from: `${V}/combat/enemyGroups.js`, mod: enemyGroups, names: ['ENEMY_GROUPS'] },
+  {
+    file: 'enemy_groups',
+    from: `${V}/combat/enemyGroups.js`,
+    // module-private literal (R3a): cut from the source text, see cutLiteral
+    mod: { ...enemyGroups, ENEMY_GROUP_BY_CAREER: cutLiteral(`${V}/combat/enemyGroups.js`, 'ENEMY_GROUP_BY_CAREER', '})') },
+    names: ['ENEMY_GROUPS', 'ENEMY_GROUP_BY_CAREER'],
+  },
   {
     file: 'enemy_equipment',
     from: `${V}/combat/enemyEquipment.js`,
-    mod: enemyEquipment,
-    names: ['ARMOR_ENUM', 'ARMOR_MATERIAL', 'MATERIALS_BY_MODIFIER', 'WEAPONS_ENUM'],
+    mod: {
+      ...enemyEquipment,
+      PIECE_BODY_PART: cutLiteral(`${V}/combat/enemyEquipment.js`, 'PIECE_BODY_PART', '})'),
+      SHIELD_VALUE: cutLiteral(`${V}/combat/enemyEquipment.js`, 'SHIELD_VALUE', '})'),
+      SHIELD_PARTS: cutLiteral(`${V}/combat/enemyEquipment.js`, 'SHIELD_PARTS', '})'),
+    },
+    names: ['ARMOR_ENUM', 'ARMOR_MATERIAL', 'MATERIALS_BY_MODIFIER', 'WEAPONS_ENUM', 'PIECE_BODY_PART', 'SHIELD_VALUE', 'SHIELD_PARTS'],
   },
-  { file: 'armor_materials', from: `${V}/systems/armorMaterials.js`, mod: armorMaterials, names: ['SHIELD_PARTS'] },
+  {
+    file: 'armor_materials',
+    from: `${V}/systems/armorMaterials.js`,
+    mod: { ...armorMaterials, PLATE_ARMOR_VALUES: cutLiteral(`${V}/systems/armorMaterials.js`, 'PLATE_ARMOR_VALUES', ']') },
+    names: ['SHIELD_PARTS', 'SHIELD_VALUES', 'BODY_PARTS', 'NUMBER_BODY_PARTS', 'ARMOR_MATERIAL', 'PLATE_ARMOR_VALUES'],
+  },
+  { file: 'formulas', from: `${V}/combat/formulas.js`, mod: formulas, names: ['GROUP_BITS'] },
+  { file: 'equip_rules', from: `${V}/characters/equipRules.js`, mod: equipRules, names: ['SLOT_RULES'] },
+  {
+    file: 'equip',
+    from: `${V}/systems/equip.js`,
+    // equip.js's slotForBodyPart is a Map inverted from SLOT_BODY_PART (module-private): probed over its keys 0..6.
+    mod: { SLOT_FOR_BODY_PART: Object.fromEntries(Array.from({ length: 7 }, (_, p) => [String(p), equip.slotForBodyPart(p)])) },
+    names: ['SLOT_FOR_BODY_PART'],
+    extra: () => [equipSlotNames()],
+  },
   { file: 'boss_traits', from: `${V}/systems/bossTraits.js`, mod: bossTraits, names: ['ELEMENT_TRAITS', 'RESIST_SHARE', 'WEAPON_RESIST_SHARE'] },
   { file: 'enchantments', from: `${V}/systems/enchantments.js`, mod: enchantments, names: ['ENCHANTMENT_TYPES', 'LOW_DAMAGE_VS', 'POTENT_VS_DAMAGE'] },
   { file: 'paperdoll', from: `${V}/characters/paperdoll/paperdoll.js`, mod: paperdoll, names: ['EQUIP_SLOTS'] },
@@ -348,6 +402,7 @@ function emitModule(src) {
     const scalar = d.t === 'f64' || d.t === 'bool' || d.t === 'str';
     items.push(`#[rustfmt::skip]\n${scalar ? 'pub const' : 'pub static'} ${toConst(name)}: ${ty(d).replaceAll("&'static ", '&')} = ${lit(d, v, [name])};`);
   }
+  if (src.extra) items.push(...src.extra());
   const blocks = [header(src.from), ...recs.map(structText), ...items];
   return { text: `${blocks.join('\n\n')}\n`, dropped };
 }

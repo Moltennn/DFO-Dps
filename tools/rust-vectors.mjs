@@ -38,6 +38,21 @@ import {
   conditionMultiplier, damageModifier, pcaaoDamageModifier, SKILLS, swingFrameSeconds, swingHandling, swingHeft, unityRound,
 } from '../src/model.js';
 import { SWING_HANDLING, WEAPONS } from '../src/data.js';
+import {
+  armourConditionMultiplier, armourMaterialId, armourPiece, armourReduction, bodyPartWeights, careerTolerance,
+  elementShare, enemyTarget, enemyTypeBonusRange, enemyTypeBonusValue, enemyTypeBonusValues, enemyTypeGroup,
+  equipArmour, hasWornEquipment, intrinsicDamage, isSkeletalTarget, leftHandShield, makeTarget, monsterHideDamage,
+  naturalDamageResistance, shieldBeatsUnderArmour, shieldBlockChance, shieldReduction, silverApplies,
+  skeletalSilverDamage, standInTarget, struckSlotItem, targetExpectedDamage, targetPartDamage, targetPartOutcomes,
+} from '../src/target.js';
+import { liveStat } from '../src/save.js';
+import { careerAttackModifier, silverDoubles } from '../vendor/upstream/a3eb1605/src/combat/formulas.js';
+import { enemyEntityGroup } from '../vendor/upstream/a3eb1605/src/combat/enemyGroups.js';
+import { enemyArmorValues } from '../vendor/upstream/a3eb1605/src/combat/enemyEquipment.js';
+import { isShieldTemplate, itemArmorValue, materialArmorValue } from '../vendor/upstream/a3eb1605/src/systems/armorMaterials.js';
+import { armorBodyParts, slotForBodyPart } from '../vendor/upstream/a3eb1605/src/systems/equip.js';
+import { conditionPercentage } from '../vendor/upstream/a3eb1605/src/systems/item/itemTemplates.js';
+import { enemyCareerIndex, enemyEntityType } from '../vendor/upstream/a3eb1605/src/characters/enemy/enemyBasics.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outDir = join(here, '..', 'rust', 'tests', 'vectors');
@@ -760,10 +775,454 @@ function genSwing() {
   return out.write();
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// target (src/target.js, R3a: the pure half up to gearEnemy). The builders (enemyTarget, standInTarget, makeTarget)
+// and armourPiece make the targets and the worn pieces the vectors read, through the real JS; every function under
+// test is called directly on those objects. Targets and attackers are written once as definitions (`tgt`, `atk`),
+// and cases refer to them by id, so a case stays short.
+// ---------------------------------------------------------------------------------------------------------------
+const TARGET_STATS = ['strength', 'intelligence', 'willpower', 'agility', 'endurance', 'personality', 'speed', 'luck'];
+const TARGET_EFFECT_KINDS = ['disease', 'poison', 'artifact', 'racialOverride', 'fortifyAttribute', 'drainAttribute', 'transferAttribute', 'spellShield'];
+const STAT_MOD_KINDS = new Set(['disease', 'poison', 'artifact', 'racialOverride']);
+const STAT_NAME_KINDS = new Set(['fortifyAttribute', 'drainAttribute', 'transferAttribute']);
+const GEAR_TEMPLATES = [102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112];
+const GEAR_MATERIALS = [0, 256, 259, 512, 513, 514, 515, 516, 517, 518, 519, 520, 521];
+const BYTES = [0, 1, 2, 3, 4, 5, 8, 9, 16, 17, 32, 64, 96, 128, 255, 0x0c, 0x30, 0x7f];
+const PARTS = [0, 1, 2, 3, 4, 5, 6, 0, 2, 4, 6, 7, -1, 2.5];
+// float32 edges (2^24 + 1 is the first integer a float32 rounds; 3.4028235e38 is the largest float32; 1.4e-45 the
+// smallest subnormal) and the 1e-9 boundary sit with the ties at .5, -0 and the infinities.
+const DAMAGES = [0, -0, 1, 0.5, 2.5, 3.5, 4.5, -3, 7.25, 12.345, 49.5, 100, 250.75, 1000, 1e6, 1e15, 5e-324, 1e-9, NaN, Infinity, -Infinity, 33.333333333333336, 16777217, 16777216.5, 3.4028235e38, 1.401298464324817e-45, 1e-9 + 1e-17];
+const MAPS = [null, (x) => x * 0.75, (x) => x + 1, (x) => Math.floor(x / 3)];
+
+function genTarget() {
+  const R = makeLcg(0x7a2e);
+  const out = new Out('target', [
+    'defs: tgt id isPlayer(b) isClass(opt bool: - = null/undefined, 1 true, 0 false) careerIndex(opt) level(opt) combatLevel(opt) CAREER LIVE n(armorValues) f64* n(slots) (slot f64, ITEM)*;',
+    'atk id LIVE attackModifierFlags(opt) CAREER. CAREER = 5 opts (resistanceFlags immunityFlags lowToleranceFlags criticalWeaknessFlags attackModifierFlags).',
+    'LIVE = 8 f64 stats (NaN = missing) n(effects) (kind ended payload)* 16 opts (_mods.stats then _mods.statMax); payload = 8 opts (statMods) for disease|poison|artifact|racialOverride, or name(-|n:) opt(magnitude) for fortify|drain|transferAttribute, or nothing.',
+    'ITEM = group=Armor(b) templateIndex(opt) material(opt) artifact(b) maxCondition(opt) currentCondition(opt). ITEMOPT = 0 | 1 ITEM. WOPT = 0 | 1 skillId material flags itemFlags (opts). TREF/AREF = - | tgt/atk id.',
+    'cases: career_tolerance flag CAREER => word | element_share TREF element(-|n:) => f64 | natural TREF => f64 | live_stat t|a id stat => f64 | enemy_type_group TREF => f64 | bonus_range AREF TREF => group decoded bonus penalty will targetLevel | bonus_value AREF TREF roll => f64 | bonus_values AREF TREF => n f64* | silver_applies TREF WOPT => b | skeletal_damage damage TREF WOPT => f64 | is_skeletal TREF => b | monster_hide TREF damage blunt natural(opt, - = default) exact => f64 | intrinsic_damage TREF damage WOPT exact => f64',
+    'armour_material_id ITEMOPT => f64 | armour_condition ITEMOPT sharp => f64 | armour_reduction ITEMOPT damage natural blunt unarmed sharp => f64 | shield_reduction (same) => f64 | shield_block TREF strong ITEMOPT => f64 | shield_beats TREF part natural(opt) sharp => b | struck_slot TREF part => ITEMOPT | left_hand TREF => ITEMOPT | has_worn TREF => b',
+    'part_outcomes TREF damage part WOPT sharp => n (p damage)* | part_damage TREF damage part WOPT sharp => f64 | expected_damage TREF damage WOPT weights(- default, else n f64*) map(- none, 1 x*0.75, 2 x+1, 3 floor(x/3)) => f64|-',
+    'equip_armour TREF n ITEM* armorValues(b) => n (slot ITEM)* m f64* | material_armor_value material(NaN = missing) => f64 | item_armor_value ITEMOPT => f64 | enemy_group career => f64 | career_attack_modifier flags group => f64 | enemy_entity_type id => monster|class|null | enemy_career_index id => f64 | slot_for_body_part part => f64 | armor_body_parts ITEMOPT => n part* | condition_percentage ITEMOPT => f64 | armour_piece max(opt) condition => f64 | body_part_weights overhaul|struck|undef => n f64* | silver_doubles TREF => b | is_shield_template t(opt) => b | enemy_armor_values isClass(b) armor n (piece(opt) material(opt) shield(b))* => 7 f64',
+  ].join(' | '));
+
+  // ---- the targets, built by the real builders, gear worn by the real armourPiece / equipArmour ----
+  const zoo = [];
+  const ids = new Map();
+  const addT = (t) => {
+    ids.set(t, zoo.length);
+    zoo.push(t);
+    return t;
+  };
+  const cloneTarget = (t) => ({
+    ...t,
+    stats: { ...(t.stats ?? {}) },
+    activeEffects: [...(t.activeEffects ?? [])],
+    armorValues: t.armorValues ? [...t.armorValues] : t.armorValues,
+    equip: { slots: { ...(t.equip?.slots ?? {}) } },
+  });
+  const byte = () => R.pick(BYTES);
+  const randMods = () => Object.fromEntries(TARGET_STATS.filter(() => R.chance(0.5)).map((k) => [k, R.pick([0, 5, -3, 12.5, 100, NaN, undefined])]));
+  const randEffects = () => Array.from({ length: R.int(0, 3) }, () => {
+    const kind = R.pick(TARGET_EFFECT_KINDS);
+    const ended = R.chance(0.2);
+    if (STAT_MOD_KINDS.has(kind)) return { kind, ended, statMods: randMods() };
+    if (STAT_NAME_KINDS.has(kind)) {
+      return { kind, ended, stat: R.pick([...TARGET_STATS, 'vitality', undefined]), magnitude: R.pick([undefined, 0, 3, -2.5, 40, NaN]) };
+    }
+    return { kind, ended };
+  });
+  const randStats = () => Object.fromEntries(TARGET_STATS.map((k) => [k, R.chance(0.08) ? undefined : R.pick([50, 50, 49, 51, 0, 100, 150, -5, 33.5, NaN, Infinity, 62.25])]));
+  const randomItem = () => (R.chance(0.05) ? null : {
+    group: R.chance(0.8) ? 'Armor' : R.pick(['Weapons', 'MensClothing', undefined]),
+    templateIndex: R.pick([...GEAR_TEMPLATES, 113, 200, 500, 512, undefined, 109.5]),
+    material: R.pick([undefined, null, 0, 256, 259, 512, 513, 514, 515, 516, 517, 518, 519, 520, 521, 3, 300, NaN, 0.5]),
+    artifact: R.chance(0.1),
+    maxCondition: R.pick([undefined, null, 0, 1, 40, 100, 255, -5, NaN, 7.5, 60]),
+    // the percentage thresholds of conditionPercentage's ladder (5/6, 15/16, 40/41, 60/61, 75/76, 91/92), and 100
+    currentCondition: R.pick([undefined, null, 0, 1, 5, 6, 16, 20, 41, 50, 61, 76, 92, 100, 77, 255, NaN, 3]),
+  });
+  const randomWeapon = () => {
+    if (R.chance(0.15)) return null;
+    const w = {
+      skillId: R.pick([SKILLS.BluntWeapon, SKILLS.LongBlade, SKILLS.ShortBlade, SKILLS.Axe, undefined, 99]),
+      material: R.pick([undefined, 0, 1, 2, 2, 3, NaN, 2.5]),
+      flags: R.pick([undefined, 0, 16, 0x11, 0x0f, NaN, 32, -1]),
+    };
+    if (R.chance(0.5)) w.item = { flags: R.pick([undefined, 0, 16, 0x10, 7, NaN]) };
+    return w;
+  };
+  const randPieces = () => Array.from({ length: R.int(1, 3) }, () => armourPiece(R.pick(GEAR_TEMPLATES), {
+    material: R.pick(GEAR_MATERIALS),
+    condition: R.pick([0, 0.1, 0.3, 0.5, 0.8, 0.95, 1, 1.5, -1, NaN]),
+  }));
+
+  let monsters = 0;
+  let classes = 0;
+  let skipped = 0;
+  for (let id = 0; id <= 42; id++) {
+    try {
+      addT(enemyTarget(id, { exactLevel: true }));
+      monsters++;
+    } catch {
+      skipped++; // a mobile with no body (39 is an empty slot): the builder refuses it, as the game would
+    }
+  }
+  for (let id = 128; id <= 146; id++) {
+    for (const lvl of [1, 9, 37]) {
+      try {
+        addT(enemyTarget(id, { playerLevel: lvl, exactLevel: true }));
+        classes++;
+      } catch {
+        skipped++;
+      }
+    }
+  }
+  addT(standInTarget(31));
+  addT(standInTarget(36));
+  const built = zoo.length;
+  for (let i = 0; i < 120; i++) {
+    const g = cloneTarget(zoo[R.int(0, built - 1)]);
+    equipArmour(g, randPieces(), { armorValues: R.chance(0.5) });
+    addT(g);
+  }
+  for (let i = 0; i < 240; i++) {
+    const t = makeTarget({
+      isPlayer: R.chance(0.1),
+      isClass: R.pick([true, false, false, undefined]),
+      careerIndex: R.pick([-1, 0, 2, 3, 9, 14, 15, 18, 22, 25, 26, 27, 28, 31, 36, 38, 40, 41, 45, 12, 1.5, NaN, undefined, null]),
+      career: R.chance(0.6) ? { resistanceFlags: byte(), immunityFlags: byte(), lowToleranceFlags: byte(), criticalWeaknessFlags: byte(), attackModifierFlags: byte() } : null,
+      level: R.pick([1, 2, 10, 21, 45, 37, 0.5, NaN, undefined, 6]),
+      combatLevel: R.pick([null, undefined, 1, 30, 0, NaN, 21, 12]),
+      stats: randStats(),
+      activeEffects: randEffects(),
+      _mods: R.chance(0.3) ? { stats: randMods(), statMax: randMods() } : undefined,
+      armorValues: R.pick([undefined, [], Array.from({ length: 7 }, () => R.range(0, 100))]),
+    });
+    if (R.chance(0.45)) equipArmour(t, randPieces(), { armorValues: R.chance(0.5) });
+    addT(t);
+  }
+  const attackers = [];
+  const aids = new Map();
+  for (let i = 0; i < 60; i++) {
+    const a = {
+      stats: randStats(),
+      activeEffects: randEffects(),
+      _mods: R.chance(0.5) ? { stats: randMods(), statMax: randMods() } : undefined,
+      attackModifierFlags: R.chance(0.5) ? byte() : undefined,
+      career: R.chance(0.5) ? { resistanceFlags: byte(), immunityFlags: byte(), lowToleranceFlags: byte(), criticalWeaknessFlags: byte(), attackModifierFlags: byte() } : null,
+    };
+    aids.set(a, attackers.length);
+    attackers.push(a);
+  }
+
+  const TREF = (t) => (t === null || t === undefined ? '-' : String(ids.get(t)));
+  const AREF = (a) => (a === null || a === undefined ? '-' : String(aids.get(a)));
+  const pickT = () => (R.chance(0.08) ? null : zoo[R.int(0, zoo.length - 1)]);
+  const pickTn = () => zoo[R.int(0, zoo.length - 1)];
+  const pickA = () => (R.chance(0.15) ? null : attackers[R.int(0, attackers.length - 1)]);
+  const itemTok = (it) => [B(it.group === 'Armor'), O(it.templateIndex), O(it.material), B(!!it.artifact), O(it.maxCondition), O(it.currentCondition)];
+  const ITEMOPT = (it) => (it === null || it === undefined ? ['0'] : ['1', ...itemTok(it)]);
+  const WOPT = (w) => (w === null || w === undefined ? ['0'] : ['1', O(w.skillId), O(w.material), O(w.flags), O(w.item?.flags)]);
+  const careerTok = (c) => [O(c?.resistanceFlags), O(c?.immunityFlags), O(c?.lowToleranceFlags), O(c?.criticalWeaknessFlags), O(c?.attackModifierFlags)];
+  const effectTok = (a) => {
+    const head = [a.kind, B(!!a.ended)];
+    if (STAT_MOD_KINDS.has(a.kind)) return [...head, ...TARGET_STATS.map((k) => O(a.statMods?.[k]))];
+    if (STAT_NAME_KINDS.has(a.kind)) return [...head, NO(a.stat), O(a.magnitude)];
+    return head;
+  };
+  const liveTok = (ch) => [
+    ...TARGET_STATS.map((k) => F(typeof ch?.stats?.[k] === 'number' ? ch.stats[k] : NaN)),
+    I((ch?.activeEffects ?? []).length), ...(ch?.activeEffects ?? []).flatMap(effectTok),
+    ...TARGET_STATS.map((k) => O(ch?._mods?.stats?.[k])), ...TARGET_STATS.map((k) => O(ch?._mods?.statMax?.[k])),
+  ];
+  const slotEntries = (t) => Object.entries(t.equip?.slots ?? {})
+    .filter(([, it]) => it)
+    .map(([k, it]) => [Number(k), it])
+    .sort((a, b) => a[0] - b[0]);
+  const armorTok = (t) => [I((t.armorValues ?? []).length), ...(t.armorValues ?? []).map((v) => F(v))];
+  const equipOut = (t) => {
+    const sl = slotEntries(t);
+    return [I(sl.length), ...sl.flatMap(([s, it]) => [F(s), ...itemTok(it)]), ...armorTok(t)];
+  };
+  for (let i = 0; i < zoo.length; i++) {
+    const t = zoo[i];
+    const sl = slotEntries(t);
+    out.add('tgt', String(i), B(!!t.isPlayer), t.isClass === undefined || t.isClass === null ? '-' : B(!!t.isClass),
+      O(t.careerIndex), O(t.level), O(t.combatLevel), ...careerTok(t.career), ...liveTok(t), ...armorTok(t),
+      I(sl.length), ...sl.flatMap(([s, it]) => [F(s), ...itemTok(it)]));
+  }
+  for (let i = 0; i < attackers.length; i++) {
+    const a = attackers[i];
+    out.add('atk', String(i), ...liveTok(a), O(a.attackModifierFlags), ...careerTok(a.career));
+  }
+  const strike = () => ({ natural: R.pick([0, 0.1, 0.25, 0.5, -0.5, NaN, 0.0666, 1]), blunt: R.chance(0.5), unarmed: R.chance(0.2), sharp: R.chance(0.3) });
+  const dmg = () => (R.chance(0.5) ? R.pick(DAMAGES) : R.range(-20, 320));
+  const wtoks = (wm) => (wm === null ? ['-'] : [I(wm.length), ...wm.map((x) => F(x))]);
+
+  // A: career tolerance and the elemental share
+  const FLAGS = [0, 1, 2, 3, 4, 5, 8, 16, 17, 32, 33, 64, 96, 128, 255, -1, 1.5, NaN, Infinity, 1e9, -0];
+  const ELEMENTS = ['fire', 'Fire', 'FROST', 'shock', 'Poison', 'magic', 'MAGIC', '', 'constructor', '__proto__', 'toString', 'fire ', 'Ice', 'i̇gnis', 'Kold'];
+  for (let i = 0; i < 2400; i++) {
+    const c = R.chance(0.1) ? null : { resistanceFlags: byte(), immunityFlags: byte(), lowToleranceFlags: byte(), criticalWeaknessFlags: byte(), attackModifierFlags: byte() };
+    const flag = R.pick(FLAGS);
+    out.add('career_tolerance', F(flag), ...careerTok(c), '=>', careerTolerance(c, flag));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const t = pickT();
+    const e = R.chance(0.1) ? null : R.pick(ELEMENTS);
+    out.add('element_share', TREF(t), e === null ? '-' : N(e), '=>', F(elementShare(t, e)));
+  }
+
+  // B: natural resistance and liveStat
+  for (let i = 0; i < 2400; i++) {
+    const t = pickT();
+    out.add('natural', TREF(t), '=>', F(naturalDamageResistance(t)));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const useT = R.chance(0.5);
+    const ch = useT ? pickTn() : attackers[R.int(0, attackers.length - 1)];
+    const stat = R.pick(TARGET_STATS);
+    out.add('live_stat', useT ? 't' : 'a', String(useT ? ids.get(ch) : aids.get(ch)), stat, '=>', F(liveStat(ch, stat)));
+  }
+
+  // C: the enemy-type bonus and the target's group
+  for (let i = 0; i < 2400; i++) {
+    const t = pickT();
+    out.add('enemy_type_group', TREF(t), '=>', F(enemyTypeGroup(t)));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const a = pickA();
+    const t = pickT();
+    const r = enemyTypeBonusRange(a, t);
+    out.add('bonus_range', AREF(a), TREF(t), '=>', F(r.group), F(r.decoded), F(r.bonus), F(r.penalty), F(r.will), F(r.targetLevel));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const a = pickA();
+    const t = pickT();
+    const roll = R.chance(0.2) ? R.pick([0, 1e-9, 0.5, 0.999999999, 1]) : R.unit();
+    out.add('bonus_value', AREF(a), TREF(t), F(roll), '=>', F(enemyTypeBonusValue(a, t, roll)));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const a = pickA();
+    const t = pickT();
+    const vals = enemyTypeBonusValues(a, t);
+    out.add('bonus_values', AREF(a), TREF(t), '=>', I(vals.length), ...vals.map((v) => F(v)));
+  }
+
+  // D: silver and the Skeletal Warrior
+  for (let i = 0; i < 2400; i++) {
+    const t = pickT();
+    const w = randomWeapon();
+    out.add('silver_applies', TREF(t), ...WOPT(w), '=>', B(silverApplies(t, w)));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const t = pickT();
+    const w = randomWeapon();
+    const d = dmg();
+    out.add('skeletal_damage', F(d), TREF(t), ...WOPT(w), '=>', F(skeletalSilverDamage(d, t, w)));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const t = pickT();
+    out.add('is_skeletal', TREF(t), '=>', B(isSkeletalTarget(t)));
+  }
+
+  // E: the monster hide and the intrinsic damage
+  for (let i = 0; i < 2400; i++) {
+    const t = pickT();
+    const d = dmg();
+    const blunt = R.chance(0.5);
+    const nat = R.chance(0.3) ? undefined : R.pick([0, 0.1, 0.25, 0.5, 0.3333, -0.5, 1, NaN]);
+    const exact = R.chance(0.3);
+    out.add('monster_hide', TREF(t), F(d), B(blunt), nat === undefined ? '-' : F(nat), B(exact), '=>', F(monsterHideDamage(t, d, blunt, nat, exact)));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const t = pickT();
+    const w = randomWeapon();
+    const d = dmg();
+    const exact = R.chance(0.3);
+    out.add('intrinsic_damage', TREF(t), F(d), ...WOPT(w), B(exact), '=>', F(intrinsicDamage(t, d, { weapon: w, exact })));
+  }
+
+  // F: worn armour and the armour reduction rows
+  for (let i = 0; i < 2400; i++) {
+    const it = randomItem();
+    out.add('armour_material_id', ...ITEMOPT(it), '=>', F(armourMaterialId(it)));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const it = randomItem();
+    const sharp = R.chance(0.3);
+    out.add('armour_condition', ...ITEMOPT(it), B(sharp), '=>', F(armourConditionMultiplier(it, { sharpEdge: sharp })));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const it = randomItem();
+    const d = dmg();
+    const s = strike();
+    const opts = { natural: s.natural, blunt: s.blunt, unarmed: s.unarmed, sharpEdge: s.sharp };
+    out.add('armour_reduction', ...ITEMOPT(it), F(d), F(s.natural), B(s.blunt), B(s.unarmed), B(s.sharp), '=>', F(armourReduction(it, d, opts)));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const it = randomItem();
+    const d = dmg();
+    const s = strike();
+    const opts = { natural: s.natural, blunt: s.blunt, unarmed: s.unarmed, sharpEdge: s.sharp };
+    out.add('shield_reduction', ...ITEMOPT(it), F(d), F(s.natural), B(s.blunt), B(s.unarmed), B(s.sharp), '=>', F(shieldReduction(it, d, opts)));
+  }
+
+  // G: the shield, the struck slot, the left hand, the worn check
+  for (let i = 0; i < 2400; i++) {
+    const t = pickTn();
+    const strong = R.chance(0.5);
+    const it = randomItem();
+    out.add('shield_block', TREF(t), B(strong), ...ITEMOPT(it), '=>', F(shieldBlockChance(t, strong, it)));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const t = pickT();
+    const part = R.pick(PARTS);
+    const nat = R.chance(0.3) ? undefined : R.pick([0, 0.2, 0.4, NaN]);
+    const sharp = R.chance(0.3);
+    out.add('shield_beats', TREF(t), F(part), nat === undefined ? '-' : F(nat), B(sharp), '=>', B(shieldBeatsUnderArmour(t, part, nat, { sharpEdge: sharp })));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const t = pickT();
+    const part = R.pick(PARTS);
+    out.add('struck_slot', TREF(t), F(part), '=>', ...ITEMOPT(struckSlotItem(t, part)));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const t = pickT();
+    out.add('left_hand', TREF(t), '=>', ...ITEMOPT(leftHandShield(t)));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const t = pickT();
+    out.add('has_worn', TREF(t), '=>', B(hasWornEquipment(t)));
+  }
+
+  // H: the per-part outcomes, the part damage and the weighted expectation
+  for (let i = 0; i < 2400; i++) {
+    const t = pickT();
+    const d = dmg();
+    const part = R.pick(PARTS);
+    const w = randomWeapon();
+    const sharp = R.chance(0.3);
+    const o = targetPartOutcomes(t, d, part, { weapon: w, sharpEdge: sharp });
+    out.add('part_outcomes', TREF(t), F(d), F(part), ...WOPT(w), B(sharp), '=>', I(o.length), ...o.flatMap((x) => [F(x.p), F(x.damage)]));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const t = pickT();
+    const d = dmg();
+    const part = R.pick(PARTS);
+    const w = randomWeapon();
+    const sharp = R.chance(0.3);
+    out.add('part_damage', TREF(t), F(d), F(part), ...WOPT(w), B(sharp), '=>', F(targetPartDamage(t, d, part, { weapon: w, sharpEdge: sharp })));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const t = pickT();
+    const d = dmg();
+    const w = randomWeapon();
+    const wm = R.chance(0.6) ? null : Array.from({ length: R.int(0, 9) }, () => R.pick([0, 0.1, 0.2, 0.3, 0.5, 1, 2, NaN, 0.25]));
+    const mi = R.int(0, MAPS.length - 1);
+    const v = targetExpectedDamage(t, d, { weapon: w, weights: wm ?? undefined, map: MAPS[mi] });
+    out.add('expected_damage', TREF(t), F(d), ...WOPT(w), ...wtoks(wm), String(mi), '=>', O(v));
+  }
+
+  // I: equipArmour on minted pieces
+  for (let i = 0; i < 2000; i++) {
+    const base = pickTn();
+    const pieces = randPieces();
+    const av = R.chance(0.5);
+    const after = cloneTarget(base);
+    equipArmour(after, pieces, { armorValues: av });
+    out.add('equip_armour', TREF(base), I(pieces.length), ...pieces.flatMap((p) => itemTok(p)), B(av), '=>', ...equipOut(after));
+  }
+
+  // J: the scalar helpers of the vendored modules, and the armour piece's condition
+  for (let i = 0; i < 2400; i++) {
+    const m = R.pick([undefined, null, 0, -0, 3, 256, 259, 300, 511, 512, 513, 516, 521, 522, 0.5, 512.5, -1, NaN, Infinity, 1e9]);
+    out.add('material_armor_value', F(m === undefined || m === null ? NaN : m), '=>', F(materialArmorValue(m)));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const it = randomItem();
+    out.add('item_armor_value', ...ITEMOPT(it), '=>', F(itemArmorValue(it)));
+  }
+  const CAREER_IDS = [-3, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 128, 1.5, -0, NaN, Infinity];
+  for (let i = 0; i < 2400; i++) {
+    const c = R.pick(CAREER_IDS);
+    out.add('enemy_group', F(c), '=>', F(enemyEntityGroup(c)));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const fl = R.chance(0.8) ? byte() : R.pick([NaN, 256, -1, 3.7, 0x1ff]);
+    const group = R.pick([-1, 0, 1, 2, 3, 4, 1.5, NaN, -0]);
+    out.add('career_attack_modifier', F(fl), F(group), '=>', F(careerAttackModifier(fl, group)));
+  }
+  const MOBILE_IDS = [0, 1, 2, 39, 41, 42, 43, 127, 128, 129, 146, 147, -0, -1, 1.5, NaN, Infinity];
+  for (let i = 0; i < 2400; i++) {
+    const id = R.chance(0.8) ? R.int(-5, 200) : R.pick(MOBILE_IDS);
+    out.add('enemy_entity_type', F(id), '=>', enemyEntityType(id) ?? 'null');
+  }
+  for (let i = 0; i < 2400; i++) {
+    const id = R.chance(0.8) ? R.int(-5, 200) : R.pick(MOBILE_IDS);
+    out.add('enemy_career_index', F(id), '=>', F(enemyCareerIndex(id)));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const part = R.pick(PARTS);
+    out.add('slot_for_body_part', F(part), '=>', F(slotForBodyPart(part)));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const it = randomItem();
+    const ps = armorBodyParts(it);
+    out.add('armor_body_parts', ...ITEMOPT(it), '=>', I(ps.length), ...ps.map((p) => F(p)));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const it = randomItem();
+    out.add('condition_percentage', ...ITEMOPT(it), '=>', F(conditionPercentage(it)));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const tmpl = R.pick(GEAR_TEMPLATES);
+    const mat = R.pick(GEAR_MATERIALS);
+    const cond = R.pick([NaN, -1, 0, 0.3, 0.5, 0.999, 1, 2, Infinity, -Infinity, 1e-9, 0.7]);
+    const it = armourPiece(tmpl, { material: mat, condition: cond });
+    out.add('armour_piece', O(it.maxCondition), F(cond), '=>', F(it.currentCondition));
+  }
+  for (const core of ['overhaul', 'struck', 'undef']) {
+    const w = core === 'undef' ? bodyPartWeights() : bodyPartWeights(core);
+    out.add('body_part_weights', core, '=>', I(w.length), ...w.map((x) => F(x)));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const t = pickT();
+    out.add('silver_doubles', TREF(t), '=>', B(silverDoubles(t)));
+  }
+  const SHIELD_IDS = [109, 110, 111, 112, 113, 102, 108, 109.5, NaN, 0, -0, 512, undefined, null];
+  for (let i = 0; i < 2400; i++) {
+    const t = R.pick(SHIELD_IDS);
+    out.add('is_shield_template', O(t), '=>', B(isShieldTemplate(t)));
+  }
+  for (let i = 0; i < 2400; i++) {
+    const isClass = R.chance(0.5);
+    const armor = R.pick([0, 100, 60, 25, 5, 30.5, 1000, -10, NaN, 300]);
+    const pieces = Array.from({ length: R.int(0, 4) }, () => ({
+      piece: R.pick([...GEAR_TEMPLATES, 113, 500, undefined]),
+      material: R.pick([undefined, ...GEAR_MATERIALS, 3]),
+      ...(R.chance(0.25) ? { shield: true } : {}),
+    }));
+    out.add('enemy_armor_values', B(isClass), F(armor), I(pieces.length), ...pieces.flatMap((p) => [O(p.piece), O(p.material), B(!!p.shield)]), '=>', ...enemyArmorValues({ isClass, armor }, pieces).map((v) => F(v)));
+  }
+
+  const perKind = {};
+  for (const line of out.lines) {
+    const k = line.split(' ', 1)[0];
+    if (k !== 'tgt' && k !== 'atk') perKind[k] = (perKind[k] ?? 0) + 1;
+  }
+  console.log(`target: ${zoo.length} targets (${monsters} monster rows, ${classes} class rows, ${skipped} mobiles refused by the builder), ${attackers.length} attackers`);
+  for (const [k, n] of Object.entries(perKind)) console.log(`target:   ${k}: ${n} cases`);
+  return out.write();
+}
+
 counts.round = genRound();
 counts.rng = genRng();
 counts.damage = genDamage();
 counts.allowance = genAllowance();
 counts.relay_claim = genRelay();
 counts.swing = genSwing();
+counts.target = genTarget();
 for (const [k, v] of Object.entries(counts)) console.log(`${k}: ${v} lines -> ${join('rust', 'tests', 'vectors', `${k}.txt`)}`);

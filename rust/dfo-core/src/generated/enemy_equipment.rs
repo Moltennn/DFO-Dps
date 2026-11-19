@@ -35,3 +35,12 @@ pub static MATERIALS_BY_MODIFIER: &[f64] = &[64.0, 128.0, 10.0, 21.0, 13.0, 8.0,
 
 #[rustfmt::skip]
 pub static WEAPONS_ENUM: &[(&str, f64)] = &[("Dagger", 113.0), ("Tanto", 114.0), ("Staff", 115.0), ("Shortsword", 116.0), ("Wakazashi", 117.0), ("Broadsword", 118.0), ("Saber", 119.0), ("Longsword", 120.0), ("Katana", 121.0), ("Claymore", 122.0), ("Dai-Katana", 123.0), ("Mace", 124.0), ("Flail", 125.0), ("Warhammer", 126.0), ("Battle Axe", 127.0), ("War Axe", 128.0), ("Short Bow", 129.0), ("Long Bow", 130.0)];
+
+#[rustfmt::skip]
+pub static PIECE_BODY_PART: &[(i64, f64)] = &[(102, 3.0), (103, 4.0), (104, 5.0), (105, 2.0), (106, 1.0), (107, 0.0), (108, 6.0)];
+
+#[rustfmt::skip]
+pub static SHIELD_VALUE: &[(i64, f64)] = &[(109, 1.0), (110, 2.0), (111, 3.0), (112, 4.0)];
+
+#[rustfmt::skip]
+pub static SHIELD_PARTS: &[(i64, &[f64])] = &[(109, &[2.0, 4.0]), (110, &[2.0, 4.0, 5.0]), (111, &[2.0, 4.0, 5.0]), (112, &[0.0, 2.0, 4.0, 5.0])];

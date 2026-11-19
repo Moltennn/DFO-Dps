@@ -2,5 +2,49 @@
 // source: vendor/upstream/a3eb1605/src/systems/armorMaterials.js
 #![allow(clippy::approx_constant, clippy::excessive_precision)]
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BodyParts {
+    pub head: f64,
+    pub right_arm: f64,
+    pub left_arm: f64,
+    pub chest: f64,
+    pub hands: f64,
+    pub legs: f64,
+    pub feet: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ArmorMaterial {
+    pub none: f64,
+    pub leather: f64,
+    pub chain: f64,
+    pub chain2: f64,
+    pub iron: f64,
+    pub steel: f64,
+    pub silver: f64,
+    pub elven: f64,
+    pub dwarven: f64,
+    pub mithril: f64,
+    pub adamantium: f64,
+    pub ebony: f64,
+    pub orcish: f64,
+    pub daedric: f64,
+}
+
 #[rustfmt::skip]
 pub static SHIELD_PARTS: &[(f64, &[f64])] = &[(109.0, &[2.0, 4.0]), (110.0, &[2.0, 4.0, 5.0]), (111.0, &[2.0, 4.0, 5.0]), (112.0, &[0.0, 2.0, 4.0, 5.0])];
+
+#[rustfmt::skip]
+pub static SHIELD_VALUES: &[(f64, f64)] = &[(109.0, 1.0), (110.0, 2.0), (111.0, 3.0), (112.0, 4.0)];
+
+#[rustfmt::skip]
+pub static BODY_PARTS: BodyParts = BodyParts { head: 0.0, right_arm: 1.0, left_arm: 2.0, chest: 3.0, hands: 4.0, legs: 5.0, feet: 6.0 };
+
+#[rustfmt::skip]
+pub const NUMBER_BODY_PARTS: f64 = 7.0;
+
+#[rustfmt::skip]
+pub static ARMOR_MATERIAL: ArmorMaterial = ArmorMaterial { none: -1.0, leather: 0.0, chain: 256.0, chain2: 259.0, iron: 512.0, steel: 513.0, silver: 514.0, elven: 515.0, dwarven: 516.0, mithril: 517.0, adamantium: 518.0, ebony: 519.0, orcish: 520.0, daedric: 521.0 };
+
+#[rustfmt::skip]
+pub static PLATE_ARMOR_VALUES: &[f64] = &[7.0, 9.0, 9.0, 11.0, 13.0, 15.0, 15.0, 17.0, 19.0, 21.0];
