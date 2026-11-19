@@ -24,7 +24,7 @@ pub fn condition_pct(item: &Value) -> Value {
 }
 
 pub fn wear_amount(damage: f64) -> f64 {
-    // mutation: equivalent - for either signed zero or any 0 < damage <= 1, the positive arm truncates to +0, as the fallback does.
+    // mutation: equivalent - durability.js:41 uses the same > 0 test; for either signed zero or 0 < damage <= 1, trunc((10 * damage + 50) / 100) is the fallback +0.
     if damage > 0.0 {
         ((10.0 * damage + 50.0) / 100.0).trunc()
     } else {
@@ -94,7 +94,7 @@ fn mint_condition(item: &mut Value) {
         hp.unwrap_or(0.0)
     };
     let mat = item.get("material");
-    // mutation: equivalent - a nullish material has no usable index, and scaling a zero pool by a positive finite factor is still +0.
+    // mutation: equivalent - itemTemplates.js:342 uses the same guard. A nullish material yields neither a weapon index nor a plate metal; the pool is +0 or positive, and scaling +0 by any ladder factor still yields +0.
     if !mat.is_nullish() && max > 0.0 {
         let metal = mat.to_number();
         let index = if group.is_str("Weapons") {

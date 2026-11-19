@@ -58,7 +58,7 @@ pub fn weapon_of(item: &Value, rri: bool) -> Value {
     let mut ids = Vec::<Value>::new();
     let mut powers = Vec::new();
     for id in power_ids_of(item) {
-        // mutation: equivalent - powerIdsOf emits at most one string (rarities are exclusive); powerOf rejects all other values.
+        // mutation: equivalent - lootRarity.js:1271 emits at most one string (exclusive rarities); another iteration can only pass a non-string to power_of, which returns Null and is filtered out.
         if id.as_str().is_some() && !ids.iter().any(|old| old.same_value_zero(&id)) {
             let p = power_of(&id);
             if p.truthy() {
@@ -220,7 +220,7 @@ pub fn martial_pace(ch: &Value, opts: &Value) -> f64 {
     match tag(ch, "martialPath") {
         "warblade" if on(opts, "rhythm") => 15.0,
         "bladedancer" if on(opts, "cyclone") => 20.0,
-        // mutation: equivalent - the missing-share default 1 and its mutant 2 are both above the frenzy threshold.
+        // mutation: equivalent - the selfShare default 1 (model.js:595) and 2 both miss the < 0.5 frenzy gate.
         "berserker" if num(opts, "attackerHealthShare", 1.0) < 0.5 => 10.0,
         _ => 0.0,
     }
@@ -229,7 +229,7 @@ pub fn martial_pace(ch: &Value, opts: &Value) -> f64 {
 fn mastery_climb(ch: &Value, id: &Value) -> f64 {
     let raw = ch.get("skills").prop(id);
     let raw = if matches!(raw, Value::Null | Value::Undefined) {
-        // mutation: equivalent - raw 0 and 1 both yield zero climb after subtracting 100 and clamping at zero.
+        // mutation: equivalent - model.js:414,617 use raw 0 for nullish skill; raw 0 and 1 both stay <= 100 after the effective-skill read, so climb clamps to +0.
         n(0.0)
     } else {
         raw
@@ -630,7 +630,7 @@ fn adrenaline(attacker: &Value, target: &Value, overhaul: bool) -> f64 {
                 .to_number(),
         ) & 4
             == 4
-            // mutation: equivalent - a missing maxHealth of 0 or 1 truncates to +0 after dividing by either 6 or 8.
+            // mutation: equivalent - inRush (model.js:187) defaults nonfinite maxHealth to 0; 1 also truncates to +0 after division by 6 or 8, leaving the health comparison unchanged.
             && num(e, "health", 0.0) < (num(e, "maxHealth", 0.0) / div).trunc()
     };
     (if rush(attacker) { value } else { 0.0 }) - if rush(target) { value } else { 0.0 }
@@ -783,13 +783,13 @@ pub fn martial_blow_pct(ch: &Value, t: Option<&target::Target>, opts: &Value) ->
         return 0.0;
     }
     match tag(ch, "martialPath") {
-        // mutation: equivalent - changing only the default from 5 to 6 still clamps it to 5; the separate cap mutation is tested.
+        // mutation: equivalent - model.js:602 also defaults to 5 stacks; replacing only the default with 6 still clamps to 5.
         "blademaster" => 3.0 * js_clamp(num(opts, "stacks", 5.0), 0.0, 5.0),
         "warblade" if on(opts, "rally") => 15.0,
         "ranger" if group_of(t) == Some("animal") => 20.0,
         "cutthroat" if on(opts, "unaware") => 25.0,
         "assassin" if on(opts, "firstBlow") => 30.0,
-        // mutation: equivalent - the missing-share default 1 and its mutant 2 are both above the frenzy threshold.
+        // mutation: equivalent - the selfShare default 1 (model.js:595) and 2 both miss the < 0.5 frenzy gate.
         "berserker" if num(opts, "attackerHealthShare", 1.0) < 0.5 => 20.0,
         "crusader" if matches!(group_of(t), Some("undead" | "daedra")) => 20.0,
         _ => 0.0,
@@ -806,7 +806,7 @@ pub fn mastery_pct(ch: &Value, w: &Value, opts: &Value) -> f64 {
     let mut pct = 0.0;
     // mutation: equivalent - the >= mutant includes only zero climb, so each selected addend is +0.
     if climb > 0.0 {
-        // mutation: equivalent - 1 and 2 both select the >= 0.5 branch and reject the < 0.5 branch.
+        // mutation: equivalent - the model.js:622-623 default 1 and 2 both select the >= 0.5 branch and reject the < 0.5 branch.
         let share = num(opts, "healthShare", 1.0);
         if ws == SKILLS.long_blade || ws == SKILLS.archery {
             pct += climb;
@@ -1001,7 +1001,7 @@ pub fn finish_blow(damage: f64, opts: &Value, critical: bool) -> f64 {
             unity_round(v)
         }
     };
-    // mutation: equivalent - each read is used only when differs rejects undefined.
+    // mutation: equivalent - model.js:665 defaults each multiplier to 1; differs rejects both undefined and numeric 1, so the Rust fallback is never multiplied into d.
     let field = |k| match opts.get(k) {
         Value::Undefined => 1.0,
         v => v.to_number(),
@@ -1352,7 +1352,7 @@ fn has(traits: &[Value], key: &str) -> bool {
 
 pub fn resist_blow(traits: &[Value], d: f64, kind: &str, w: &Value, element: Option<usize>) -> f64 {
     use crate::generated::boss_traits::{ELEMENT_TRAITS, RESIST_SHARE, WEAPON_RESIST_SHARE};
-    // mutation: equivalent - bypassing the guard for empty traits, zero, negative or NaN leaves landed < d false (the only multipliers are positive and <= 1).
+    // mutation: equivalent - bossTraits.js:89-91 short-circuits empty traits or nonpositive/NaN d. Bypassing that guard leaves landed == d for empty traits, landed >= d for nonpositive d (all shares in (0, 1]), and landed < d false for NaN.
     if traits.is_empty() || d <= 0.0 || d.is_nan() {
         return d;
     }

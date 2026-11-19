@@ -11,7 +11,7 @@ pub const SINGLE_TICKS: f64 = 5.0;
 pub const OFF_HAND_BLOW_WEIGHT: f64 = DUAL.off_damage;
 
 pub fn off_hand_to_hit(agility: f64) -> f64 {
-    // mutation: equivalent - fallback 51 also rounds (51 - 50) * 0.1 to zero, matching fallback 50.
+    // mutation: equivalent - handsLaw.js:253 defaults nonfinite agility to 50; both 50 and 51 give Math.round((a - 50) * 0.1) == 0.
     let a = finite_or(agility, 50.0);
     js_clamp(
         DUAL.off_to_hit + math_round((a - 50.0) * DUAL.off_to_hit_per_agility),
@@ -21,7 +21,7 @@ pub fn off_hand_to_hit(agility: f64) -> f64 {
 }
 
 pub fn off_hand_burden(weight: f64, strength: f64) -> f64 {
-    // mutation: equivalent - fallback 1 kg loads at most 1 * 1.5 * 1.5 = 2.25 kg, below the 2.5 kg free heft in both hands.
+    // mutation: equivalent - handsLaw.js:261 defaults falsy weight to 0; 1 kg instead loads at most 2.25 kg (off-hand 1.5x, STR 0), below the 2.5 kg free heft in both hands.
     let w = or_default(weight, 0.0);
     swing_heft(Some(w * DUAL.off_weight), Some(strength)) / swing_heft(Some(w), Some(strength))
 }
