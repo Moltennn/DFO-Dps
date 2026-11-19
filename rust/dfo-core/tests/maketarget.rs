@@ -28,18 +28,25 @@ use dfo_core::target::{Career, Effect, Item, Stat, Target};
 use dfo_core::vectors_canon as vc;
 use std::collections::BTreeMap;
 
-/// The roll sequence a case replays: the values the JS consumed, in order.
+/// The roll sequence a case replays: an explicit list of the values the JS consumed (in order), or a constant fill
+/// (every roll is `constant`). `expected` is how many the JS drew; the port must draw exactly that many.
 struct Scripted {
     vals: Vec<f64>,
+    constant: Option<f64>,
+    expected: usize,
     pos: usize,
 }
 
 impl Rolls for Scripted {
     fn roll(&mut self) -> f64 {
+        if let Some(v) = self.constant {
+            self.pos += 1;
+            return v;
+        }
         let Some(v) = self.vals.get(self.pos) else {
             panic!(
                 "maketarget: the case drew more rolls than the JS did ({} recorded)",
-                self.vals.len()
+                self.expected
             );
         };
         self.pos += 1;
@@ -49,34 +56,51 @@ impl Rolls for Scripted {
 
 impl Scripted {
     fn finished(&self) -> bool {
-        self.pos == self.vals.len()
+        self.pos == self.expected
     }
 }
 
-/// `I n` then n f64 tokens.
-fn read_rolls(c: &mut Case) -> Scripted {
-    let n = c.int() as usize;
-    let vals = (0..n).map(|_| c.f64()).collect();
-    Scripted { vals, pos: 0 }
-}
-
-/// `-` (no roll function) or the block of [`read_rolls`].
+/// The ROLLS block: `-` (no roll function), `I n` then n f64 (the consumed values), or `K F I` (every roll is the f64,
+/// and I is how many the JS drew).
 fn read_rolls_opt(c: &mut Case) -> Option<Scripted> {
-    if c.peek() == Some("-") {
-        c.word();
-        None
-    } else {
-        Some(read_rolls(c))
+    match c.word().as_str() {
+        "-" => None,
+        "K" => {
+            let v = c.f64();
+            let n = c.int() as usize;
+            Some(Scripted {
+                vals: Vec::new(),
+                constant: Some(v),
+                expected: n,
+                pos: 0,
+            })
+        }
+        t => {
+            let n: usize = t
+                .parse()
+                .unwrap_or_else(|_| c.fail(&format!("bad rolls count `{t}`")));
+            let vals = (0..n).map(|_| c.f64()).collect();
+            Some(Scripted {
+                vals,
+                constant: None,
+                expected: n,
+                pos: 0,
+            })
+        }
     }
 }
 
-/// Ends a case: every recorded roll was drawn.
+/// A block that must be present (every family but the enemy target's).
+fn read_rolls(c: &mut Case) -> Scripted {
+    read_rolls_opt(c).unwrap_or_else(|| c.fail("a rolls block is required here"))
+}
+
+/// Ends a case: every recorded roll was drawn, and no more.
 fn rolls_done(c: &Case, r: &Scripted) {
     if !r.finished() {
         c.fail(&format!(
             "the JS drew {} rolls, the port drew {}",
-            r.vals.len(),
-            r.pos
+            r.expected, r.pos
         ));
     }
 }
@@ -585,6 +609,12 @@ const FLOORS: &[(&str, &[&str], usize)] = &[
     ("scalar", &["mrm", "tgo", "erow", "cidx", "iscl"], 2000),
     ("classic", &["classic"], 2000),
     ("rri", &["rri"], 2000),
+    // The boundary families (tools/rust-vectors.mjs, boundary probes): each is a floor against truncation only.
+    ("bclassic", &["bclassic"], 1000),
+    ("brri", &["brri"], 1000),
+    ("bgear", &["bgear"], 1000),
+    ("benemy", &["benemy"], 1000),
+    ("bpoison", &["bpoison"], 1000),
 ];
 
 #[test]
@@ -620,7 +650,7 @@ fn maketarget_matches_js_vectors() {
                     ));
                 }
             }
-            "enemy" => {
+            "enemy" | "benemy" => {
                 let id = c.f64();
                 let code = c.int() as usize;
                 let player_level = c.opt();
@@ -661,7 +691,7 @@ fn maketarget_matches_js_vectors() {
                 let exp = c.word();
                 check_target(&c, &exp, stand_in_target(id, &Boot::from_code(code)));
             }
-            "gear" => {
+            "gear" | "bgear" => {
                 let id = c.f64();
                 let code = c.int() as usize;
                 let player_level_for_class = c.opt();
@@ -744,7 +774,7 @@ fn maketarget_matches_js_vectors() {
                 let exp = c.bool();
                 c.check_eq("isClassEnemyOf", exp, is_class_enemy_of(id));
             }
-            "classic" => {
+            "classic" | "bclassic" => {
                 let id = c.f64();
                 let is_class = c.bool();
                 let variant = c.opt();
@@ -765,7 +795,7 @@ fn maketarget_matches_js_vectors() {
                 rolls_done(&c, &rolls);
                 check_gear_out(&c, &exp, &got, None);
             }
-            "rri" => {
+            "rri" | "brri" => {
                 let id = c.f64();
                 let is_class = c.bool();
                 let variant = c.opt();
@@ -803,6 +833,16 @@ fn maketarget_matches_js_vectors() {
                 });
                 rolls_done(&c, &rolls);
                 check_gear_out(&c, &exp, &got, got.poison);
+            }
+            "bpoison" => {
+                let mob = c.f64();
+                let pl = c.f64();
+                let mut rolls = read_rolls(&mut c);
+                c.expect("=>");
+                let exp = c.opt();
+                let got = dfo_core::gear::roll_enemy_weapon_poison(Some(mob), pl, &mut rolls);
+                rolls_done(&c, &rolls);
+                c.check_opt("roll_enemy_weapon_poison", exp, got);
             }
             other => c.fail(&format!("unknown kind `{other}`")),
         }

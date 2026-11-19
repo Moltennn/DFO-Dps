@@ -428,7 +428,8 @@ joined by `,` for a target and `;` for a row; `!` is a JS RangeError, the refusa
 | `classic` | `F id`, `B isClass`, `O variant`, `F armor`, `F playerLevel`, ROLLS | GEAR_OUT | `classic` 2000: 2400 |
 | `rri` | `F id`, `B isClass`, `O variant`, `F playerLevel`, `O level`, `F armor`, `B mudex`, `O team`, `O bitfield`, ROLLS | GEAR_OUT | `rri` 2000: 2400 |
 
-ROLLS is `I n` then n f64 (the consumed values), or `-` (no roll function). GEAR_OUT is `right` (`-` or `W tmpl mat`),
+ROLLS is `I n` then n f64 (the consumed values), or `K F I` (every roll is the f64 F, and I is how many the JS drew: the
+constant-fill form of the boundary probes), or `-` (no roll function). GEAR_OUT is `right` (`-` or `W tmpl mat`),
 `left` (`-`, `S tmpl` for a shield marker, or `W tmpl mat`), `I n` then n x `(F piece, F material, B shield)`, seven f64
 armour values, and the poison (`O`). A career is `-` or `c` and fourteen opts (six flag bytes, eight stats). A make field
 is `-` when the key is absent; `minMetalToHit` is `u` for a key present with `undefined`. The grammars the Rust reader
@@ -484,6 +485,76 @@ value is the armour ladder (`itemArmorValue`: `_customArmorValue` is never regis
   vendored helper that R3a did not port.
 - `minMetalToHit`: the generator asserts every mint row has it, so a body always carries a number; `Target` keeps the
   `Option` so a JS `undefined` would still read as one.
+
+### Boundary probes (R3b, second pass)
+
+Mutation testing showed that the random sequences rarely land a roll in a threshold's narrow band (a chance of 5 with
+the roll in [0.05, 0.06)). So each arm also runs with probes at the flip points of every threshold it tests.
+
+For a decision `floor(r * N) < T` (a dice100 chance, N = 100) or `lo + floor(r * width)` (a range, N = width), the flip
+points are the bucket starts `b(k)` = the least double r with `floor(r * N) >= k`. The generator (`bucketStart`,
+`boundaryValues`, `indexValues`, tools/rust-vectors.mjs) takes for each threshold T the starts of buckets T-1, T, T+1
+(so a +-1 change of T flips a probe), their predecessors (the just-below double), and the successor of each start.
+Range widths N = 2..8 and 13 get every bucket start and predecessor; the material ladder gets the partial sums of
+`MATERIALS_BY_MODIFIER` (N = 256).
+
+Some branches are reachable only through a second roll that a constant fill cannot pass: the classic and RRI secondary
+weapon (the first 50% test must fail and the second pass, and one constant does both), and the Dai-Katana's 90% re-roll
+(after a range picks 123). For those bases the background is the first of 256 seeds whose run takes the branch
+(`wantLeftWeapon`, `wantDaiKatana`), so the index probes overwrite a roll of that branch. The generator warns if no seed
+does. The gear family cannot observe the secondary weapon (weapons are not on the target), so those are classic and RRI
+only.
+
+Two sequence kinds per base case:
+- `K F I` (a constant fill): every roll is the value F, and I is how many the JS drew. One line per boundary value
+  probes every decision of the base at once.
+- `I n F*` with one index overwritten: a random sequence (seeded from the base's inputs) whose k-th roll is replaced by a
+  boundary value, for the first 8 decisions of the bases marked `indexed`. This isolates a decision whose outcome a
+  constant fill would mask (a branch the earlier decision skipped).
+
+The bases (each a family of its own, under 10k lines each; the generator prints the counts):
+
+| Kind | Bases | Lines per base |
+|---|---|---|
+| `bclassic` | 12 classic loadouts: a monster (variants null, 0, 1, 2; player level 1, 2, 9, 10, 11, 45), a class (variant 0 or 1 or 2), the city watch | ~240 constant; 8 x ~53 per indexed base |
+| `brri` | 19 classes (variant 0, bitfield 0 or 256 for plate), 7 combat classes with variant 1, orcs/centaurs with their variants (Orcs convert), a monster with none | ~240; indexed for 4 |
+| `bgear` | 19 classes (code 7, city watch level 9), 4 classes (code 5, DEX on and Meaner Monsters off), 7 monsters (career indices 0, 6, 7, 8, 12, 21, 24) | ~240; indexed for 4 |
+| `benemy` | the City Watch knight (146) at player levels 1, 2, 9, 45, boots 0 and 7 | ~240 |
+| `bpoison` | `rollEnemyWeaponPoison` (poisons.js:250) for mobs 0, 7, 8, 12, 21, 24, 135, 139, 141, 146 at player levels 1, 2, 9 | ~240 constant at levels 1 and 9; at level 9 also a PAIR per boundary value (the chance roll 0, which passes both the 5 and the 60 percent tests, then the value as the type roll) and the chance's index probes |
+
+The poison roll is reached by the RRI arm only for monsters (a class never enters that branch), so the Assassin's 60
+percent is probed through `bpoison` directly. The rolls of every base are the rolls the JS draws; the Rust replays them
+and asserts it drew the same number.
+
+Every threshold the arms test a roll against (JS line and the Rust function that ports it):
+
+| Threshold | Where (JS / Rust) | Probed by |
+|---|---|---|
+| dice100 chance 0 (initial, variant null) | `enemyEquipment.js:246`, `gear.rs roll_enemy_equipment` | constants (0 edge), `bclassic` null variant |
+| dice100 chance 50 (variant 0: weapon and shield chance, and the six pieces) | `enemyEquipment.js:248-273`, `roll_enemy_equipment` | constants (49, 50, 51 edges), `bclassic` |
+| dice100 chance 75 (variant 1) | `enemyEquipment.js:261`, `roll_enemy_equipment` | constants (74, 75, 76), `bclassic` variant 1 |
+| dice100 chance 90 (variant 2) | `enemyEquipment.js:262`, `roll_enemy_equipment` | constants (89, 90, 91), `bclassic` variant 2 |
+| `range(Broadsword, Longsword)` width 3 | `enemyEquipment.js:247`, `range_incl` | N = 3 edges |
+| `range(Buckler, Round_Shield)` width 2 | `enemyEquipment.js:249`, `range_incl` | N = 2 edges (prevDown of 0.5 moves the shield id) |
+| `range(Dagger, Shortsword)` width 4 | `enemyEquipment.js:254`, `range_incl` | N = 4 edges |
+| `range(Claymore, Battle Axe)` width 6 | `enemyEquipment.js:257`, `range_incl` | N = 6 edges |
+| `floor(r x 256)` material bucket, clamp 256, ladder | `enemyEquipment.js:105-110`, `random_material` | N = 256 partial sums, `bclassic` |
+| `levelModifier >= 0` (x2, else x4), `- 10` | `enemyEquipment.js:103-104`, `random_material` | `bclassic` player levels 9, 10 |
+| `1 + floor(r x 100)`, `roll >= 70`, `roll >= 90` | `enemyEquipment.js:119-124`, `random_armor_material` | N = 100 edges (69, 70, 71, 89, 90, 91) |
+| `variant === 0`, `=== 1` (75), `=== 2` (90) | `enemyEquipment.js:246-262` | `bclassic`, `brri`, `bgear` |
+| career 7/21 -> 0, 8/12 -> 1, 24 -> 2; class `floor(r x 2)` | `enemyEquipment.js:398-401`, `equipment_variant_for` | `bgear` (monsters 0, 6, 7, 8, 12, 21, 24; classes); N = 2 edges |
+| convertOrcish dice100 80 | `rriEnemyEquipment.js:435`, `convert_orcish` | constants (79, 80, 81), `brri` orcs |
+| poison: `playerLevel <= 1`; dice100 5; Assassin 60; `128 + floor(r x 8)` | `poisons.js:251-262`, `roll_enemy_weapon_poison` | `bpoison` (all 3 levels, mobs incl. 139), N = 8 edges |
+| DEX coin `floor(r x 2) == 0`; forbidden plate/chain/leather bits | `dexEquipment.js:50-89`, `dex_armour_template` | N = 2 edges, `brri` bitfields 0 / 256 / 448 |
+| class arm: dice100 chance 50 (the class's chance) | `rriEnemyEquipment.js:277`, `assign_class` | constants 49/50/51, `brri` |
+| shortblade dice100 40, range 113..117 (width 5) | `rriEnemyEquipment.js:93`, `random_shortblade` | constants 39/40/41, N = 5 edges |
+| secondary weapon `range(0, 4)` | `rriEnemyEquipment.js:95`, `secondary_weapon` | N = 4 edges |
+| big weapon `range(122, 129)` width 7, dice100 90 for the Dai-Katana | `rriEnemyEquipment.js:88-89`, `random_big_weapon` | N = 7 edges, constants 89/90/91 |
+| bow `range(129, 131)` width 2; longblade width 3; blunt width 3/4, axe width 2/3 (`oneOf`) | `rriEnemyEquipment.js:71-92`, the `range_excl` helpers | N = 2, 3, 4 edges, `brri` |
+| combat-class armoured start 100/80/90/30; the head and legs `+50` (barbarian); the -10/-10/-10/-20 steps; `armored > 0` | `rriEnemyEquipment.js:278-399`, `assign_class` | constants (every BOUND_T100 edge), `brri` (classes with the 60, 80, 90, 30, 35, 65, 75 armour) |
+| arrow stack `range(4, 17)` width 13 | `rriEnemyEquipment.js:296`, `assign_class` | N = 13 edges |
+| robes variant `range(0, variants)` when the template has variants | `rriEnemyEquipment.js:191`, `mint_clothing` | N = 8 edges (the robes' variant count is not read here; a mismatch fails the replay) |
+| city watch `3 + floor(r x 4)` | `enemyEntity.js:207`, `mint.rs minted_body` | `benemy` (N = 4 edges, levels 1, 2, 9, 45) |
 
 ### Run (R3b)
 

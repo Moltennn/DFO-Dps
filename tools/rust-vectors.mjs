@@ -53,6 +53,7 @@ import { assignEnemyEquipment } from '../vendor/upstream/a3eb1605/src/combat/ene
 import { createDexEquipmentAssigner } from '../vendor/upstream/a3eb1605/src/systems/enemyExpansion/dexEquipment.js';
 import { dexRead } from '../vendor/upstream/a3eb1605/src/systems/enemyExpansion/dexInstall.js';
 import { ENEMY_BASICS } from '../vendor/upstream/a3eb1605/src/characters/enemy/enemyBasics.js';
+import { rollEnemyWeaponPoison } from '../vendor/upstream/a3eb1605/src/systems/poisons.js';
 import { liveStat } from '../src/save.js';
 import { careerAttackModifier, silverDoubles } from '../vendor/upstream/a3eb1605/src/combat/formulas.js';
 import { enemyEntityGroup } from '../vendor/upstream/a3eb1605/src/combat/enemyGroups.js';
@@ -1450,6 +1451,104 @@ const refused = (e) => {
   return null;
 };
 
+// ---- boundary probes (R3b, second pass) ------------------------------------------------------------------------
+// Every threshold the arms test a roll against is probed at its bucket edges. A roll r decides `floor(r * N) < T` (a
+// dice100 chance, T = chance, N = 100) or `lo + floor(r * (hi + 1 - lo))` (a range); its flip points are the bucket
+// starts b(k) = least r with floor(r * N) >= k, and the doubles just below b(k) and just above it. For each threshold
+// T the set covers b(T-1), b(T), b(T+1), their predecessors and successors. See rust/README.md (R3b, boundary probes).
+const nextUp = (x) => (x === 0 ? 5e-324 : step(x, 1));
+const prevDownOf = (x) => step(x, -1);
+/** The least double r with Math.floor(r * N) >= k (a bucket start of floor(r * N)). */
+function bucketStart(k, N) {
+  if (k <= 0) return 0;
+  let r = k / N;
+  while (Math.floor(r * N) < k) r = nextUp(r);
+  while (Math.floor(prevDownOf(r) * N) >= k) r = prevDownOf(r);
+  return r;
+}
+/** The thresholds (percent) the arms test a roll against, and the armour thresholds of the class arm (+-10 steps). */
+const BOUND_T100 = [0, 5, 10, 20, 30, 35, 40, 50, 60, 65, 70, 75, 80, 90];
+/** The bucket starts of floor(r * 256) where a material ladder step lands (the partial sums of MATERIALS_BY_MODIFIER). */
+const MAT_K256 = [0, 1, 63, 64, 65, 127, 128, 191, 192, 193, 201, 202, 203, 222, 223, 235, 236, 243, 244, 248, 249, 251, 252, 253, 254, 255];
+/** Constant roll values (each applied to every roll of a case): the bucket starts and their predecessors for the range
+ *  widths the arms draw (N = 2..8 and 13), the percent thresholds (+-1, plus the successor of each start), and the material
+ *  edges. Plus 0 and the largest double below 1. */
+function boundaryValues() {
+  const s = new Set([0, 1 - 2 ** -53]);
+  const edges = (k, N) => {
+    if (k < 0 || k >= N) return;
+    const r = bucketStart(k, N);
+    s.add(r);
+    if (r > 0) s.add(prevDownOf(r));
+  };
+  for (const N of [2, 3, 4, 5, 6, 7, 8, 13]) for (let k = 0; k < N; k++) edges(k, N);
+  for (const T of BOUND_T100) {
+    for (const k of [T - 1, T, T + 1]) {
+      edges(k, 100);
+      if (k >= 0 && k < 100) s.add(nextUp(bucketStart(k, 100)));
+    }
+  }
+  for (const k of MAT_K256) edges(k, 256);
+  return [...s];
+}
+/** The single-roll overwrites of an index probe: the percent edges and the predecessor of each threshold's start. */
+function indexValues() {
+  const s = new Set();
+  for (const T of BOUND_T100) {
+    for (const k of [T - 1, T, T + 1]) if (k >= 0 && k < 100) s.add(bucketStart(k, 100));
+    if (T > 0) s.add(prevDownOf(bucketStart(T, 100)));
+  }
+  return [...s];
+}
+/** The f64 of a 16-hex-digit token (the inverse of F). */
+const fromF = (h) => {
+  dv.setBigUint64(0, BigInt(`0x${h}`));
+  return dv.getFloat64(0);
+};
+/** Predicates over a GEAR_OUT token list, for the branches a constant fill cannot reach (a background sequence is
+ *  searched so the branch is taken; the index probes then overwrite a roll of that branch). */
+const isWeaponTpl = (t) => (t >= 113 && t <= 130) || t === 513 || t === 514;
+/** The secondary weapon in the left hand (classic: rollEnemyEquipment's second `dice100`, enemyEquipment.js:253-257). */
+const wantLeftWeapon = (tk) => {
+  const rl = tk[0] === '-' ? 1 : 3;
+  return tk[rl] === 'W' && isWeaponTpl(fromF(tk[rl + 1]));
+};
+/** The Dai-Katana in the right hand (EnemyEntity's big weapon, rriEnemyEquipment.js:88-89: a 90% re-roll follows it). */
+const wantDaiKatana = (tk) => tk[0] === 'W' && fromF(tk[1]) === 123;
+const WANT = { left: wantLeftWeapon, dai: wantDaiKatana };
+
+/** Runs one case with `rolls`; a RangeError is the refusal (null), any other throw is a bug. */
+const runRefusable = (run, rolls) => {
+  try {
+    return run(rolls);
+  } catch (e) {
+    return refused(e);
+  }
+};
+/** A random sequence with its values replaced by the script: the consumed values are what the JS drew. */
+function scriptRun(script, run) {
+  let i = 0;
+  const used = [];
+  const rolls = () => {
+    if (i >= script.length) throw new Error('maketarget: a probe script ran out');
+    const v = script[i++];
+    used.push(v);
+    return v;
+  };
+  return { used, result: runRefusable(run, rolls) };
+}
+/** Every roll is `v`; `n` is how many the JS drew. */
+function constRun(v, run) {
+  let n = 0;
+  const rolls = () => {
+    n++;
+    if (n > 100000) throw new Error('maketarget: a constant probe does not stop');
+    return v;
+  };
+  const result = runRefusable(run, rolls);
+  return { n, result };
+}
+
 async function genMaketarget() {
   const out = new Out('maketarget', 'families: mint (rows) | make (synthetic makeTarget) | enemy, stand (enemyTarget, standInTarget) | gear (gearEnemy) | scalar (materialRequirementMultiplier, targetGroupOf, enemyRowOf, careerIndexOf, isClassEnemyOf) | classic (assignEnemyEquipment) | rri (the Enemy Expansion delegate). Grammar: rust/README.md R3b');
   const R = makeLcg(0x3b01);
@@ -1614,6 +1713,160 @@ async function genMaketarget() {
     if (eq === null) throw new Error('maketarget: the Enemy Expansion arm answered null with the switches at their defaults');
     out.add('rri', F(id), B(isClass), O(variant), F(pl), O(level), F(armor), B(mudex), OS(team), O(bitfield), ...rollsTokens(rs.used()), '=>', ...gearOutTokens(eq, eq.rightHand?.poisonType ?? null));
     bump('rri');
+  }
+
+  // ---- boundary probes: each base run with the constant fills, and (for `indexed` bases) with one roll overwritten ----
+  const BOUND_VALUES = boundaryValues();
+  const IDX_VALUES = indexValues();
+  const emitProbe = (kind, inputs, rollTok, result) => {
+    out.add(kind, ...inputs, ...rollTok, '=>', ...(result ?? ['!']));
+    bump(kind);
+  };
+  const probeBase = (kind, inputs, run, indexed, want = null) => {
+    const hashOf = (text) => [...text].reduce((h, ch) => Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0, 0x811c9dc5);
+    const backgroundOf = (attempt) => {
+      const R2 = makeLcg(hashOf(`${kind}|${inputs.join('|')}|${attempt}`));
+      const s = Array.from({ length: 512 }, () => R2.unit());
+      return { s, b: scriptRun(s, run) };
+    };
+    // The background: the first seed whose run takes the wanted branch (attempt 0 when nothing is wanted).
+    let chosen = null;
+    for (let attempt = 0; attempt < 256 && chosen === null; attempt++) {
+      const c = backgroundOf(attempt);
+      if (want === null || (c.b.result !== null && want(c.b.result))) chosen = c;
+      if (want === null) break;
+    }
+    if (chosen === null) {
+      console.warn(`maketarget: no background of ${kind} ${inputs.join(' ')} takes the wanted branch in 256 seeds`);
+      chosen = backgroundOf(0);
+    }
+    const { s: script, b: base } = chosen;
+    for (const v of BOUND_VALUES) {
+      const c = constRun(v, run);
+      emitProbe(kind, inputs, ['K', F(v), I(c.n)], c.result);
+    }
+    if (indexed) {
+      for (let k = 0; k < Math.min(base.used.length, 8); k++) {
+        for (const v of IDX_VALUES) {
+          const s = script.slice();
+          s[k] = v;
+          const r = scriptRun(s, run);
+          emitProbe(kind, inputs, [I(r.used.length), ...r.used.map((x) => F(x))], r.result);
+        }
+      }
+    }
+  };
+
+  // bclassic: assignEnemyEquipment (the classic loadout). Variants null/0/1/2, the city watch (146), a class, a monster.
+  const CLASSIC_BOUND = [
+    { id: 0, isClass: false, variant: null, pl: 1, indexed: true },
+    { id: 0, isClass: false, variant: 0, pl: 1, indexed: true, want: 'left' },
+    { id: 0, isClass: false, variant: 0, pl: 9 },
+    { id: 0, isClass: false, variant: 0, pl: 10 },
+    { id: 0, isClass: false, variant: 1, pl: 45, indexed: true },
+    { id: 0, isClass: false, variant: 2, pl: 11 },
+    { id: 141, isClass: true, variant: 0, pl: 9, indexed: true, want: 'left' },
+    { id: 146, isClass: true, variant: 0, pl: 9 },
+    { id: 146, isClass: true, variant: 1, pl: 45 },
+    { id: 135, isClass: true, variant: 0, pl: 2 },
+    { id: 128, isClass: true, variant: 2, pl: 10 },
+    { id: 143, isClass: true, variant: null, pl: 1 },
+  ];
+  for (const b of CLASSIC_BOUND) {
+    probeBase('bclassic', [F(b.id), B(b.isClass), O(b.variant), F(60), F(b.pl)],
+      (rolls) => gearOutTokens(assignEnemyEquipment({ mobileType: b.id, isClass: b.isClass, armor: 60 }, b.variant, b.pl, rolls), null),
+      b.indexed === true, WANT[b.want] ?? null);
+  }
+
+  // brri: the Enemy Expansion delegate's arm. Every class (a variant-0 base, and a bitfield that forbids plate or not),
+  // the combat classes' second variant, the orcs and centaurs with their variants (Orcs convert), and a monster with none.
+  const RRI_BOUND = [];
+  for (let id = 128; id <= 146; id++) {
+    // The combat classes at variant 0 take the secondary weapon (a left-hand weapon) when the second 50% test passes.
+    const combat = [136, 140, 145].includes(id);
+    RRI_BOUND.push({ id, isClass: true, variant: 0, pl: 9, mudex: id % 2 === 1, bitfield: id % 2 === 0 ? 0 : 256, team: 'PlayerEnemy', indexed: combat, want: combat ? 'left' : null });
+  }
+  for (const id of [143, 144, 145, 146, 140, 136, 135]) {
+    // The Barbarian's variant-1 big weapon is the Dai-Katana often enough to take its 90% re-roll.
+    RRI_BOUND.push({ id, isClass: true, variant: 1, pl: 37, mudex: true, bitfield: 448, team: 'PlayerEnemy', indexed: id === 143, want: id === 143 ? 'dai' : null });
+  }
+  for (const [id, variant, team] of [[7, 0, 'Orcs'], [21, 0, 'Orcs'], [8, 1, 'Centaurs'], [12, 1, 'Orcs'], [24, 2, 'Orcs']]) {
+    RRI_BOUND.push({ id, isClass: false, variant, pl: 9, mudex: false, bitfield: 0, team });
+  }
+  RRI_BOUND.push({ id: 0, isClass: false, variant: null, pl: 9, mudex: false, bitfield: 0, team: 'Criminals' });
+  for (const b of RRI_BOUND) {
+    probeBase('brri', [F(b.id), B(b.isClass), O(b.variant), F(b.pl), '-', F(60), B(b.mudex), OS(b.team), O(b.bitfield)],
+      (rolls) => {
+        const assign = createDexEquipmentAssigner(propsByMudex.get(b.mudex));
+        const eq = assign({ mobileType: b.id, isClass: b.isClass, armor: 60, career: { weaponArmorShieldsBitfield: b.bitfield }, basics: { team: b.team } }, b.variant, b.pl, { rolls });
+        return gearOutTokens(eq, eq.rightHand?.poisonType ?? null);
+      },
+      b.indexed === true, WANT[b.want] ?? null);
+  }
+
+  // bgear: gearEnemy under a boot (the copy). Classes at the city watch's player level (code 7, and 5 with DEX on and
+  // Meaner Monsters off), and the monsters whose career index a variant table names (and one it does not).
+  const GEAR_BOUND = [];
+  for (let id = 128; id <= 146; id++) GEAR_BOUND.push({ id, code: 7, L: 9, pl: undefined, indexed: id <= 131 });
+  for (const id of [135, 139, 146, 141]) GEAR_BOUND.push({ id, code: 5, L: 37, pl: undefined });
+  for (const id of [0, 6, 7, 8, 12, 21, 24]) GEAR_BOUND.push({ id, code: 7, L: undefined, pl: 9 });
+  for (const b of GEAR_BOUND) {
+    probeBase('bgear', [F(b.id), I(b.code), O(b.L), O(b.pl), '-'],
+      (rolls) => {
+        let target;
+        try {
+          target = enemyTarget(b.id, { playerLevel: b.L, exactLevel: true, boot: bootOfCode(b.code) });
+        } catch (e) {
+          return refused(e);
+        }
+        TARGET_UNDER[b.code].gearEnemy(target, { playerLevel: b.pl, rolls });
+        return [canonTarget(target)];
+      },
+      b.indexed === true);
+  }
+
+  // benemy: the City Watch knight's roll (enemyEntity.js:207, `3 + floor(roll x 4)`), per player level and boot.
+  for (const code of [0, 7]) {
+    for (const pl of [1, 2, 9, 45]) {
+      probeBase('benemy', [F(146), I(code), O(pl), '-', '-', '-', '-', '-', B(false)],
+        (rolls) => {
+          try {
+            return [canonTarget(enemyTarget(146, { playerLevel: pl, exactLevel: false, rolls, boot: bootOfCode(code) }))];
+          } catch (e) {
+            return refused(e);
+          }
+        },
+        false);
+    }
+  }
+
+  // bpoison: rollEnemyWeaponPoison (systems/poisons.js:250): the level gate, the 5% (60% Assassin) chance, the type.
+  // The type roll (`128 + floor(r x 8)`) is drawn only after the chance roll passes, so a constant fill can reach it only
+  // with a chance value that passes too (none of the edge values do). So: constants at the level gate (1 and 9), and
+  // PAIRS for player level 9: the chance roll 0 (passes both the 5 and the 60 percent tests), then each boundary value as
+  // the type roll; and the index-0 probes of the chance roll itself.
+  const POISON_MOBS = [0, 7, 8, 12, 21, 24, 135, 139, 146, 141];
+  const poisonRun = (mob, pl) => (rolls) => [O(rollEnemyWeaponPoison(mob, pl, rolls))];
+  for (const mob of POISON_MOBS) {
+    for (const pl of [1, 9]) probeBase('bpoison', [F(mob), F(pl)], poisonRun(mob, pl), false);
+    // Player level 2 (the gate is `<= 1`): the chance edges only, so a gate of 2 would change the answer.
+    for (const v of [0, bucketStart(5, 100), prevDownOf(bucketStart(5, 100)), 1 - 2 ** -53]) {
+      const c = constRun(v, poisonRun(mob, 2));
+      emitProbe('bpoison', [F(mob), F(2)], ['K', F(v), I(c.n)], c.result);
+    }
+  }
+  for (const mob of POISON_MOBS) {
+    const inputs = [F(mob), F(9)];
+    for (const v of BOUND_VALUES) {
+      const rest = Array.from({ length: 510 }, () => R.unit());
+      const r = scriptRun([0, v, ...rest], poisonRun(mob, 9));
+      emitProbe('bpoison', inputs, [I(r.used.length), ...r.used.map((x) => F(x))], r.result);
+    }
+    for (const v of IDX_VALUES) {
+      const rest = Array.from({ length: 510 }, () => R.unit());
+      const r = scriptRun([v, ...rest], poisonRun(mob, 9));
+      emitProbe('bpoison', inputs, [I(r.used.length), ...r.used.map((x) => F(x))], r.result);
+    }
   }
 
   console.log(`maketarget: ${Object.entries(fam).map(([k, v]) => `${k} ${v}`).join(', ')}`);
