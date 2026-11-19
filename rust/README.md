@@ -1,5 +1,19 @@
 # dfo-core (Rust), milestones R1 and R2
 
+## R6b: seeded ordinary fights
+
+`simulate_fight` ports the ordinary scheduler and trial loop. `simulate_fights` owns
+one tier cache per batch; standalone and `.with()` replays start fresh. Carry defaults
+to on. `FightRolls` accepts explicit replacements for the CWS and condition streams.
+Every call takes a `Spellbook`; nothing loads files or reads ambient randomness.
+As elsewhere in the `Value` port, decoded records do not carry JS object identity.
+Use equip slots to identify held entries in `worn`; arbitrary aliased object graphs
+are not represented by the input codec.
+
+`tools/rust-simulate-vectors.mjs` writes full JS rows and summaries for 216 ten-seed
+batches, plus standalone, reordered and duplicate-seed batches, and scheduler and
+summary edge probes. Float comparisons include signed zero and use IEEE bits.
+
 ## R6a: whole fights and Cast When Strikes
 
 `fight` and `fight_relay` return the JS result records (including the full analysis snapshot and relay run).

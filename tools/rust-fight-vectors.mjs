@@ -10,6 +10,7 @@ import { theoryCharacter } from '../src/theory.js';
 import { EFFECT_FLAGS, ELEMENT_FLAG_BY_INDEX } from '../src/target.js';
 import { effectCastingCost } from '../vendor/upstream/a3eb1605/src/systems/absorption.js';
 import { encodeValue as V } from './rust-codec.mjs';
+import { genSimulateFight } from './rust-simulate-vectors.mjs';
 
 const bits = new DataView(new ArrayBuffer(8));
 function adjacent(x, delta) {
@@ -354,5 +355,5 @@ export function genFightFamilies(Out, makeLcg) {
       }
     }
   }
-  return { fight: out.write() };
+  return { fight: out.write(), simulate_fight: genSimulateFight(Out, records, standard) };
 }

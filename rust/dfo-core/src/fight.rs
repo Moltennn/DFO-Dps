@@ -11,11 +11,11 @@ use crate::value::Value::{self, Arr, Bool, Null, Num, Obj};
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 
-fn obj<const N: usize>(rows: [(&str, Value); N]) -> Value {
+pub(crate) fn obj<const N: usize>(rows: [(&str, Value); N]) -> Value {
     Obj(rows.into_iter().map(|(k, v)| (k.to_owned(), v)).collect())
 }
 
-fn num(v: &Value, default: f64) -> f64 {
+pub(crate) fn num(v: &Value, default: f64) -> f64 {
     Num(v.to_number()).finite_or(default)
 }
 
@@ -33,7 +33,7 @@ pub fn health_thresholds(powers: &[Value]) -> Vec<f64> {
     bounds
 }
 
-fn scenario(args: &Value) -> Value {
+pub(crate) fn scenario(args: &Value) -> Value {
     let imprint = args.get("imprint");
     if !imprint.truthy() {
         return Obj(args.entries().to_vec());
@@ -57,7 +57,7 @@ fn health(args: &Value) -> f64 {
     )
 }
 
-fn at(args: &Value, health: f64, share: f64) -> Value {
+pub(crate) fn at(args: &Value, health: f64, share: f64) -> Value {
     let mut args = args.clone();
     args.set("healthShare", Num(share));
     args.set("health", Num(health));
@@ -137,7 +137,7 @@ pub fn fight(ch: &Value, args: &Value, book: &Spellbook) -> Value {
 
 pub use fight as fight_dps;
 
-fn edited(args: &Value, edit: &Value) -> Value {
+pub(crate) fn edited(args: &Value, edit: &Value) -> Value {
     let mut args = Obj(args.entries().to_vec());
     for (k, v) in edit.entries() {
         args.set(k, v.clone());

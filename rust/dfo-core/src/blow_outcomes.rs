@@ -142,7 +142,7 @@ pub(crate) fn defence_target(v: &Value) -> Target {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Hand {
     Main,
     Off,
@@ -883,7 +883,14 @@ pub fn tier_means(tier: &Tier) -> TierMeans {
 
 #[derive(Debug)]
 pub struct BlowSampler<'a> {
-    live: Vec<(usize, &'a Atom)>,
+    tier: &'a Tier,
+    index: SamplerIndex,
+    pub total: f64,
+}
+
+#[derive(Debug)]
+pub(crate) struct SamplerIndex {
+    live: Vec<usize>,
     cdf: Vec<f64>,
     pub total: f64,
 }
@@ -891,26 +898,37 @@ pub struct BlowSampler<'a> {
 /// JS:440-469. The CDF uses compensated prefixes of the positive-probability atoms only,
 /// not `fight.total`. Neither construction nor selection draws any randomness.
 pub fn create_blow_sampler(fight: &Tier) -> Result<BlowSampler<'_>, BlowError> {
-    if fight.kind == TierKind::Full {
-        return Err(BlowError::FightRequired);
-    }
-    let mut sum = Sum::default();
-    let mut cdf = Vec::new();
-    let mut live = Vec::new();
-    for (i, row) in fight.outcomes.iter().enumerate() {
-        if row.p > 0.0 {
-            sum.add(row.p);
-            cdf.push(sum.value());
-            live.push((i, row));
+    let index = SamplerIndex::new(fight)?;
+    Ok(BlowSampler {
+        tier: fight,
+        total: index.total,
+        index,
+    })
+}
+
+impl SamplerIndex {
+    pub(crate) fn new(fight: &Tier) -> Result<Self, BlowError> {
+        if fight.kind == TierKind::Full {
+            return Err(BlowError::FightRequired);
         }
+        let mut sum = Sum::default();
+        let mut cdf = Vec::new();
+        let mut live = Vec::new();
+        for (i, row) in fight.outcomes.iter().enumerate() {
+            if row.p > 0.0 {
+                sum.add(row.p);
+                cdf.push(sum.value());
+                live.push(i);
+            }
+        }
+        let total = *cdf.last().ok_or(BlowError::EmptyDistribution)?;
+        Ok(Self { live, cdf, total })
     }
-    let total = *cdf.last().ok_or(BlowError::EmptyDistribution)?;
-    Ok(BlowSampler { live, cdf, total })
 }
 
 impl<'a> BlowSampler<'a> {
     pub fn cumulative(&self) -> &[f64] {
-        &self.cdf
+        &self.index.cdf
     }
 
     /// Like JS `outcomeAt`, validate a caller-supplied roll, then select the first prefix
@@ -924,7 +942,17 @@ impl<'a> BlowSampler<'a> {
 
     /// Like JS `sample`, trust the stream contract; callers supply its already drawn roll.
     pub fn sample(&self, roll: f64) -> (usize, &'a Atom) {
-        let x = roll * self.total;
+        let i = self.index.sample_scaled(roll * self.total);
+        (i, &self.tier.outcomes[i])
+    }
+}
+
+impl SamplerIndex {
+    pub(crate) fn sample(&self, roll: f64) -> usize {
+        self.sample_scaled(roll * self.total)
+    }
+
+    fn sample_scaled(&self, x: f64) -> usize {
         let mut lo = 0;
         let mut hi = self.cdf.len() - 1;
         while lo < hi {
