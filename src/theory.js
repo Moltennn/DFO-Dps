@@ -22,6 +22,7 @@
 import { SKILLS, WEAPONS } from './data.js';
 import { characterFromSave } from './save.js';
 import { perfectSockets } from './sockets.js';
+import { UsageError } from './usageError.js';
 
 export const THEORY_LEVEL = 45;
 export const THEORY_STATS = Object.freeze({
@@ -92,7 +93,7 @@ export function theoryCharacter({
   const raceId = typeof race === 'number' ? race : (THEORY_RACES[String(race).toLowerCase()] ?? THEORY_RACES.darkelf);
   const templateIndex = Number(blade);
   if (!WEAPONS[templateIndex]) {
-    throw new Error(`theory expects a melee weapon template, got ${blade}`);
+    throw new UsageError(`theory expects a melee weapon template, got ${blade}`);
   }
   const skills = Array.from({ length: 35 }, () => 100);
   skills[SKILLS.LongBlade] = rawBlade;

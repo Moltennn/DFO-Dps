@@ -16,8 +16,8 @@
  * the share a player brings, the phase shields, and the encounter mechanics
  * (the ketch's immune windows, the Abyss's clock puzzle and gold/silver split).
  *
- * Only the breach is calibrated. The other two carry their known mechanics
- * and are marked `calibrated: false` until the probe measures the windows.
+ * The breach and the Sky-ketch Warden are calibrated (the Sky-ketch from a single solo capture); the Abyss carries
+ * its known mechanics and is marked `calibrated: false` until the probe measures the windows.
  */
 import { bossTarget } from './model.js';
 import { ALLOWANCE, BREACH_PHASES, allowanceLaw, allowanceSpec, refOf } from './allowance.js';

@@ -1,5 +1,5 @@
 /*
- * dfo-dps - seeded, blow-only stochastic fight simulation (Stage 3.2).
+ * dfo-dps - seeded ordinary fight simulation (Stage 3.2 and later).
  *
  * A fight is a sequence of sampled blows from the Stage 3.1 fight-tier distribution. There is NO second damage formula:
  * each blow is one draw from `blowFightTier` (src/blowOutcomes.js), built with the same `analyze`/`hitModel`/`damageModel`
@@ -21,9 +21,9 @@
  * runs several builds on the SAME seed list, which is the form a comparison should use. A Pistolet pair is refused:
  * its own machine and reload law are not part of this stage.
  *
- * Included since Stage 3.5.1: Cast When Strikes DIRECT DAMAGE on an ordinary foe, resolved before the melee blow with
- * its own injectable stream. A CWS fight takes no per-hit cap and no scenario boss traits (the cast path knows neither;
- * a melee-only fight supports both).
+ * Cast When Strikes direct damage (Stage 3.5.1) and supported Continuous Damage (Stage 3.6b) are sampled on an ordinary
+ * foe from their own injectable stream. Cast-time damage resolves before the melee blow and later rounds tick on the
+ * fight clock. A CWS fight takes no per-hit cap and no scenario boss traits (a melee-only fight supports both).
  *
  * Durability is opt-in (`durability: true`, Stage 3.5.2): ordinary weapon wear (the core's `damageEquipment`), the Cast
  * When Strikes condition bill, the break/unequip leaf and the surviving hand's promotion are modelled. The default
@@ -31,11 +31,11 @@
  * this ordinary simulator refuses relay targets outright, and `simulateRelayFight` rejects `durability: true`
  * (Stage 3.5.3g).
  *
- * Excluded: relay bucket/token/claim and relay durability, DoTs, other spell families, dynamic Flow stack increments,
+ * Excluded: relay bucket/token/claim and relay durability, other spell families, dynamic Flow stack increments,
  * ward lifecycle, ranged support, incoming damage, attacker health/death and pair support. The simulation does not
  * pretend those are present.
  */
-import { analyze, conditionMultiplier, weaponOf, weaponPowers } from './model.js';
+import { analyze, conditionMultiplier, createCarryState, weaponOf, weaponPowers } from './model.js';
 import { blowFightTier, createBlowSampler } from './blowOutcomes.js';
 import { cwsEligible, cwsRows, equipTableForFight, equippedForFight, resolveCwsCast, spellPowerInputs, tickActiveEffects } from './cws.js';
 import { MAGIC_ROUND_SECONDS } from './spells.js';
@@ -265,11 +265,12 @@ export function createTierCache() {
 }
 
 /** One seeded battle. The result is one of the samples `simulateFights` summarises. `seed` defaults to 0, so even an
- *  unseeded call is deterministic (the path never touches `Math.random`). */
+ *  unseeded call is deterministic. Use `carry: false` for the stateless floor stream. */
 export function simulateFight(ch, args = {}) {
   const scenario = normalizeScenario(args);
-  // `_tierCache` is the batch's shared table set (`simulateFights`); a standalone call gets its own. It never reaches
-  // `blowFightTier` (deleted here) and `.with()` must not inherit it: its edit can change the very inputs a tier reads.
+  scenario.carry ??= true;
+  // `_tierCache` is shared by a batch; a standalone call gets its own. Strip the option before calling `blowFightTier`
+  // or replaying via `.with()`, whose edits can change the inputs a tier reads.
   const tierCache = scenario._tierCache ?? createTierCache();
   delete scenario._tierCache;
   const withArgs = { ...args };
@@ -390,6 +391,9 @@ export function simulateFight(ch, args = {}) {
     });
   };
   const cache = tierCache.tiers;
+  // The carried stream's remainders: one state per fight, reset at its start
+  // Keyed per channel and held item inside `weaponBlow`.
+  const carryState = scenario.carry === true ? createCarryState() : null;
   // The health thresholds a tier was built under. A break/promotion changes them, and the segment index alone does not
   // say which threshold set it belongs to, so the epoch is part of the key (and a batch's other fights keep theirs).
   let epoch = 0;
@@ -441,9 +445,9 @@ export function simulateFight(ch, args = {}) {
   let clock = 0;
   let next = scheduleNow.next();
   // Stage 3.6b, the DoT round clock: rounds fall at k * MAGIC_ROUND_SECONDS on the FIGHT clock from t=0. That phase is an
-  // ASSUMPTION (M35; the record of this choice is the Stage 3.6 changelog entry) - the cast's own first round is billed
+  // ASSUMPTION (the record of this choice is the Stage 3.6 changelog entry) - the cast's own first round is billed
   // inside the cast, at the cast's time. At an
-  // equal timestamp the BLOW resolves first and the round after it (`docs/ASSUMPTIONS.md` M35). A round bills the same
+  // equal timestamp the BLOW resolves first and the round after it. A round bills the same
   // health path a cast does, and kills like one.
   let nextRoundT = MAGIC_ROUND_SECONDS;
   let lastHand = 'main'; // the hand a round's reporting segment rides (a round is no hand's blow)
@@ -456,7 +460,7 @@ export function simulateFight(ch, args = {}) {
         cwsDealt += n;
         dotDealt += n;
         dealt += n;
-        // The health segments are the fight's reporting split and must add up to `damageDealt` (objectives.js:103 reads
+        // The health segments are the fight's reporting split and must add up to `damageDealt` (objectives.js:241 reads
         // only their count). A round rides the segment it lands in and the hand of the last blow.
         const segIndex = healthSegment(bounds, shareNow);
         const segKey = `${segIndex}|${lastHand}`;
@@ -491,7 +495,8 @@ export function simulateFight(ch, args = {}) {
     const index = healthSegment(bounds, share);
     const band = bandOf(item);
     const dist = distribution(index, hand, item, dual, band);
-    const outcome = dist.sampler.sample(blowStream);
+    const sampled = dist.sampler.sample(blowStream);
+    const outcome = dist.tier.carryResolve ? dist.tier.carryResolve(sampled, carryState) : sampled;
     const blowDamage = damageMode === 'capped' ? outcome.claim : outcome.blow; // the host's melee blow
     let echoDamage = num(outcome.echoDamage, 0); // the strike listener's separate hit, before the host's blow
     t = tNow;
@@ -687,7 +692,7 @@ export function simulateFight(ch, args = {}) {
       } : {}),
     });
     if (hp <= 0) { ttk = t; break; }
-    // The round on this blow's own timestamp resolves AFTER the blow (the tie rule, M35) - and only while the foe lives.
+    // The round on this blow's own timestamp resolves AFTER the blow (the tie rule) - and only while the foe lives.
     while (nextRoundT <= t && hp > 0) { tickRound(nextRoundT); nextRoundT += MAGIC_ROUND_SECONDS; }
     if (hp <= 0) break;
     if (durability && brokeNow) {
@@ -903,6 +908,8 @@ export function simulateFights(ch, args = {}) {
   // only the seed's draws differ. `simulateFight` treats `_tierCache` as internal and strips it from `.with()`.
   const tierCache = createTierCache();
   const rows = seeds.map((seed) => simulateFight(ch, { ...args, seed, _tierCache: tierCache }));
+  // Row closures keep this cache alive; carried tables are large, so release them once the batch is sampled.
+  tierCache.tiers.clear();
   if (rows.some((r) => !r)) return null;
   const kills = rows.filter((r) => r.kill);
   const pool = rows[0].health;
@@ -954,6 +961,3 @@ export function simulatePairedFights(entries, args = {}) {
   const seeds = Array.isArray(args.seeds) ? [...args.seeds] : pairedFightSeeds(trials, num(args.seed, 0));
   return { seeds, trials: seeds.length, rows: entries.map((e) => ({ id: e.id, result: simulateFights(e.ch, { ...args, seeds }) })) };
 }
-
-/** Named aliases for callers that prefer the objective vocabulary. */
-export const simulateFightDistribution = simulateFights;

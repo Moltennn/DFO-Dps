@@ -60,17 +60,60 @@ whole fights and report distributions.
 |---|---|---|
 | uncapped | `dps`, `perSwing` | the blow at full foe health, before the per-hit cap: the Combat Stats card's rate |
 | per-hit-capped | `cappedDps`, `cappedPerSwing` | the same blow after the cap; a **ceiling**, not what a relay accepts |
-| allowance-sustained | `allowance.sustainedDps` | the relay's refill once the purse/bucket limit binds |
+| ceiling (card total) | `ceilingTotalDps`, `ceilingTotalTtk` | capped weapon rate plus the proc estimate before the shared budget; the ceiling TTK is also `totalTtkCapOnly` |
+| allowance-sustained | `claimSustainedDps` | `allowance.sustainedDps`: the existing steady-state estimate, refill-limited when saturated; null without a run |
+| allowance-sustained TTK | `claimTotalTtk` | `allowance.ttk`: time to kill on the expected claim schedule; null without a run or kill inside the horizon |
 | opening burst | `allowance.burst5Dps` | the first 5 s while the relay purse is full |
 | carried sustained mean | `carriedDps`, `carriedCappedDps` | a held item's long-run mean of a percentage line (the exact share, not the card's per-blow floor); pricing reads this |
 | sampled fight | `stochastic-ttk`, `kill-probability` | seeded `simulateFight` trials: kill rate with a mean-TTK interval, or the share that kills inside the horizon (Wilson) |
 | sampled relay | `stochastic-relay` | the same over `simulateRelayFight` claims |
 
+The ceiling and the allowance-sustained run are different questions, so the CLI
+and the HTML report print both when the target has an allowance, each labelled
+(`ceiling` vs `allowance-sustained`), and add a one-line note when they differ by
+more than 1% - the note says the ceiling can promise a kill the allowance
+refuses only when the claim figure is null or longer; otherwise it states the
+percentage. Without an allowance the kill time is labelled as the per-hit-capped
+ceiling. On an allowance target `totalTtk` is `claimTotalTtk`, even when null.
+`totalDps` uses `claimSustainedDps` when the run exists and the ceiling otherwise.
+When sustained, the default has no band (`totalDpsMin`/`totalDpsMax` are null);
+the pre-budget band is always available as `ceilingTotalDpsMin`/`ceilingTotalDpsMax`.
+
+Below the refill the claim TTK can be ~0.5% SHORTER than the ceiling, and that
+is the claim schedule's discretisation, not a proc effect:
+
+- claims land on a grid of `interval = 1 / (aps x hit)` (the first at one
+  interval), so the run ends on the first claim whose cumulative damage covers
+  the pool - up to one `perClaim` of overkill (6.25 HP = 0.096 s on the weak
+  level-45 fixture);
+- a phase shield is charged by the card as its full `shieldS`; the claim run
+  only loses the claims that fall strictly inside it, so a 3 s shield costs
+  `floor((3 - eps) / interval) x interval` (4 x 0.615 s = 2.462 s on that
+  fixture, 8 refused claims over two shields) rather than 3 s.
+
+Difference = 6 - 8 x 0.6154 - 6.25 / 65.032 = 0.9807 s, exactly the
+190.5241 -> 189.5434 s measured there (refused-claim damage / offered DPS is
+the same quantity on a multi-stream build). `W-PROC-BUDGET` records what
+remains: the explicit ceiling applies the per-hit cap to procs and the merged
+round, but sums their rates without the shared blow tokens or purse.
+
 `fight` and `fightRelay` are deterministic walks of the same health-dependent
 model; `snapshot`, `fight`, `relay` and `relay-ceiling` are the four
-deterministic ranking objectives. The sampled objectives start at 1,000 trials
-(the audit's first pass; 10,000 for a reported mean) and rank on the same seeds;
+deterministic ranking objectives; these keep their own metrics. In particular
+`fightRelay` and the `relay`/`relay-ceiling` objectives use weapon-only claims,
+not the card's proc-inclusive totals. Pricing/loadout card baselines and the
+benchmark's `cardDps` selector keep the pre-budget ceiling. The separate
+loadout purse summary (including its weapon-TTK fallback) is unchanged.
+`dfo-dps objective` scores one build on any of these objectives or on
+`stochastic-ttk`, `kill-probability` or `stochastic-relay`. An explicit
+`--health` is the total pool, not multiplied by `--players`.
+The sampled objectives start at 1,000 trials, the only
+count the code enforces (the audit's first pass); 10,000 is a recommendation for a reported mean. They rank on the same seeds;
 a censored trial is reported as kill probability, never folded into the mean.
+The sampled fights use live held-item percentage remainders starting at zero
+per fight; `--no-carry` (`carry: false` in the library) preserves the old
+floor sampler. The deterministic objectives and plain card do not track
+live remainders.
 See the [README](README.md) and [docs/USAGE.md](docs/USAGE.md) for the
 commands and target flags.
 
@@ -175,6 +218,28 @@ imprint, Total DPS, Burst 5s, Avg DPS, TTK and Purse kept. Monster-type
 damage imprints are excluded from loadout selection. It also carries the
 shared enchant template, imprint ratings and Firmament plans.
 
+`loadout --shortlist K` is a second pass, not a search over all builds or
+imprints. It caches the deterministic universe per setup, filters to the
+melee rows supported by the benchmark, and keeps the top K by `totalDps`.
+It reconstructs each enchanted character with `realBuildStages` and passes the
+same deterministic imprint as a scenario power. `rankBuilds` uses common
+random numbers on one target per ranking: the level-45 tough reference foe or
+the selected encounter relay. Deterministic DPS adds expected proc DPS to the
+carried blow figure; sampled kill rate walks health and hit timing, rolls
+Cast When Strikes direct damage and supported Continuous Damage, and (on the
+relay) bills those claims through caps, tokens and the refill bucket. Neither
+sampler rerolls the enchant plan or imprint. The output gives both ranks so
+changes in order are visible, not credited to a different build.
+
+Example (uncapped, K=5, seed 0, 1,000 trials): the dual Wakizashi ranked
+second by deterministic DPS (4,700.35, including 604.30 proc DPS), ahead of
+the dual Katana (4,629.51, including 421.80 proc DPS). Their carried blow
+rates alone were 4,096.05 and 4,207.71, respectively. The sampled scores were
+529.10 and 398.86 kill DPS. Removing only Cast When Strikes from those same
+five builds, without changing the seeds or target, left the sampled scores
+and order unchanged at that precision. The proc term changes the deterministic
+comparison, but does not explain the sampled order on this 100 HP target.
+
 The capped side applies the boss purse (`net/gate/gateBrain.js`,
 `bossBody`): depth `15 * ref`, refill `3 * ref` a second, per-blow cap
 `12 * ref`, and a four-blow token bucket (`ref = 5 + level`). The share is
@@ -278,7 +343,7 @@ on load; this project rebuilds the channels the combat model reads:
 - `masteredSkills` gates which skills may read past 100
 
 The verification oracle is the pinned upstream source, checked by the
-differential and golden suites (the verification notes). The in-game Combat
+differential and golden suites. The in-game Combat
 Stats card is a useful reference, not the oracle: it can include opening
 effects (First Blood) and a different live gear state, so a disagreement is a
 reason to check the import and the scenario, not proof that the model is

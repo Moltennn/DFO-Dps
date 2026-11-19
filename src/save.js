@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { RACE_NAMES, SKILL_NAMES, SKILLS } from './data.js';
 import { validItemLines, weaponDamagePct as itemWeaponDamagePct } from './gearLines.js';
+import { UsageError } from './usageError.js';
 
 export function userDataDir(home = os.homedir()) {
   if (process.env.DAGGER_USER_DATA) return path.resolve(process.env.DAGGER_USER_DATA);
@@ -72,14 +73,14 @@ export function listSaves(home = os.homedir()) {
 export function resolveSave(ref, home = os.homedir()) {
   const saves = listSaves(home);
   if (!ref) {
-    if (!saves.length) throw new Error(`no saves found under ${savesDir(home)}`);
+    if (!saves.length) throw new UsageError(`no saves found under ${savesDir(home)}`);
     return saves[0];
   }
   const asPath = path.resolve(String(ref));
   if (fs.existsSync(asPath)) {
     if (fs.statSync(asPath).isDirectory()) {
       const file = path.join(asPath, 'SaveData.txt');
-      if (!fs.existsSync(file)) throw new Error(`${file} not found`);
+      if (!fs.existsSync(file)) throw new UsageError(`${file} not found`);
       return { slot: path.basename(asPath), folder: asPath, file, mtime: 0, name: '', character: '', date: null };
     }
     return { slot: path.basename(path.dirname(asPath)), folder: path.dirname(asPath), file: asPath, mtime: 0, name: '', character: '', date: null };
@@ -87,7 +88,7 @@ export function resolveSave(ref, home = os.homedir()) {
   const wanted = /^\d+$/.test(String(ref)) ? `SAVE${ref}` : String(ref).toUpperCase();
   const hit = saves.find((s) => s.slot.toUpperCase() === wanted);
   if (!hit) {
-    throw new Error(`save "${ref}" not found. Available: ${saves.map((s) => s.slot).join(', ') || '(none)'}`);
+    throw new UsageError(`save "${ref}" not found. Available: ${saves.map((s) => s.slot).join(', ') || '(none)'}`);
   }
   return hit;
 }
@@ -96,9 +97,9 @@ export function loadSave(ref, home = os.homedir()) {
   const entry = resolveSave(ref, home);
   let raw;
   try { raw = JSON.parse(fs.readFileSync(entry.file, 'utf8')); } catch (e) {
-    throw new Error(`could not read ${entry.file}: ${e.message}`);
+    throw new UsageError(`could not read ${entry.file}: ${e.message}`);
   }
-  if (!raw || typeof raw !== 'object') throw new Error(`${entry.file} is not a save object`);
+  if (!raw || typeof raw !== 'object') throw new UsageError(`${entry.file} is not a save object`);
   return { entry, save: raw };
 }
 

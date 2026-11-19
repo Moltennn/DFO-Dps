@@ -43,8 +43,14 @@ separate Assassin/Opening Strike scenario).
 
 - `soft`, `tough`, `armoured`, `human` are reference foes.
 - `boss` is a generic boss: pass `--health`, `--armor`, `--traits`, `--level`.
-- `breach` and `gate` are the real relay body and its per-player allowance.
-  Their default traits come from the game's relay selector.
+- `breach`, `gate`, `ruhn`, `skyketch` and `abyss` are the real relay bodies
+  and their per-player allowances. Their default traits come from the game's
+  relay selector.
+- `gate` and its alias `ruhn` are the solo gate boss, Valkynaz Ruhn.
+- `skyketch` is the Sky-ketch Warden: 600 s share per player, a 6.6 s opening
+  immunity and The Discord window.
+- `abyss` is the Abyss Remnant: the clock puzzle and gold/silver split, with an
+  uncalibrated share.
 - `--players` and `--blow-x` apply to the relay targets.
 
 Common combat switches:
@@ -191,6 +197,8 @@ long-run mean (the line's exact share); the plain card floors each blow.
 ./dfo-dps loadout --cap-aware
 ./dfo-dps loadout --cap-aware --encounter skyketch
 ./dfo-dps loadout --cap-aware --all-encounters
+./dfo-dps loadout --uncapped --shortlist 5 --trials 1000 --seed 0
+./dfo-dps loadout --cap-aware --encounter breach --shortlist 5 --json
 ```
 
 `firmament` plans the real star tree for `longblade`, `shortblade`, `axe`,
@@ -203,6 +211,33 @@ imprint. The capped side applies the encounter purse: depth `15 × ref`, refill
 `3 × ref` per second, a `12 × ref` per-blow cap and a four-claims-a-second
 hand. `ref = 5 + level`. The content names are **Breach**, **Sky-ketch** and
 **Abyss**; the Abyss is marked uncalibrated.
+
+`--shortlist K` takes the K highest deterministic **total-DPS** melee rows
+per target (no bows, guns or fists). It keeps each row's enchant plan and
+imprint, then reranks the candidates on the same seed list. Uncapped uses the
+level-45 tough reference foe (100 HP) and defaults to `stochastic-ttk`; use
+`--objective kill-probability` to rank by the fraction of trials that kill.
+Capped uses the selected encounter's relay body and only `stochastic-relay`.
+With both modes on, each uses its own default and is ranked separately;
+select one mode when passing `--objective` explicitly.
+
+Sampled kill rate is pool / mean TTK **of kills only**. The table shows kill
+probability and a 95% interval for mean TTK (seconds) or kill probability,
+depending on the objective. Paired separation compares adjacent rows (TTK on
+seeds both kill, or kill indicators for `kill-probability`). If Wilson
+intervals for kill probability don't overlap, kill rate is a tiebreaker
+behind kill probability. `--trials` defaults to 1000 (the minimum), `--seed`
+to 0, `--max-seconds` to 900 and `--max-blows` to 6000. An invalid K, trial
+count or mode/objective pairing exits with status 2. `--shortlist 0` (default)
+keeps the original table and HTML; a shortlist prints results only. `--json`
+returns an array with one ranking per target; add `--samples` for per-seed data.
+
+Both samplers include the melee blows and eligible Cast When Strikes direct
+damage and supported Continuous Damage rounds. The relay applies its
+allowance to those claims and tracks live Flow. The shortlist doesn't model
+wear or phase-ward timing. Deterministic total DPS includes modeled proc DPS
+(shown separately); in relay mode that figure is before the allowance. It's
+not a prediction of sampled kill rate.
 
 ## 9. Spells and weapon enchantments
 
@@ -222,7 +257,8 @@ school potency, cost, cast recovery and per-tick DoT damage. Mana is treated
 as solved unless `--mana-limit` is passed.
 
 `enchant` shows the equipped weapon's Cast When Strikes, Potent Vs and related
-rows. CWS is an expected-value model, not a full proc scheduler; see the
+rows. CWS is an expected-value model, not a full proc scheduler; the ceiling and
+the allowance-sustained figures are printed labelled apart. See the
 limitations in the README and the `W-PROC-BUDGET` waiver.
 
 ## 10. Graphs and the Combat Probe
@@ -248,10 +284,46 @@ unless `--uncapped` is passed.
 `--old` reads `captures/old/`; the default reads only the live capture folder.
 See `METHOD.md` for the capture fields and the estimate rules.
 
-## 11. Stochastic fight simulation (library)
+## 11. Score one build with `objective`
 
-Stage 3.2 adds a seeded, blow-by-blow simulation over the Stage 3.1 per-blow
-distribution. It is a library API, not a CLI command.
+```bash
+./dfo-dps objective --theory --target soft
+./dfo-dps objective --theory --target soft --health 12000 --objective stochastic-ttk --seed 7 --trials 1000
+./dfo-dps objective --theory --target breach --players 3 --health 36000 --objective stochastic-relay --json --samples
+```
+
+Choose `snapshot` (default), `fight`, `relay`, `relay-ceiling`,
+`stochastic-ttk`, `kill-probability` or `stochastic-relay`. The three relay
+objectives require a relay target (`breach` or `gate`); use `stochastic-relay`
+to sample that target. `--health` is the **total** pool for this command, not a
+per-player amount: `--players` does not multiply an explicit `--health`.
+For `stochastic-relay` the sampled pool is one player's share, `--health`
+divided by `--players`; the text output prints that share beside the total.
+Without an override, the command uses the target's default pool.
+With `--theory` the default target is `gate`; explicitly select a non-relay
+target such as `soft` for `stochastic-ttk` or `kill-probability`. Those two
+objectives (and `loadout --shortlist`) refuse a boss, gate or trait target:
+the ordinary fight supports only `soft`, `tough`, `armoured` and `human`.
+
+Sampled objectives default to `--trials 1000` (the minimum), `--seed 0`,
+`--max-seconds 900` and `--max-blows 6000` per trial; `--trials` is capped at
+1,000,000. `--seconds` is for
+spell sustain, not fight simulation. The text reports kill probability with
+a Wilson 95% interval and mean time to kill (TTK) with a 95% interval over
+the trials that kill. The sampled kill-rate score is pool divided by that
+conditional mean, not an unconditional fight rate. If no trial kills, there
+is no mean TTK to report. The interval is a normal approximation (1.96 standard
+errors): with fewer than 30 kills treat it as a rough guide only, since one kill
+gives a zero-width interval. The text prints the kill count beside it. `--json` includes the
+summary and target assumptions; add `--samples` for the per-seed rows.
+Carry is on by default; `--no-carry` selects the stateless floor sampler. The
+shortlist (`loadout --shortlist`) always samples with carry, so `--no-carry`
+there exits with status 2. Deterministic objectives print `Carry: n/a`.
+
+### Stochastic fight simulation (library)
+
+The library API also exposes the seeded, blow-by-blow simulation over the
+Stage 3.1 per-blow distribution.
 
 ```js
 import { simulateFight, simulateFights, simulatePairedFights, pairedFightSeeds } from './src/simulateFight.js';
@@ -267,6 +339,11 @@ one.ttk; one.damageDealt; one.overkill; one.remainingHealth; one.blows;
 const many = simulateFights(ch, { ...scenario, trials: 2000 });
 many.ttk.mean; many.ttk.median; many.ttk.p10; many.ttk.p90; many.ttk.ci95;
 many.kills; many.censored; many.killProbability; many.damageDealt.mean; many.overkill.mean;
+// Summary conventions: `median`/`p10`/`p90` are order statistics (for an even count the median is the LOWER
+// middle value, not the average of the two); `ci95` is 1.96 x standard error, a normal approximation that is
+// too narrow with few kills. `health` is the pool fought AND the boss's maximum health for a per-hit curbing
+// cap (a share of `health`), so keep it equal to the target's own `maxHealth`.
+// A horizon-censored fight's `time` and `outputDps` run to its last blow (ordinary) or to `maxSeconds` (relay).
 
 // two builds on the SAME seed list
 const seeds = pairedFightSeeds(2000, 7);
@@ -275,6 +352,12 @@ const paired = simulatePairedFights([{ id: 'a', ch: a }, { id: 'b', ch: b }], { 
 
 - `damageMode: 'capped'` samples the per-hit-capped blow; the default is
   `uncapped`, matching `fight()`.
+- Seeded ordinary and relay fights carry percentage remainders per item and
+  channel, starting each fight at zero. The sampled objectives forward the
+  same scenario: use `carry: false` for the old floor stream. The deterministic
+  `fight()` and `fightRelay()` estimates do not track a live remainder. The
+  carried tier can map the same seed to a different trace, even on a build
+  without a percentage bonus.
 - `simulateFight` reports `killDps = health / ttk` and
   `outputDps = damageDealt / time`; a run that reaches `maxSeconds` (or
   `maxBlows`) with the pool alive is **censored** (`ttk: null`).
@@ -291,8 +374,10 @@ const paired = simulatePairedFights([{ id: 'a', ch: a }, { id: 'b', ch: b }], { 
 - Axe/blunt mastery, venom and execute rebuild the blow table when the foe's
   health crosses 0.5 or an execute threshold.
 - Dual builds follow `dualSchedule`; a Pistolet pair throws instead of being
-  approximated. Wear, CWS, DoTs, Flow, the relay bucket/ward and incoming
-  damage are outside this stage (the assumptions register M29).
+  approximated. The ordinary sampler includes eligible Cast When Strikes
+  direct damage and supported Continuous Damage; CWS with a target per-hit
+  cap or scenario boss traits is refused. Ordinary wear is opt-in; live Flow,
+  the relay bucket/ward and incoming damage are outside this simulator.
 - 1,000 fights at a 12,000 pool take about 3 seconds in Node 22.
 
 ## 12. Relay claim engine (library)
@@ -387,7 +472,26 @@ HTML pages default to the current directory:
 | `probe` | `probe.html` |
 
 Use `--out <file>` to override. Many table commands accept `--json`; use
-`--help` for the exact command.
+`--help` for the exact command. With `--json` stdout is exactly one JSON document
+(no text card before it). `enchant`, `scale`, `spell` and `tradeoff` used to print the
+text table first and then the JSON; parse their stdout directly now. A command that
+writes no file or has no JSON form rejects `--out` / `--json` with exit 2.
+
+`build --json` and `enchant --json` carry the **ceiling vs claim** split in
+`result`. These commands use the plain card and its deterministic
+claim estimate, not seeded fights. On a target with an allowance, `totalTtk` is
+`claimTotalTtk`: null if the run cannot kill or was unavailable, never a
+ceiling fallback. `totalDps` is `claimSustainedDps` if there is a run, even on a
+no-kill result; otherwise DPS stays on the ceiling. Ordinary foes retain the
+old totals. Use `ceilingTotalDps` and `ceilingTotalTtk` for the pre-budget
+figures (`build` also exports the `totalTtkCapOnly` alias). `build` exports the
+unchanged band as `ceilingTotalDpsMin`/`ceilingTotalDpsMax`; its default
+`totalDpsMin`/`totalDpsMax` are null when the default is sustained.
+
+The text distinguishes `no kill` (censored run) from `no allowance run`.
+`build` names the ceiling beside the allowance TTK and shows a direction-aware
+`Ceiling vs allowance` note for gaps over 1% or when only the ceiling has a kill.
+Without an allowance the row is labelled `Time to kill (per-hit-capped ceiling)`.
 
 ## 15. First-run troubleshooting
 

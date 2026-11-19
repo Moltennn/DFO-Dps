@@ -35,7 +35,7 @@ import { fileURLToPath } from 'node:url';
 
 import { MATERIALS, WEAPONS } from '../src/data.js';
 import { IMPRINT_FAMILIES } from '../src/imprints.js';
-import { realBuildStages, realWeaponLoadouts } from '../src/realBuild.js';
+import { isSampledLoadout, realBuildStages, realWeaponLoadouts } from '../src/realBuild.js';
 import { referenceFoe } from '../src/model.js';
 import { pairedFightSeeds, simulateFights } from '../src/simulateFight.js';
 import { barChart, lineChart } from '../src/graph.js';
@@ -101,10 +101,10 @@ const FAMILY = Object.freeze(Object.fromEntries(IMPRINT_FAMILIES.map((f) => [f.k
 export function loadoutUniverse() {
   const all = realWeaponLoadouts({ modes: ['uncapped'] });
   const excluded = all
-    .filter((r) => r.family === 'Archery' || r.category === 'Fists')
+    .filter((r) => !isSampledLoadout(r))
     .map((r) => ({ family: r.family, weapon: r.weapon, category: r.category, why: 'simulateFight refuses bow/gun/fist scheduling' }));
   const rows = all
-    .filter((r) => r.family !== 'Archery' && r.category !== 'Fists')
+    .filter(isSampledLoadout)
     .map((r) => ({
       id: `${r.key}-${r.template}-${r.category.toLowerCase()}`,
       key: r.key, family: r.family, category: r.category, template: r.template, weapon: r.weapon,
@@ -221,7 +221,7 @@ function runCell(row, health, durability, condition = 'minted') {
   return { res, st };
 }
 
-/** The best row per family and hold configuration, by the optimizer's card DPS. */
+/** The best row per family and hold configuration, by the optimizer's pre-allowance card DPS. */
 function bestByArchetype(rows) {
   const out = {};
   for (const row of rows) {

@@ -21,14 +21,13 @@
  * Included since Stage 3.7d: Cast When Strikes procs and Continuous Damage rounds are claims of their own on the relay
  * body. A blow that carries a CWS row resolves the cast INSIDE the blow's formula, before the host's blow claim
  * (`vendor:combat/formulas.js:826-836`), so a cast kill suppresses the blow claim; a proc is its own claim
- * (`full:scenes/gate/standInSpell.js:198-217`) and the cast's first DoT round rides it. Later rounds are ONE claim per
+ * (`vendor:scenes/gate/standInSpell.js:198-217`) and the cast's first DoT round rides it. Later rounds are ONE claim per
  * round carrying the sum of the live entries' ticks (`standInSpell.js:131-151`), at `k x MAGIC_ROUND_SECONDS` from t=0,
- * after the blow at an equal timestamp (M35); the entry itself is one like-kind entry per body (renewal,
- * `vendor:systems/effects.js:1091-1103`). The ward for a cast is the relay's own clock - `t < shieldUntil`, nothing sets
- * `target.warded` on a relay body (ASSUMPTION M38) - while a DoT round always ticks and lets the claim engine refuse it
- * while shielded (`gateBrain.js:1308`), so a warded round loses its damage and not its countdown (M36).
+ * after the blow at an equal timestamp; the entry itself is one like-kind entry per body (renewal,
+ * `vendor:systems/effects.js:1091-1103`). A DoT round ticks even when the body is turned, but the host sends no claim
+ * during `t < shieldUntil` or an explicit `target.warded` (`standInSpell.js:219-236`, `gateCourt.js:1159-1168` @ a3eb1605).
  *
- * Excluded by this stage (the assumptions register M30/M31/M38): wear, phase-ward lifecycle, geometry, the Sundered
+ * Excluded by this stage: wear, phase-ward lifecycle, geometry, the Sundered
  * halves, stun/profile hit multipliers, Wrath, host/crystal hits and the multi-body `spendBlow` sequence. A build with
  * fists is refused by the Stage 3.2 schedule (the unarmed StrikeLeft frame list is not in the analytical cadence).
  * Relay durability is not a gap: a relay body is a `spareGear` stand-in (`vendor:world/gate/gateBoss.js:161`), and the
@@ -37,7 +36,7 @@
  * nothing to model, so `durability: true` stays REFUSED (Stage 3.5.3g): a wear pass here would invent a loss the game
  * never takes. Omitted and `durability: false` keep the Stage 3.3 behaviour.
  */
-import { echoChances, weaponOf, weaponPowers } from './model.js';
+import { createCarryState, echoChances, weaponOf, weaponPowers } from './model.js';
 import { blowFightTier, createBlowSampler } from './blowOutcomes.js';
 import { createRng } from './rng.js';
 import { healthThresholds } from './fight.js';
@@ -48,6 +47,7 @@ import { createRelayClaimEngine } from './relayClaim.js';
 import { createFlowState } from './flowState.js';
 import { cwsEligible, cwsRows, equippedForFight, resolveCwsCast, spellPowerInputs, tickActiveEffects } from './cws.js';
 import { MAGIC_ROUND_SECONDS } from './spells.js';
+import { resistSpell } from './bossTraits.js';
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 
@@ -67,11 +67,16 @@ function normalizeScenario(args) {
  * @param {object} args `analyze`/`simulateFight` args plus `target` (must carry `allowance`), `health`, `seed`,
  *   `fresh` (false: a wounded boss, empty damage bucket), `shieldUntil` (seconds), `maxSeconds`, `maxBlows`, `trace`.
  *   `durability: true` is refused (a relay body is `spareGear` and the game wears nothing on it);
- *   `durability: false`/omitted is unchanged.
+ *   Use `carry: false` for the stateless floor stream.
  * @returns {null|object} null when the target is not a relay body or the schedule cannot run
  */
 export function simulateRelayFight(ch, args = {}) {
+  return runRelayFight(ch, args);
+}
+
+function runRelayFight(ch, args, batchTiers) {
   const scenario = normalizeScenario(args);
+  scenario.carry ??= true;
   const target = scenario.target ?? null;
   const spec = target?.allowance ?? null;
   if (!spec) return null;
@@ -140,6 +145,10 @@ export function simulateRelayFight(ch, args = {}) {
   const fightTarget = baseTarget
     ? { ...baseTarget, activeEffects: (baseTarget.activeEffects ?? []).map((a) => ({ ...a })) }
     : null;
+  // The boss's traits for a SPELL, read as a blow reads them (`scenario.traits ?? target.bossTraits`, blowOutcomes.js). A
+  // relay body's element-proof trait cuts a Cast When Strikes cast and each carried round
+  // (vendor:scenes/gate/standInSpell.js:51-58, :204-205; test/standInSpellDifferential.test.js).
+  const bossTraits = scenario.traits ?? fightTarget?.bossTraits ?? [];
   const standard = scenario.standard;
   const strikeItems = [probe.weapon?.item, probe.offHand?.weapon?.item].filter(Boolean);
   const castsCws = strikeItems.some((it) => cwsRows(it, standard).length > 0);
@@ -169,8 +178,15 @@ export function simulateRelayFight(ch, args = {}) {
     throw new Error('simulateRelayFight: events is a test-only option (use test/harness/relayEventSeam.mjs)');
   }
 
-  const cache = new Map();
+  // Caller-owned carry remainders and spell hooks can change tier inputs between trials.
+  const sharedTiers = batchTiers && !scenario.carryState && scenario.cwsRolls === undefined
+    && (typeof standard?.get !== 'function' || standard.get === Map.prototype.get) ? batchTiers : null;
+  const cache = sharedTiers ?? new Map();
+  // The carried stream's remainders: one state per fight, starting at zero.
+  const carryState = scenario.carry === true ? createCarryState() : null;
   const distribution = (index, hand, stacks) => {
+    // The batch fixes build, target (including relay/ward flags), health, carry mode and other scenario options.
+    // Live claim/DoT/ward state stays in the fight loop; only the health segment and Flow stacks feed back into tiers.
     const key = `${index}|${hand}|${stacks}`;
     let d = cache.get(key);
     if (d) return d;
@@ -201,7 +217,7 @@ export function simulateRelayFight(ch, args = {}) {
   let killSource = null;
   let lastBilledAt = 0;
   const claimLog = scenario.trace === true ? [] : null;
-  /** One claim at the host's wire boundary (rounded, nothing under 1: `Math.round`, ASSUMPTION M38), with its accounting. */
+  /** One claim at the host's wire boundary (round, then drop under 1: gateCourt.js:1164-1165@a3eb1605). */
   const send = (t, kind, damage, hand = null) => {
     const claim = Math.round(damage);
     if (!(claim >= 1)) return null;
@@ -219,9 +235,8 @@ export function simulateRelayFight(ch, args = {}) {
     if (engine.killed && killSource === null) killSource = kind === 'proc' ? 'cws' : kind;
     return { claim, result };
   };
-  // STAGE 3.7d, the round clock: rounds at k x MAGIC_ROUND_SECONDS from t=0 (M35), billed AFTER the blow at an equal
-  // timestamp. A round TICKS whether or not the boss is shielded: the claim engine refuses a shielded claim
-  // (`gateBrain.js:1308`), which is the one ward rule for a round (M36), so the entry still counts down. The clock and
+  // STAGE 3.7d, the round clock: rounds at k x MAGIC_ROUND_SECONDS from t=0, billed AFTER the blow at an equal
+  // timestamp. A turned round still ticks and counts down (standInSpell.js:137-150,219-236@a3eb1605). The clock and
   // the drain run only when the fight can hold an entry - it casts, or the caller's target arrived with a live
   // continuousDamage entry (the target's own state, cloned like the ordinary fight's, and billed the same way).
   const hasLiveDot = (fightTarget?.activeEffects ?? [])
@@ -230,15 +245,18 @@ export function simulateRelayFight(ch, args = {}) {
   let nextRoundT = MAGIC_ROUND_SECONDS;
   const dotRound = (at) => {
     let total = 0;
-    tickActiveEffects(fightTarget, { hurt: (n) => { total += n; } }, cwsRolls);
-    if (total > 0) send(at, 'dot', total);
+    // each tick is resisted by its own element as it lands, then summed (standInSpell.js:51-58 `counting(got, resist)`)
+    tickActiveEffects(fightTarget, {
+      hurt: (n, info) => { total += Math.max(0, n > 0 ? resistSpell(bossTraits, n, info?.element ?? null) : n); },
+    }, cwsRolls);
+    if (total > 0 && at >= shieldUntil && !fightTarget.warded) send(at, 'dot', total);
   };
   /** Rounds due at or before `at` (the ones strictly before it ran at the loop's head). True when the boss fell. */
   const roundsAt = (at) => {
     while (holdsEntries && nextRoundT <= at && !engine.killed) { dotRound(nextRoundT); nextRoundT += MAGIC_ROUND_SECONDS; }
     return engine.killed;
   };
-  /** Rounds due strictly before `at`: the blow at an equal timestamp lands first (M35). */
+  /** Rounds due strictly before `at`: the blow at an equal timestamp lands first. */
   const roundsBefore = (at) => {
     while (holdsEntries && nextRoundT < at && !engine.killed) { dotRound(nextRoundT); nextRoundT += MAGIC_ROUND_SECONDS; }
     return engine.killed;
@@ -252,7 +270,7 @@ export function simulateRelayFight(ch, args = {}) {
     if (!provided && !next) { termination = 'schedule'; break; }
     const t = provided ? event.t : next.t;
     if (t > maxSeconds) { termination = 'horizon'; break; }
-    // Rounds due strictly before this attack's time; the round at an equal timestamp comes after the blow (M35).
+    // Rounds due strictly before this attack's time; the round at an equal timestamp comes after the blow.
     if (roundsBefore(t) && engine.killed) { termination = 'kill'; break; }
     attacks += 1;
     lastAttackAt = t;
@@ -269,7 +287,8 @@ export function simulateRelayFight(ch, args = {}) {
       eventIndex += 1;
     } else {
       const dist = distribution(index, hand, stackedBefore);
-      outcome = dist.sampler.sample(blowStream);
+      const sampled = dist.sampler.sample(blowStream);
+      outcome = dist.tier.carryResolve ? dist.tier.carryResolve(sampled, carryState) : sampled;
       tierStacks = dist.tier.meta.flowStacks;
       tierHand = dist.tier.meta.hand;
     }
@@ -300,7 +319,7 @@ export function simulateRelayFight(ch, args = {}) {
     // STAGE 3.7d: the Strikes payload runs inside the blow's formula, so the cast's claim lands BEFORE the blow's
     // (formulas.js:826-836; the ordinary fight's order is simulateFight.js:557-562). The cast is one claim - its direct
     // damage and its first round together - and a killing cast suppresses the blow claim. The ward is the relay's own
-    // clock (ASSUMPTION M38); nothing sets target.warded here.
+    // clock; nothing sets target.warded here.
     if (castsCws) {
       const rowItem = hand === 'off' ? (probe.offHand?.weapon?.item ?? null) : (probe.weapon?.item ?? null);
       if (cwsEligible({
@@ -314,6 +333,9 @@ export function simulateRelayFight(ch, args = {}) {
             pierce: cwsPower.pierce, potencyPct: cwsPower.potencyPct,
             hurt: (n) => { castDamage += n; },
           });
+          // the cast's hurts are summed, then the element-proof trait cuts the SUM once; under one point it is sent as
+          // it is (standInSpell.js:204-206)
+          if (castDamage >= 1) castDamage = resistSpell(bossTraits, castDamage, Number.isInteger(row.spell.element) ? row.spell.element : null);
           if (castDamage > 0) send(t, 'proc', castDamage, hand);
         }
       }
@@ -406,6 +428,7 @@ export function simulateRelayFight(ch, args = {}) {
     : termination === 'horizon' ? maxSeconds
       : Math.max(lastAttackAt, lastBilledAt);
   const outputDps = time > 0 ? s.dealt / time : null;
+  if (!sharedTiers) cache.clear();
   return {
     seed,
     kill: s.killed,
@@ -476,7 +499,13 @@ export function simulateRelayFights(ch, args = {}) {
   const trials = Math.max(1, Math.floor(num(args.trials, Array.isArray(args.seeds) ? args.seeds.length : 1000)));
   const seeds = Array.isArray(args.seeds) ? [...args.seeds] : pairedFightSeeds(trials, num(args.seed, 0));
   if (!seeds.length) throw new RangeError('simulateRelayFights: at least one seed is required');
-  const rows = seeds.map((seed) => simulateRelayFight(ch, { ...args, seed }));
+  const tiers = new Map();
+  let rows;
+  try {
+    rows = seeds.map((seed) => runRelayFight(ch, { ...args, seed }, tiers));
+  } finally {
+    tiers.clear();
+  }
   if (rows.some((r) => !r)) return null;
   const kills = rows.filter((r) => r.kill);
   const ttk = summarize(kills.map((r) => r.ttk));

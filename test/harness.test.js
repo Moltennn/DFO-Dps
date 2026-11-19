@@ -92,14 +92,14 @@ test('runStage: discrepancy report names the input, both answers and the diverge
 test('runStage: a stale waiver fails instead of passing silently', async () => {
   const report = await runStage({
     name: 'stale',
-    cases: [{ id: 'x', input: {}, waived: 'W-WARD' }],
+    cases: [{ id: 'x', input: {}, waived: 'W-PROC-BUDGET' }],
     waivers: WAIVERS,
     upstream: () => 1,
     simulator: () => 1,
   });
   assert.equal(report.failures.length, 0);
   assert.equal(report.staleWaivers.length, 1);
-  assert.match(formatReport(report), /stale waiver W-WARD/);
+  assert.match(formatReport(report), /stale waiver W-PROC-BUDGET/);
 });
 
 test('an intentionally introduced discrepancy is detected end to end', async () => {

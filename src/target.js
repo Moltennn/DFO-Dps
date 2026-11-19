@@ -529,7 +529,7 @@ export function equipArmour(target, pieces = [], { armorValues = false } = {}) {
  * ENEMY_BASICS in place (dexInstall.js:211-220) while this module's rows are already `dexClassicRow` over
  * the pristine table, so a global install would make every later mint order-dependent. `dexRead` only reads
  * the mod's tables (dexInstall.js:89-99); the props are `dexProperties`' mod-loaded answer (dexInstall.js:121-126).
- * ASSUMPTION M40: the posture is the boot's - UPSTREAM_BOOT (Enemy Expansion and Meaner Monsters at their
+ * The posture is the boot's - UPSTREAM_BOOT (Enemy Expansion and Meaner Monsters at their
  * shipped defaults, so MUDEX's tables are read too: dexInstall.js:190) and Roleplay & Realism: Items'
  * realisticEnemyEquipment at its shipped default (true), the arm's own live gate
  * (combat/rriEnemyEquipment.js:246). The target carries no boot field; a posture other than the shipped

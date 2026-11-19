@@ -145,10 +145,10 @@ export function realTemplate(template, family, { mode = 'uncapped', vampire = fa
   const { capped, tree, treeCh, treeRun, enchRun, enchPlan, imprint } = realBuildStages(template, family, { mode, vampire, dual, encounter });
   // ONE metric per row: the CARRIED capped blow (a held item's long-run mean) plus the proc layer, which is not a
   // percentage channel. The imprint step is therefore carried minus carried, never a metric jump. `cardEnchDps`
-  // keeps the plain card figure under its own name (W-LOOT-CARRY, docs/ASSUMPTIONS.md M41).
+  // keeps the plain card ceiling under its own name (W-LOOT-CARRY).
   const enchDps = enchRun.carriedCappedDps + enchRun.enchantDps;
   const totalDps = enchRun.enchantDps + (imprint?.dps ?? enchRun.carriedCappedDps);
-  // The same row's CARD figures, under their own names (the benchmark's `cardDps` selector reads these).
+  // The same row's CARD ceilings (the benchmark's `cardDps` selector reads these).
   const cardTotalDps = enchRun.enchantDps + (imprint?.cardDps ?? enchRun.cappedDps);
   // The purse is run on the imprinted CARD - the same blow the ranking priced, Many Endings' echo included (it rides
   // that blow's claim, so the capped mean already carries what the relay accepts).
@@ -158,7 +158,7 @@ export function realTemplate(template, family, { mode = 'uncapped', vampire = fa
     mode, family: family.name, key: family.key, weapon: WEAPONS[template]?.name ?? String(template), template, dual, encounter,
     treeStars: tree.stars, freeStars: tree.freeStars, treeBlow: treeCh.firmamentDamagePct,
     treeDps: treeRun.carriedCappedDps + treeRun.enchantDps, enchDps, totalDps,
-    metric: 'carried', cardTreeDps: treeRun.totalDps, cardEnchDps: enchRun.totalDps, cardTotalDps,
+    metric: 'carried', cardTreeDps: treeRun.ceilingTotalDps, cardEnchDps: enchRun.ceilingTotalDps, cardTotalDps,
     ttk: purse?.ttk ?? enchRun.ttk,
     burst5: purse?.burst5 ?? null,
     sustainedDps: purse?.sustainedDps ?? null,
@@ -189,3 +189,6 @@ export function realWeaponLoadouts({ modes = ['uncapped', 'cap'], vampire = fals
   }
   return out;
 }
+
+/** The sampled fight schedule supports melee weapon rows only. */
+export const isSampledLoadout = (row) => row.family !== 'Archery' && row.category !== 'Fists' && !WEAPONS[row.template]?.ranged;

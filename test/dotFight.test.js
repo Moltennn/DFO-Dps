@@ -7,9 +7,8 @@
  *   - a DoT round is damage like any other: it lands through the same health path, is counted in `cwsDamage` and
  *     `damageDealt`, and is recorded in `cwsTrace`, so the trace's `remaining` reconciles with every drop;
  *   - the round anchor is the fight clock: rounds fall at k * MAGIC_ROUND_SECONDS (5 s) from t=0, while the cast's OWN
- *     first round lands inside the cast, at the cast's time (docs/STAGE-3-AUDIT.md A3.0-3);
- *   - at an equal timestamp the BLOW resolves first and the round after it - a labelled ASSUMPTION, not event order
- *     (docs/ASSUMPTIONS.md);
+ *     first round lands inside the cast, at the cast's time;
+ *   - at an equal timestamp the BLOW resolves first and the round after it - a labelled ASSUMPTION, not event order;
  *   - a round that kills ends the cast: no later effect of the same spell applies (src/cws.js's direct arm does the
  *     same), and `killSource` names the DoT.
  *

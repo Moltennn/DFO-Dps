@@ -211,10 +211,11 @@ test('F4: a multi-effect cast stops counting after the target dies', () => {
 });
 
 test('F5: an echo kill suppresses the melee blow and its accounting', () => {
+  // LOCAL: with carry disabled, seed 19 selects the killing echo. This checks event order, not the sampler.
   const item = { ...weapon(121, { material: 9 }), rarity: 'rare', imprint: 'warp-edge' };
   const ch = simCharacter(BASIC(), item);
   const r = simulateFight(ch, {
-    target: referenceFoe(30, 'tough'), health: 20, weapon: weaponOf(item), seed: 19, trace: true, maxBlows: 1,
+    target: referenceFoe(30, 'tough'), health: 20, weapon: weaponOf(item), seed: 19, trace: true, maxBlows: 1, carry: false,
   });
   assert.equal(r.trace[0].echoKill, true);
   assert.equal(r.trace[0].blowDamage, 23);

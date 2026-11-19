@@ -6,6 +6,329 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage 3.8: sampled loadout shortlist (2026-11-19)
+
+**Source.** `src/realBuild.js` supplies the deterministic candidates, enchant
+plans and imprints. `src/loadoutShortlist.js` keeps those builds and reranks a
+melee shortlist on common seeds through `src/objectives.js`, separately for
+the ordinary foe and each relay body. The sampled damage note names the
+existing Cast When Strikes direct-damage and Continuous Damage paths rather
+than describing the fights as blow-only.
+
+**Evidence.** `test/loadoutShortlist.test.js` covers opt-out output bytes,
+mode and trial validation, unchanged build shape, the retained imprint,
+seed pairing and both sampler modes. No damage formulas changed.
+
+## Stage 3.8: expose sampled objectives in the CLI (2026-11-19)
+
+**Source.** `src/objectives.js` supplies the scores and intervals. `dfo-dps
+objective` applies it to a single CLI build. The command uses an explicit
+`--health` as the total pool and samples with carry on unless `--no-carry`
+is passed.
+
+**Red → green.** `test/objectiveCli.test.js` first failed on the missing
+command and flags, then verified library parity, repeatability, carry and
+sample reporting, total relay health, and input errors.
+
+**Outputs moved: none.** Compared complete before/after stdout for `build
+--theory --target soft` and `loadout --theory` (`loadout` has no `--top`). The benchmark file
+(`tools/benchmark-loadouts.mjs`) had only a refactor: the Archery/Fists filter
+moved into `isSampledLoadout` in `src/realBuild.js`, with identical rows. No
+scoring code changed; sampled objective assumptions now record carry.
+
+## Sampled fights carry held-item fractions by default (2026-11-18)
+
+**Source.** `systems/loot/lootPowers.js:169-181@a3eb1605` keeps a fractional
+share on the held item except during the estimate. Separate remainders are
+kept by `systems/weaponMastery.js:132,148-150`, `systems/martialPowers.js:106,232-235`
+and `systems/firmamentPowers.js:104,111-115` at the same pin. M43's local reset
+to zero for each fight is unchanged.
+
+**Red → green.** `node --test test/lootCarry.test.js` with the existing held-item
+differentials changed to omit `carry` failed before the default flip and passed
+after. At 240 seeds the 25% slayer's mean TTK went from 282.258 s to 277.094 s
+(vendored 277.204 s); damage/blow went from 16.2478 to 16.5499 (vendored 16.5406).
+At 64 relay seeds and 400 attacks per fight, damage/attack went from 20.59914 to
+20.97586 (vendored 21.04320, z from −6.90 to −1.09). Explicit floor is still
+outside the held-item bounds and the original seeded floor trace is unchanged.
+
+**Outputs moved.** `src/simulateFight.js` and `src/relayFight.js` enable the
+existing carried sampler when `carry` is omitted. The sampled objectives and
+benchmark CLI inherit it; ordinary CLI builds and deterministic objectives
+still use the card or its deterministic estimate. `carry: false` retains the
+old sampled floor stream. `W-LOOT-CARRY` remains for the stateless estimates
+and explicit floor, not the default sampled fights. Pricing, `ceilingTotalDps` /
+`ceilingTotalTtk`, the optimizer and benchmark artifacts are unchanged.
+
+## Phase 2 (M44) - allowance totals use the existing claim estimate (2026-11-18)
+
+**Source.** `net/gate/gateBrain.js:1298-1335@a3eb1605` spends a shared blow
+token and damage purse for every accepted submission. The card's ceiling
+(`src/enchants.js:137-172`) applies per-claim caps but sums the proc rates
+before that shared budget. No claim, carry, or fight rules change here.
+
+**Red → green.** `node --test --test-name-pattern='Phase 2' test/procBudget.test.js`
+first failed on both changed defaults. Replaying the card's fixed proc schedule
+through the vendored `applyHit` measured 150 DPS after the bucket drained;
+raw `totalDps` was 710.08698005698 and is now 150. The finite kill agrees before
+and after (75.69429833789175 s vs vendored 75.69429833789185 s; the ceiling is
+22.90 s). With a 100,000,000 HP pool, raw `totalTtk` was 1283880.52643776 s and
+is now null; the finite estimate remains available as `ceilingTotalTtk`.
+Ordinary totals and bands still match the pre-budget formula.
+
+**Outputs moved.** `src/model.js:1128-1139` selects the existing claim fields
+for allowance totals; no TTK fallback, and DPS keeps its ceiling fallback when
+there is no run. The legacy DPS band is null only for a sustained default; the
+unchanged ceiling band is explicitly named and exported by `build --json`.
+The CLI and HTML distinguish censored and missing runs. Enchant-plan,
+real-build and benchmark ceiling baselines and the explicit fight objectives
+retain their metrics. `W-PROC-BUDGET` remains for the pre-budget proc estimate;
+the vendored replay verifies the fixed schedule's billing, not sampled proc
+lifecycle parity for the card.
+
+## Turned relay DoT rounds tick without sending a claim (2026-11-18)
+
+**Source.** At `a3eb1605`, `scenes/gate/standInSpell.js:137-150` runs the tick and
+updates the carried entry before landing; `:219-236` suppresses the host callback
+for a turned body or entity. `scenes/gate/gateCourt.js:1159-1168` sends nothing
+while `t < shieldUntil`. This supersedes the round-submission behavior in M38.
+
+**Change and evidence.** `src/relayFight.js` still spends the tick's duration
+and draws, but does not submit it under the shield or an explicit `target.warded`.
+Before the fix, `test/standInSpellDifferential.test.js` found an extra claim of
+200 at 5 s. Afterward the claims are 10, 160 and 160 at 10, 15 and 20 s,
+matching the vendored bridge, including the round exactly at shield end. A
+persistent entity ward went from four claims to zero, also matching upstream.
+The tick draw counts still match. The separate relay-claim differential still
+checks engine refusal when a shielded claim actually reaches it.
+
+**Outputs moved.** A turned tick adds no claim or claim-log row, offer,
+refusal, or shielded-claim count, and does not advance either the claim clock
+or the last billed time. If it was the last billed event after the last attack,
+schedule- or blow-budget elapsed time can shrink and output DPS can change;
+horizon and kill time rules are unchanged. An explicit ward now also prevents
+the turned tick's damage from landing. Stun and court geometry are not modelled.
+
+## Relay spell claims respect the boss's element-proof trait (2026-11-18)
+
+**Source.** At `a3eb1605`, `scenes/gate/standInSpell.js:198-217` sums the cast's
+direct damage and first tick, then applies `bossStrike` once. Later rounds
+resist each tick before summing (`:51-58`, `:137-150`). The shared clock's
+period is 5,000 ms (`gateCourt.js:159`, `net/wire.js:240`); its phase relative
+to the fight start is not established by this comparison.
+
+**Change and evidence.** `src/relayFight.js` applies the existing `resistSpell`
+helper at those two points. `test/standInSpellDifferential.test.js` drives the
+vendored `createStandInSpell` with scripted rolls: on a flameproof boss the
+local fire claims were `[210, 200, 10, 160, 160]` (red) and are now
+`[53, 50, 3, 40, 40]` (green), matching the game. The no-trait and mismatched
+element controls agree without scaling. This changes seeded relay-fight spell
+claims, damage and potentially TTK; it does not change the card or ordinary fights.
+
+## Ward correction - `W-WARD` was recorded as a divergence that the source does not show (2026-11-18)
+
+**What the game does.** The boss `warded` trait is a health pool: "a ward of WARD_SHARE of its health takes every blow
+first" (`vendor:systems/bossTraits.js:8`, `WARD_SHARE = 0.3` at `:64`), taken on the OWNER's side after the blow has
+landed (`bossTake`, `:234-255`: the ward absorbs `min(pool, blow)` first, then health), regrowing whole `WARD_REGROW_S`
+(10 s) after the last blow (`:65`, `:180-181`); relay bosses carry no ward at all (`:390-391`). `target.warded` is a
+different thing: the REFEREE's turned blow - "a stand-in `warded` - the Warden's ward, the Remnant shut, the Spire's
+turned blows" (`vendor:systems/enchantments.js:594`, `:670`). No vendored code sets it from the trait.
+
+**What changed.** Nothing in `src/`. The waiver `W-WARD` said the trait "does not suppress per-blow powers" and listed
+that as a known divergence; by the source the trait is not meant to, so the waiver is removed
+(`test/harness/waivers.mjs`; `test/harness.test.js` now uses `W-PROC-BUDGET` as its stale-waiver sample id, the same
+assertions). The test that used to pin the "gap" (`test/wardSuppression.test.js`, formerly "OPEN GAP (W-WARD)") is now a
+differential: for seven health values from 1 to 250,000 the card's ward equals the vendored `bossWardNow` maximum
+(`Math.max(1, Math.round(health * WARD_SHARE))`), the number of blows to kill through the ward equals the vendored
+`bossTake` drain (`ceil((health + ward) / blow)`), and the blow powers still pay under the trait while only a
+caller-set `target.warded` turns them. The local ward is therefore the same quantity as the vendored one for a
+sustained fight; what it does not model is the regrowth after a 10 s pause in blows. Order with `curbing`: upstream curbs
+the blow first and the ward then absorbs the curbed blow (`bossTake` `:238`, `:247-253`); the card applies the cap to the
+blow and divides `(health + ward)` by the capped rate, which spends the same total at a steady rate (blow granularity
+aside). The card's own TTK is asserted to spend `health + ward` in the same test.
+
+**Open, not waived.** Whether the cut host ever copies the trait ward onto `target.warded` (ASSUMPTION U8; no vendored
+code does it, so the model follows the source); the Firmament's gate, which only the vendored stub of its sky law
+covers (`STUBS.md:47`); and the relay phase-ward length, a model parameter (A8).
+
+**Outputs moved.** None.
+
+## Stage 4a (M44) - the ceiling and the claim-based run are named and printed apart (W-PROC-BUDGET) (2026-11-18)
+
+**What the game does.** Nothing new is modelled. The relay bills every Cast When Strikes proc and every Continuous
+Damage round as its own claim against the per-hit cap and the allowance (`vendor:scenes/gate/standInSpell.js:131-151`,
+`:198-217`; the local claim list is `src/allowance.js:97-115` `claimStreams`), and the local allowance has run that law
+since Stage 3.7 (`src/allowance.js:134-297` `simulateAllowance`/`runAllowance`). The card's default figures do NOT do
+that: `totalDps = cappedDps + enchantDps` and `totalTtkCapOnly = (health + ward) / that + shields` add the procs
+(direct plus DoT) to the per-hit-capped weapon figure, so they are an upper bound, not a relay verdict.
+
+**What changed.** Naming only; no arithmetic. `analyze` (`src/model.js:1119-1132`) also exposes
+`ceilingTotalDps` (= `totalDps`), `ceilingTotalTtk` (= `totalTtkCapOnly` - the pure ceiling; `ttkCapOnly` is the
+weapon-only one), and the allowance run's own figures `claimTotalTtk` (= `allowance.ttk`) and `claimSustainedDps`
+(= `allowance.sustainedDps`). `claimSustainedDps` is `null` only without an allowance spec; `claimTotalTtk` is also
+`null` when the run cannot kill inside the horizon. Every existing key keeps its value, with one caveat: the
+pre-existing `totalTtk` carries the claim figure only when the run KILLS - when it cannot, `gate?.totalTtk ?? totalTtk`
+(`src/model.js:1246`, `:1295`, `:1583`) falls back to the ceiling, so read `claimTotalTtk` (null then). `src/cli.js`
+labels the allowance row `Allowance-sustained DPS`, prints the allowance-sustained kill time with `ceiling: X s` beside
+it (`no kill` when there is none), labels the no-allowance row `Time to kill (per-hit-capped ceiling)`, adds a
+`Ceiling vs allowance` line when the two differ by more than 1% - the fixed "the ceiling can promise a kill the
+allowance refuses" sentence only when the claim is null or longer, otherwise `ceiling and allowance-sustained differ by
+X%` - and adds the four fields to `build --json` and `enchant --json`. `src/report.js` does the same on the cards and
+prints the same note. `W-PROC-BUDGET` is narrowed, not closed: the default figures are still the ceiling by definition;
+the pin stays live.
+
+**Measured before/after** (2026-11-18, the shipped/test fixtures; TTK in seconds). "before" is the same card read
+through its old names:
+
+| build | ceilingTotalDps | allowance-sustained DPS | ceilingTotalTtk | claimTotalTtk | claim / ceiling |
+|---|---|---|---|---|---|
+| waiver pin: 3 instant procs, level-45 gate | 710.09 | 150 | 22.90 | 75.69 | 3.31x |
+| geared blade + 1 CWS row, level-45 gate | 935.57 | 150 | 18.83 | 75.98 | 4.04x |
+| the same geared blade, no enchants | 821.24 | 150 | 20.61 | 75.98 | 3.69x |
+| weak blade, no enchants (below the refill) | 65.03 | 65.03 | 190.52 | 189.54 | 0.995x |
+| dual pair + CWS DoT, level-30 gate (below the refill) | 19.31 | 19.31 | 441.00 | 438.77 | 0.995x |
+
+A no-proc build can still differ: the allowance clips the weapon blows themselves (row 3). A build under the refill
+has a slightly SHORTER claim figure (rows 4-5, 0.5%); that is the claim schedule's discretisation, traced and exact,
+not a proc or clipping effect:
+
+- Claims land on `interval = 1/(aps x hit)` (the first at one interval), so the run ends on the first claim whose
+  cumulative damage covers the pool: 300 claims deliver 12,006.25 against 12,000 HP on the weak fixture, 6.25 HP of
+  overkill = 0.096 s.
+- A phase shield is charged in full by the card (3 s each, 6 s), but the claim run only loses the claims that fall
+  strictly inside it: `floor((3 - eps)/interval)` claims. On the weak fixture `interval` = 0.6154 s, so 4 claims per
+  shield (2.462 s), 8 refusals over two shields (`claimsRefused: 8`).
+- Difference = 6 - 8 x 0.6154 - 6.25/65.032 = 6 - 4.9232 - 0.0961 = **0.9807 s**, exactly the measured
+  190.5241 - 189.5434. The multi-stream dual pair is the same quantity: refused damage 8,467.56 - 8,400.98 = 66.58 at
+  the 19.31 offered DPS = 3.448 s against the card's 6 s, plus 0.32 s of kill-claim slack (435.00 + 3.45 + 0.32 =
+  438.77). The purse (65 DPS < 150/s) and token bucket (1.62 claims/s < 4/s) do not bind, so neither is the cause. The
+  1% note tolerance is why rows 4-5 print no note. The pin's 22.90 vs 75.69 s is the disagreement the waiver records.
+
+**Red, before the change** (`test/procBudget.test.js`, the two new M44 cases, pre-change code):
+
+```
+✖ M44: the ceiling aliases are the same numbers as the fields they name
+  AssertionError [ERR_ASSERTION]: single-hand DoT: ceilingTotalDps is totalDps
+  + actual - expected
+    undefined
+    18.45575042735043
+✖ M44: the ceiling can promise a kill the allowance refuses - named, and printed beside it
+  TypeError: Cannot read properties of undefined (reading 'toFixed')
+```
+
+**Red, before the follow-up fixes** (the null-claim, note-direction and no-allowance-label cases, on the first cut):
+
+```
+✖ M44: the ceiling can promise a kill the allowance refuses - named, and printed beside it
+  AssertionError [ERR_ASSERTION]: and it names the direction
+✖ M44: an allowance that cannot kill leaves the claim figure null, and totalTtk falls back to the ceiling
+  AssertionError [ERR_ASSERTION]: the CLI says the claim run never kills, not "-"
+✖ M44: the gap note names its direction - the ceiling is not always the shorter figure
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /ceiling and allowance-sustained differ by \d+%/
+✖ M44: without an allowance the kill time is labelled as the per-hit-capped ceiling
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /Time to kill \(per-hit-capped ceiling\)/
+```
+
+**Green, after** (`npm test`): 0 failures. The alias cases assert `ceilingTotalDps === totalDps`,
+`ceilingTotalTtk === totalTtkCapOnly`, `claimTotalTtk === allowance.ttk` and `claimSustainedDps === allowance.sustainedDps`
+on the single-hand DoT, dual-pair and pin fixtures, and both aliases `null` on a plain reference foe; the label cases
+assert the pin's `ceilingTotalTtk < claimTotalTtk`, the report's `Total (per-hit-capped ceiling)` /
+`Allowance-sustained DPS` / `ceiling: X s` strings and `Ceiling vs allowance` note with its direction, the CLI's same
+rows, and the new JSON fields on both `build --json` and `enchant --json`. The follow-up cases add a level-45 gate at
+1e8 HP (the run never kills: `claimTotalTtk` null, `ceilingTotalTtk` finite, `totalTtk` === the ceiling, the report/CLI
+say `no kill`/`never kills`), the neutral note branch (a 1,000 HP gate, claim shorter: `ceiling and allowance-sustained
+differ by X%`, never the "promises a kill" sentence), and the no-allowance label (`Time to kill (per-hit-capped
+ceiling)`, with no `null`/`NaN` when there is no health at all).
+
+**Outputs moved: none.** No existing key's value changes and no printed number changes (the CLI/report add rows and
+labels; a `-` becomes `no kill` only where an allowance exists and never kills). The waiver entry was reworded, the pin
+assertion is unchanged.
+
+**Evidence.** `test/procBudget.test.js` M44 cases (see above); `test/harness/waivers.mjs` `W-PROC-BUDGET` (narrowed).
+Limits: the ceiling is still an uncapped-proc upper bound until procs are priced as capped claims (Stage 4); a target
+without an allowance spec has no claim figure (`null`), nor does a run that cannot kill (`claimTotalTtk` null, and the
+pre-existing `totalTtk` falls back to the ceiling).
+
+## Stage 3.7i - the seeded fight streams carry the percentage fraction (W-LOOT-CARRY step 3) (2026-11-18)
+
+**What the game does.** Every percentage blow channel floors the blow and keeps the remainder on the held item:
+`shareOf` at `vendor/upstream/a3eb1605/src/systems/loot/lootPowers.js:176-181@a3eb1605`
+(`exact = damage * pct / 100 + carry`, `more = floor(exact + 1e-9)`, `carry = max(0, exact - more)`, written only
+when `!info.estimate`; every `pct` source of the loot step is summed into ONE share, `:344-345` and `:305-345`),
+the same shape in `systems/weaponMastery.js:148-150`, the martial path `systems/martialPowers.js:232-235`, and the
+Firmament `systems/firmamentPowers.js:111-115` (`whole = pct >= 0 ? floor : ceil`, remainder unclamped, the blow never
+below 1 at `:181`). The key is the held item (a module `WeakMap`), one remainder per channel. A miss never reaches
+`shareOf` (guarded by `damage > 0` at `lootPowers.js:287`, `weaponMastery.js:135`, `martialPowers.js:229`,
+`firmamentPowers.js:173`), so it neither consumes nor advances one.
+
+**What changed.** The seeded fight streams gain the opt-in scenario flag `carry: true` on
+`simulateFight`/`simulateFights`/`simulateRelayFight(s)`. A per-fight carry state (`Map` per channel and held item,
+reset at the fight's start - ASSUMPTION M43) is consulted per DRAWN blow. The tier keeps each landed atom's
+pre-percentage base (`src/model.js` `damageModel` `blowBaseRolls`, `{ carryBases: true }`) and the `resolve` branch it
+took (`src/blowOutcomes.js` atoms `blowBase`/`branch`); `mergeToCarryTier` keys on them and `carryResolve` re-runs the
+percentage channels in upstream order (mastery, the loot step's one summed share, the elemental flat, the martial path,
+the theory `damagePct` floor, the Firmament) with the live remainder, then the unchanged integer stages (crit, material,
+condition, defence, off-hand share, payload, pull, trait, cap). `weaponBlow` reads `opts.carryState`; the `carried`
+pricing pass deliberately ignores it (`src/model.js`). `finishBlow` is the extracted integer-stage sequence (same
+`unityRound` order), used by `damageModel` and the re-resolution. The default path is untouched: `blowFightTier`
+returns the ordinary tier, no atom gains a field, and the model arithmetic is unchanged.
+
+**Phase 1 measurement (before/after).** (a) On the vendored functions with ONE reused item over 120,000 blows
+(`test/harness/upstream.mjs`/`upstreamBodies.mjs`, standIn mobile 31, level 30 katana material 9), the held stream vs the
+fresh-item (floor) stream, per ATTACK and per landed blow:
+
+- 25% slayer line: **16.31768 vs 15.97885** (+0.33883, +2.12%); per landed blow +0.39843
+- mastery line (skill 150 online, the vendored 17% climb): **17.34781 vs 16.88877** (+0.45904, +2.72%); per landed +0.47325
+- martial path (Cutthroat Cheap Shot 25%, unaware): **16.31768 vs 15.97885** (+2.12%) - the same 25% share on the same
+  build, as expected
+- Firmament 30%: the vendored `blowPct` is an inert stub (`STUBS.md:47`), so the local law is measured instead:
+  carried mean **115.3425** = the exact mean 115.3425, floor 114.8950 (+0.4475, +0.39%)
+
+(b) Seeded `simulateFights` (2,000 trials, pool 5,000, reference foe tough, `carry` off -> on), mean conditional TTK and
+mean per-swing damage:
+
+- slayer 25%: **282.986 -> 278.055 s (-1.74%)**, per swing 16.2052 -> 16.4931 (+1.78%)
+- mastery 17%: **279.034 -> 271.990 s (-2.52%)**, per swing 17.8332 -> 18.2956 (+2.59%)
+- martial 25%: **1041.426 -> 1020.048 s (-2.05%)**, per swing 4.7992 -> 4.8999 (+2.10%)
+- Firmament 30%: **1003.481 -> 980.640 s (-2.28%)**, per swing 4.9815 -> 5.0979 (+2.34%)
+
+Those TTK moves are 1.7-2.5x the 1% TTK tolerance used elsewhere, which is why the default stays off. `simulateFights`
+wall time on the same fixture: **1.26-1.37x** the floor path (2,000 trials, 943-1,171 ms -> 1,241-1,588 ms).
+
+Against the held-item oracle (`upstreamFight(..., reuseItem: true)`, 300 seeds, pool 5,000): `carry: true` matches to
+**TTK z -0.07 / 0.06 / -0.02** and per-blow gap **0.01% / 0.00% / 0.03%** for the slayer, mastery and martial builds;
+`carry: false` is **+1.53% / +2.74% / +2.25%** low on per-blow damage (z 4.82 / 14.75 / 4.75), exactly the waiver's floor.
+`test/lootCarry.test.js` runs the same comparison at 240 seeds and pins the floor with `expectKnownDiscrepancy`.
+
+**Red, before the change** (the new sequence differential on the pre-change path, where `carryState` did not exist; the
+same hold is now test 1):
+
+```
+✖ 1. a held item carries the loot share: 25% slayer, one remainder, misses do not advance it
+  AssertionError [ERR_ASSERTION]: the local carried stream is the vendored held-item stream, blow for blow
+  + actual - expected
+    [ 0, 81, 146, 128, 76, 137, 128, 132, ... ]
+    (expected) [ 0, 81, 146, 129, 76, 138, 128, 133, ... ]
+```
+
+**Green, after** (`test/lootCarry.test.js`, 7 sections; `npm test`):
+1: the 400-blow stream equals `lootBlow` blow for blow, and differs from the floor. 2: 25% slayer + 50% bane
+(Dragonsbane on career 16) is ONE 75% remainder; a two-carry control differs; mastery then loot equal
+`lootBlow(weaponMasteryBlow(...))`; a merged one-share control differs. 3: the martial stream equals `martialBlow`;
+the Firmament mean is its exact share (within 1/n). 4: the `carried` estimate pass ignores a carry state and writes
+nothing. 5: seeded fights, three builds, oracle bounds above. 6: the default path is bit-identical to the recorded
+pre-change fight literal (`seed` 119, 295 blows, `ttk` 269.4661224489796, `damageDealt` 5017, the full 295-value blow
+array), while `carry: true` differs. 7: relay fights accept the flag and the carried stream is the higher one.
+
+**Outputs moved: none by default.** Every shipped caller keeps `carry` off and reproduces the recorded literal;
+`carry: true` is a new opt-in metric whose effect is the numbers above. The relay stream is wired and smoke-tested, not
+differentially sampled. Limits: the per-fight zero remainder (M43), and the `damage > 0` gate boundary noted there.
+
+**Evidence.** `test/lootCarry.test.js` (new, in the HEAVY list), `test/harness/fightOracle.mjs` (`reuseItem` keeps one
+item for the whole fight and restores its condition, since the oracle still excludes wear; `attacker` and `unaware` let
+the online/mastery and martial builds be driven), `test/pricing.test.js` section 5 (unchanged card pin),
+`test/harness/waivers.mjs` `W-LOOT-CARRY` (narrowed: default + card remain, fight `carry: true` proved).
+
 ## Stage 3.3 correction - the allowance accepts a claim at exactly the shield's end (2026-11-18)
 
 **What the game does.** `applyHit` refuses a shielded blow only while the clock is strictly inside the ward:
@@ -2308,7 +2631,7 @@ Recorded as known and **not fixed** (each asserted as still broken):
 | ~~`W-CONDITION`~~ | Weapon condition bands read a float percentage - **fixed in Stage 2.5** (this waiver was removed). |
 | ~~`W-RACIAL`~~ | Racial weapon/fist arms missing - **fixed in Stage 2.6** (this waiver was removed). |
 | ~~`W-CLASSIC-STRENGTH`~~ | Classic Strength used /5; the live install uses /10 - **fixed in Stage 2.7** (this waiver was removed). |
-| `W-WARD`, `W-PROC-BUDGET` | Smaller per-hit discrepancies, detailed in `test/harness/waivers.mjs`. |
+| `W-WARD` (removed 2026-11-18), `W-PROC-BUDGET` | Smaller per-hit discrepancies, detailed in `test/harness/waivers.mjs`. |
 
 Next stages (not started): fix the critical set (Stage 1), the hit-path fidelity
 items (Stage 2), the encounter layer (Stage 3).

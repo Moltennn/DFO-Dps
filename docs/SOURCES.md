@@ -42,7 +42,7 @@ with a file to prove the check is live.
 
 ## What is vendored, and why
 
-289 files out of roughly 900 modules in the client's combat import
+303 files out of roughly 900 modules in the client's combat import
 graph, plus the JSON data files those modules import whole.
 
 The **roots** (`ROOTS` in `tools/vendor-upstream.mjs`) are the modules the
@@ -55,7 +55,7 @@ simulator reimplements or needs to build the same inputs:
 | Power ceilings | `systems/powerCeiling.js`, `systems/entityMods.js`, `systems/weaponMastery.js`, `systems/martialPowers.js`, `systems/martialPaths.js`, `systems/firmamentPowers.js`, `systems/loot/lootPowers.js`, `systems/loot/lootRarity.js`, `systems/loot/lootLevelGate.js` |
 | Spells | `systems/spellcast.js` (`savingChance`, `savingThrow`, `savingLands`, `careerTolerance`, `spellHasFlags`, `rollMagnitude`; vendored actual, not a stub). Its `player/motor.js` edge remains a stub for capsule/missile geometry; `savingChance` does not read those constants. |
 | Stats and skills | `systems/statMods.js`, `systems/skills.js`, `systems/skillSoftcap.js`, `systems/masterSkills.js` |
-| Relay boss law | `net/gate/gateBrain.js`, `net/gate/gateMods.js` (three files with `textManager`; the rest of `net/` stays cut) |
+| Relay boss law | `net/gate/gateBrain.js`, `net/gate/gateMods.js` (with `textManager`). Added by the wider cut (re-pin of the same commit, parity unchanged): `scenes/gate/standInSpell.js` (a stand-in's spell claims: round summing, the `turned` gate), `scenes/gate/gateCourt.js` (the claim door `hit`, `COURT_ROUND_MS`), `net/wire.js` (the wire constants `COURT_ROUND_MS` reads) and `net/firmament/firmamentLaw.js` (the sky law, formerly a stub). Their imports into `scenes/`, `render/`, `ui/` and the rest of `net/` stay stubs; the host scene `scenes/dungeonContext.js` is deliberately NOT vendored (it pulls in 148 files and cannot be called) and is cited as `full:`. |
 | Foes and gear | `systems/bossTraits.js`, `systems/equip.js`, `systems/armorMaterials.js`, `characters/equipTable.js`, `characters/weapons.js`, `characters/handWrapsIds.js`, `characters/thunderlockIds.js`, `characters/enemy/*`, `combat/enemyGroups.js`, `combat/enemyEquipment.js` (the enemy loadout and its ArmorValues pass), `systems/enemyExpansion/dexEquipment.js` and `combat/rriEnemyEquipment.js` (the booted delegate's class arm), `combat/clawMetal.js`, `combat/healthShare.js` |
 | Foe bodies (Stage 2.8) | `systems/enemyExpansion/dexInstall.js` (`dexClassicRow`, `installEnemyExpansion` - the classic rows Daggerfall Enemy Expansion and MUDEX leave, and the boot the oracle realm runs), `world/gate/gateBoss.js` (`bossStandIn`, `BOSS_ARMOR`: the one constructor of the Breach, Sky-ketch and Abyss bodies). The roots pull in the mod's tables and readers, `characters/meanerMonsters.js`, `combat/pcaaoMeanerMonsters.js` and `characters/mobile/mobileUnit.js`; their render, net and scene edges stay stubs. |
 | Martial and enchantment dependencies (Stage 2.9) | `systems/sigil/sigilSets.js` + `systems/sigil/setReach.js` (`setsDueling`: `lootPowers.js:245` `wornPowers` returns nothing while it is true; the stub's inert truthy answer meant **no worn Legendary power or imprint ever fired in the oracle**; Stage 2.11a), `systems/sigil/sigil.js` (`sigilDueling`: `martialPowers.js:124` asks it before any path acts; the stub's inert truthy answer switched every path off in the oracle), `formats/magicDef.js` and its `formats/save/saveTreeFile.js` (`ENCHANTMENT_TYPES`: the stub keyed the payload registry by proxies, so no Strikes payload ran). Added as roots; vendor parity runs a held path's fold and a Potent Vs payload in both trees. |
@@ -65,7 +65,7 @@ Everything the closure reaches is copied **whole and unmodified**. Three of
 those (mod settings, settings, inventory) were added after the parity tool
 proved a stub was changing a measured answer — see "The gate" below.
 
-## Stubbed edges (122 files)
+## Stubbed edges (168 files)
 
 The combat graph reaches UI, rendering, world geometry, baked assets, the
 network and player-movement code. Vendoring those would copy a 27 MB client. Each

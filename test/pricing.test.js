@@ -261,5 +261,6 @@ test('5. W-LOOT-CARRY: the carried metric is the held item\'s stream; the card s
   // The card is upstream's own estimate path (info.estimate reads the carry, never writes it), so each blow floors:
   // the gap this waiver keeps pinning - 19.03 against 19.45 on this 25% line, +2.2%.
   const card = priced.perSwing;
+  // Card-vs-carried on a humanoid slayer line is asserted separately in lootCarry.test.js §4 (different fixture).
   expectKnownDiscrepancy(assert, 'W-LOOT-CARRY', (m - card) / se > 8 && m / card - 1 > 0.005, { upstream: m, card, z: (m - card) / se });
 });

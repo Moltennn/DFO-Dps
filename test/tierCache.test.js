@@ -146,7 +146,7 @@ test('T1-5: a batch cache is reused across seeds, and `.with()` never inherits i
   assert.deepEqual(rowOf(viaWith), rowOf(direct));
 });
 
-test('T1-6: separate simulateFights calls do not share a cache', () => {
+test('T1-6: a second batch rebuilds tiers for the changed target and matches standalone fights', () => {
   const { ch, it } = single();
   const seeds = pairedFightSeeds(4, 9);
   const args = { target: target(), health: 40000, weapon: weaponOf(it) };
@@ -157,4 +157,24 @@ test('T1-6: separate simulateFights calls do not share a cache', () => {
   const second = simulateFights(ch, { ...altArgs, seeds });
   assertSameRows(second, ch, altArgs, seeds);
   assert.notDeepEqual(first.rows.map((r) => r.damageDealt), second.rows.map((r) => r.damageDealt));
+});
+
+test('T1-7: a batch releases its cached tiers before returning', () => {
+  const { ch, it } = single();
+  const args = { target: target(), health: 40000, weapon: weaponOf(it), maxBlows: 1, seeds: [1, 2] };
+  const caches = new Set();
+  const set = Map.prototype.set;
+  // Capture the private cache when it stores a tier, without exposing it on the returned rows.
+  Map.prototype.set = function (key, entry) {
+    if (entry?.tier && entry?.sampler) caches.add(this);
+    return set.call(this, key, entry);
+  };
+  try {
+    simulateFights(ch, args);
+  } finally {
+    Map.prototype.set = set;
+  }
+  assert.equal(caches.size, 1, 'the batch populated one shared tier cache');
+  const [cache] = caches;
+  assert.equal(cache.size, 0, 'the batch released its cached tiers');
 });

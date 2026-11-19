@@ -46,8 +46,8 @@
  * it: test/blowOutcomes.test.js asserts that the distribution's means equal analyze()'s perSwing / cappedPerSwing.
  */
 import {
-  RANDOM_SWING, SWING_DIRECTIONS, afterShare, additionsTo, bowOf, damageModel, echoChances, hitModel, skill,
-  strikesNet, weaponOf, referenceFoe,
+  RANDOM_SWING, SWING_DIRECTIONS, afterShare, additionsTo, bowOf, conditionMultiplier, damageModel, echoChances,
+  finishBlow, hitModel, skill, strikesNet, weaponBlow, weaponOf, referenceFoe,
 } from './model.js';
 import { CURB_SHARE, RRI_WEAPON_DAMAGE, WEAPONS } from './data.js';
 import { powerIdsOf, powerOf } from '../vendor/upstream/a3eb1605/src/systems/loot/lootRarity.js';
@@ -125,6 +125,7 @@ export function blowOutcomes(ch, args = {}) {
     healthShare: opts.healthShare ?? t.healthShare ?? 1,
     firmamentDamagePct: opts.firmamentDamagePct ?? chUse.firmamentDamagePct ?? 0,
     wraps, matReqMulti, imprintsExtra: powerAdditions,
+    ...(opts.carry === true ? { carryBases: true } : {}),
   };
 
   // backstab: the host's chance, as analyzeCard reads it
@@ -191,11 +192,43 @@ export function blowOutcomes(ch, args = {}) {
     return r;
   };
 
+  // SCENARIO `carry: true`: the fight loop draws an atom and re-resolves the percentage channels with the live
+  // remainder, in upstream's stage order, then the unchanged non-percentage stages (crit, material, condition, the
+  // defence, the off-hand share, the payload, the trait, the cap). The atom keeps the pre-percentage base and the
+  // branch it took through `resolve`; the tier's probabilities do not depend on the damage, so the sampled sequence
+  // stays valid. `critMult` is set during the enumeration below (the same for every direction).
+  let critMult = 1;
+  const conditionMult = w ? conditionMultiplier(w, simOpts.equipmentDamageEnhanced === true) : 1;
+  const resolveOne = (card, part, whole, branch) => {
+    const list = geared
+      ? targetPartOutcomes(tgt, card, part, { weapon: w })
+        .flatMap(({ p, damage }) => afterShare(offHand ? offHandDamage(damage) : damage, p, ctxOf(whole)))
+      : afterShare(offHand ? offHandDamage(intrinsicDamage(tgt, card, { weapon: w })) : intrinsicDamage(tgt, card, { weapon: w }), 1, ctxOf(whole));
+    return list[branch];
+  };
+  const carryResolve = opts.carry === true ? (draw, state) => {
+    // A miss never reaches shareOf, and a landed blow with a base of 0 (or the classic fist arm's negative base) never
+    // reaches weaponBlow at all - damageModel guards `d > 0` (src/model.js) and upstream lootBlow returns at
+    // `!(damage > 0)` (lootPowers.js:287) - so neither consumes nor advances a remainder, and neither may gain the
+    // elemental/venom flat. Fall back to the enumerated (floor) outcome.
+    if (!draw.hit || !(draw.blowBase > 0)) return draw;
+    let card = weaponBlow(chUse, w, draw.blowBase, tgt, { ...simOpts, carryState: state });
+    if (draw.backstab) card *= 3; // the x3 is taken before the critical/material/condition stages, as damageModel does
+    card = finishBlow(card, {
+      core, critMult, matReq: num(simOpts.matReqMulti, 1), conditionMult, hasWeapon: !!w,
+    }, draw.crit);
+    const o = resolveOne(card, draw.part, draw.whole, draw.branch);
+    // The resolve list's shape is damage-independent except at the `damage > 0` gate; should a branch
+    // ever be gone, keep the enumerated (floor) outcome rather than crash. Not observed on the shipped fixtures.
+    return o ? finish({ ...draw }, o, cap) : draw;
+  } : null;
+
   const outcomes = [];
   const wholes = offHand ? [[true, wholeP], [false, 1 - wholeP]] : [[true, 1]];
   swingKeys.forEach((direction, di) => {
     const h = hitModel(chUse, w, tgt, direction, core, simOpts);
     const d = damageModel(chUse, w, tgt, direction, core, simOpts);
+    critMult = d.crit.damageMult;
     const hb = behind ? hitModel(chUse, w, tgt, direction, core, { ...simOpts, backstabBonus: backSkill }) : h;
     const facings = [{ facing: false, backstab: false, weight: behind ? 1 - backUptime : 1, h, plain: d.plainRolls, crit: d.critRolls, scale: 1 }];
     if (behind) {
@@ -219,10 +252,16 @@ export function blowOutcomes(ch, args = {}) {
             const common = { direction, directionIndex: di, facing: f.facing, backstab: f.backstab, crit, part, whole };
             if (ph > 0) {
               for (let r = 0; r < nRoll; r++) {
-                for (const o of resolve(cards[r], part, whole)) {
+                const hitOutcomes = resolve(cards[r], part, whole);
+                for (let branch = 0; branch < hitOutcomes.length; branch++) {
+                  const o = hitOutcomes[branch];
                   const p = base * pw * ph * (1 / nRoll) * o.p;
                   if (!(p > 0)) continue;
-                  outcomes.push(finish({ p, ...common, hit: true, roll: r, preFinish: d.preFinishRolls[r] * f.scale, card: cards[r] }, o, cap));
+                  outcomes.push(finish({
+                    p, ...common, hit: true, roll: r, preFinish: d.preFinishRolls[r] * f.scale, card: cards[r],
+                    // the carried stream's re-resolution key: the pre-percentage base and the defence/payload branch
+                    ...(opts.carry === true ? { blowBase: d.blowBaseRolls?.[r], branch } : {}),
+                  }, o, cap));
                 }
               }
             }
@@ -251,6 +290,8 @@ export function blowOutcomes(ch, args = {}) {
       // the value the tier's loot percentage actually read; null when no Flow power rides this hand
       flowStacks: flowPower ? num(simOpts.flowStacks, num(flowPower.max, 1)) : null,
       backstab: { behind, uptime: backUptime, chance: backProb, skill: backSkill },
+      // scenario `carry: true` only: the per-fight re-resolution of a drawn atom with a live remainder
+      carryResolve,
     },
   };
 }
@@ -329,8 +370,49 @@ export function mergeToFightTier(full) {
   return { kind: 'fight', exact: true, hand: full.hand, cap: full.cap, directions: full.directions, outcomes, total: t.value, meta: full.meta, mergedFrom: full.outcomes.length };
 }
 
-/** One call: the fight tier of a blow. */
-export const blowFightTier = (ch, args) => mergeToFightTier(blowOutcomes(ch, args));
+/**
+ * The CARRIED fight tier (`blowOutcomes(ch, { carry: true })`): the fight tier with the pre-percentage base and the
+ * `resolve` branch kept on every landed atom, plus the tier's `carryResolve(atom, state)` from `blowOutcomes`'s meta.
+ * The key is the ordinary one plus (part, blowBase, branch): two atoms with the same pre-percentage base and branch are
+ * identical for every remainder state, so the distribution's probabilities still sum to 1 and the sampler's one draw
+ * stays valid; only the integer values are re-resolved per draw.
+ */
+export function mergeToCarryTier(full) {
+  if (!full.meta?.carryResolve) throw new TypeError('mergeToCarryTier: needs blowOutcomes with carry: true');
+  const groups = new Map();
+  for (const o of full.outcomes) {
+    const k = `${keyOf(o)}|${o.part}|${o.blowBase ?? ''}|${o.branch ?? ''}`;
+    let g = groups.get(k);
+    if (!g) {
+      g = { first: o, sum: new Sum() };
+      groups.set(k, g);
+    }
+    g.sum.add(o.p);
+  }
+  const outcomes = [...groups.values()].map(({ first: o, sum }) => Object.freeze({
+    p: sum.value,
+    direction: o.direction, directionIndex: o.directionIndex, facing: o.facing, backstab: o.backstab,
+    crit: o.crit, hit: o.hit, whole: o.whole, echoMask: o.echoMask, echoHits: o.echoHits, echoEligible: o.echoEligible === true, formulaPositive: o.formulaPositive === true,
+    strikesDamage: o.strikesDamage, strikesPositive: o.strikesPositive === true,
+    blow: o.blow, echoDamage: o.echoDamage, damage: o.damage, claim: o.claim, cappedDamage: o.cappedDamage,
+    part: o.part, blowBase: o.blowBase, branch: o.branch,
+  }));
+  outcomes.sort((a, b) => a.directionIndex - b.directionIndex
+    || a.facing - b.facing || a.backstab - b.backstab || a.crit - b.crit || a.hit - b.hit || a.whole - b.whole
+    || a.echoMask - b.echoMask || a.part - b.part || (a.blowBase ?? -1) - (b.blowBase ?? -1)
+    || (a.branch ?? -1) - (b.branch ?? -1) || a.blow - b.blow || a.echoDamage - b.echoDamage);
+  const t = new Sum();
+  for (const o of outcomes) t.add(o.p);
+  return {
+    kind: 'fight', exact: true, carry: true, hand: full.hand, cap: full.cap, directions: full.directions,
+    outcomes, total: t.value, meta: full.meta, carryResolve: full.meta.carryResolve, mergedFrom: full.outcomes.length,
+  };
+}
+
+/** One call: the fight tier of a blow (carried when the scenario asks for `carry: true`). */
+export const blowFightTier = (ch, args) => (args?.carry === true
+  ? mergeToCarryTier(blowOutcomes(ch, args))
+  : mergeToFightTier(blowOutcomes(ch, args)));
 
 /** Moments of a tier (any tier), for comparison with analyze(): probability-weighted means of the damage fields. */
 export function tierMeans(tier) {

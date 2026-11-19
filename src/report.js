@@ -160,6 +160,18 @@ export function buildReport(ch, {
     ? `${r.capSource === 'hit cap' ? 'Hit cap' : 'Curbing cap'}: ${r.cap} per hit${r.capSource === 'curbing' ? ` (5% of ${health.toLocaleString()} HP)` : ''}`
     : 'No per-hit cap active';
   const affinity = target?.group ? `, ${target.group}` : '';
+  // M44: the ceiling vs the allowance run. The gap is relative to the CLAIM figure (the realistic kill time); the fixed
+  // "promises a kill" sentence is only true when the claim is null or longer than the ceiling.
+  const claimTtk = r.claimTotalTtk;
+  const ceilingTtk = r.ceilingTotalTtk;
+  const ttkGap = claimTtk && ceilingTtk ? Math.abs(claimTtk - ceilingTtk) / claimTtk : null;
+  const ttkGapNote = r.allowance && ceilingTtk && (claimTtk === null || ttkGap > 0.01)
+    ? `<div class="note"><b>Ceiling vs allowance:</b> ${claimTtk === null
+      ? `ceiling ${n1(ceilingTtk)} s; the allowance-sustained run never kills - the ceiling can promise a kill the allowance refuses`
+      : claimTtk > ceilingTtk
+        ? `ceiling ${n1(ceilingTtk)} s; allowance-sustained ${n1(claimTtk)} s - the ceiling can promise a kill the allowance refuses`
+        : `ceiling ${n1(ceilingTtk)} s; allowance-sustained ${n1(claimTtk)} s - ceiling and allowance-sustained differ by ${pct(ttkGap)}`}.</div>`
+    : '';
 
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -207,18 +219,22 @@ export function buildReport(ch, {
   <p class="sub">${esc(characterLabel(ch))} &middot; ${esc(w ? `${w.materialName} ${w.name}` : 'bare hands')} &middot; ${esc(ruleset)}</p>
 
   <div class="grid">
-    ${card('DPS', n1(r.dps), `${n1(r.perSwing)} per swing x ${n2(r.cadence.aps)}/s`, 'brass')}
+    ${card('Uncapped weapon DPS', n1(r.dps), `${n1(r.perSwing)} per swing x ${n2(r.cadence.aps)}/s`, 'brass')}
     ${card('Per-hit-capped DPS', n1(r.cappedDps), r.cap ? `${capLine} - a ceiling` : 'no cap', r.cap ? 'bad' : 'good')}
-    ${r.allowance ? card('Sustained DPS', n1(r.allowance.sustainedDps), `relay allowance refill ${n1(r.allowance.law.rate)}/s${r.allowance.saturated ? ' (the limit)' : ''}`, 'good') : ''}
+    ${r.allowance ? card('Allowance-sustained DPS', n1(r.allowance.sustainedDps), `relay allowance refill ${n1(r.allowance.law.rate)}/s${r.allowance.saturated ? ' (the limit)' : ''}`, 'good') : ''}
     ${r.allowance ? card('Opening burst', n1(r.allowance.burst5Dps), `first 5 s, ${n1(r.allowance.law.depth)} bucket`, 'brass') : ''}
-    ${r.enchantDps > 0 ? card('Enchant DPS', n1(r.enchantDps), `${n1(r.enchantPerSwing)} per landed hit`, 'brass') : ''}
-    ${r.enchantDps > 0 ? card('Total (per-hit-capped ceiling)', n1(r.totalDps), 'capped weapon + enchant procs', 'good') : ''}
+    ${r.enchantDps > 0 ? card('Enchant DPS (ceiling component)', n1(r.enchantDps), `${n1(r.enchantPerSwing)} per landed hit`, 'brass') : ''}
+    ${r.enchantDps > 0 ? card('Total (per-hit-capped ceiling)', n1(r.ceilingTotalDps), 'capped weapon + proc estimate before allowance', 'good') : ''}
     ${card('Hit chance', pct(r.hit.hit), `${pct(r.hit.crit.chance)} critical`, '')}
     ${card('Damage / hit', `${r.damage.min}-${r.damage.max}`, `avg ${n1(r.damage.avg)}; crit ${r.damage.critMin}-${r.damage.critMax}`)}
     ${r.backstab?.chance > 0 ? card('Backstab', `${pct(r.backstab.chance)} ×3`, r.backstab.uptime > 0 ? `uptime ${pct(r.backstab.uptime)}; raw crit ${r.backstab.critMin}-${r.backstab.critMax}` : `available; raw crit ${r.backstab.critMin}-${r.backstab.critMax}`) : ''}
     ${card('Swing time', `${n2(r.cadence.seconds)} s`, `${n2(r.cadence.aps)} swings/s`)}
-    ${card('Time to kill', (r.totalTtk ?? r.ttk) ? `${n1(r.totalTtk ?? r.ttk)} s` : '-', r.health ? `${r.health.toLocaleString()} HP${r.ward ? ` + ${r.ward} ward` : ''}${r.enchantDps > 0 ? ' · weapon + procs' : ''}` : 'no boss health set')}
+    ${r.target.allowance
+      ? card('Time to kill (allowance-sustained)', r.totalTtk != null ? `${n1(r.totalTtk)} s` : r.allowance ? 'no kill' : 'no allowance run', r.health ? `${r.health.toLocaleString()} HP${r.ward ? ` + ${r.ward} ward` : ''} · ceiling: ${r.ceilingTotalTtk != null ? `${n1(r.ceilingTotalTtk)} s` : '-'}` : 'no boss health set')
+      : card('Time to kill (per-hit-capped ceiling)', r.totalTtk != null ? `${n1(r.totalTtk)} s` : '-', r.health ? `${r.health.toLocaleString()} HP${r.ward ? ` + ${r.ward} ward` : ''}${r.enchantDps > 0 ? ' · weapon + procs' : ''}` : 'no boss health set')}
   </div>
+
+  ${ttkGapNote}
 
   ${r.backstab?.uptime > 0 ? `<div class="note"><b>Backstab:</b> ${pct(r.backstab.chance)} chance of ×3 from behind; the DPS uses a ${pct(r.backstab.uptime)} behind uptime (expected ×${n2(r.backstab.expectedMult)}). Raw backstab crit ${r.backstab.critMin}-${r.backstab.critMax}; the per-hit cap is applied after this. A displayed 600 is a backstab crit; the health bar may only lose the cap (${r.cap || 'none'}).</div>` : ''}
   <div class="note"><b>Target:</b> ${esc(targetLabel)}${esc(affinity)}, level ${esc(target?.level ?? '-')}.

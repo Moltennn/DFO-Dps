@@ -113,6 +113,23 @@ export const ROOTS = Object.freeze([
   // sigil directory cut that call answered an inert, truthy stub, so no worn Legendary power or imprint ever fired in
   // the vendored oracle. The full checkout's answer is false (a refereed set duel is the only true).
   'systems/sigil/sigilSets.js',
+  // Wider cut (re-pin): the claim bridge and the host were stubbed, so these were ASSUMPTIONS, not source. A declared
+  // root is never cut; its imports into the excluded directories (scenes/, render/, ui/, net/, world/) stay stubs, so
+  // each of these is vendored as readable source and is never called by the harness unless a test says so.
+  //  - the round summing, the `turned` gate and the first-round-in-the-cast rule of a stand-in's spell claims
+  //
+  'scenes/gate/standInSpell.js',
+  //  - the claim door `gateCourt.hit` (the host rounding and the sub-1 drop, Q3), claim ordering within one timestamp
+  //    (Q1) and COURT_ROUND_MS (:159), the round anchor that M35 assumes
+  'scenes/gate/gateCourt.js',
+  //    (COURT_ROUND_MS = round(1 / ONLINE_MINUTES_PER_MS) reads net/wire.js:240 `12 / 60 / 1000`, so the wire constants
+  //    are a root too: with it a stubbed binding cannot hide the value)
+  'net/wire.js',
+  //  - NOT vendored: scenes/dungeonContext.js and scenes/hostEnchant.js (the host, U8). A dry run showed dungeonContext
+  //    alone pulls in 148 files / 3.7 MB of unrelated systems and it is a scene host the harness cannot call; U8 is
+  //    answered by reading the pinned checkout and citing it as `full:`.
+  //  - the Firmament's sky law, now a stub (STUBS.md), so its blow gate and percentage had no live oracle
+  'net/firmament/firmamentLaw.js',
 ]);
 
 /**

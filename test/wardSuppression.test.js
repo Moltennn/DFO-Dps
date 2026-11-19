@@ -1,5 +1,5 @@
 /*
- * test/wardSuppression.test.js - Stage 3.6c: a WARD turns every per-blow power, and only those.
+ * test/wardSuppression.test.js - Stage 3.6c: caller-set `target.warded` gates per-blow powers; the boss `warded` trait is a health pool.
  *
  * Upstream gates each per-blow channel on the target's `warded` flag (the host copies the Warden's/court's word onto the
  * body; the relay's own clock is `shieldUntil`, a different field the claim engine reads):
@@ -8,7 +8,7 @@
  *   2. lootStrike     vendor:systems/loot/lootPowers.js:354   - early return: no leech, chain, quake, echo, fists
  *   3. CastWhenStrikes vendor:systems/enchantments.js:597     - no cast, no bill (already local: cwsEligible)
  *   4. weaponMasteryBlow vendor:systems/weaponMastery.js:141  - returns the damage
- *   5. firmamentBlow  vendor:systems/firmamentPowers.js:173   - nothing for a ward (the gate is BEFORE the sky is read)
+ *   5. firmamentBlow  vendor:systems/firmamentPowers.js:173   - checked with a live tree in firmamentBlow.test.js
  *   6. martialPowers  vendor:systems/martialPowers.js:136     - foeOf: !target.warded (the blow at :229 and the strike
  *                                                                at :241 both read it)
  *   7. Vampiric WhenStrikes vendor:systems/artifactEffects.js:247 and vendor:systems/enchantments.js:674
@@ -54,7 +54,7 @@ const SLASH = [{ id: 'slayer', param: 'humanoid', value: 20 }, { id: 'elemental'
 /** A weapon item both sides read: the upstream shape, with the two loot lines. */
 const linedItem = () => ({ ...weaponItem(121, { material: 9 }), affixes: SLASH.map((a) => ({ ...a })) });
 
-test('A ward: lootBlow adds no slayer percent and no elemental flat to a warded foe', async () => {
+test('A: target.warded gates slayer percent and elemental flat in lootBlow', async () => {
   const u = await upstream();
   const item = linedItem();
   const attacker = playerEntity({ level: 30 });
@@ -70,7 +70,7 @@ test('A ward: lootBlow adds no slayer percent and no elemental flat to a warded 
   assert.equal(weaponBlow(ch, w, 100, localBody({ warded: true }), {}), upWarded);
 });
 
-test('B ward: weaponMasteryBlow adds nothing to a warded foe', async () => {
+test('B: target.warded gates weaponMasteryBlow', async () => {
   const u = await upstream();
   const item = weaponItem(121, { material: 9 });
   const desc = character({
@@ -102,7 +102,7 @@ test('B ward: weaponMasteryBlow adds nothing to a warded foe', async () => {
   assert.equal(weaponBlow(ch, w, 100, localBody({ warded: true }), {}), upWarded);
 });
 
-test('C ward: the martial blow channel and the Firmament add nothing to a warded foe', async () => {
+test('C: target.warded gates the martial blow channel', async () => {
   const u = await upstream();
   const item = weaponItem(121, { material: 9 });
   const path = u.martialPaths.MARTIAL_BY_ID.cutthroat;
@@ -123,16 +123,9 @@ test('C ward: the martial blow channel and the Firmament add nothing to a warded
     'the path itself still reports its percent: weaponBlow\'s single ward gate is what suppresses the blow');
   assert.equal(weaponBlow(ch, w, 100, localBody(), { unaware: true }), upPlain);
   assert.equal(weaponBlow(ch, w, 100, localBody({ warded: true }), { unaware: true }), upWarded);
-
-  // The Firmament: the gate is BEFORE the sky is read, so a warded body returns the damage even in a realm where the
-  // vendored `blowPct` is a stub (STUBS.md, firmwareLaw row). The local model carries `firmamentDamagePct`, so its own
-  // control is the card's number.
-  assert.equal(u.firmamentPowers.firmamentBlow(item, 100, attacker, upBody(u, { warded: true }), {}), 100);
-  assert.equal(weaponBlow(ch, w, 100, localBody(), { firmamentDamagePct: 20 }), 120);
-  assert.equal(weaponBlow(ch, w, 100, localBody({ warded: true }), { firmamentDamagePct: 20 }), 100);
 });
 
-test('D ward: lootStrike answers a warded foe with nothing - no echo, no leech, no chain', async () => {
+test('D: target.warded gates lootStrike - no echo, no leech, no chain', async () => {
   const u = await upstream();
   const item = { ...weaponItem(121, { material: 9 }), rarity: 'rare', imprint: 'warp-edge' };
   const attacker = playerEntity({ level: 30 });
@@ -172,7 +165,7 @@ test('D ward: lootStrike answers a warded foe with nothing - no echo, no leech, 
   assert.equal(echoDelta(true), 0, 'a warded target: the card carries no echo');
 });
 
-test('GREEN GUARD: Potent Vs survives a ward - the Strikes payload is not a blow power', async () => {
+test('GREEN GUARD: target.warded does not gate Potent Vs - the Strikes payload is not a blow power', async () => {
   const u = await upstream();
   const item = { ...weaponItem(121, { material: 9 }), equipSlot: 19, enchantments: [{ type: 4, param: 1 }] };
   const attacker = playerEntity({ level: 30 });
@@ -185,7 +178,7 @@ test('GREEN GUARD: Potent Vs survives a ward - the Strikes payload is not a blow
   assert.equal(strikesNet(item, local), upRaw);
 });
 
-test('GREEN GUARD: Cast When Strikes is refused by a ward - no cast, no bill', async () => {
+test('GREEN GUARD: target.warded gates Cast When Strikes - no cast, no bill', async () => {
   const u = await upstream();
   const spell = {
     name: 'Ward Probe', index: 1, element: 4, rangeType: 1,
@@ -219,22 +212,47 @@ test('GREEN GUARD: Cast When Strikes is refused by a ward - no cast, no bill', a
   assert.equal(cwsEligible({ target: localBody(), strikesPositive: true, whole: true, item, standard }), true);
 });
 
-test('OPEN GAP (W-WARD): the `warded` TRAIT is a pool, not `target.warded` - the powers still pay', () => {
-  // The narrowed waiver's subject. `analyze(..., { traits: ['warded'] })` adds the boss ward's pool to the TTK
-  // (`src/model.js:1448`, `WARD_SHARE`) but never sets `target.warded`, so the one gate in `weaponBlow` does not fire and
-  // the blow still carries its slayer and elemental lines. Only a caller that SETS `target.warded` (the host's copy of
-  // the Warden's/court's word) is suppressed.
+test('the boss `warded` TRAIT is a health pool the owner takes first, not `target.warded`: pool and drain match bossTake', async () => {
+  // vendor:systems/bossTraits.js:8 "a ward of WARD_SHARE of its health takes every blow first"; :20-23 the ward is the
+  // OWNER's half (`bossTake`, where its health is), after the blow has landed - so the striker's per-blow powers fire
+  // as usual; :390-391 the relay bosses carry no ward at all. `target.warded` is the REFEREE's flag (vendor:systems/
+  // enchantments.js:594 "a stand-in `warded` - the Warden's ward, the Remnant shut, the Spire's turned blows"), and no
+  // vendored code sets it from the trait. Whether the cut host (`dungeonContext.js`) ever copies the trait ward onto
+  // `target.warded` is NOT established (docs: U8); this test pins what the source says.
+  const u = await upstream();
   const item = linedItem();
   const ch = simCharacter(BASIC(), item);
   const w = weaponOf(item);
   const plain = localBody();
-  const card = analyze(ch, { target: plain, health: 1000, traits: ['warded'] });
-  assert.ok(card.ward > 0, 'the trait adds the ward pool the card prices');
-  assert.equal(weaponBlow(ch, w, 100, plain, {}), 130, 'the trait does NOT suppress the slayer/elemental lines');
+  // 1. the powers still pay under the trait; only a caller-set target.warded suppresses them
+  assert.equal(weaponBlow(ch, w, 100, plain, {}), 130, 'the trait does not suppress the slayer/elemental lines');
   assert.equal(weaponBlow(ch, w, 100, localBody({ warded: true }), {}), 100, 'only target.warded does');
+  // 2. the pool: local ward === the vendored ward's maximum (WARD_SHARE of max health, rounded, at least 1)
+  for (const health of [1, 3, 17, 500, 1000, 12345, 250000]) {
+    const e = { maxHealth: health, bossTraits: ['warded'] };
+    assert.equal(u.bossTraits.standBossWard(e, 0), true);
+    const up = u.bossTraits.bossWardNow(e, 0);
+    const card = analyze(ch, { target: plain, health, traits: ['warded'] });
+    assert.equal(card.ward, up.max, `the ward pool at ${health} health`);
+    // the card's own time to kill uses that same pool: (health + ward) / capped dps, no shields on this body
+    assert.ok(card.cappedDps > 0);
+    assert.ok(Math.abs(card.ttkCapOnly * card.cappedDps - (health + card.ward)) <= 1e-9 * (health + card.ward),
+      `the card's TTK spends health + ward at ${health} health`);
+    // 3. the drain: blows of 37 against bossTake (no regrowth inside one fight) need ceil((health + ward) / 37) of them,
+    //    which is the card's (health + ward) / dps with a steady rate
+    const d = 37;
+    let blows = 0;
+    let toHealth = 0;
+    let guard = 0;
+    while (toHealth < health && guard++ < 100000) {
+      toHealth += u.bossTraits.bossTake(e, d, { nowS: 0, mine: false }).damage;
+      blows += 1;
+    }
+    assert.equal(blows, Math.ceil((health + up.max) / d), `blows to kill through the ward at ${health} health`);
+  }
 });
 
-test('blowDistribution: a warded target draws no echo', () => {
+test('blowDistribution: target.warded suppresses echo draws', () => {
   const w = weaponOf(weapon(121, { material: 9 }));
   const mean = (m) => [...m].reduce((a, [v, p]) => a + v * p, 0);
   // The same rolls with and without a 100% echo: a ward must leave the two identical.

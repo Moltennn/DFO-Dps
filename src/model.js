@@ -634,6 +634,45 @@ function applyPct(damage, pct) {
 }
 
 /**
+ * The live carry state of ONE carried stream: `channel -> (item -> remainder)`, created fresh per fight. Upstream keys
+ * its remainders by the held item (a WeakMap), one per channel - mastery (`weaponMastery.js:132`), the loot step
+ * (`lootPowers.js:171`), the martial path (`martialPowers.js:106`) and the Firmament (`firmamentPowers.js:104`).
+ * `createCarryState` is the fight's per-fight reset (a fight starts with a zero remainder).
+ */
+export function createCarryState() {
+  return new Map();
+}
+
+/** `shareOf` with a live remainder: `exact = damage*pct/100 + carry`, floor (or the Firmament's ceil for a loss),
+ *  the remainder kept on the held item (`lootPowers.js:176-181`, `firmamentPowers.js:111-115`). */
+function carriedAmount(state, channel, key, damage, pct, firmament = false) {
+  let byItem = state.get(channel);
+  if (!byItem) { byItem = new Map(); state.set(channel, byItem); }
+  const exact = (damage * pct) / 100 + (byItem.get(key) ?? 0);
+  const whole = firmament
+    ? (pct >= 0 ? floor(exact + 1e-9) : Math.ceil(exact - 1e-9))
+    : floor(exact + 1e-9);
+  byItem.set(key, firmament ? exact - whole : Math.max(0, exact - whole));
+  return whole;
+}
+
+/**
+ * The blow's integer stages after the percentage channels: the critical multiplier, the material requirement and the
+ * condition band, in pcaaoAttackDamage's order (`src/model.js` damageModel's own sequence). Extracted so the carried
+ * fight stream can re-run it on a re-resolved card without a second copy. `carried: true` (the pricing mean) skips the
+ * per-blow unityRound.
+ */
+export function finishBlow(damage, { core = 'overhaul', critMult = 1, matReq = 1, conditionMult = 1, hasWeapon = false, carried = false } = {}, critical = false) {
+  if (core !== 'overhaul') return damage;
+  let d = Math.max(0, damage);
+  const round = carried ? (v) => v : unityRound;
+  if (critical && critMult !== 1) d = round(fround(d * critMult));
+  if (matReq !== 1) d = round(fround(d * fround(matReq)));
+  if (d >= 1 && hasWeapon && conditionMult !== 1) d = round(fround(d * conditionMult));
+  return d;
+}
+
+/**
  * The carried stream's long-run mean of a per-cent channel. `shareOf` floors each blow and keeps the remainder on
  * the item (systems/loot/lootPowers.js:176-181; the same shape in weaponMastery.js:148-150, martialPowers.js:232-235),
  * so floor(x_i + c) = x_i + c - c_next and sum f_i = sum x_i + c_0 - c_n: the mean is the EXACT share. The card's
@@ -686,7 +725,12 @@ export function conditionMultiplier(w, sharpEdge = false) {
 export function weaponBlow(ch, w, damage, target, opts = {}) {
   let d = damage;
   const carried = opts.carried === true; // the carried metric's exact-share pass; the card (`applyPct`) is untouched
+  // A live per-fight carry (scenario `carry: true`): each percentage channel keeps its own remainder on the held item,
+  // in upstream's stage order. The pricing mean (`carried`) is a different pass and must never consume it.
+  const state = carried ? null : (opts.carryState ?? null);
   const lines = w ?? opts.wraps ?? null;
+  const weaponKey = w?.item ?? w ?? ch;
+  const lootKey = lines?.item ?? w ?? lines ?? ch;
   // STAGE 3.6c: A WARD turns every per-blow power, and only those. One gate here - the one place every card, fight-tier
   // and what-if blow passes - for the four channels upstream refuses on a `warded` foe: the loot's slayer/elemental/power
   // walk (`vendor:systems/loot/lootPowers.js:287`), weapon mastery (`vendor:systems/weaponMastery.js:141`), the martial
@@ -699,7 +743,10 @@ export function weaponBlow(ch, w, damage, target, opts = {}) {
     return own ? applyPct(damage, own) : damage;
   }
   const mastery = masteryPct(ch, w, target, opts);
-  if (mastery > 0) d = carried ? carriedPct(d, mastery) : applyPct(d, mastery);
+  if (mastery > 0) {
+    d = state && d > 0 ? d + carriedAmount(state, 'mastery', weaponKey, d, mastery)
+      : carried ? carriedPct(d, mastery) : applyPct(d, mastery);
+  }
   // lootBlow (systems/loot/lootPowers.js:286-347) sums EVERY percentage - the weapon's slayer lines, and any
   // power (bane, unaware, flow, moon, ...) - into one `pct` and takes it of the blow ONCE (`shareOf`), then
   // adds the flat (elemental lines, venom). `opts.loot` is a power the weapon does not carry yet - a what-if
@@ -708,7 +755,10 @@ export function weaponBlow(ch, w, damage, target, opts = {}) {
   const what = opts.loot ?? null;
   const power = lootPowerTerms([...(lines?.powers ?? []), ...(opts.imprintsExtra ?? [])], target, opts);
   const slayer = (lines?.slayerByGroup?.[String(target?.group ?? '')] ?? 0) + num(what?.pct, 0) + power.pct;
-  if (slayer > 0) d = carried ? carriedPct(d, slayer) : applyPct(d, slayer);
+  if (slayer > 0) {
+    d = state && d > 0 ? d + carriedAmount(state, 'loot', lootKey, d, slayer)
+      : carried ? carriedPct(d, slayer) : applyPct(d, slayer);
+  }
   const elementalLines = lines?.elementalLines ?? null;
   let elemental = 0;
   if (elementalLines && elementalLines.length) {
@@ -720,11 +770,18 @@ export function weaponBlow(ch, w, damage, target, opts = {}) {
   elemental += num(what?.flat, 0) + power.flat; // venom's flat rides the same `flat` (lootPowers.js:346 `out + flat`)
   if (elemental > 0) d += elemental;
   const martial = martialBlowPct(ch, target, opts);
-  if (martial > 0) d = carried ? carriedPct(d, martial) : applyPct(d, martial);
+  if (martial > 0) {
+    d = state && d > 0 ? d + carriedAmount(state, 'martial', weaponKey, d, martial)
+      : carried ? carriedPct(d, martial) : applyPct(d, martial);
+  }
   const theory = num(opts.damagePct, 0);
   if (theory) d = applyPct(d, theory); // the card's OWN roll (lootRarity.js:2474-2478 trunc): never carried
   const firm = num(opts.firmamentDamagePct, 0);
-  if (firm) d = carried ? carriedFirmament(d, firm) : applyPct(d, firm);
+  if (firm) {
+    d = state && d > 0
+      ? Math.max(1, d + carriedAmount(state, 'firmament', weaponKey, d, firm, true))
+      : carried ? carriedFirmament(d, firm) : applyPct(d, firm);
+  }
   // The long bow's pull is NOT part of the blow: bowFastDamage acts on the finished
   // calculateAttackDamage (combat/arrowFlight.js:501-510), after the crit, the material, the condition,
   // the armour and the off hand's share, and before the boss trait and the cap. See `bowBlow`.
@@ -928,6 +985,7 @@ export function damageModel(ch, w, target, swingKey, core, opts = {}) {
     matMod = WEAPON_MATERIAL_MODIFIER[w.material] ?? 0;
     strMod = core === 'overhaul' ? pcaaoDamageModifier(str) * (w.twoHanded ? 2 : 1) : classicStrength(str, opts);
   }
+  const bases = [];
   const one = (roll) => {
     // pcaao.js:555-590: silver/skeletal act on the weapon roll plus the swing/proficiency/racial
     // modifiers, BEFORE Strength and the material modifier. The enemy-type bonus (:511-522) is a
@@ -941,26 +999,17 @@ export function damageModel(ch, w, target, swingKey, core, opts = {}) {
     const bonuses = core === 'overhaul' ? enemyTypeBonusValues(ch, target) : [0];
     return bonuses.map((bonus) => {
       let d = base >= 1 ? base + bonus : base;
+      // The value BEFORE the percentage channels: the carried fight stream re-resolves them with the live remainder.
+      if (opts.carryBases === true) bases.push(d);
       if (d > 0) d = weaponBlow(ch, w, d, target, opts); // the elemental flat is added there, once
       return d;
     });
   };
-  const finish = (d, critical) => {
-    if (core !== 'overhaul') return d;
-    d = Math.max(0, d);
-    // The carried metric passes the stream's MEAN: unityRound on each integer blow is unbiased over the stream, so
-    // its mean is the plain product - rounding the mean again would quantise the carry away.
-    const round = opts.carried === true ? (v) => v : unityRound;
-    if (critical && crit.damageMult !== 1) d = round(fround(d * crit.damageMult));
-    // pcaao.js:1745-1755: the soft/hard material requirement is applied after the critical
-    // multiplier and before the weapon-condition band.
-    if (matReq !== 1) d = round(fround(d * fround(matReq)));
-    if (d >= 1 && w) {
-      const mult = conditionMultiplier(w, opts.equipmentDamageEnhanced === true);
-      if (mult !== 1) d = round(fround(d * mult));
-    }
-    return d;
+  const conditionMult = w ? conditionMultiplier(w, opts.equipmentDamageEnhanced === true) : 1;
+  const finishParams = {
+    core, critMult: crit.damageMult, matReq, conditionMult, hasWeapon: !!w, carried: opts.carried === true,
   };
+  const finish = (d, critical) => finishBlow(d, finishParams, critical);
   const values = [];
   for (const r of rolls) for (const d of one(r)) values.push(d);
   const plain = values.map((d) => finish(d, false));
@@ -977,6 +1026,9 @@ export function damageModel(ch, w, target, swingKey, core, opts = {}) {
     plainRolls: plain, critRolls: crits,
     // The blow before the critical/material/condition band, for an exact stage comparison.
     preFinishRolls: values,
+    // The blow before the percentage channels, when the carried stream asked for it (carryBases): the fight loop's
+    // tier keys an atom on this and re-resolves the channels with the live remainder.
+    ...(opts.carryBases === true ? { blowBaseRolls: bases } : {}),
     backstabPlainRolls: backstabPlain, backstabCritRolls: backstabCrits,
     parts: {
       roll: [Math.min(...rolls), Math.max(...rolls)],
@@ -1004,7 +1056,7 @@ export function damageModel(ch, w, target, swingKey, core, opts = {}) {
  * the relay's law over time (allowance.js). Returns null for any other target,
  * so ordinary foes and curbing bosses are untouched.
  *
- *   ttk       the weapon's blows alone; totalTtk adds Cast When Strikes procs and
+ *   ttk       the weapon's blows alone; allowance.ttk adds Cast When Strikes procs and
  *             their damage-over-time rounds, each its own claim.
  *   ttkCapOnly / totalTtkCapOnly (set by the caller) keep the old ceiling figure -
  *             health / per-hit-capped DPS, which ignores the allowance.
@@ -1033,7 +1085,6 @@ function allowancePatch(tgt, health, { cappedPerSwing, hit, aps, procs, cap, str
       },
     },
     ttk: weaponLane.run.ttk,
-    totalTtk: totalLane.run.ttk,
   };
 }
 
@@ -1058,7 +1109,11 @@ function allowancePatch(tgt, health, { cappedPerSwing, hit, aps, procs, cap, str
  * (info.estimate reads the carry and never writes it). A HELD item carries the fraction between blows, and the
  * stream's long-run mean is the exact share, so the same pipeline is run once more with `carried: true`
  * (src/model.js `carriedPct`) and exposed as `carriedPerSwing` / `carriedCappedPerSwing` / `carriedDps` /
- * `carriedCappedDps` - the metric pricing deltas use. The fight streams still floor (W-LOOT-CARRY).
+ * `carriedCappedDps` - the metric pricing deltas use. Sampled fights track the live remainder instead.
+ *
+ * On allowance targets `totalTtk` is the claim result even if null; `totalDps` is allowance-sustained when a run
+ * exists. The old capped-weapon + proc sum and its band are named `ceilingTotalDps[Min|Max]` and its kill time
+ * `ceilingTotalTtk` (= `totalTtkCapOnly`). Ordinary foes retain the ceiling defaults.
  */
 export function analyze(ch, args = {}) {
   const r = analyzeCard(ch, args);
@@ -1067,6 +1122,18 @@ export function analyze(ch, args = {}) {
   r.carriedCappedPerSwing = carried.cappedPerSwing;
   r.carriedDps = carried.dps;
   r.carriedCappedDps = carried.cappedDps;
+  r.ceilingTotalDps = r.totalDps;
+  r.ceilingTotalDpsMin = r.totalDpsMin;
+  r.ceilingTotalDpsMax = r.totalDpsMax;
+  r.ceilingTotalTtk = r.totalTtkCapOnly;
+  r.claimTotalTtk = r.allowance?.ttk ?? null;
+  r.claimSustainedDps = r.allowance?.sustainedDps ?? null;
+  r.totalTtk = r.target.allowance ? r.claimTotalTtk : r.ceilingTotalTtk;
+  if (r.allowance) {
+    r.totalDps = r.claimSustainedDps;
+    // The existing run estimates a point, not a sustained DPS band.
+    r.totalDpsMin = r.totalDpsMax = null;
+  }
   Object.defineProperty(r, 'with', {
     value: (edit = {}) => {
       const { imprint, ...rest } = edit;
@@ -1180,7 +1247,7 @@ function analyzeCard(ch, {
       ...main, dual: true, offHand: off, schedule,
       perSwing, perSwingMin, perSwingMax, cappedPerSwing, cappedPerSwingMin, cappedPerSwingMax, dps, dpsMin, dpsMax, cappedDps, cappedDpsMin, cappedDpsMax,
       enchantPerSwing, enchantDps: enchantDpsValue, enchantDpsMin, enchantDpsMax,
-      totalDps, totalDpsMin, totalDpsMax, ttk: gate?.ttk ?? ttk, totalTtk: gate?.totalTtk ?? totalTtk, ttkCapOnly: ttk, totalTtkCapOnly: totalTtk, allowance: gate?.allowance ?? null, capLoss: dps > 0 ? 1 - cappedDps / dps : 0,
+      totalDps, totalDpsMin, totalDpsMax, ttk: gate?.ttk ?? ttk, ttkCapOnly: ttk, totalTtkCapOnly: totalTtk, allowance: gate?.allowance ?? null, capLoss: dps > 0 ? 1 - cappedDps / dps : 0,
       cadence: { ...main.cadence, seconds: schedule.period / 2, aps, dual: true, period: schedule.period, mainSeconds: schedule.mainSeconds, offSeconds: schedule.offSeconds },
     };
   }
@@ -1229,7 +1296,6 @@ function analyzeCard(ch, {
       enchantDps: enchantDpsValue,
       enchantDpsMin, enchantDpsMax,
       totalDps, totalDpsMin, totalDpsMax,
-      totalTtk: gate?.totalTtk ?? totalTtk,
       cadence: { ...main.cadence, seconds: main.cadence.seconds / 2, aps, pair: true },
       ttk: gate?.ttk ?? ttk,
       ttkCapOnly: ttk, totalTtkCapOnly: totalTtk, allowance: gate?.allowance ?? null,
@@ -1517,7 +1583,7 @@ function analyzeCard(ch, {
     core, weapon: w, target: tgt, swing, swingDirections: swingKeys, swingMix, hit: hitOut, damage: displayDmg, cadence: cad,
     perSwing, perSwingMin, perSwingMax, dps, dpsMin, dpsMax,
     cappedPerSwing, cappedPerSwingMin, cappedPerSwingMax, cappedDps, cappedDpsMin, cappedDpsMax, cap, capSource, capLoss: dps > 0 ? 1 - cappedDps / dps : 0,
-    enchantPerSwing, enchantDps: enchantDpsValue, enchantDpsMin, enchantDpsMax, totalDps, totalDpsMin, totalDpsMax, totalTtk: gate?.totalTtk ?? totalTtk, enchantProcs: ench?.procs ?? [], enchantDotDps: ench?.dotDps ?? 0, enchantDotDpsMin: ench?.dotDpsMin ?? 0, enchantDotDpsMax: ench?.dotDpsMax ?? 0, procsBeforeBreak: procsBeforeBreak(w?.item ?? ch.wraps ?? ch.weapon), procsBeforeBreakBasis: PROCS_BEFORE_BREAK_BASIS,
+    enchantPerSwing, enchantDps: enchantDpsValue, enchantDpsMin, enchantDpsMax, totalDps, totalDpsMin, totalDpsMax, enchantProcs: ench?.procs ?? [], enchantDotDps: ench?.dotDps ?? 0, enchantDotDpsMin: ench?.dotDpsMin ?? 0, enchantDotDpsMax: ench?.dotDpsMax ?? 0, procsBeforeBreak: procsBeforeBreak(w?.item ?? ch.wraps ?? ch.weapon), procsBeforeBreakBasis: PROCS_BEFORE_BREAK_BASIS,
     resist, health: bossHealth || null, ward, shields, ttk: gate?.ttk ?? ttk, ttkCapOnly: ttk, totalTtkCapOnly: totalTtk, allowance: gate?.allowance ?? null, wrath, wrathAt: WRATH_AFTER_S,
     targetDefense,
     backstab: {

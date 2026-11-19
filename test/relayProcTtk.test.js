@@ -9,7 +9,7 @@
  * the metric (the precedent: `test/relayFight.test.js`'s 120 seeded upstream fights within 1%).
  *
  * The build is a Cast When Strikes row carrying a Continuous Damage spell: its procs and rounds are claims of their own
- * (`full:scenes/gate/standInSpell.js:198-217`, `:131-151`), which is what 3.7d added to the relay fight.
+ * (`scenes/gate/standInSpell.js:198-217`, `:131-151`), which is what 3.7d added to the relay fight.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,6 +22,7 @@ import { upstream } from './harness/upstream.mjs';
 import { oracleEntity, upstreamBody } from './harness/upstreamBodies.mjs';
 import { oracleItem } from './harness/fightOracle.mjs';
 import { upstreamRelayEvents } from './harness/relayFightOracle.mjs';
+import { generator } from './harness/prng.mjs';
 
 const BASIC = () => character({
   level: 45, raceId: 1, stats: { strength: 70, agility: 60, speed: 60, luck: 50 },
@@ -51,13 +52,6 @@ const spell = ({ index = 1, mag = 40, rounds = 6, direct = 30 } = {}) => ({
     }] : []),
   ],
 });
-const scripted = (values, fallback = 0.5) => {
-  let i = 0;
-  const fn = () => { const v = i < values.length ? values[i] : fallback; i += 1; return v; };
-  fn.used = () => i;
-  return fn;
-};
-const roundDraws = (n, seed = 0) => Array.from({ length: n * 3 }, (_, i) => ((seed + i * 37) % 97) / 97);
 const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
 
 /** The attack schedule's events up to `horizon`, the same list both sides fight. */
@@ -99,7 +93,8 @@ test('3.7g: the proc build\'s mean TTK is within 1% of the upstream compositor\'
     const events = eventsOf(ch, item, { target, health: pool });
     const up = await upstreamRelayEvents(u, {
       desc: BASIC(), item: oracleItem(item), body: upBody, level, pool, events, seed, standard,
-      cwsRolls: scripted(roundDraws(400)), maxSeconds: 600,
+      // Sample spell variance across trials, not the same save sequence in every fight.
+      traits: target.bossTraits, cwsRolls: generator(seed, 'xoshiro128ss'), maxSeconds: 600,
     });
     assert.equal(local.kill, true, `seed ${seed}: the local proc fight kills`);
     const upKill = killTimeOf(up);
@@ -112,9 +107,6 @@ test('3.7g: the proc build\'s mean TTK is within 1% of the upstream compositor\'
   const rel = lMean / uMean - 1;
   assert.equal(localTimes.length, seeds.length);
   // A mean TTK is the metric (rule 7): the two samplers use different streams, so only their means are comparable.
-  // Measured on this fixed seed list: local mean 297.95 s (95% CI +/-3.20 s) against the oracle's 298.94 s (+/-1.37 s),
-  // bias -0.33%. The 1% bound is about 2.2x the oracle CI and about 0.6x the LOCAL CI, and the seeds are fixed, so the
-  // test is deterministic and catches only a gross composition error of roughly 1.5% or more.
   assert.ok(Math.abs(rel) < 0.01, `proc TTK mean ${lMean.toFixed(3)} s vs upstream ${uMean.toFixed(3)} s (bias ${(rel * 100).toFixed(2)}%)`);
 });
 

@@ -29,13 +29,13 @@ const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 
 /**
  * Below this many both-kill pairs a paired TTK difference is reported but NOT called separated: the normal/t
- * interval is too wide to be a ranking claim. The audit's own floor for a reported mean is 1,000 trials
- * (docs/STAGE-3-AUDIT.md:473); this is only a guard against a pathological sample.
+ * interval is too wide to be a ranking claim. This is only a guard against a pathological sample; the trial floor
+ * for a reported mean is MIN_STOCHASTIC_TRIALS.
  */
 const MIN_PAIRED_PAIRS = 8;
 
-// Two-sided 95% Student t, df 1..30. At df = 999 (a 1,000-trial paired sample) this is 1.962, so the 1.96 normal
-// quantile is used above the table: the difference is negligible there and material only for small n.
+// Two-sided 95% Student t, df 1..30. Above df 30 the normal 1.96 is used: it understates the true t by about
+// 4% at df 31, 2% at df 60 and 1% at df 120, so the interval is slightly narrow there and tightens with n.
 const T95 = Object.freeze([
   12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228,
   2.201, 2.179, 2.160, 2.145, 2.131, 2.120, 2.110, 2.101, 2.093, 2.086,
@@ -180,7 +180,7 @@ function evaluateStochastic(objective, def, ch, scenario, target, pool) {
     horizonSeconds: sim.horizonSeconds,
     damageMode: sim.damageMode ?? null,
     killProbability: kp,
-    assumptions: { objective, target: targetAssumptions(target), health: pool, basis: def.basis },
+    assumptions: { objective, target: targetAssumptions(target), health: pool, basis: def.basis, carry: (scenario.carry ?? true) === true },
     detail: {
       trials: sim.trials,
       kills: sim.kills,
@@ -200,7 +200,7 @@ function evaluateStochastic(objective, def, ch, scenario, target, pool) {
       ci: { metric: 'kill-probability', method: 'wilson', p: kp.p, lo: kp.lo, hi: kp.hi, level: 0.95, n: kp.n },
     };
   }
-  // ASSUMPTION M42: the score is a kill rate, because TTK is a minimum and the ranking is max-only. With no kill in
+  // The score is a kill rate, because TTK is a minimum and the ranking is max-only. With no kill in
   // the horizon there is no mean TTK; the score is 0 and the censoring stays visible in killProbability.
   return {
     ...common,
@@ -381,7 +381,7 @@ export function rankBuilds(entries, { objective = 'snapshot', target = null, hea
   failed.forEach((r) => { r.rank = null; });
   if (stochastic) {
     // flags only: the rows keep their score order, even when the paired interval cannot separate them. `ttkSeparated`
-    // compares per-seed TTK over the seeds BOTH kill, while the score uses each row's own killers (ASSUMPTION M42);
+    // compares per-seed TTK over the seeds BOTH kill, while the score uses each row's own killers;
     // the paired kill-indicator difference is carried beside it so the two readings cannot be confused.
     for (let i = 1; i < ok.length; i += 1) {
       try {

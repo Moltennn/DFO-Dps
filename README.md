@@ -64,16 +64,21 @@ platform user-data location.
 - `report` writes a single-file HTML report.
 
 `--target` accepts the reference foes `soft`, `tough`, `armoured` and `human`,
-the synthetic `boss`, or the real relay targets `breach` and `gate`. `--target
-breach` uses the Breach body at the selected level (the character's level by
-default; `--level` overrides it) and its per-player allowance. `boss` is a
-generic boss with the health, armour and traits you pass.
+the synthetic `boss`, or the real relay targets `breach`, `gate`, `ruhn`,
+`skyketch` and `abyss`. `--target breach` uses the Breach body at the selected
+level (the character's level by default; `--level` overrides it) and its
+per-player allowance. `gate` and its alias `ruhn` are the solo gate boss,
+Valkynaz Ruhn; `skyketch` is the Sky-ketch Warden (600 s share per player, one
+6.6 s opening immunity and The Discord window); `abyss` is the Abyss Remnant
+(clock puzzle, gold/silver split, uncalibrated share). `boss` is a generic boss
+with the health, armour and traits you pass.
 
 ## Commands at a glance
 
 | Command | Purpose |
 |---|---|
 | `build` | One build against one target; the default command. |
+| `objective` | Score one build on a named deterministic or sampled objective. |
 | `rank weapons` | Rank melee templates and materials. |
 | `report` | HTML report for one build and target. |
 | `compare` | Baseline versus one stat, skill or weapon change. |
@@ -83,7 +88,7 @@ generic boss with the health, armour and traits you pass.
 | `weapons`, `skills` | HTML weapon ceiling page; `skills` is an alias. |
 | `imprints` | Rank Rare imprints by weapon family. |
 | `enchant-plan` | Per-piece enchant budget and priority plan. |
-| `loadout` | Tree + enchants + best imprint, per weapon/hold. |
+| `loadout` | Tree + enchants + best imprint, per weapon/hold; `--shortlist K` reranks the top melee builds on shared fight seeds. |
 | `firmament` | Star-tree plans for the supported builds. |
 | `spell`, `spells` | One spell, or an HTML page of damaging spells. |
 | `graph` | Standalone SVG line chart of stats, skills or stars. |
@@ -110,9 +115,9 @@ Use `./dfo-dps --help` for every flag, or see
   does not terminate the modelled fight.
 - Snapshot, whole-fight, relay, relay-ceiling, carried and sampled
   (`stochastic-ttk`, `kill-probability`, `stochastic-relay`) metrics, with
-  explicitly named targets. The sampled three use seeded fights at the audit's
-  1,000-trial first-pass floor (10,000 for a reported mean, 100,000 for a close
-  ranking), carry their horizon and a 95% interval on the **mean TTK** (not on
+  explicitly named targets. The sampled three use seeded fights at the code's
+  1,000-trial floor (the only count enforced; 10,000 is a recommendation for a
+  reported mean and 100,000 for a close ranking), carry their horizon and a 95% interval on the **mean TTK** (not on
   the kill-rate score), and rank with paired seeds, a censoring guard and a
   separation flag rather than independent noise. Carried is a held item's
   long-run mean: the percentage lines (mastery, slayer/loot powers, the martial
@@ -147,9 +152,9 @@ Use `./dfo-dps --help` for every flag, or see
   in the ordinary fight (Stage 3.5.1), with its condition bill when
   `durability: true` (Stage 3.5.2); in the relay fight every proc and every DoT
   round is its own claim, compared claim for claim against the vendored
-  compositor (Stage 3.7d-3.7f). The CARD and CEILING figures still price
-  CWS/DoTs as expected damage added to the capped weapon figure, so a ceiling can
-  promise a kill the allowance refuses; see `W-PROC-BUDGET`.
+  compositor (Stage 3.7d-3.7f). The card defaults to the expected-value allowance
+  run where available and still shows the pre-budget `ceilingTotalDps` and
+  `ceilingTotalTtk` separately; see `W-PROC-BUDGET`.
 - **Spells** use the live `SPELLS.STD` records, saving throws and school
   potency. Reflection/absorption and some effect families are not modelled.
 - **Firmament, enchant-plan, imprint and loadout** are supported planner
@@ -182,14 +187,40 @@ Use `./dfo-dps --help` for every flag, or see
   `spendBlow` sequence, or the phase-ward lifecycle (a fixed `shieldUntil` is
   the caller's). Wear needs no model (a relay body is `spareGear` and the game
   wears nothing on it), and `durability: true` is refused (Stage 3.5.3g). CWS
-  procs and DoT rounds ARE modelled since Stage 3.7d-3.7f (see above). A static
-  Warded trait/ward pool is not modelled. A synthetic two-echo build, an unarmed
+  procs and DoT rounds ARE modelled since Stage 3.7d-3.7f (see above). The relay
+  engine does not simulate a Warded trait's health pool (the card prices it; see
+  Ward below). A synthetic two-echo build, an unarmed
   build, and bow/gun builds (whose release/landing timing is not modelled) are
   refused rather than approximated. Flow and one Many Endings power are
   supported; an echo build requires `target.relayBody === true` up front.
-- Per-blow ward suppression and the full proc/DoT budget.
+- The full proc/DoT budget. Per-blow ward suppression exists only as the
+  caller-set `target.warded` flag (see Ward below), not as a derived ward state.
 - Elite Breach, and non-English boss-trait seeding.
 - Exact reproduction of a live client's frame timing or RNG sequence.
+
+### Unverified mechanics
+
+The pinned source shows the rules below, but live-client parity is unverified.
+Source paths are relative to `vendor/upstream/a3eb1605/src/` unless noted.
+
+- **Missed-frame catch-up:** `scenes/gate/standInSpell.js:122-150` resets the
+  clock on idle or backwards frames and bundles due DoT ticks into one claim
+  per body per frame. The local relay bills one claim per round. See
+  [`test/standInSpellCatchUp.test.js`](test/standInSpellCatchUp.test.js) for the
+  oracle cases and the known difference; actual frame delivery is unvendored.
+- **Round phase and ties:** `scenes/gate/standInSpell.js:115,122` uses
+  `Math.floor(now() / COURT_ROUND_MS)` on a 5-second grid
+  (`scenes/gate/gateCourt.js:159`, `net/wire.js:240`). The simulator anchors
+  rounds at fight `t = 0` (`src/simulateFight.js:447-452`); the unvendored
+  host determines the order of a blow and a round due at the same time.
+- **Stun:** Breaking Dagon's Reckoning sets an 8-second stun; the relay applies
+  a 1.5× pre-cap hit multiplier to the stunned whole Warden
+  (`net/gate/gateBrain.js:929-930,1331,2106-2109`). The model omits it; the host
+  code that times client actions and claim delivery is not vendored.
+- **Geometry:** `scenes/gate/gateCourt.js:889-894,1163` checks the player's feet
+  against the boss's court. `net/gate/gateBrain.js:1313-1320` checks the incoming
+  pose, floor, court and melee reach. The model omits geometry; the live host
+  that supplies player positions and detects contact is not vendored.
 
 ## Data, outputs and rules
 
@@ -219,21 +250,34 @@ The project names its metrics rather than treating every “DPS” as one number
 which pricing uses), and the sampled **stochastic-ttk** / **kill-probability** /
 **stochastic-relay** (seeded fights at the 1,000-trial first-pass floor; the 95%
 interval is on the mean TTK, not on the kill-rate score, and ranking pairs the
-seeds with a censoring guard). See [`METHOD.md`](METHOD.md) for formulas
-and the limitations below for what is not verified.
+seeds with a censoring guard). On a target with an allowance, the card also
+separates the **ceiling** (`ceilingTotalDps`, `ceilingTotalTtk`: capped weapon
+plus the proc sum before the shared budget) from the **allowance-sustained** run
+(`claimTotalTtk`, `claimSustainedDps`). `totalTtk` stays null if there is no kill
+or no run; `totalDps` uses sustained DPS when the run exists. Ordinary foes keep
+their previous totals. See [`METHOD.md`](METHOD.md) for formulas and the limitations below for
+what is not verified.
 
 ## Limitations and known gaps
 
 These are recorded as waivers or assumptions, not hidden:
 
-- `W-PROC-BUDGET`: the relay fight bills every proc and DoT round as its own
-  claim (Stage 3.7d-3.7f); the ceiling figures still add that damage to the capped
-  weapon figure.
-- `W-WARD`: ward suppression of the per-blow powers fires on `target.warded`, which only a caller sets; the boss
-  `warded` TRAIT's own pool does not suppress them, and DoT rounds are not ward-gated.
-- `W-LOOT-CARRY`: the seeded fight streams and the card estimate floor each
-  blow; the game carries a percentage line's fraction between blows. Pricing
-  (imprints, enchant deltas) reads the carried mean instead.
+- `W-PROC-BUDGET`: the relay fight bills each submitted proc and DoT round as
+  its own claim. The card's explicit ceiling and `enchantDps` still price
+  expected proc damage before the shared token and purse limits. The defaults
+  on allowance targets use the existing claim schedule, not the sampled proc
+  lifecycle; use the seeded relay fight for per-event billing.
+- Ward: the `warded` boss trait is a health pool the owner takes first (`bossTake`),
+  priced as `WARD_SHARE` of health and checked against the vendored pool and drain; it
+  is not the per-blow `target.warded` flag, which is the relay referee's turned blow and
+  suppresses the blow powers when a caller sets it. No known divergence is waived here.
+  Open and unverified: whether the unvendored host ever copies the trait ward onto
+  `target.warded`, and the Firmament's gate (its sky law is a vendored stub).
+- `W-LOOT-CARRY`: the plain card and its deterministic estimates, including
+  the CLI ceiling, omit the held item's percentage remainders. Pricing reads
+  the carried mean; sampled ordinary and relay fights (including sampled
+  objectives and new benchmark runs) track live remainders by default, starting
+  at zero for each fight. Pass `carry: false` to replay the old floor stream.
 - Phase-ward duration, Wrath termination and some encounter windows are model
   parameters or uncalibrated.
 - Spells, procs, the Firmament application and the planners do not all have
