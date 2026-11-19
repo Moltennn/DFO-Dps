@@ -34,8 +34,8 @@ const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
  */
 const MIN_PAIRED_PAIRS = 8;
 
-// Two-sided 95% Student t, df 1..30. At df = 999 (a 1,000-trial paired sample) this is 1.962, so the 1.96 normal
-// quantile is used above the table: the difference is negligible there and material only for small n.
+// Two-sided 95% Student t, df 1..30. Above df 30 the normal 1.96 is used: it understates the true t by about
+// 4% at df 31, 2% at df 60 and 1% at df 120, so the interval is slightly narrow there and tightens with n.
 const T95 = Object.freeze([
   12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228,
   2.201, 2.179, 2.160, 2.145, 2.131, 2.120, 2.110, 2.101, 2.093, 2.086,

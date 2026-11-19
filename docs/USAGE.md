@@ -282,7 +282,7 @@ See `METHOD.md` for the capture fields and the estimate rules.
 
 ```bash
 ./dfo-dps objective --theory --target soft
-./dfo-dps objective --theory --target boss --health 12000 --objective stochastic-ttk --seed 7
+./dfo-dps objective --theory --target soft --health 12000 --objective stochastic-ttk --seed 7 --trials 1000
 ./dfo-dps objective --theory --target breach --players 3 --health 36000 --objective stochastic-relay --json --samples
 ```
 
@@ -295,10 +295,13 @@ For `stochastic-relay` the sampled pool is one player's share, `--health`
 divided by `--players`; the text output prints that share beside the total.
 Without an override, the command uses the target's default pool.
 With `--theory` the default target is `gate`; explicitly select a non-relay
-target such as `soft` or `boss` for `stochastic-ttk` or `kill-probability`.
+target such as `soft` for `stochastic-ttk` or `kill-probability`. Those two
+objectives (and `loadout --shortlist`) refuse a boss, gate or trait target:
+the ordinary fight supports only `soft`, `tough`, `armoured` and `human`.
 
 Sampled objectives default to `--trials 1000` (the minimum), `--seed 0`,
-`--max-seconds 900` and `--max-blows 6000` per trial. `--seconds` is for
+`--max-seconds 900` and `--max-blows 6000` per trial; `--trials` is capped at
+1,000,000. `--seconds` is for
 spell sustain, not fight simulation. The text reports kill probability with
 a Wilson 95% interval and mean time to kill (TTK) with a 95% interval over
 the trials that kill. The sampled kill-rate score is pool divided by that

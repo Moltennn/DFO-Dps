@@ -24,7 +24,7 @@ import { imprintFamilyById, rankAll } from './imprints.js';
 import { effectLine, planEnchants, planMatrix, SOUL_GEM_POINTS } from './enchantPlan.js';
 import { applyTree, realWeaponLoadouts } from './realBuild.js';
 import { shortlistLoadouts } from './loadoutShortlist.js';
-import { ENCOUNTERS, ENCOUNTER_IDS, encounterById } from './encounters.js';
+import { ENCOUNTERS, ENCOUNTER_IDS, encounterById, encounterTarget } from './encounters.js';
 import { evaluateObjective, MIN_STOCHASTIC_TRIALS, OBJECTIVE_IDS, STOCHASTIC_OBJECTIVE_IDS } from './objectives.js';
 import { enchantmentName as enchantmentNameOf } from './enchantData.js';
 import { analyzeSpell, resolveSpells, spellCost, spellRotation, standardSpells } from './spells.js';
@@ -45,6 +45,7 @@ import {
   characterFromSave, characterLabel, effectiveSkill, listSaves, liveStat, loadSave,
   skillName, skillValue,
 } from './save.js';
+import { UsageError } from './usageError.js';
 
 const CLI_OBJECTIVE_IDS = [...OBJECTIVE_IDS, ...STOCHASTIC_OBJECTIVE_IDS];
 
@@ -372,11 +373,18 @@ function starOptions(values) {
   return { starStats, starSkills };
 }
 
+const REFERENCE_TARGETS = ['soft', 'tough', 'armoured', 'human'];
+const SPECIAL_TARGETS = ['boss', 'gate', 'breach', 'ruhn'];
+const VALID_TARGETS = [...new Set([...REFERENCE_TARGETS, ...SPECIAL_TARGETS, ...ENCOUNTER_IDS])];
+const VALID_TARGET_LIST = VALID_TARGETS.join(', ');
+
 function targetOf(ch, values, traits) {
+  const requested = String(values.target ?? 'armoured').toLowerCase();
+  if (!VALID_TARGETS.includes(requested)) {
+    throw new UsageError(`unknown target "${values.target}" (choose ${VALID_TARGET_LIST})`);
+  }
   const level = n(values.level, ch.level);
-  const target = String(values.target ?? 'armoured').toLowerCase() === 'armoured' && values.theory
-    ? 'gate'
-    : String(values.target ?? 'armoured').toLowerCase();
+  const target = requested === 'armoured' && values.theory ? 'gate' : requested;
   if (target === 'gate' || target === 'breach' || target === 'ruhn') {
     return gateTarget(level, { health: n(values.health, gateHealth(level)), traits: traits.length ? traits : undefined, players: n(values.players, 1), blowX: n(values['blow-x'], 1) });
   }
@@ -388,20 +396,28 @@ function targetOf(ch, values, traits) {
       traits: traits.length ? traits : [],
     });
   }
+  // The other content ids (skyketch, abyss) are real relay bodies, not reference-foe presets.
+  if (ENCOUNTER_IDS.includes(target)) {
+    return encounterTarget(target, level, { players: n(values.players, 1), traits: traits.length ? traits : null });
+  }
   return referenceFoe(level, target);
 }
 
 function weaponOverride(values) {
   if (!values.weapon) return undefined;
   const [tpl, mat] = String(values.weapon).split(':').map(Number);
-  if (!WEAPONS[tpl]) throw new Error(`unknown weapon template ${tpl}. Melee templates: ${Object.keys(WEAPONS).join(', ')}`);
+  if (!WEAPONS[tpl]) throw new UsageError(`unknown weapon template ${tpl}. Melee templates: ${Object.keys(WEAPONS).join(', ')}`);
   return syntheticWeapon(tpl, Number.isFinite(mat) ? mat : 9);
 }
 
 function scenarioOf(ch, values, traits, target) {
+  const core = String(values.core ?? 'overhaul').toLowerCase();
+  if (core !== 'overhaul' && core !== 'classic') {
+    throw new UsageError(`unknown core "${values.core}" (choose overhaul, classic)`);
+  }
   return {
     target,
-    core: values.core === 'classic' ? 'classic' : 'overhaul',
+    core,
     rri: !values['no-rri'],
     // `--traits` overrides; with none the target's own traits (a relay boss's) apply.
     traits: traits.length ? traits : null,
@@ -426,16 +442,19 @@ function scenarioOf(ch, values, traits, target) {
   };
 }
 
+const MAX_STOCHASTIC_TRIALS = 1_000_000;
+
 function sampledOptions(values) {
   const trials = Number(values.trials);
-  if (!Number.isSafeInteger(trials) || !values.trials.trim()) throw new Error('--trials must be an integer');
-  if (trials < MIN_STOCHASTIC_TRIALS) throw new Error(`--trials: at least ${MIN_STOCHASTIC_TRIALS} trials are required`);
+  if (!Number.isSafeInteger(trials) || !values.trials.trim()) throw new UsageError('--trials must be an integer');
+  if (trials < MIN_STOCHASTIC_TRIALS) throw new UsageError(`--trials: at least ${MIN_STOCHASTIC_TRIALS} trials are required`);
+  if (trials > MAX_STOCHASTIC_TRIALS) throw new UsageError(`--trials: at most ${MAX_STOCHASTIC_TRIALS.toLocaleString('en-US')} trials are allowed`);
   const seed = Number(values.seed);
-  if (!Number.isSafeInteger(seed) || !values.seed.trim()) throw new Error('--seed must be a safe integer');
+  if (!Number.isSafeInteger(seed) || !values.seed.trim()) throw new UsageError('--seed must be a safe integer');
   const maxSeconds = Number(values['max-seconds']);
   const maxBlows = Number(values['max-blows']);
-  if (!Number.isFinite(maxSeconds) || maxSeconds <= 0) throw new Error('--max-seconds must be positive');
-  if (!Number.isSafeInteger(maxBlows) || maxBlows <= 0) throw new Error('--max-blows must be a positive integer');
+  if (!Number.isFinite(maxSeconds) || maxSeconds <= 0) throw new UsageError('--max-seconds must be positive');
+  if (!Number.isSafeInteger(maxBlows) || maxBlows <= 0) throw new UsageError('--max-blows must be a positive integer');
   return { trials, seed, maxSeconds, maxBlows };
 }
 
@@ -455,6 +474,12 @@ function printObjective(values) {
   const target = targetOf(ch, { ...values, health: undefined }, traits);
   if (pool !== null && target.isBoss) target.health = target.maxHealth = pool;
   if (traits.length) target.bossTraits = traits;
+  // simulateFight supports a plain ordinary foe only: a boss/gate body or boss traits are refused up front
+  // rather than deep in the sampler.
+  if (STOCHASTIC_OBJECTIVE_IDS.includes(objective) && objective !== 'stochastic-relay'
+    && (target.isBoss || (target.bossTraits?.length ?? 0) > 0 || target.phaseShields)) {
+    throw new UsageError(`${objective} needs a plain ordinary foe; supported targets: soft, tough, armoured, human (use stochastic-relay for gate or breach)`);
+  }
   const health = pool ?? target.maxHealth;
   if (!(health > 0)) throw new Error('a positive target pool is required (set --health)');
   const carry = !values['no-carry'];
@@ -463,7 +488,7 @@ function printObjective(values) {
   const r = evaluateObjective(ch, {
     ...scenarioOf(ch, values, traits, target), objective, health, ...sampling, carry,
   });
-  const { unit, value, n = null, horizonSeconds = null, killProbability = null, ci = null, assumptions, detail } = r;
+  const { unit, value, n: trialCount = null, horizonSeconds = null, killProbability = null, ci = null, assumptions, detail } = r;
   const metric = r.metric ?? ({ snapshot: 'snapshot-dps', 'relay-ceiling': 'ceiling-dps' }[objective] ?? 'kill-rate');
   const damageMode = r.damageMode ?? (target.allowance && objective !== 'snapshot' && objective !== 'fight' ? 'relay' : 'uncapped');
   if (values.json) {
@@ -471,14 +496,14 @@ function printObjective(values) {
       delete detail.samples;
       delete detail.seeds;
     }
-    console.log(JSON.stringify({ objective, metric, unit, value, n, horizonSeconds, damageMode, carry, seed, killProbability, ci, assumptions, detail }, null, 2));
+    console.log(JSON.stringify({ objective, metric, unit, value, n: trialCount, horizonSeconds, damageMode, carry, seed, killProbability, ci, assumptions, detail }, null, 2));
     return;
   }
   const { p, lo, hi } = killProbability ?? {};
   const pct = (v) => `${fmt2(v * 100)}%`;
   const { ttk } = detail;
   console.log(`Objective: ${objective} | Metric: ${metric} | Value: ${fmt2(value)} ${unit}`);
-  console.log(`n: ${n ?? 'n/a'} | Kills: ${detail.kills ?? 'n/a'} | Censored: ${detail.censored ?? 'n/a'}`);
+  console.log(`n: ${trialCount ?? 'n/a'} | Kills: ${detail.kills ?? 'n/a'} | Censored: ${detail.censored ?? 'n/a'}`);
   console.log(`Kill probability (Wilson 95%): ${killProbability ? `${pct(p)} [${pct(lo)}, ${pct(hi)}]` : 'n/a'}`);
   console.log(`Mean TTK (95% CI, kills only): ${ttk?.mean == null ? 'n/a' : `${fmt2(ttk.mean)} s [${fmt2(ttk.mean - ttk.ci95)}, ${fmt2(ttk.mean + ttk.ci95)}] from ${detail.kills ?? 'n/a'} kills`}`);
   const deterministic = !STOCHASTIC_OBJECTIVE_IDS.includes(objective);
@@ -722,16 +747,15 @@ function saveFirmamentCache(cache) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
-  let values;
+  let parsed;
   try {
-    values = parseArgs({ args: argv, options: optsSpec, allowPositionals: true, strict: true }).values;
+    parsed = parseArgs({ args: argv, options: optsSpec, allowPositionals: true, strict: true });
   } catch (e) {
     console.error(e.message);
     console.error(`\n${HELP}`);
     process.exit(2);
   }
-  const parsed = parseArgs({ args: argv, options: optsSpec, allowPositionals: true, strict: true });
-  values = parsed.values;
+  const values = parsed.values;
   if (values.help) { console.log(HELP); return; }
   const cmd = parsed.positionals[0] ?? 'build';
   if (cmd === 'theory' || cmd === 'weapons' || cmd === 'skills') values.theory = true;
@@ -1884,26 +1908,28 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       let to;
       let label;
       if (kind === 'stat') {
+        if (!idRaw) throw new UsageError(`graph series ${spec} needs an attribute name (stat:strength)`);
         id = String(id).toLowerCase();
         current = liveStat(ch, id);
         from = n(values.from, 50); to = n(values.to, 100);
         label = `stat ${id}`;
       } else if (kind === 'skill' || kind === 'gear') {
         id = Number(id);
-        if (!(id >= 0 && id < 35)) throw new Error(`bad skill id ${idRaw}`);
+        if (!(id >= 0 && id < 35)) throw new UsageError(`bad skill id ${idRaw}`);
         current = kind === 'skill' ? (ch.skills?.[id] ?? 0) : (ch._mods?.skills?.[id] ?? 0);
         from = n(values.from, kind === 'skill' ? 100 : current);
         to = n(values.to, kind === 'skill' ? 200 : current + 100);
         label = kind === 'skill' ? `skill ${id}` : `gear ${id}`;
       } else if (kind === 'star') {
+        if (!idRaw) throw new UsageError(`graph series ${spec} needs an attribute name (star:strength)`);
         id = String(id).toLowerCase();
-        if (!STAT_KEYS.includes(id)) throw new Error(`bad star attribute ${idRaw}`);
+        if (!STAT_KEYS.includes(id)) throw new UsageError(`bad star attribute ${idRaw}`);
         current = ch._mods?.stats?.[id] ?? 0;
         from = n(values.from, 0);
         to = n(values.to, FIRM_CHANNEL_MAX);
         label = `star ${id}`;
       } else {
-        throw new Error(`graph series must be stat:name, skill:id, gear:id or star:name (${spec})`);
+        throw new UsageError(`graph series must be stat:name, skill:id, gear:id or star:name (${spec})`);
       }
       const points = [];
       for (const value of scaleRange(values, from, to)) {
@@ -1990,20 +2016,22 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       return;
     }
     if (values.stat) {
-      const k = String(values.stat).toLowerCase();
-      if (!['strength', 'intelligence', 'willpower', 'agility', 'endurance', 'personality', 'speed', 'luck'].includes(k)) throw new Error(`unknown stat ${k}`);
+      const statArgs = Array.isArray(values.stat) ? values.stat : [values.stat];
+      if (statArgs.length > 1) throw new UsageError('scale accepts one --stat per run; run it once per stat');
+      const k = String(statArgs[0]).toLowerCase();
+      if (!['strength', 'intelligence', 'willpower', 'agility', 'endurance', 'personality', 'speed', 'luck'].includes(k)) throw new UsageError(`unknown stat ${k}`);
       rows.push(...one(`stat ${k}`, 'stat', k, liveStat(ch, k), 100));
     } else if (values.skill) {
       const id = n(values.skill, -1);
-      if (!(id >= 0 && id < 35)) throw new Error('--skill expects a skill id 0..34');
+      if (!(id >= 0 && id < 35)) throw new UsageError('--skill expects a skill id 0..34');
       rows.push(...one(`skill ${id}`, 'skill', id, ch.skills?.[id] ?? 0, 200));
     } else if (values['gear-skill']) {
       const id = n(values['gear-skill'], -1);
-      if (!(id >= 0 && id < 35)) throw new Error('--gear-skill expects a skill id 0..34');
+      if (!(id >= 0 && id < 35)) throw new UsageError('--gear-skill expects a skill id 0..34');
       const cur = ch._mods?.skills?.[id] ?? 0;
       rows.push(...one(`gear skill ${id}`, 'gear', id, cur, cur + 100));
     } else {
-      throw new Error('scale needs --stat <name>, --skill <id>, --gear-skill <id>, or --all');
+      throw new UsageError('scale needs --stat <name>, --skill <id>, --gear-skill <id>, or --all');
     }
     console.log(`${characterLabel(ch)}  |  target ${values.target}  |  ${values.core}${ch.online ? ' / online' : ' / offline'}`);
     printScale(rows, values);
@@ -2079,7 +2107,11 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       rri: !values['no-rri'], pair: values.pair, bowSpam: values.spam, potencyPct: n(values.potency, 0), pierce: n(values.pierce, 0), weapon: scenario.weapon,
     });
     const out = path.resolve(values.out);
-    fs.writeFileSync(out, html, 'utf8');
+    try {
+      fs.writeFileSync(out, html, 'utf8');
+    } catch (e) {
+      throw new UsageError(`cannot write report to ${out}: ${e.message}`);
+    }
     console.log(`report written: ${out}`);
     return;
   }
@@ -2088,15 +2120,15 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     const statList = Array.isArray(values.stat) ? values.stat : values.stat ? [values.stat] : [];
     const changes = statList.map((s) => {
       const m = /^([a-z]+|\d+)=(-?\d+)$/i.exec(s);
-      if (!m) throw new Error(`--stat expects name=value, got ${s}`);
+      if (!m) throw new UsageError(`--stat expects name=value, got ${s}`);
       return { name: m[1].toLowerCase(), value: Number(m[2]) };
     });
-    if (!changes.length && !values.weapon) throw new Error('compare needs --stat name=value and/or --weapon template:material');
+    if (!changes.length && !values.weapon) throw new UsageError('compare needs --stat name=value and/or --weapon template:material');
     const c2 = JSON.parse(JSON.stringify(ch));
     for (const c of changes) {
       if (c.name in c2.stats) c2.stats[c.name] = c.value;
       else if (/^\d+$/.test(c.name)) c2.skills[Number(c.name)] = c.value;
-      else throw new Error(`unknown stat "${c.name}" (use strength, agility, speed, luck, endurance, willpower, intelligence, personality, or a skill id)`);
+      else throw new UsageError(`unknown stat "${c.name}" (use strength, agility, speed, luck, endurance, willpower, intelligence, personality, or a skill id)`);
     }
     const w2 = weaponOverride(values);
     const r = analyze(ch, { ...scenario, weapon: undefined });

@@ -93,6 +93,20 @@ test('sampled objective CLI is reproducible, with opt-in samples and carry', () 
   assert.match(text, /Mean TTK.*95% CI/);
 });
 
+test('objective CLI refuses a boss, gate or trait target for sampled non-relay objectives', () => {
+  const cases = [
+    ['--target', 'boss', '--health', '12000', '--objective', 'stochastic-ttk'],
+    ['--target', 'gate', '--objective', 'kill-probability'],
+    ['--target', 'soft', '--traits', 'curbing', '--objective', 'stochastic-ttk'],
+  ];
+  for (const args of cases) {
+    const result = cli('objective', '--theory', ...args);
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /plain ordinary foe/);
+    assert.match(result.stderr, /supported targets: soft, tough, armoured, human/);
+  }
+});
+
 test('existing build text is unchanged', () => {
   const result = cli('build', '--theory', '--target', 'soft');
   assert.equal(result.status, 0, result.stderr);

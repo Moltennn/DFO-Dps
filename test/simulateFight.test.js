@@ -204,7 +204,7 @@ test('4. health-dependent distributions rebuild after a threshold, and the fight
   assert.ok(shares.some((s) => s > 0.5) && shares.some((s) => s <= 0.5), 'the fight crosses half');
   assert.ok(r.damageDealt >= r.health || !r.kill, 'a kill has dealt at least the pool');
   if (r.kill) {
-    assert.ok(r.overkill >= 0);
+    assert.equal(r.overkill, r.damageDealt - r.health, 'a kill overkills by exactly the damage past the pool');
     assert.equal(r.ttk, r.trace[r.trace.length - 1].t);
     assert.equal(r.remainingHealth, 0);
   } else {

@@ -460,7 +460,7 @@ export function simulateFight(ch, args = {}) {
         cwsDealt += n;
         dotDealt += n;
         dealt += n;
-        // The health segments are the fight's reporting split and must add up to `damageDealt` (objectives.js:103 reads
+        // The health segments are the fight's reporting split and must add up to `damageDealt` (objectives.js:241 reads
         // only their count). A round rides the segment it lands in and the hand of the last blow.
         const segIndex = healthSegment(bounds, shareNow);
         const segKey = `${segIndex}|${lastHand}`;
@@ -961,6 +961,3 @@ export function simulatePairedFights(entries, args = {}) {
   const seeds = Array.isArray(args.seeds) ? [...args.seeds] : pairedFightSeeds(trials, num(args.seed, 0));
   return { seeds, trials: seeds.length, rows: entries.map((e) => ({ id: e.id, result: simulateFights(e.ch, { ...args, seeds }) })) };
 }
-
-/** Named aliases for callers that prefer the objective vocabulary. */
-export const simulateFightDistribution = simulateFights;
