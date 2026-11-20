@@ -7,6 +7,15 @@
 //! `craftPointsFor` and `refundSilver`. Application is the chain `src/realBuild.js` uses: `planFromTree` then
 //! `applyFirmament` (a new character; the original is untouched), whose `_mods` and `firmamentDamagePct` the analysis
 //! reads.
+//!
+//! Gear editing lives beside it: [`build_item`] mints a player item from explicit parts (a template, a material and
+//! either a rarity with its lines or a Legendary record id), and [`preview_equip_main_hand`] answers the character a
+//! main-hand wear would leave and the pieces it takes off. Both are the game's own rules (the legal-line validator, the
+//! condition mint, the hand law and `wearLeavers`), and neither mutates its input. See `rust/FORGE-API.md`.
+
+pub use crate::forge_gear::{
+    build_item, can_wear_main_hand, preview_equip_main_hand, EquipPreview, GearFault, GearSpec,
+};
 
 use crate::firmament::{build_by_id, plan_from_tree};
 use crate::firmament_law::{

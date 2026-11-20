@@ -1,5 +1,17 @@
 # dfo-core (Rust), milestones R1 and R2
 
+## The Forge API (`forge`, `forge_gear`)
+
+`dfo_core::forge` is the GUI-facing surface described in `rust/FORGE-API.md`: the Firmament previews, application and
+save decode, and (from `forge_gear`) `build_item` and `preview_equip_main_hand`. Nothing there is a second reading of a
+rule: the line budget is `gear_profile::validate_plan`, the condition `durability::mint_condition`, the hand law
+`gear::can_hold_main_hand`, the leavers `gear::leavers_for`, and the resulting character `src/save.js`'s own reads
+rebuilt by `save::rebuild_mods` / `save::rebuild_enchant_mods`. The item builder answers the game's mint for a legal
+spec field for field (minus the trade `value`). The wear preview answers a NEW character and the displaced pieces, and
+keeps every `_mods` channel the character already carried (the gear fold is a delta, like the game's re-fold on an
+equip change). Parity: `tools/rust-forge-vectors.mjs` and `tools/rust-forge-gear-vectors.mjs` write `forge.txt` and
+`forge_gear.txt` from the real engine, replayed by `tests/forge.rs` and `tests/forge_gear.rs`.
+
 ## R5c: theory builds, legal budgets, and imprint rankings
 
 `theory` produces the ordered character records that `analyze` consumes. It

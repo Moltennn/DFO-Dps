@@ -88,6 +88,7 @@ import { genPlanningFamilies } from './rust-planning-vectors.mjs';
 import { genFirmamentFamilies } from './rust-firmament-vectors.mjs';
 import { genPlannerFamilies } from './rust-planner-vectors.mjs';
 import { genForgeFamilies } from './rust-forge-vectors.mjs';
+import { genForgeGearFamilies } from './rust-forge-gear-vectors.mjs';
 
 export { encodeValue };
 
@@ -2795,6 +2796,7 @@ counts.maketarget = await genMaketarget();
 Object.assign(counts, genFirmamentFamilies(Out, makeLcg));
 Object.assign(counts, genPlannerFamilies(Out));
 Object.assign(counts, genForgeFamilies(Out));
+Object.assign(counts, genForgeGearFamilies(Out));
 counts.round = genRound();
 counts.rng = genRng();
 counts.damage = genDamage();

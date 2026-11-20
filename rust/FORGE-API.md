@@ -1,9 +1,12 @@
-# The Forge API: manual Firmament editing for `DFO Forge`
+# The Forge API: manual Firmament and gear editing for `DFO Forge`
 
 `dfo_core::forge` (re-exported from `dfo_core::lib`) is the Rust-core API a GUI uses to let a player spend and take
-back Firmament stars. It is plain data in, plain data out: `Tree` and `Value` records, typed errors, no ambient state,
-and **no input is mutated**. Every preview answers the tree it would leave, so the GUI can hold the player's tree and
-show the result without applying it.
+back Firmament stars, and to build and wear gear. It is plain data in, plain data out: `Tree` and `Value` records,
+typed errors, no ambient state, and **no input is mutated**. Every preview answers the tree or character it would leave,
+so the GUI can hold the player's build and show the result without applying it.
+
+There are two halves. Firmament editing is sections (1)–(4); gear is section (5) ([`build_item`],
+[`preview_equip_main_hand`], [`can_wear_main_hand`]).
 
 The rules are the game's own, ported verbatim from `vendor/firmament/firmamentLaw.js` into
 `dfo_core::firmament_law` (`pathTo`, `treeFault`, `fits`, `pointsLeft`, `refundTakes`, `cleanKeys`, `treeDiff`,
@@ -99,14 +102,79 @@ weapon-blow effects exactly as the planner's own trees do. `build` is a preset i
 
 `attribute_values(&tree)` gives the eight attribute totals the tree adds; `attribute_keys()` names them.
 
-## The readers beside the previews
+## (4) The readers beside the previews
 
 `tree_fault_of(&tree, budget)`, `totals(&tree)`, `difference(prev, next)`, `tree_to_value(&tree)` — each the port of
 `treeFault`, `totals`, `treeDiff` and the `{ start, keys }` record. `firmament_law`'s own `clean_keys`,
 `firm_cost_of`, `fits`, `points_left`, `tree_fault`, `tree_fault_value`, `path_to`, `allocatable`, `refund_takes`,
 `tree_diff`, `totals`, `stars_for`, `craft_points_for` and `refund_silver` are public too.
 
-## (4) A saved allocation
+## (5) Gear: a player item, and a main-hand wear
+
+The same module edits gear, under the same contract: plain data, typed answers, no ambient state, **no input mutated**.
+The rules are the game's own, reused rather than restated — [`crate::gear_profile::validate_plan`] (the `validatePlan`
+the max profile is checked with), [`crate::durability::mint_condition`], the game's template-name table, the hand law
+[`crate::gear::can_hold_main_hand`] and `leavers_for`, and `characterFromSave`'s own reads of the worn list rebuilt by
+[`crate::save::rebuild_mods`] / [`crate::save::rebuild_enchant_mods`].
+
+```rust
+use dfo_core::forge::{build_item, preview_equip_main_hand, can_wear_main_hand, GearSpec};
+use dfo_core::value::Value::{Num, Obj, Str};
+
+// A Magic or Rare piece: a template, a material, a rarity and the lines the player picked (`{ id, param?, value }`).
+let damage = Obj(vec![("id".into(), Str("damage".into())), ("value".into(), Num(25.0))]);
+let item = build_item(&GearSpec::lines_of(123.0, 9.0, "rare", vec![damage]))?;   // a NEW item, never the spec
+
+// Or a Legendary record, whose lines, enchantment and name are its own.
+let dragon = build_item(&GearSpec::legendary(123.0, 9.0, "wyrmbane"))?;
+
+// Wear it in the main hand: the character it would leave, and the pieces it takes off.
+if can_wear_main_hand(&item) {
+    let preview = preview_equip_main_hand(&character, &item)?;
+    println!("{} piece(s) displaced", preview.displaced.len());
+    let card = dfo_core::analyze::analyze(&preview.character, &scenario, &book);
+}
+```
+
+`GearSpec` is `{ template, material, rarity, lines, record? }`; `GearSpec::from_value` reads the record a GUI holds
+(`{ template, material, rarity, lines?, record? }`). `rarity` is `magic` or `rare` for explicit lines, `legendary` with a
+`record`. The material is the game's id: 0..=9 on the weapon ladder, DFU's raw armour value (0 leather, 0x0100 chain,
+0x0200+ plate), 0 for jewellery and clothing.
+
+The item a legal spec builds is what the game mints, field for field: `setItemFields` + `mintCondition` for a Magic or
+Rare piece (group, template, material, rarity, lines, name, condition), and `applyRarity` + `mintCondition` for a
+Legendary (its record's name, lines and enchantment). One field is deliberately absent: the trade `value`, which no battle
+reads and which needs the template price tables.
+
+`GearFault` says why not:
+
+| arm | when |
+|---|---|
+| `Spec(String)` | the value is not a gear spec: no numeric template, no rarity |
+| `UnknownTemplate(f64)` | the template is not one the game's slot tables hold |
+| `Illegal(Vec<String>)` | the lines are not legal: `validatePlan`'s own sentences, unchanged |
+| `UnknownRecord(String)` | a Legendary id that does not fit this template and group |
+| `NotMainHand` | the piece cannot be held in the main hand (a shield's `LeftOnly`) |
+| `NoWornList` | the character carries no worn list |
+
+`EquipPreview` is `{ character, displaced, slot }`:
+
+- `slot` — `EQUIP_SLOTS.RightHand`, the slot the hand law admits;
+- `displaced` — every leaver, in `wearLeavers`' order (a two-hander clears both hands, a shield bumps a held two-hander,
+  the destination's occupant swaps out), each without an `equipSlot` as `unequipSlot` leaves it; and
+- `character` — a NEW value: `worn`, `items`, `weapon`, `offWeapon`, `wraps`, `_mods`' gear channels, `_enchantMods` and
+  `legendaries`, all `src/save.js`'s own reads of the new list. The gear channels are a **delta** on the character's
+  existing `_mods` (the old gear fold taken out, the new one added), so a Firmament already folded in survives — the game
+  re-runs every fold on an equip change (`systems/entityMods.js:179-196`).
+
+The boot is the shipped one (the Roleplay & Realism switches at their defaults, a bow in both hands), the same boot
+`can_wear_main_hand` answers with.
+
+**What this is not.** No rarity roll, no imprint, no optimization, no share codes, no persistence, and no game-save
+export: a Forge edit acts on a build and returns a new build, and the imported save stays read-only.
+
+## (6) A saved allocation
+
 
 ```rust
 use dfo_core::forge::{decode_saved_firmament, decode_tree_value, SavedFirmament};
@@ -158,3 +226,32 @@ Mutation gate (seed 1, count 1000): `forge.rs` 14 candidates, 13 killed, 1 inval
 135 candidates, 129 killed, 1 invalid, 5 survivors — all five proven equivalent on the mutated line (`castCostPct`
 prices unreachable from the sky; the refund's clamp floor; `pathTo`'s fast path and its loop bound). The gate reports
 `FAIL` for proven-equivalent survivors too.
+
+## The gear half: parity
+
+`tools/rust-forge-gear-vectors.mjs` writes `rust/tests/vectors/forge_gear.txt` (382 cases) from the **real** engine,
+and `rust/dfo-core/tests/forge_gear.rs` replays it:
+
+- `gearbuild` — 90: legal Magic, Rare and Legendary specs across every group (weapons, armour, shields, jewellery,
+  clothing, Hand Wraps), every Legendary record the long blade and every other probed template takes, and the band edges
+  (a Rare line at its top and one past); plus the refusals `validatePlan` gives (too many lines, a value past the band, a
+  skill a cuirass cannot roll, a repeated skill param, an unknown rarity, a Legendary record that fits another group).
+  A case is the minted item, field for field, or the typed refusal.
+- `gearwear` — 51: a main-hand wear on seven characters (a two-hander and a shield, a dual pair, armour only, a buffed
+  blade, the same-skill blade, a theory build, and one already carrying a Firmament tree), each against seven
+  candidates: a mace and a katana (one-handers that displace the right hand), a Dai-katana (a two-hander that clears
+  both hands), a Rare Dai-katana, Hand Wraps, and a Legendary Dai-katana. Two more cases are the refusals (a shield, a
+  ring). A case is `{ slot, displaced, character }` or the refusal, and the test asserts neither input changed.
+- `gearequip` — 35: the whole `analyze` card before and after each legal wear. The generator fails if fewer than eight
+  wears move a DPS figure, so the family cannot pass by comparing two identical cards.
+
+The generator also checks, with the game's own builder, that `characterFromSave` over the wear's own bag and worn list
+agrees with the wear's answer on `weapon`, `offWeapon`, `wraps`, `legendaries`, `_mods` and `_enchantMods` — the
+invariant that makes the gear delta a re-fold rather than a second reading. `the_wear_corpus_keeps_its_displacements_and_refusals`
+pins that the corpus keeps those shapes, and `the_main_hand_guard_matches_the_wear` pins that `can_wear_main_hand` and
+the preview's refusal agree.
+
+Mutation gate (seed 1, count 400): `forge_gear.rs` 33 candidates, **33 killed, 0 survivors**. `gear.rs` (which gained
+the shared whole-item hand law, the worn-list table and `leavers_for`) has 241 of 300 killed; every new-code mutant is
+killed, and each of the 47 survivors sits on a line whose text is byte-identical in the pre-change file (verified by
+matching each survivor's line against `git show HEAD:rust/dfo-core/src/gear.rs`), so none is new code.

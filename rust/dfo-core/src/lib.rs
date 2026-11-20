@@ -22,6 +22,7 @@ pub mod firmament;
 pub mod firmament_law;
 pub mod flow_state;
 pub mod forge;
+pub mod forge_gear;
 pub mod gear;
 pub mod gear_lines;
 pub mod gear_profile;

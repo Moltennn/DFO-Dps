@@ -34,6 +34,7 @@ use crate::generated::weapons::{CONDITION_MULTIPLIERS_BY_MATERIAL, WEAPON_MATERI
 use crate::rolls::Rolls;
 use crate::round::{js_max, js_min, to_int32, to_uint32, trunc};
 use crate::target::{Career, Item, Target};
+use crate::value::Value;
 use crate::vendored::{custom_item_class, enemy_armor_values_with, ArmourPieceRef};
 
 /// `ITEM_GROUPS` values the arms branch on (equipRules.js:12-43).
@@ -230,6 +231,110 @@ fn hands_named(name: &str) -> u8 {
         "Both" => HAND_BOTH,
         _ => 0,
     }
+}
+
+/// The player-facing hand law (`getItemHands`, characters/equipTable.js:33-77) over a whole item, not the arms' minted
+/// `Piece`: a group outside Weapons/Armor has no hands (None); a bow is LeftOnly or Both by `bowLeftHand`
+/// (:633-635); the Thunderlock, Pistolet and Hand Wraps take the three explicit arms (:66-71); then a custom class's
+/// hands (RRI1), the generated `WEAPON_HANDS` row, and the shield list. `None` is `0`.
+pub fn item_hands_of(item: &Value, ctx: &Ctx) -> u8 {
+    let group = item.get("group").as_str().unwrap_or("");
+    if group != "Weapons" && group != "Armor" {
+        return 0;
+    }
+    let template = item.get("templateIndex").to_number();
+    if group == "Weapons" && (template == 129.0 || template == 130.0) {
+        return if ctx.bow_left_hand {
+            HAND_LEFT_ONLY
+        } else {
+            HAND_BOTH
+        };
+    }
+    if group == "Weapons" && template == 560.0 {
+        return HAND_BOTH;
+    }
+    if group == "Weapons" && (template == 562.0 || template == 563.0) {
+        return HAND_EITHER;
+    }
+    if let Some(h) = custom(template, ctx).and_then(|c| c.item_hands) {
+        return hands_named(h);
+    }
+    if let Some((_, h)) = WEAPON_HANDS.iter().find(|(k, _)| *k as f64 == template) {
+        return hands_named(h);
+    }
+    if SHIELD_INDICES.contains(&template) {
+        return HAND_LEFT_ONLY;
+    }
+    0
+}
+
+/// `mayHold(item, hand)` (systems/equip.js:292-297) for the main hand: `Either`, `RightOnly` or `Both`. A shield
+/// (`LeftOnly`) and a piece with no hands are refused. The same hand law the equip table reads.
+pub fn can_hold_main_hand(item: &Value, ctx: &Ctx) -> bool {
+    matches!(
+        item_hands_of(item, ctx),
+        HAND_RIGHT_ONLY | HAND_EITHER | HAND_BOTH
+    )
+}
+
+/// The equip table a character's worn list makes (`createEquipTable`, characters/equipTable.js:79): 27 slots, each the
+/// item worn there. `leavers_for` is `wearLeavers` over it.
+pub struct ValueTable {
+    pub slots: [Option<Value>; 27],
+}
+
+impl ValueTable {
+    pub fn empty() -> ValueTable {
+        ValueTable {
+            slots: [const { None }; 27],
+        }
+    }
+}
+
+/// A `Value` item's equip slot id as a slot index, when it holds a real one (the table's 0..26).
+fn slot_index(item: &Value) -> Option<usize> {
+    match item.get("equipSlot") {
+        Value::Num(n) if n.is_finite() && n.trunc() == *n && (0.0..27.0).contains(n) => {
+            Some(*n as usize)
+        }
+        _ => None,
+    }
+}
+
+/// A character's worn list as its equip table: each item that carries a real `equipSlot` is placed there, the first of
+/// two claiming one slot keeping it (as [`createEquipTable`](crate::gear) reads a save's items). A list entry is the
+/// whole item, so the table answers exactly what the character carries.
+pub fn table_of_worn(worn: &[Value]) -> ValueTable {
+    let mut t = ValueTable::empty();
+    for item in worn {
+        let Some(i) = slot_index(item) else { continue };
+        if t.slots[i].is_none() {
+            t.slots[i] = Some(item.clone());
+        }
+    }
+    t
+}
+
+/// `wearLeavers(entity, item, slot)` (systems/equip.js:404-414): the slots a wear takes off first - a two-hander both
+/// hands, a piece put in the left hand bumps a two-hander held right, and the destination's occupant. Pure.
+pub fn leavers_for(t: &ValueTable, item: &Value, slot: f64, ctx: &Ctx) -> Vec<f64> {
+    if item.is_nullish() || slot == EQUIP_SLOTS.none {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    if item.get("group").is_str("Weapons") && item_hands_of(item, ctx) == HAND_BOTH {
+        out.push(EQUIP_SLOTS.left_hand);
+        out.push(EQUIP_SLOTS.right_hand);
+    }
+    if slot == EQUIP_SLOTS.left_hand {
+        if let Some(right) = &t.slots[EQUIP_SLOTS.right_hand as usize] {
+            if item_hands_of(right, ctx) == HAND_BOTH {
+                out.push(EQUIP_SLOTS.right_hand);
+            }
+        }
+    }
+    out.push(slot);
+    out
 }
 
 /// The equip table of one entity (`createEquipTable`, equipTable.js:79): 27 slots, each the index of the piece in it.
@@ -1260,4 +1365,139 @@ pub fn gear_enemy(target: &mut Target, boot: &Boot, player_level: Option<f64>, r
         .collect();
     equip_armour_descriptors(target, &descs, Some(&boot.rri));
     target.armor_values = eq.armor_values.to_vec();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::value::Value::{Null, Num, Obj, Str};
+
+    fn item(group: &str, template: f64, slot: Option<f64>) -> Value {
+        let mut it = Value::Obj(vec![]);
+        it.set("group", Str(group.to_owned()));
+        it.set("templateIndex", Num(template));
+        it.set("equipSlot", slot.map_or(Null, Num));
+        it
+    }
+
+    fn ctx() -> Ctx {
+        Ctx {
+            rri: crate::boot::RriSwitches::shipped(),
+            bow_left_hand: false,
+        }
+    }
+
+    #[test]
+    fn a_worn_mark_names_a_slot_only_when_it_is_a_real_one() {
+        // An integer in the table's 0..26 names its slot; a fraction, a slot past the table, a nullish mark and a
+        // non-number name none (`createEquipTable` is `new Array(27)`, so only those keys are slots).
+        assert_eq!(slot_index(&item("Weapons", 121.0, Some(19.0))), Some(19));
+        assert_eq!(slot_index(&item("Weapons", 121.0, Some(0.0))), Some(0));
+        assert_eq!(slot_index(&item("Weapons", 121.0, Some(26.0))), Some(26));
+        assert_eq!(slot_index(&item("Weapons", 121.0, Some(19.5))), None);
+        assert_eq!(slot_index(&item("Weapons", 121.0, Some(27.0))), None);
+        assert_eq!(slot_index(&item("Weapons", 121.0, Some(-1.0))), None);
+        assert_eq!(slot_index(&item("Weapons", 121.0, None)), None);
+        let mut text = Obj(vec![]);
+        text.set("group", Str("Weapons".to_owned()));
+        text.set("equipSlot", Str("19".to_owned()));
+        assert_eq!(slot_index(&text), None);
+    }
+
+    /// LOCAL INVARIANT: `wearLeavers`' two guards and its left-hand bump, read through the whole-item form. A nullish
+    /// item and a None slot take nothing off; a piece put in the left hand bumps a two-hander held right.
+    #[test]
+    fn the_leavers_read_the_hand_and_the_table() {
+        let mut held = item("Weapons", 123.0, Some(19.0));
+        held.set("equipSlot", Num(19.0));
+        let table = table_of_worn(&[held.clone()]);
+        let shield = item("Armor", 112.0, None);
+        // A shield in the left hand bumps the held two-hander (systems/equip.js:408-412).
+        assert_eq!(
+            leavers_for(&table, &shield, EQUIP_SLOTS.left_hand, &ctx()),
+            vec![19.0, 21.0]
+        );
+        // Nothing for a nullish item, and nothing for the None slot.
+        assert!(leavers_for(&table, &Value::Null, EQUIP_SLOTS.right_hand, &ctx()).is_empty());
+        assert!(leavers_for(&table, &shield, EQUIP_SLOTS.none, &ctx()).is_empty());
+        // A shield in an empty table's left hand takes only that slot.
+        let empty = table_of_worn(&[]);
+        assert_eq!(
+            leavers_for(&empty, &shield, EQUIP_SLOTS.left_hand, &ctx()),
+            vec![21.0]
+        );
+    }
+
+    #[test]
+    fn a_worn_list_makes_its_table_and_hands_decide_the_slots() {
+        let worn = [
+            item("Weapons", 123.0, Some(19.0)),
+            item("Armor", 112.0, Some(21.0)),
+        ];
+        let table = table_of_worn(&worn);
+        assert_eq!(table.slots[19].as_ref(), Some(&worn[0]));
+        assert_eq!(table.slots[21].as_ref(), Some(&worn[1]));
+        // A one-hander in the main hand takes only the right-hand occupant off.
+        let one = item("Weapons", 121.0, None);
+        assert_eq!(
+            leavers_for(&table, &one, EQUIP_SLOTS.right_hand, &ctx()),
+            vec![19.0]
+        );
+        // A two-hander clears both hands, in `wearLeavers`' order (left, then right, then its own).
+        let two = item("Weapons", 123.0, None);
+        assert_eq!(
+            leavers_for(&table, &two, EQUIP_SLOTS.right_hand, &ctx()),
+            vec![21.0, 19.0, 19.0]
+        );
+        // A shield is never a main-hand piece.
+        let shield = item("Armor", 112.0, None);
+        assert!(!can_hold_main_hand(&shield, &ctx()));
+        assert!(can_hold_main_hand(&one, &ctx()));
+    }
+
+    /// LOCAL INVARIANT: the player-facing hand law over every row the game's tables hold, at both bow settings, so the
+    /// Forge's hand guard and the arms' `getItemHands` cannot drift apart on a row a GUI can offer. The arms' own reading
+    /// is pinned by the maketarget vectors; this pins the whole-item form beside it.
+    #[test]
+    fn the_hand_law_over_every_row() {
+        let both = ctx();
+        let left_bow = Ctx {
+            bow_left_hand: true,
+            ..both
+        };
+        let hands =
+            |group: &str, template: f64, c: &Ctx| item_hands_of(&item(group, template, None), c);
+        // RightOnly / Either / Both of the classic weapon rows.
+        assert_eq!(hands("Weapons", 113.0, &both), HAND_EITHER); // Dagger
+        assert_eq!(hands("Weapons", 115.0, &both), HAND_BOTH); // Staff
+        assert_eq!(hands("Weapons", 123.0, &both), HAND_BOTH); // Dai-katana
+                                                               // The two bows read the setting (characters/equipTable.js:43-51, ItemEquipTable.cs:633-635).
+        assert_eq!(hands("Weapons", 129.0, &both), HAND_BOTH);
+        assert_eq!(hands("Weapons", 130.0, &both), HAND_BOTH);
+        assert_eq!(hands("Weapons", 129.0, &left_bow), HAND_LEFT_ONLY);
+        assert_eq!(hands("Weapons", 130.0, &left_bow), HAND_LEFT_ONLY);
+        // The three explicit departures ahead of the generated row.
+        assert_eq!(hands("Weapons", 560.0, &both), HAND_BOTH); // Thunderlock
+        assert_eq!(hands("Weapons", 562.0, &both), HAND_EITHER); // Pistolet
+        assert_eq!(hands("Weapons", 563.0, &both), HAND_EITHER); // Hand Wraps
+                                                                 // Shields are LeftOnly, and a group with no hands is None.
+        assert_eq!(hands("Armor", 109.0, &both), HAND_LEFT_ONLY);
+        assert_eq!(hands("Armor", 102.0, &both), 0);
+        assert_eq!(hands("Jewellery", 135.0, &both), 0);
+        assert_eq!(hands("Weapons", 999.0, &both), 0);
+        // A custom class's hands answer before the classic row (rriItems.js:626; 513 is the Archer's Axe, Either).
+        let rri = Ctx {
+            rri: crate::boot::RriSwitches {
+                enabled: true,
+                new_weapons: true,
+                new_armor: true,
+                realistic_enemy_equipment: true,
+            },
+            bow_left_hand: false,
+        };
+        assert_eq!(hands("Weapons", 513.0, &rri), HAND_EITHER);
+        assert_eq!(hands("Armor", 515.0, &rri), 0);
+        // `hands_named` keeps no name it does not know: a class row with no hands is None.
+        assert_eq!(hands_named("NoHands"), 0);
+    }
 }

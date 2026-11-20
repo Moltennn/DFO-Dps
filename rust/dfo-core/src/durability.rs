@@ -77,7 +77,11 @@ pub fn clone_item(item: &Value) -> Value {
     }
 }
 
-fn mint_condition(item: &mut Value) {
+/// `mintCondition(item)` (systems/item/itemTemplates.js:336-350): when the piece has no `maxCondition`, write the
+/// template's hit points (a weapon not ammunition: the one weapon pool, 1600) scaled by its material's ladder, and set
+/// `currentCondition` to it too. A piece that already carries a maximum is left as it is. Used by the wear path and by
+/// the Forge's item builder, so both mint the same condition.
+pub fn mint_condition(item: &mut Value) {
     use crate::generated::{
         armor_materials::ARMOR_MATERIAL as A,
         item_facts::CONDITION_HIT_POINTS,
