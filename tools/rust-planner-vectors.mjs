@@ -94,6 +94,33 @@ function costOf(kind, param) {
   return c === null || c === undefined ? 0 : c;
 }
 
+/**
+ * The four stage characters carry whole built characters, which are large; the vectors compare the parts the fold can
+ * change (`_mods.stats`, `_mods.statMax`, `_mods.skills`, `firmamentDamagePct`) plus the item's enchant rows and
+ * condition, which is the whole surface `applyFirmament`/`applyEnchants` write.
+ */
+function stripCharacter(ch) {
+  const copy = JSON.parse(JSON.stringify(ch));
+  return {
+    mods: copy._mods,
+    firmamentDamagePct: copy.firmamentDamagePct ?? null,
+    enchantments: copy.weapon?.enchantments ?? copy.wraps?.enchantments ?? null,
+    condition: copy.weapon?.currentCondition ?? copy.wraps?.currentCondition ?? null,
+    offEnchantments: copy.offWeapon?.enchantments ?? null,
+    offCondition: copy.offWeapon?.currentCondition ?? null,
+    offEquipSlot: copy.offWeapon?.equipSlot ?? null,
+    dual: copy._dual ?? false,
+  };
+}
+
+/**
+ * `applyTree` for a probe: the JS function is exported, but the vector wants a character with a known skill map first.
+ * Start from a built character so `_mods.stats`/`_mods.skills` exist, then fold the family's tree in.
+ */
+function applyTreeProbe(template, familyKey) {
+  return FB.applyTree(maxCharacter(template, {}), familyKey);
+}
+
 /** `Number(x).toLocaleString('en-US')`, the formatter the vectors pin. */
 function groupedText(x) {
   return Number(x).toLocaleString('en-US');
@@ -458,5 +485,126 @@ export function genPlannerFamilies(Out) {
     throw new Error(`rust-planner-vectors: the CWS row count is not the constant 6: ${JSON.stringify([...cwsRows])}`);
   }
   console.log(`PROBE maxRows ${maxRows}`);
+  console.log('rust-planner-vectors:', counts);
+  // Invariants the stage-3 notes rely on: the monster-kind imprint filter never changes a pick (no monster-kind
+  // imprint is ever the best eligible one), so the filter is a guard, not a ranking step.
+  {
+    const MONSTER = new Set(['bane', 'sanctified', 'moon']);
+    let kindsWin = 0;
+    for (const mode of ['uncapped', 'cap']) {
+      for (const family of IMPRINT_FAMILIES) {
+        for (const template of family.templates) {
+          const st = FB.realBuildStages(template, family, { mode, encounter: 'breach' });
+          if (st.imprint && MONSTER.has(st.imprint.power.kind)) kindsWin++;
+        }
+      }
+    }
+    if (kindsWin !== 0) throw new Error(`rust-planner-vectors: a monster-kind imprint wins ${kindsWin} times`);
+  }
+
+  // ---- stage 3: the real-build chain -----------------------------------------------------------------
+  // `realBuildStages` costs ~0.1-0.4 s per call (it runs planEnchants and three analyze passes), so the stage family
+  // is one template per family at each (mode, encounter, vampire, dual) combination rather than the whole grid:
+  //   2 modes x 3 encounters x 2 vampire x 2 dual x 1 template = 24 stages (~5 s)
+  // The universe families then cover every template in every hold, which is the whole domain of realWeaponLoadouts:
+  //   2 modes x 2 vampire x 1 encounter = 4 universes, 31 rows each (~12 s)
+  // `applyFirmament`/`applyTree` are cheap (a plan and a fold), so they get every family and both characters:
+  //   apply   6 families x 2 characters = 12 (~1 s)
+  const onePerFamily = [123, 118, 127, 124, 130, 563];
+  for (const [mode, encounter] of [['uncapped', 'breach'], ['cap', 'breach'], ['cap', 'skyketch'], ['cap', 'abyss']]) {
+    for (const vampire of [false, true]) {
+      for (const dual of [false, true]) {
+        for (const template of onePerFamily) {
+          const family = IMPRINT_FAMILIES.find((f) => f.templates.includes(template));
+          if (!family) continue;
+          // The JS chain throws on a dual bow/fist row (there is no off-hand item to copy), and `realWeaponLoadouts`
+          // never makes one: the dual stage is only asked for where that function would ask for it.
+          const w = WEAPONS[template];
+          if (dual && (w.twoHanded || w.skill === 'Archery' || w.skill === 'HandToHand')) continue;
+          const st = FB.realBuildStages(template, family, { mode, vampire, dual, encounter });
+          // The stage carries whole characters and runs; compare the derived figures the caller reads, plus the two
+          // characters' mods and the imprint record, so a wrong fold shows.
+          putReal('stage', [{ template, family: family.key, mode, vampire, dual, encounter }], {
+            capped: st.capped,
+            target: st.target,
+            treeStars: st.tree.stars,
+            treeFreeStars: st.tree.freeStars,
+            treeBlow: st.treeCh.firmamentDamagePct,
+            treeDps: st.treeRun.carriedCappedDps + st.treeRun.enchantDps,
+            enchDps: st.enchRun.carriedCappedDps + st.enchRun.enchantDps,
+            treeCh: stripCharacter(st.treeCh),
+            enchCh: stripCharacter(st.enchCh),
+            gearCh: stripCharacter(st.gearCh),
+            imprint: st.imprint,
+          });
+        }
+      }
+    }
+  }
+  // The whole universe per (mode, vampire): every template's row, which is the domain of realWeaponLoadouts.
+  for (const mode of ['uncapped', 'cap']) {
+    for (const vampire of [false, true]) {
+      const rows = FB.realWeaponLoadouts({ modes: [mode], vampire, encounter: 'breach' });
+      putReal('loadouts', [{ mode, vampire, encounter: 'breach' }], rows);
+      for (const row of rows) putReal('sampled', [row], FB.isSampledLoadout(row));
+    }
+  }
+  // `applyFirmament` and `applyTree` over every family: the fold's stats/statMax/skills and the blow percent.
+  for (const family of IMPRINT_FAMILIES) {
+    for (const template of [family.templates[0], family.templates[family.templates.length - 1]]) {
+      const ch = applyTreeProbe(template, family.key);
+      putReal('apply', [{ template, family: family.key }], stripCharacter(ch));
+    }
+  }
+
+  // ---- stage 4: the sampled shortlist -----------------------------------------------------------------
+  // One shortlist costs 2-8 s at `trials: 1000, maxSeconds: 20` (it re-runs the chain for k rows and samples 1,000
+  // fights per row), so the family is sized by wall clock: 5 runs, ~21 s, 13 rows.
+  //   uncapped k = 1, 3, 5   the top of the universe at the widest k the vectors need
+  //   cap      k = 1, 3      the relay objective (a different ranking path and a different target)
+  // The universe itself is compared by the `loadouts` family, so the shortlist cases only need the rerank.
+  for (const [mode, k] of [['uncapped', 1], ['uncapped', 3], ['uncapped', 5], ['cap', 1], ['cap', 3]]) {
+    const opts = { k, mode, trials: 1000, seed: 7, maxSeconds: 20, maxBlows: 6000 };
+    putReal('shortlist', [opts], S.shortlistLoadouts(opts));
+  }
+  // The validation arms (no simulation: they throw before any universe is built), with the JS message pinned.
+  for (const opts of [
+    { k: 0 },
+    { k: 1.5 },
+    { k: -1 },
+    { k: 1, trials: 999 },
+    { k: 1, trials: 1000.5 },
+    { k: 1, mode: 'cap', health: 5000 },
+    { k: 1, mode: 'cap', objective: 'stochastic-ttk' },
+    { k: 1, objective: 'stochastic-relay' },
+    { k: 1, mode: 'weird' },
+    { k: 999 },
+    // The `k` default and the safe-integer boundary: `Number.isSafeInteger` accepts 2^53-1 and rejects 2^53, and an
+    // absent `k` is not an integer at all.
+    {},
+    { mode: 'cap' },
+    { k: 9007199254740991 },
+    { k: 9007199254740992 },
+    { k: -9007199254740992 },
+    { k: NaN },
+    { k: Infinity },
+  ]) {
+    let message;
+    try {
+      S.shortlistLoadouts(opts);
+      message = null;
+    } catch (e) {
+      message = e.message;
+    }
+    putReal('shortlist-err', [opts], message);
+  }
+  // The `seed` and `maxSeconds` defaults: absent keys take 0 and 900. `maxBlows: 20` keeps the 900-second horizon cheap
+  // (each trial ends on the blow cap), so both defaults are actually exercised.
+  for (const opts of [
+    { k: 2, maxSeconds: 20, maxBlows: 6000 },
+    { k: 2, seed: 7, maxBlows: 20 },
+  ]) {
+    putReal('shortlist', [opts], S.shortlistLoadouts(opts));
+  }
   return { enchant_plan: plan.write(), real_build: real.write() };
 }

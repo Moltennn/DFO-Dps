@@ -918,10 +918,6 @@ pub fn plan_enchants(opts: &Value, book: &Spellbook) -> Result<Value, String> {
         let skill_ids: Vec<f64> = skill_ids_for(template)
             .into_iter()
             .filter(|id| {
-                // mutation: equivalent - `optional_skill(opts)` is `None` on the `forceSkills` plans the vectors carry,
-                // so the first `||` short-circuits and the two `==` arms never evaluate; with a `Some(skill)` the set is
-                // that skill plus Critical Strike (the second arm), which the filter's own second term supplies. The
-                // mutant would need a `forceSkills` plan with `skill` set, which the grid does not have.
                 optional_skill(opts).is_none()
                     || Some(*id) == optional_skill(opts)
                     || *id == SKILLS.critical_strike

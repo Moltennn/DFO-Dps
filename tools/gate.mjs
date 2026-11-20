@@ -14,14 +14,17 @@
  * `node tools/gate.mjs *`, runs the whole chain here, without a shell, and prints one line per step plus the first
  * failures. Exit code: 0 all steps passed, 1 a step failed, 2 usage.
  *
+ *   --fresh        rust: regenerate the golden vectors even when their inputs are unchanged (cached by input hash)
+ *   --test-jobs N  rust: test binaries run in parallel, default 1: 4 parallel was SLOWER (254 s vs ~170 s; memory-bound on 600 MB vector files)
  *   --keep-going   do not stop at the first failing step
  *   --no-game      js only: run with a HOME that has no launcher config, i.e. as a machine without the game's
  *                  SPELLS.STD (tests that need it are reported as skipped; see test/harness/spellbook.mjs)
  *   --lines N      how many lines of a failure to show (default 25)
  */
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { cpus, homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -122,6 +125,94 @@ function stepCargo(name, args, parse) {
   return report(name, ok, ok ? `clean (${r.secs}s)` : `exit ${r.status}`, first(r.out));
 }
 
+// ---- fast paths ---------------------------------------------------------------------------------------------------
+/** Hash of everything the golden-vector generators read: JS sources, generators, harness (content) and the vendored
+ *  trees and the game's spell file (path, size, mtime: hashing 25 MB of vendor per run would defeat the point). */
+function vectorInputsHash() {
+  const h = createHash('sha256');
+  const walk = (dir, filter, contentOf) => {
+    if (!existsSync(dir)) return;
+    for (const name of readdirSync(dir).sort()) {
+      const p = join(dir, name);
+      const st = statSync(p);
+      if (st.isDirectory()) { if (name !== 'node_modules') walk(p, filter, contentOf); continue; }
+      if (!filter(p)) continue;
+      h.update(p.slice(root.length)).update('\0');
+      if (contentOf) h.update(readFileSync(p)); else h.update(`${st.size}:${Math.floor(st.mtimeMs)}`);
+      h.update('\0');
+    }
+  };
+  walk(join(root, 'src'), (p) => p.endsWith('.js'), true);
+  walk(join(root, 'test', 'harness'), () => true, true);
+  walk(join(root, 'tools'), (p) => /rust-.*\.mjs$/.test(p), true);
+  walk(join(root, 'vendor'), () => true, false);
+  walk(join(root, 'rust', 'dfo-core', 'src', 'generated'), () => true, true);
+  try {
+    const cfg = JSON.parse(readFileSync(join(homedir(), '.config', 'dfo-dps', 'config.json'), 'utf8'));
+    if (cfg.arena2Path) walk(cfg.arena2Path, (p) => /SPELLS\.STD$/i.test(p), false);
+  } catch { /* the generator that needs the spell file fails loudly on its own */ }
+  return h.digest('hex');
+}
+
+/** rust-vectors, unless its inputs are unchanged since the vectors on disk were written (--fresh forces it). */
+function stepVectors() {
+  const stamp = join(rustDir, 'tests', 'vectors', '.inputs-sha256');
+  const want = vectorInputsHash();
+  const have = existsSync(stamp) ? readFileSync(stamp, 'utf8').trim() : '';
+  if (!flag('fresh') && have === want && existsSync(join(rustDir, 'tests', 'vectors', 'value.txt'))) {
+    return report('rust-vectors', true, `cached (inputs unchanged, ${want.slice(0, 10)}); --fresh regenerates`);
+  }
+  const ok = stepNode('rust-vectors', ['tools/rust-vectors.mjs'], 'vectors written');
+  if (ok) writeFileSync(stamp, `${want}\n`);
+  return ok;
+}
+
+/** cargo test, with the test binaries run as separate processes in parallel (cargo runs them one after another). */
+async function stepCargoTestParallel() {
+  const t0 = Date.now();
+  const build = run('cargo', ['test', '--no-run', '--message-format=json'], { cwd: rustDir });
+  const exes = [];
+  const diagnostics = [];
+  for (const line of build.out.split('\n')) {
+    if (!line.startsWith('{')) continue;
+    let m;
+    try { m = JSON.parse(line); } catch { continue; }
+    if (m.reason === 'compiler-artifact' && m.profile?.test && m.executable) exes.push({ exe: m.executable, name: m.target?.name ?? m.executable });
+    if (m.reason === 'compiler-message' && m.message?.level === 'error') diagnostics.push(m.message.rendered.split('\n')[0]);
+  }
+  if (build.status !== 0 || exes.length === 0) {
+    return report('cargo test', false, 'build failed', [...diagnostics.slice(0, 6), first(build.out.replace(/^\{.*$/gm, ''), 12)].join('\n'));
+  }
+  const jobs = Math.max(1, Number(opt('test-jobs', 1)));
+  const queue = [...exes];
+  const outputs = [];
+  await Promise.all(Array.from({ length: jobs }, async () => {
+    while (queue.length) {
+      const e = queue.shift();
+      const r = await new Promise((res) => {
+        const c = spawn(e.exe, ['-q'], { cwd: join(rustDir, 'dfo-core'), stdio: ['ignore', 'pipe', 'pipe'] });
+        let out = '';
+        c.stdout.on('data', (d) => { out += d; });
+        c.stderr.on('data', (d) => { out += d; });
+        c.on('close', (status) => res({ name: e.name, status, out }));
+        c.on('error', () => res({ name: e.name, status: 127, out }));
+      });
+      outputs.push(r);
+    }
+  }));
+  let passed = 0;
+  let failed = 0;
+  const details = [];
+  for (const o of outputs) {
+    const s = cargoTestSummary(o.out);
+    passed += s.passed;
+    failed += s.failed;
+    if (o.status !== 0 || s.failed > 0) details.push(`[${o.name}] ${[...s.panics.slice(0, 3), s.panics.length ? '' : first(o.out, 6)].filter(Boolean).join(' | ')}`);
+  }
+  const ok = details.length === 0;
+  return report('cargo test', ok, `${passed} passed, ${failed} failed in ${outputs.length} suites, ${jobs} parallel (${((Date.now() - t0) / 1000).toFixed(1)}s)`, details.slice(0, 8).join('\n'));
+}
+
 const stop = () => !keepGoing && results.some((r) => !r.ok);
 
 function gateJs() {
@@ -134,17 +225,17 @@ function gateJs() {
   if (!stop()) stepVendorVerify();
 }
 
-function gateRust() {
+async function gateRust() {
   if (!existsSync(rustDir)) {
     console.log('no rust/ directory on this branch (the port lives on rust-rewrite)');
     results.push({ name: 'rust', ok: false });
     return;
   }
   stepNode('rust-data --check', ['tools/rust-data.mjs', '--check']);
-  if (!stop()) stepNode('rust-vectors', ['tools/rust-vectors.mjs'], 'vectors written');
+  if (!stop()) stepVectors();
   if (!stop()) stepCargo('cargo fmt --check', ['fmt', '--check']);
   if (!stop()) stepCargo('cargo clippy', ['clippy', '--all-targets', '--', '-D', 'warnings']);
-  if (!stop()) stepCargo('cargo test', ['test'], true);
+  if (!stop()) await stepCargoTestParallel();
 }
 
 function gateMutate() {
@@ -176,10 +267,10 @@ if (!cmd || cmd === '--help' || cmd === '-h') {
   process.exit(cmd ? 0 : 2);
 }
 if (cmd === 'js') gateJs();
-else if (cmd === 'rust') gateRust();
+else if (cmd === 'rust') await gateRust();
 else if (cmd === 'all') {
   gateJs();
-  if (!stop() && existsSync(rustDir)) gateRust();
+  if (!stop() && existsSync(rustDir)) await gateRust();
 } else if (cmd === 'mutate') gateMutate();
 else {
   console.error(`unknown gate "${cmd}"\n${HELP}`);

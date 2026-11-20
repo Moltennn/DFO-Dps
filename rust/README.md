@@ -38,8 +38,8 @@ results to JS, including 216 ten-seed configurations and scripted spell draws.
 
 ## R5d: The Firmament sky, its law and the tree planner (stage 1 of 5)
 
-Ported: `firmament_law` (the channel readers) and `firmament` (the build presets, the greedy 98-star walk and the
-summary). NOT ported: `src/enchantPlan.js`, `src/realBuild.js` and `src/loadoutShortlist.js`; see "R5d: what is left".
+Ported: `firmament_law` (the channel readers), `firmament` (the build presets, the greedy 98-star walk and the
+summary), `enchant_plan` (stage 2), `real_build` (stage 3) and `loadout_shortlist` (stage 4). R5d is complete.
 
 ### The vendor pin (FIRST, and it was missing)
 
@@ -161,16 +161,64 @@ percent totals or hp/mp small stats ever leave the ranges the equivalence notes 
 and `MAX_RUN_SCENARIO` are `cutLiteral`/`cutScalar` reads of the real source text (the R1 method): the generator throws if
 the text moves or the name is not unique. They are generated now, unused, for stage 2.
 
-## R5d: what is left
+## R5d stages 3 and 4: the real chain and the shortlist (DONE)
 
-**Stage 2 (the enchant plan) is DONE** (see "R5d stage 2" below). **Stages 3 and 4 are NOT ported**: `src/realBuild.js`
-and `src/loadoutShortlist.js` remain a JS-only surface, `dfo-core/src/real_build.rs` is a comment-only placeholder, no
-test reads them, and nothing calls them. They are documented here, not hidden.
+`src/realBuild.js` and `src/loadoutShortlist.js` are ported. No JS-only surface is left in R5d.
 
-| Stage | JS | Why it stopped | What it needs |
-|---|---|---|---|
-| 3 | `src/realBuild.js` (194) | Not started in this session (budget). | Port `applyFirmament`, `applyTree`, `realBuildStages`, `realTemplate`, `realWeaponLoadouts`, `isSampledLoadout`. `clone` at :33 is `analyze::json_clone` with the same proof. Vectors: mode {uncapped, cap} x encounter {breach, skyketch, abyss} x vampire x dual over each family's templates (~168 stage objects, ~15 s). Encounter/purse are already ported. |
-| 4 | `src/loadoutShortlist.js` (57) | Needs stage 3. | Port `shortlistLoadouts` over `objectives::rank_builds`; drop `universeCache` (a pure function), pass `MAX_RUN_SCENARIO` and the `health` argument explicitly. Vectors: k in {1,3,5,all} x both modes x fixed seeds at `maxSeconds: 20` (~8 calls, ~30 s). |
+- `dfo-core/src/real_build.rs`: `apply_firmament`, `apply_tree`, `real_build_stages`, `real_template`,
+  `real_weapon_loadouts`, `is_sampled_loadout`, and the option reader `StageOpts` (`from_value` takes the JS
+  destructured defaults). `Stages` is the whole chain (the two characters, their two analyzed runs, and the imprint
+  record), which is what `loadout_shortlist` reranks.
+- `dfo-core/src/loadout_shortlist.rs`: `shortlist_loadouts` over `objectives::rank_builds`, with `ShortlistOpts`
+  (the JS defaults: `objective` from the mode, `trials` = `MIN_STOCHASTIC_TRIALS`, `seed` = 0, `maxSeconds` = 900,
+  `maxBlows` = 6000), `max_run_scenario()` (`MAX_RUN_SCENARIO` as the object the ranking takes) and
+  `eligible_universe()` (the sorted, `isSampledLoadout`-filtered universe).
+- `tests/real_build.rs` reads `tests/vectors/real_build.txt`.
+
+### JS semantics decided here
+
+- **`universeCache` is not ported.** A universe is a pure function of `(mode, vampire, encounter)`, so the caller owns
+  the cache: `eligible_universe` returns a fresh sorted vector, and the CLI's cache-hit and cache-miss paths become the
+  same code. `rust/README.md`'s stage-1 note on `PLAN_CACHE` is the same decision.
+- **`run.with({imprint})` needs the character and the original scenario**, not the serialized `Analysis`; `Stages`
+  therefore carries `ench_ch` and `ench_args` beside `ench_run`, and `best_imprint`/`real_template` price with
+  `analyze_with` on those (the same call `imprints::power_dps` makes).
+- **`bestImprint` returns the card figure of its winner** (`carded.cappedDps` / `carded.dps`), not the carried one; the
+  carried figure is what the rows filter on. Mixing the two was a real bug the vectors caught (`stage` byte 6316).
+- **A dual bow/fist row throws in the JS** (there is no off-hand item to copy), and `realWeaponLoadouts` never builds
+  one; the vector generator mirrors that guard rather than pretending the shape exists.
+- **The monster-kind filter** (`bane`/`sanctified`/`moon` imprints excluded) never changes a pick: the generator
+  asserts that no monster-kind imprint is ever the best eligible one over all 12 family/mode combinations, so the
+  filter is a guard with a proof behind it, not a ranking step.
+- **The imprint sort is stable and first-wins**, but the passing rows already arrive in descending `dps` order; the
+  generator asserts that (21 cases with 3 passing rows, 0 out of order) so the `sort`'s direction is unobservable and
+  carries its own note.
+
+### Vector sizing (generator stays under ~3 minutes)
+
+`realBuildStages` costs 0.1-0.4 s and `shortlistLoadouts` 2-8 s, so these families are sized by wall clock:
+
+| Family | Cases | Why |
+|---|---|---|
+| `stage` | 72 | 4 (mode, encounter) x 2 vampire x dual where the hold exists x 6 templates (one per family). A representative slice of the stage grid; the cost is the chain itself. |
+| `loadouts` | 4 | 2 modes x 2 vampire, 31 rows each: the whole domain of `realWeaponLoadouts`. |
+| `sampled` | 124 | every loadout row of those four universes: the whole domain of `isSampledLoadout`. |
+| `apply` | 12 | both end templates of each of the 6 families: `applyFirmament`/`applyTree` over the whole family set. |
+| `shortlist` | 7 | uncapped k = 1, 3, 5 and cap k = 1, 3, plus one call exercising the `seed` default and one the `maxSeconds` default (`maxBlows: 20` keeps them cheap). |
+| `shortlist-err` | 17 | every validation arm, including the 2^53-1 / 2^53 safe-integer boundary and an absent `k`. |
+
+`shortlist` (7 cases, ~40 s) dominates the ~90 s the planner families add to `node tools/rust-vectors.mjs`.
+
+### Mutation sweeps (seed 1, one foreground run per file)
+
+| File | Mutants | Killed | Survived | Invalid |
+|---|---|---|---|---|
+| `real_build.rs` | 38 | 28 | 10 | 0 |
+| `loadout_shortlist.rs` | 39 | 39 | 0 | 0 |
+
+Every survivor in `real_build.rs` carries its own `// mutation: equivalent - …` on the mutated line, each naming the
+data fact and the probe that established it (attribute/skill values, passing-imprint margins, pair gaps, the written
+condition). There are no module-level blanket notes and no note reasons from what the vectors happen to contain.
 
 ## R5d stage 2: the enchant plan (`src/enchantPlan.js`)
 

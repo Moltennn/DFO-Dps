@@ -26,6 +26,7 @@ pub mod gear_lines;
 pub mod gear_profile;
 pub mod generated;
 pub mod imprints;
+pub mod loadout_shortlist;
 pub mod loot;
 pub mod maxprofile;
 pub mod mint;

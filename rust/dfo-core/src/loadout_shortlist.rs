@@ -1,0 +1,289 @@
+//! The sampled shortlist over the real loadout universe (`src/loadoutShortlist.js`).
+//!
+//! The JS keeps a module-level `universeCache`; a universe is a pure function of its key, so the cache is not ported:
+//! the caller owns one (the CLI keeps it), which is what makes the JS's cache-hit and cache-miss paths the same code
+//! here.
+//!
+//! `MAX_RUN_SCENARIO` is the scenario `maxRun` prices the deterministic row under; the sampled fight must use the same
+//! swing law, so the ranking's scenario is this constant, not a caller default.
+
+use crate::generated::firmament::MAX_RUN_SCENARIO;
+use crate::imprints::imprint_families;
+use crate::objectives::{rank_builds, MIN_STOCHASTIC_TRIALS};
+use crate::real_build::{is_sampled_loadout, real_build_stages, real_weapon_loadouts, StageOpts};
+use crate::simulate_fight::paired_fight_seeds;
+use crate::spells::Spellbook;
+use crate::theory::obj;
+use crate::value::Value::{self, Arr, Bool, Null, Num, Obj, Str};
+
+/// The errors `shortlistLoadouts` raises, as the JS messages.
+fn err(message: impl Into<String>) -> String {
+    message.into()
+}
+
+/// The options `shortlistLoadouts` reads. `objective` defaults from the mode, which is why it is optional.
+pub struct ShortlistOpts {
+    pub k: f64,
+    pub mode: String,
+    pub encounter: String,
+    pub vampire: bool,
+    pub objective: Option<String>,
+    pub trials: f64,
+    pub seed: f64,
+    pub max_seconds: f64,
+    pub max_blows: f64,
+    pub health: Value,
+}
+
+impl ShortlistOpts {
+    /// Read the options, applying the JS defaults (`objective` from the mode, `trials` from `MIN_STOCHASTIC_TRIALS`).
+    pub fn from_value(opts: &Value) -> Self {
+        let mode = opts
+            .get("mode")
+            .as_str()
+            .map_or_else(|| "uncapped".to_owned(), str::to_owned);
+        let objective = opts
+            .get("objective")
+            .as_str()
+            .map(str::to_owned)
+            .or_else(|| {
+                Some(match mode.as_str() {
+                    "cap" => "stochastic-relay".to_owned(),
+                    _ => "stochastic-ttk".to_owned(),
+                })
+            });
+        Self {
+            k: opts.get("k").finite_or(0.0),
+            encounter: opts
+                .get("encounter")
+                .as_str()
+                .map_or_else(|| "breach".to_owned(), str::to_owned),
+            vampire: opts.get("vampire").truthy(),
+            mode,
+            objective,
+            trials: match opts.get("trials") {
+                Value::Undefined => MIN_STOCHASTIC_TRIALS as f64,
+                v => v.num_or_default(MIN_STOCHASTIC_TRIALS as f64),
+            },
+            seed: match opts.get("seed") {
+                Value::Undefined => 0.0,
+                v => v.num_or_default(0.0),
+            },
+            max_seconds: match opts.get("maxSeconds") {
+                Value::Undefined => 900.0,
+                v => v.num_or_default(900.0),
+            },
+            max_blows: match opts.get("maxBlows") {
+                Value::Undefined => 6000.0,
+                v => v.num_or_default(6000.0),
+            },
+            health: match opts.get("health") {
+                Value::Undefined => Null,
+                v => v.clone(),
+            },
+        }
+    }
+}
+
+/// `MAX_RUN_SCENARIO` as the object `rankBuilds` takes.
+pub fn max_run_scenario() -> Value {
+    obj([
+        ("core", Str(MAX_RUN_SCENARIO.core.into())),
+        ("rri", Bool(MAX_RUN_SCENARIO.rri)),
+        ("passiveOn", Bool(MAX_RUN_SCENARIO.passive_on)),
+        ("stacks", Num(MAX_RUN_SCENARIO.stacks)),
+    ])
+}
+
+/// The whole eligible universe for one key, sorted by deterministic total DPS (the JS `universeCache` value).
+pub fn eligible_universe(opts: &ShortlistOpts, book: &Spellbook) -> Result<Vec<Value>, String> {
+    let mut rows: Vec<Value> = real_weapon_loadouts(
+        std::slice::from_ref(&opts.mode),
+        opts.vampire,
+        &opts.encounter,
+        book,
+    )?
+    .into_iter()
+    .filter(is_sampled_loadout)
+    .collect();
+    // `sort((a, b) => b.totalDps - a.totalDps)`: stable, first row wins a tie.
+    rows.sort_by(|a, b| {
+        let d = b.get("totalDps").to_number() - a.get("totalDps").to_number();
+        if d < 0.0 {
+            std::cmp::Ordering::Less
+        } else {
+            std::cmp::Ordering::Equal
+        }
+    });
+    Ok(rows)
+}
+
+fn round_down(v: f64) -> f64 {
+    v.floor()
+}
+
+fn is_safe_integer(v: f64) -> bool {
+    v.is_finite() && v.fract() == 0.0 && v.abs() <= 9007199254740991.0
+}
+
+fn objective_allowed(mode: &str, objective: &str) -> bool {
+    if mode == "cap" {
+        objective == "stochastic-relay"
+    } else {
+        objective == "stochastic-ttk" || objective == "kill-probability"
+    }
+}
+
+/// `shortlistLoadouts`: rerank the top k eligible deterministic loadouts on one target, keeping their imprints.
+pub fn shortlist_loadouts(opts: &ShortlistOpts, book: &Spellbook) -> Result<Value, String> {
+    if opts.mode != "uncapped" && opts.mode != "cap" {
+        return Err(err(format!("unknown shortlist mode: {}", opts.mode)));
+    }
+    if opts.mode == "cap" && !opts.health.is_nullish() {
+        return Err(err(
+            "--health does not apply to --cap-aware shortlists: the relay encounter sets the pool",
+        ));
+    }
+    let objective = opts.objective.clone().unwrap_or_default();
+    if !objective_allowed(&opts.mode, &objective) {
+        let allowed = if opts.mode == "cap" {
+            vec!["stochastic-relay"]
+        } else {
+            vec!["stochastic-ttk", "kill-probability"]
+        };
+        return Err(err(format!(
+            "{} shortlist: choose {}, not {objective}",
+            opts.mode,
+            allowed.join(" or ")
+        )));
+    }
+    if !is_safe_integer(opts.k) || opts.k < 1.0 {
+        return Err(err(
+            "--shortlist must be a positive integer (0 disables it in the CLI)",
+        ));
+    }
+    if !is_safe_integer(opts.trials) || opts.trials < MIN_STOCHASTIC_TRIALS as f64 {
+        return Err(err(format!(
+            "--trials: at least {MIN_STOCHASTIC_TRIALS} trials are required"
+        )));
+    }
+
+    let universe = eligible_universe(opts, book)?;
+    let k = round_down(opts.k) as usize;
+    if k > universe.len() {
+        return Err(err(format!(
+            "--shortlist: {k} exceeds the {} eligible loadouts",
+            universe.len()
+        )));
+    }
+    let candidates: Vec<Value> = universe.into_iter().take(k).collect();
+    let stages: Vec<_> = candidates
+        .iter()
+        .map(|row| {
+            let family = imprint_families()
+                .iter()
+                .find(|f| f.get("key").strict_eq(row.get("key")))
+                .cloned()
+                .unwrap_or_else(|| Obj(vec![]));
+            let stage_opts = StageOpts {
+                mode: opts.mode.clone(),
+                vampire: opts.vampire,
+                dual: row.get("dual").truthy(),
+                encounter: opts.encounter.clone(),
+            };
+            real_build_stages(row.get("template"), &family, &stage_opts, book)
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let seeds = paired_fight_seeds(&Num(opts.trials), &Num(opts.seed));
+    let entries: Vec<Value> = stages
+        .iter()
+        .enumerate()
+        .map(|(id, st)| {
+            let imprint = st.imprint.get("power");
+            obj([
+                ("id", Num(id as f64)),
+                ("ch", st.ench_ch.clone()),
+                (
+                    "scenario",
+                    obj([(
+                        "imprint",
+                        if imprint.is_nullish() {
+                            crate::value::UNDEFINED.clone()
+                        } else {
+                            imprint.clone()
+                        },
+                    )]),
+                ),
+            ])
+        })
+        .collect();
+    let mut scenario = max_run_scenario();
+    scenario.set("objective", Str(objective.clone()));
+    scenario.set("target", stages[0].target.clone());
+    scenario.set("health", opts.health.clone());
+    scenario.set("seeds", Arr(seeds));
+    scenario.set("maxSeconds", Num(opts.max_seconds));
+    scenario.set("maxBlows", Num(opts.max_blows));
+    let ranking = rank_builds(&entries, &scenario, book)?;
+
+    let damage_note = if opts.mode == "cap" {
+        "Sampled melee and Cast When Strikes (direct and supported Continuous Damage) go through the relay allowance; live Flow, no wear; phase-ward timing is not modelled. Deterministic DPS is a ceiling plus modeled proc DPS, before the allowance."
+    } else {
+        "Sampled melee and Cast When Strikes (direct and supported Continuous Damage) damage the ordinary foe; no wear, and Flow held at its steady-state maximum stacks. Deterministic DPS includes modeled proc DPS."
+    };
+    let rows: Vec<Value> = ranking
+        .get("rows")
+        .items()
+        .iter()
+        .map(|row| {
+            let id = row.get("id").to_number() as usize;
+            let cand = &candidates[id];
+            let mut out = row.clone();
+            out.set("key", cand.get("key").clone());
+            out.set("family", cand.get("family").clone());
+            out.set("weapon", cand.get("weapon").clone());
+            out.set("template", cand.get("template").clone());
+            out.set("category", cand.get("category").clone());
+            out.set("dual", cand.get("dual").clone());
+            out.set("imprint", cand.get("imprint").clone());
+            out.set("deterministicRank", Num(id as f64 + 1.0));
+            out.set("deterministicTotalDps", cand.get("totalDps").clone());
+            out.set(
+                "deterministicProcDps",
+                Num(stages[id].ench_run.card.fields.enchant_dps),
+            );
+            let damage_mode = match row.get("damageMode") {
+                Value::Undefined | Value::Null => Str(if opts.mode == "cap" {
+                    "relay"
+                } else {
+                    "uncapped"
+                }
+                .into()),
+                v => v.clone(),
+            };
+            out.set("damageMode", damage_mode);
+            out.set("damageNote", Str(damage_note.into()));
+            match row.get("ttkSeparated") {
+                Value::Undefined | Value::Null => out.set("ttkSeparated", Null),
+                v => out.set("ttkSeparated", v.clone()),
+            }
+            match row.get("censoringDiffers") {
+                Value::Undefined | Value::Null => out.set("censoringDiffers", Null),
+                v => out.set("censoringDiffers", v.clone()),
+            }
+            out
+        })
+        .collect();
+    let encounter = if opts.mode == "cap" {
+        Str(opts.encounter.clone())
+    } else {
+        Null
+    };
+    let mut out = ranking;
+    out.set("mode", Str(opts.mode.clone()));
+    out.set("encounter", encounter);
+    out.set("seed", Num(opts.seed));
+    out.set("maxBlows", Num(opts.max_blows));
+    out.set("rows", Arr(rows));
+    Ok(out)
+}
