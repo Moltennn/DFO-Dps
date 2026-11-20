@@ -191,15 +191,7 @@ fn firmament() {
             }
             "treestats" => {
                 let tree = row.value(&defs);
-                let typed = Tree {
-                    start: tree.get("start").to_js_string(),
-                    keys: tree
-                        .get("keys")
-                        .items()
-                        .iter()
-                        .map(|k| k.to_js_string())
-                        .collect(),
-                };
+                let typed = Tree::from_value(&tree);
                 let totals = law::tree_stats(&typed);
                 let mut out = Obj(vec![]);
                 for (k, v) in totals.entries {
@@ -210,15 +202,7 @@ fn firmament() {
             "blowtree" => {
                 let tree = row.value(&defs);
                 let opts = row.value(&defs);
-                let typed = Tree {
-                    start: tree.get("start").to_js_string(),
-                    keys: tree
-                        .get("keys")
-                        .items()
-                        .iter()
-                        .map(|k| k.to_js_string())
-                        .collect(),
-                };
+                let typed = Tree::from_value(&tree);
                 Num(blow_pct(
                     &law::tree_stats(&typed),
                     opts.get("skill").as_str(),
@@ -230,15 +214,7 @@ fn firmament() {
             "castcosttree" => {
                 let tree = row.value(&defs);
                 let schools = row.value(&defs);
-                let typed = Tree {
-                    start: tree.get("start").to_js_string(),
-                    keys: tree
-                        .get("keys")
-                        .items()
-                        .iter()
-                        .map(|k| k.to_js_string())
-                        .collect(),
-                };
+                let typed = Tree::from_value(&tree);
                 let names: Vec<&str> = schools
                     .items()
                     .iter()
@@ -274,15 +250,7 @@ fn firmament() {
             }
             "treeprices" => {
                 let tree = row.value(&defs);
-                let typed = Tree {
-                    start: tree.get("start").to_js_string(),
-                    keys: tree
-                        .get("keys")
-                        .items()
-                        .iter()
-                        .map(|k| k.to_js_string())
-                        .collect(),
-                };
+                let typed = Tree::from_value(&tree);
                 let totals = law::tree_stats(&typed);
                 Obj(totals
                     .prices

@@ -148,7 +148,7 @@ struct Paths {
 /// `pathsFrom`: one breadth-first walk from the allocated stars to every reachable star. A keystone may be reached but
 /// not walked through; another sign's start is closed.
 fn paths_from(tree: &Tree) -> Paths {
-    let mut have: Vec<String> = vec![tree.start.clone()];
+    let mut have: Vec<String> = tree.start.iter().cloned().collect();
     for k in &tree.keys {
         if !have.contains(k) {
             have.push(k.clone());
@@ -161,7 +161,9 @@ fn paths_from(tree: &Tree) -> Paths {
         // mutation: equivalent - `tree.keys` never holds a start (cleanKeys/planBuild drop one), so every key here is
         // either the tree's own start or a non-start star: `n.kind == "start"` implies `key == tree.start`, and the
         // `&&` arm then never fires. The `||` guard alone decides, which is what the port does.
-        if n.kind == "keystone" || (n.kind == "start" && key != &tree.start) {
+        if n.kind == "keystone"
+            || (n.kind == "start" && Some(key.as_str()) != tree.start.as_deref())
+        {
             continue;
         }
         from.push((key.clone(), None));
@@ -309,7 +311,7 @@ fn greedy(start: &str, build: &Value, budget: f64) -> Greedy {
         .filter(|k| sector_allows(k, build) && !node_has_off(k, build, false))
         .collect();
     let mut tree = Tree {
-        start: start.to_owned(),
+        start: Some(start.to_owned()),
         keys: vec![],
     };
     let mut gains: Vec<(String, f64)> = Vec::new();
@@ -388,7 +390,7 @@ fn greedy(start: &str, build: &Value, budget: f64) -> Greedy {
             }
         }
         tree = Tree {
-            start: start.to_owned(),
+            start: Some(start.to_owned()),
             keys: chosen.clone(),
         };
         sort_tree(&mut tree);
@@ -401,7 +403,7 @@ fn greedy(start: &str, build: &Value, budget: f64) -> Greedy {
     keys.sort();
     Greedy {
         tree: Tree {
-            start: start.to_owned(),
+            start: Some(start.to_owned()),
             keys,
         },
         totals: stats_from_parts(&gains, &prices),
@@ -469,7 +471,7 @@ pub fn plan_build(build: &Value, opts: &Value) -> Value {
     }
     let start_key = best.as_ref().map_or_else(
         || law_start_keys()[0].to_owned(),
-        |b| b.plan.tree.start.clone(),
+        |b| b.plan.tree.start.clone().unwrap_or_default(),
     );
     let start_name = sign_name(node(&start_key).map_or("sp", |n| n.sector));
     let mut out = obj([("build", build.clone())]);
@@ -508,7 +510,7 @@ fn law_start_keys() -> Vec<&'static str> {
 
 fn tree_value(tree: &Tree) -> Value {
     obj([
-        ("start", s(&tree.start)),
+        ("start", tree.start.as_deref().map_or(Null, s)),
         ("keys", Arr(tree.keys.iter().map(|k| s(k)).collect())),
     ])
 }
@@ -545,7 +547,7 @@ pub fn plan_from_tree(build: &Value, opts: &Value) -> Value {
         _ => vec![],
     };
     let tree = Tree {
-        start: start_key.clone(),
+        start: Some(start_key.clone()),
         keys: clean.clone(),
     };
     let finite = |v: &Value| match v {
@@ -832,7 +834,7 @@ pub fn plan_tree_keys(plan: &Value) -> Vec<String> {
 /// Rebuild the typed [`Tree`] a plan carries.
 pub fn plan_tree(plan: &Value) -> Tree {
     Tree {
-        start: plan.get("tree").get("start").to_js_string(),
+        start: plan.get("tree").get("start").as_str().map(str::to_owned),
         keys: plan_tree_keys(plan),
     }
 }

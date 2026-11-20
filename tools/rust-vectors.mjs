@@ -87,6 +87,7 @@ import { genFightFamilies } from './rust-fight-vectors.mjs';
 import { genPlanningFamilies } from './rust-planning-vectors.mjs';
 import { genFirmamentFamilies } from './rust-firmament-vectors.mjs';
 import { genPlannerFamilies } from './rust-planner-vectors.mjs';
+import { genForgeFamilies } from './rust-forge-vectors.mjs';
 
 export { encodeValue };
 
@@ -2793,6 +2794,7 @@ Object.assign(counts, genPlanningFamilies(Out, makeLcg));
 counts.maketarget = await genMaketarget();
 Object.assign(counts, genFirmamentFamilies(Out, makeLcg));
 Object.assign(counts, genPlannerFamilies(Out));
+Object.assign(counts, genForgeFamilies(Out));
 counts.round = genRound();
 counts.rng = genRng();
 counts.damage = genDamage();
