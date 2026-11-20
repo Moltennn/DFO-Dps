@@ -16,20 +16,22 @@ fn enchant_plan() {
     let defs = Default::default();
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     let mut book = None;
+    let mut profiles: Option<dfo_core::maxprofile::Profiles<'_>> = None;
     for mut row in common::stream("enchant_plan") {
         let kind = row.kind.clone();
         if kind == "book" {
             let v = row.value(&defs);
             assert!(!v.items().is_empty());
-            assert!(book
-                .replace(dfo_core::spells::spells_by_index_map(
-                    v.items().iter().cloned()
-                ))
-                .is_none());
+            let b = book.replace(dfo_core::spells::spells_by_index_map(
+                v.items().iter().cloned(),
+            ));
+            assert!(b.is_none());
+            profiles = book.as_ref().map(dfo_core::maxprofile::Profiles::new);
             row.done();
             continue;
         }
         let book = book.as_ref().expect("enchant_plan: fixture spellbook");
+        let profiles = profiles.as_mut().expect("enchant_plan: frontier cache");
         let got = match kind.as_str() {
             "gear" => {
                 let opts = row.value(&defs);
@@ -49,7 +51,8 @@ fn enchant_plan() {
             "best" => {
                 let family = row.value(&defs);
                 let target = row.value(&defs);
-                E::best_weapon_for_family(&family, &target, book).expect("bestWeaponForFamily")
+                E::best_weapon_for_family_with(&family, &target, profiles)
+                    .expect("bestWeaponForFamily")
             }
             "sortdps" => {
                 let values = row.value(&defs);
@@ -129,11 +132,11 @@ fn enchant_plan() {
             }
             "matrix" => {
                 let opts = row.value(&defs);
-                E::plan_matrix(&opts, book).expect("planMatrix")
+                E::plan_matrix_with(&opts, profiles).expect("planMatrix")
             }
             "plan" => {
                 let opts = row.value(&defs);
-                E::plan_enchants(&opts, book).expect("planEnchants")
+                E::plan_enchants_with(&opts, profiles).expect("planEnchants")
             }
             "line" => {
                 let e = row.value(&defs);

@@ -9,6 +9,10 @@ shipped Legendary registry (no runtime mod registration). `maxprofile::Profiles`
 owns its evaluated-frontier cache, shares one explicit `Spellbook` for its
 lifetime, and never shares results between callers. Its key uses the JS
 template and shield coercions, including null and undefined sharing a key.
+The real-build, enchant-plan and shortlist entry points have `_with` variants
+that take a caller-owned `Profiles`, so one batch evaluates each weapon
+template's frontier once (the JS `_frontiers` map is module-level); the plain
+names build a fresh cache per call and are unchanged.
 `imprints::power_dps` takes the original character and options explicitly to
 replay JS's non-enumerable `base.with` method.
 

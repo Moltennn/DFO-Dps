@@ -728,6 +728,13 @@ pub fn guarded_rate(value: f64, cost: f64) -> f64 {
 /// from `opts` with the JS default parameter when it is `undefined`.
 pub fn plan_enchants(opts: &Value, book: &Spellbook) -> Result<Value, String> {
     let mut profiles = Profiles::new(book);
+    plan_enchants_with(opts, &mut profiles)
+}
+
+/// [`plan_enchants`] on a caller-owned frontier cache. The JS `_frontiers` map is module-level, so a batch that plans
+/// many weapons evaluates each template's frontier once; a caller that owns a [`Profiles`] gets the same reuse.
+pub fn plan_enchants_with(opts: &Value, profiles: &mut Profiles<'_>) -> Result<Value, String> {
+    let book = profiles.book;
     // `for (const p of pieces) { p.soul = ...; p.budget = p.base + p.soul; p.spent = 0; p.effects = []; }`
     let soul_gem = opts.get("soulGem").truthy();
     let mut pieces: Vec<Value> = gear_pieces(opts)?.items().to_vec();
@@ -1268,6 +1275,16 @@ pub fn best_weapon_for_family(
     book: &Spellbook,
 ) -> Result<Value, String> {
     let mut profiles = Profiles::new(book);
+    best_weapon_for_family_with(family, target, &mut profiles)
+}
+
+/// [`best_weapon_for_family`] on a caller-owned frontier cache.
+pub fn best_weapon_for_family_with(
+    family: &Value,
+    target: &Value,
+    profiles: &mut Profiles<'_>,
+) -> Result<Value, String> {
+    let book = profiles.book;
     let mut best: Option<Value> = None;
     // mutation: equivalent - `0.0 -> 1.0`: `best` is `None` on entry, so the first template always wins; and
     // `>` -> `>=`: no two templates in a family tie (the probe read every family at both targets), so the comparison
@@ -1298,13 +1315,19 @@ pub fn best_weapon_for_family(
 
 /// `planMatrix`: one plan per weapon family, on that family's best weapon.
 pub fn plan_matrix(opts: &Value, book: &Spellbook) -> Result<Value, String> {
+    let mut profiles = Profiles::new(book);
+    plan_matrix_with(opts, &mut profiles)
+}
+
+/// [`plan_matrix`] on a caller-owned frontier cache.
+pub fn plan_matrix_with(opts: &Value, profiles: &mut Profiles<'_>) -> Result<Value, String> {
     let mut out = Vec::new();
     for family in imprint_families() {
         let target = match opts.get("target") {
             Undefined => gate_target(&Num(THEORY_LEVEL), &Undefined),
             v => v.clone(),
         };
-        let best = best_weapon_for_family(family, &target, book)?;
+        let best = best_weapon_for_family_with(family, &target, profiles)?;
         if matches!(best, Null) {
             out.push(obj([
                 ("family", family.get("name").clone()),
@@ -1326,7 +1349,7 @@ pub fn plan_matrix(opts: &Value, book: &Spellbook) -> Result<Value, String> {
             ),
             ("target", target.clone()),
         ]);
-        let plan = plan_enchants(&plan_opts, book)?;
+        let plan = plan_enchants_with(&plan_opts, profiles)?;
         let skill_id = n(&plan, "skillId");
         let skill_pieces = plan
             .get("rows")

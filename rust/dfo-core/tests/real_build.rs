@@ -2,9 +2,9 @@
 
 mod common;
 
-use dfo_core::loadout_shortlist::{shortlist_loadouts, ShortlistOpts};
+use dfo_core::loadout_shortlist::{shortlist_loadouts_with, ShortlistOpts};
 use dfo_core::real_build::{
-    apply_tree, is_sampled_loadout, real_build_stages, real_weapon_loadouts, StageOpts,
+    apply_tree, is_sampled_loadout, real_build_stages_with, real_weapon_loadouts_with, StageOpts,
 };
 use dfo_core::spells::spells_by_index_map;
 use dfo_core::value::Value::{self, Arr, Bool, Num, Str};
@@ -101,27 +101,30 @@ fn real_build() {
     let defs = Default::default();
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     let mut book = None;
+    let mut profiles: Option<dfo_core::maxprofile::Profiles<'_>> = None;
     for mut row in common::stream("real_build") {
         let kind = row.kind.clone();
         if kind == "book" {
             let v = row.value(&defs);
             assert!(!v.items().is_empty());
-            assert!(book
-                .replace(spells_by_index_map(v.items().iter().cloned()))
-                .is_none());
+            let b = book.replace(spells_by_index_map(v.items().iter().cloned()));
+            assert!(b.is_none());
+            profiles = book.as_ref().map(dfo_core::maxprofile::Profiles::new);
             row.done();
             continue;
         }
-        let book = book.as_ref().expect("real_build: fixture spellbook");
+        let profiles = profiles
+            .as_mut()
+            .expect("real_build: the fixture spellbook row must come first");
         let got = match kind.as_str() {
             "stage" => {
                 let o = row.value(&defs);
                 let opts = StageOpts::from_value(&o);
-                let st = real_build_stages(
+                let st = real_build_stages_with(
                     o.get("template"),
                     &obj([("key", o.get("family").clone())]),
                     &opts,
-                    book,
+                    profiles,
                 )
                 .expect("realBuildStages");
                 stage_value(&st)
@@ -129,11 +132,11 @@ fn real_build() {
             "loadouts" => {
                 let o = row.value(&defs);
                 let opt = StageOpts::from_value(&o);
-                let rows = real_weapon_loadouts(
+                let rows = real_weapon_loadouts_with(
                     std::slice::from_ref(&opt.mode),
                     opt.vampire,
                     &opt.encounter,
-                    book,
+                    profiles,
                 )
                 .expect("realWeaponLoadouts");
                 Arr(rows)
@@ -146,7 +149,6 @@ fn real_build() {
                 let o = row.value(&defs);
                 let template = o.get("template").to_number();
                 let family = o.get("family").to_js_string();
-                let mut profiles = dfo_core::maxprofile::Profiles::new(book);
                 let ch = profiles
                     .max_character(&Num(template), &obj([]))
                     .expect("maxCharacter");
@@ -156,12 +158,12 @@ fn real_build() {
             "shortlist" => {
                 let o = row.value(&defs);
                 let opts = ShortlistOpts::from_value(&o);
-                shortlist_loadouts(&opts, book).expect("shortlistLoadouts")
+                shortlist_loadouts_with(&opts, profiles).expect("shortlistLoadouts")
             }
             "shortlist-err" => {
                 let o = row.value(&defs);
                 let opts = ShortlistOpts::from_value(&o);
-                match shortlist_loadouts(&opts, book) {
+                match shortlist_loadouts_with(&opts, profiles) {
                     Ok(_) => Value::Null,
                     Err(message) => s(&message),
                 }

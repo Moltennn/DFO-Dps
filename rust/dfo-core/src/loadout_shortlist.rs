@@ -9,8 +9,11 @@
 
 use crate::generated::firmament::MAX_RUN_SCENARIO;
 use crate::imprints::imprint_families;
+use crate::maxprofile::Profiles;
 use crate::objectives::{rank_builds, MIN_STOCHASTIC_TRIALS};
-use crate::real_build::{is_sampled_loadout, real_build_stages, real_weapon_loadouts, StageOpts};
+use crate::real_build::{
+    is_sampled_loadout, real_build_stages_with, real_weapon_loadouts_with, StageOpts,
+};
 use crate::simulate_fight::paired_fight_seeds;
 use crate::spells::Spellbook;
 use crate::theory::obj;
@@ -97,11 +100,20 @@ pub fn max_run_scenario() -> Value {
 
 /// The whole eligible universe for one key, sorted by deterministic total DPS (the JS `universeCache` value).
 pub fn eligible_universe(opts: &ShortlistOpts, book: &Spellbook) -> Result<Vec<Value>, String> {
-    let mut rows: Vec<Value> = real_weapon_loadouts(
+    let mut profiles = Profiles::new(book);
+    eligible_universe_with(opts, &mut profiles)
+}
+
+/// [`eligible_universe`] on a caller-owned frontier cache, so a shortlist reuses the universe's evaluations.
+pub fn eligible_universe_with(
+    opts: &ShortlistOpts,
+    profiles: &mut Profiles<'_>,
+) -> Result<Vec<Value>, String> {
+    let mut rows: Vec<Value> = real_weapon_loadouts_with(
         std::slice::from_ref(&opts.mode),
         opts.vampire,
         &opts.encounter,
-        book,
+        profiles,
     )?
     .into_iter()
     .filter(is_sampled_loadout)
@@ -136,6 +148,17 @@ fn objective_allowed(mode: &str, objective: &str) -> bool {
 
 /// `shortlistLoadouts`: rerank the top k eligible deterministic loadouts on one target, keeping their imprints.
 pub fn shortlist_loadouts(opts: &ShortlistOpts, book: &Spellbook) -> Result<Value, String> {
+    let mut profiles = Profiles::new(book);
+    shortlist_loadouts_with(opts, &mut profiles)
+}
+
+/// [`shortlist_loadouts`] on a caller-owned frontier cache: the universe and the staged candidates share one
+/// evaluation per weapon template.
+pub fn shortlist_loadouts_with(
+    opts: &ShortlistOpts,
+    profiles: &mut Profiles<'_>,
+) -> Result<Value, String> {
+    let book = profiles.book;
     if opts.mode != "uncapped" && opts.mode != "cap" {
         return Err(err(format!("unknown shortlist mode: {}", opts.mode)));
     }
@@ -168,7 +191,7 @@ pub fn shortlist_loadouts(opts: &ShortlistOpts, book: &Spellbook) -> Result<Valu
         )));
     }
 
-    let universe = eligible_universe(opts, book)?;
+    let universe = eligible_universe_with(opts, profiles)?;
     let k = round_down(opts.k) as usize;
     if k > universe.len() {
         return Err(err(format!(
@@ -191,7 +214,7 @@ pub fn shortlist_loadouts(opts: &ShortlistOpts, book: &Spellbook) -> Result<Valu
                 dual: row.get("dual").truthy(),
                 encounter: opts.encounter.clone(),
             };
-            real_build_stages(row.get("template"), &family, &stage_opts, book)
+            real_build_stages_with(row.get("template"), &family, &stage_opts, profiles)
         })
         .collect::<Result<Vec<_>, String>>()?;
     let seeds = paired_fight_seeds(&Num(opts.trials), &Num(opts.seed));

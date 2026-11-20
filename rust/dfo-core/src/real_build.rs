@@ -341,6 +341,19 @@ pub fn real_build_stages(
     opts: &StageOpts,
     book: &Spellbook,
 ) -> Result<Stages, String> {
+    let mut profiles = Profiles::new(book);
+    real_build_stages_with(template, family, opts, &mut profiles)
+}
+
+/// [`real_build_stages`] on a caller-owned frontier cache: a batch over many loadouts evaluates each weapon template's
+/// gear frontier once, as the JS module-level `_frontiers` map does.
+pub fn real_build_stages_with(
+    template: &Value,
+    family: &Value,
+    opts: &StageOpts,
+    profiles: &mut Profiles<'_>,
+) -> Result<Stages, String> {
+    let book = profiles.book;
     let capped = opts.mode != "uncapped";
     let target = if capped {
         encounter_target(&s(&opts.encounter), &Num(THEORY_LEVEL), &Undefined)
@@ -349,7 +362,6 @@ pub fn real_build_stages(
     };
     let family_key = family.get("key").to_js_string();
     let tree = family_tree(&family_key)?;
-    let mut profiles = Profiles::new(book);
     // The gear-only baseline is kept before the tree folds into the same character (`applyFirmament` mutates).
     let gear_ch = profiles.max_character(template, &obj([("vampire", Bool(opts.vampire))]))?;
     let mut tree_ch = apply_firmament(&gear_ch, &tree);
@@ -366,7 +378,7 @@ pub fn real_build_stages(
         Undefined | Null => s(if capped { "none" } else { "humanoid" }),
         v => v.clone(),
     };
-    let ench_plan = crate::enchant_plan::plan_enchants(
+    let ench_plan = crate::enchant_plan::plan_enchants_with(
         &obj([
             ("weapon", template.clone()),
             ("soulGem", Bool(true)),
@@ -374,7 +386,7 @@ pub fn real_build_stages(
             ("target", target.clone()),
             ("group", group),
         ]),
-        book,
+        profiles,
     )?;
     let mut ench_ch = apply_enchants(&tree_ch, &ench_plan);
     // mutation: equivalent - `&&` -> `||`: for a non-dual row `offWeapon` is absent, so the second term is false and
@@ -429,7 +441,19 @@ pub fn real_template(
     opts: &StageOpts,
     book: &Spellbook,
 ) -> Result<Value, String> {
-    let st = real_build_stages(template, family, opts, book)?;
+    let mut profiles = Profiles::new(book);
+    real_template_with(template, family, opts, &mut profiles)
+}
+
+/// [`real_template`] on a caller-owned frontier cache.
+pub fn real_template_with(
+    template: &Value,
+    family: &Value,
+    opts: &StageOpts,
+    profiles: &mut Profiles<'_>,
+) -> Result<Value, String> {
+    let book = profiles.book;
+    let st = real_build_stages_with(template, family, opts, profiles)?;
     let ench_dps = st.ench_run.totals.carried_capped_dps + st.ench_run.card.fields.enchant_dps;
     let imprint_dps = if matches!(st.imprint, Null) {
         st.ench_run.totals.carried_capped_dps
@@ -530,6 +554,18 @@ pub fn real_weapon_loadouts(
     encounter: &str,
     book: &Spellbook,
 ) -> Result<Vec<Value>, String> {
+    let mut profiles = Profiles::new(book);
+    real_weapon_loadouts_with(modes, vampire, encounter, &mut profiles)
+}
+
+/// [`real_weapon_loadouts`] on a caller-owned frontier cache: every row of one universe reuses one evaluation per
+/// weapon template, which is the JS `_frontiers` map's behaviour across a whole batch.
+pub fn real_weapon_loadouts_with(
+    modes: &[String],
+    vampire: bool,
+    encounter: &str,
+    profiles: &mut Profiles<'_>,
+) -> Result<Vec<Value>, String> {
     let mut out = Vec::new();
     for mode in modes {
         for family in imprint_families() {
@@ -550,7 +586,7 @@ pub fn real_weapon_loadouts(
                     dual: false,
                     encounter: encounter.to_owned(),
                 };
-                let mut row = real_template(t, family, &opts, book)?;
+                let mut row = real_template_with(t, family, &opts, profiles)?;
                 row.set("category", s(category));
                 out.push(row);
                 if !w.two_handed && w.skill != "Archery" && w.skill != "HandToHand" {
@@ -560,7 +596,7 @@ pub fn real_weapon_loadouts(
                         dual: true,
                         encounter: encounter.to_owned(),
                     };
-                    let mut row = real_template(t, family, &dual_opts, book)?;
+                    let mut row = real_template_with(t, family, &dual_opts, profiles)?;
                     row.set("category", s("DW"));
                     out.push(row);
                 }
