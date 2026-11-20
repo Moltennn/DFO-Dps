@@ -36,6 +36,147 @@ ranking objectives. `loadoutShortlist` still needs the `realBuild`/`imprints`
 planners and is not ported. `tools/rust-relay-vectors.mjs` compares complete
 results to JS, including 216 ten-seed configurations and scripted spell draws.
 
+## R5d: The Firmament sky, its law and the tree planner (stage 1 of 5)
+
+Ported: `firmament_law` (the channel readers) and `firmament` (the build presets, the greedy 98-star walk and the
+summary). NOT ported: `src/enchantPlan.js`, `src/realBuild.js` and `src/loadoutShortlist.js`; see "R5d: what is left".
+
+### The vendor pin (FIRST, and it was missing)
+
+`vendor/firmament` had no pinned hash anywhere. `tools/rust-data.mjs` now holds `FIRMAMENT_PINS` and throws when any of
+the three files changes, before a single table is written. The sha256 values (recorded here, 2026-11-19):
+
+| File | sha256 |
+|---|---|
+| `vendor/firmament/README.md` | `42e3897b55f85d1e723d06a9cb2fbc4f1a33eec400bb5d276989634df57d6413` |
+| `vendor/firmament/firmamentLaw.js` | `1ae04bf3eb869c52a4d9bf96a7b39fca0afab3bb05f4b0b52e51451af5d4b073` |
+| `vendor/firmament/firmamentTree.js` | `ea271b76b777ae41e007565ebf7e6c72444cc39689c8e63d56294ade623c6568` |
+
+A change needs `FIRMAMENT_PINS` edited AND every Firmament vector regenerated: the sky is 518 stars, and a moved star
+changes paths, scores and plans. Never copy these tables by hand.
+
+### Files
+
+- `generated/firmament.rs` (new, from `tools/rust-data.mjs`): `FIRM_NODES` (the Map's insertion order: key, kind, ring,
+  sector, cluster, name, stats, text, x, y), `FIRM_ADJ` (each node's sorted neighbours), `SIGNS`, `SERPENT`,
+  `START_KEYS`, `ATTR_KEYS`, `STAT_DEF_ROWS` (every `statDef` key with its kind/max/min), `STAT_WORDS` (`statWords` for
+  every integer in each channel's min..max, the only values a capped total can hold), `BUILDS` (a codec token: a plan
+  echoes its build verbatim, field order included), `SLOT_NAMES`, `ARMOR`, `SHIELD_DEFAULT`, `JEWELRY`, `GROUP_PARAM`,
+  `ONE_PIECE`, `STACKS`, `WEAPON_ONLY`, `SOUL_GEM_POINTS`, `FIRMAMENT_STARS` and `MAX_RUN_SCENARIO` (cut from
+  `src/loadoutShortlist.js`, which does not export it). The enchant-plan constants are generated now so stage 2 does not
+  have to re-cut them.
+- `generated/enchant_data.rs` (extended): `ITEM_ENCHANTMENT_NAMES` and `ITEM_ENCHANTMENT_HIT_POINTS`, which
+  `gearPieces`' `equipName` and `hitPointsOf` read (`?? 400` for a template with no hitPoints).
+- `dfo-core/src/firmament_law.rs`: `stat_def`, `stat_words`, `is_price`, `is_start`, `sign_name`, `node`, `adj`,
+  `node_keys`, `small_stats`, `tree_parts`, `stats_from_parts`, `tree_stats`, `effective_value`, `blow_pct`,
+  `cast_cost_pct`, `attribute_values`, `skill_names`, `totals_from_value`, `channel`, and the typed `Tree`/`Totals`.
+- `dfo-core/src/firmament.rs`: `builds`, `build_by_id`, `build_ids`, `plan_build`, `plan_from_tree`, `plan_key`,
+  `plan_summary`, `node_value`, `plan_tree`, `tree_blow`.
+- `tests/firmament.rs`: reads `tests/vectors/firmament.txt`; the table rows (`nodes`, `adj`, `signs`, `builds`,
+  `statdefs`, `statKeys`, `constants`) pin the generated data to the vendored sky, and every other case is a whole
+  ordered value compared through the codec.
+
+### What is ported, and the JS semantics decided here
+
+| Rust | JS |
+|---|---|
+| `firmament_law::stat_def`, `stat_words`, `is_price`, `is_start` | `firmamentLaw.js:192-269`, `:342`, `:504` |
+| `firmament_law::small_stats` | `firmamentTree.js:977-992` |
+| `firmament_law::tree_parts`, `stats_from_parts`, `tree_stats` | `firmamentLaw.js:506-560`, `firmament.js:204-217` |
+| `firmament_law::effective_value`, `channel_score`, `score_tree` | `firmament.js:121-155` |
+| `firmament_law::blow_pct`, `cast_cost_pct` | `firmamentLaw.js:299-334` |
+| `firmament::plan_build`, `greedy`, `paths_from`, `path_for`, `off_stat`, `node_has_off`, `sector_allows` | `firmament.js:254-358` |
+| `firmament::plan_from_tree`, `plan_key` | `firmament.js:310-325` |
+| `firmament::plan_summary`, `node_value` | `firmament.js:361-414` |
+| `firmament::builds`, `build_by_id`, `build_ids` | `firmament.js:36-115` |
+
+- **`localeCompare`** (`firmament.js:397`): `rows.sort((a, b) => Math.abs(b.value) - Math.abs(a.value) ||
+  a.key.localeCompare(b.key))`. Every key a row can carry is `blow`, `castCost`, an attribute, `pct.<attr>`, a
+  `skill.*`/`skillPct.*` line, or a build channel that is also a total (`hp`, `weaponDmg`, `resist.fire`, ...). The
+  generator builds that exact set and asserts `a.localeCompare(b)` has the same sign as byte order for every pair; the
+  set is 135 ASCII-only channel names, so byte order is the same order. `planSummary` rows are sorted by the generated
+  ASCII keys only (the JS never prints a non-ASCII key).
+- **NaN comparators**: every sort in this stage is `b.x - a.x` (value/cost, absolutes, deltas). A NaN difference is
+  JS's "equal", so the comparator falls to the next key or keeps insertion order. Rust `sort_by` is stable, so the port
+  returns `Equal` on a NaN difference (never a comparison of the NaN). The probes at 0 and `Infinity` would otherwise
+  expose a NaN.
+- **`delete` on shared objects** (`firmament.js:294-297`): the JS rebuilds `gains`/`prices` by deleting every key and
+  then `Object.assign`ing the winner's copies. The port owns its `Vec<(String, f64)>` pairs and simply replaces them
+  with the winner's, which is the same value in the same key order (the winner's own order; the JS's `Object.assign`
+  keeps the winner's insertion order too).
+- **`PLAN_CACHE` is not ported**: a plan is a pure function of (build, purse, forced start). A caller that wants the JS
+  cache's speed keeps its own map keyed by `plan_key`.
+- **`FIRMAMENT_NODES`** is the constant 518 (the Map's size), and the `nodes` vector row is the whole sky, so a star
+  added or removed fails the port.
+- `planBuild`'s purse: `Math.max(0, Math.min(98, Math.trunc(Number(stars) || 0)))` where `Number(stars) || 0` turns NaN,
+  both zeros and `''` into 0; the port does the same and the vectors cross `0, ±1, 0.5, 1.9, 2.5, 98.9, 1e9, ±Infinity,
+  NaN, '98', 'x', null, undefined`.
+- A plan's `stars` is a NUMBER in the JS (`plan.stars` is `chosen.length`, a number; `planFromTree` can set a string
+  only if the caller passes one). The 2026-11-19 sweep caught the port returning 0 for every plan here (the `stars`
+  field was left at `0.0` on the built plan): it is now the chosen count.
+- `planSummary`'s `freeStars` uses `plan.starBudget ?? 98` (a JS `null`/`undefined`/missing key is 98, a `NaN` stays
+  NaN); `planFromTree`'s `stars`/`starBudget` use `Number.isFinite` (so a string is not finite and takes the fallback).
+- `node_value` omits `text` unless the star has one (the JS builds the field with `...(text ? { text } : {})`) and
+  keeps `cluster: null` for the 505 stars without a cluster.
+
+### Vectors (`tools/rust-firmament-vectors.mjs`, written `firmament.txt`)
+
+| Family | Cases | What |
+|---|---|---|
+| `nodes`, `adj`, `signs`, `builds`, `statdefs`, `statKeys`, `constants` | 1 each | the whole generated tables, the JS as the oracle |
+| `plan` | 528 | every build id x 23 purse edges (98, 0, 1, ±1, 0.5, 2.5, 98.9, 1e9, ±Infinity, NaN, '98', null, ...), every forced start x 4 purses, and 200 random (build, purse, start) draws |
+| `summary` | 93 | every plan at the default and four purses, a single-star tree for 40 starts, and five hostile trees (`null` start, a dropped key, a repeated key, a start among the keys) |
+| `fromtree` | 64 | each plan's own tree (with and without `starBudget`, and with a duplicate + a dropped key), at five purses |
+| `key` | 15 | the plan key over the odd purse/start inputs |
+| `blow` / `castcost` | 200 / 160 | every plan's totals through `blowPct`/`castCostPct` with a weapon, a school group, no groups, an unknown skill/group, an Archery blow |
+| `effective` | 49 | every channel a build reads, plus a synthetic over-cap totals object |
+| `statdef`, `words`, `isstart`, `buildbyid` | 122, ~4.5k, 133, 35 | the law alphabet: every channel definition, every integer in every channel's min..max as a word, every start key and near miss, every build id in every case form |
+
+The floors in `tests/firmament.rs` are per family (500 plans, 4,000 words, ...), so a shrunken file fails rather than
+passes. A missing file panics (never skips).
+
+`node_modules`-free, deterministic: the fixed LCG (`makeLcg(0x5d2026)`) drives the random draws, and a second run is
+byte-identical.
+
+The two planner guards `offStat` and `nodeHasOff` are module-private in `src/firmament.js`; the generator cuts their exact
+source text (the R1 method) so the `offstat`/`nodehasoff` families test the real guards, not a restatement. The same cut
+gives `statsFromParts` for the `statsparts` family. `guardProbe`'s invariant assertions fail the generator if the sky's
+percent totals or hp/mp small stats ever leave the ranges the equivalence notes below rely on.
+
+### Mutation sweeps (seed 1, count 1000)
+
+- `firmament_law.rs`: 74 mutants, 71 killed, 2 equivalent survivors (the two `price`-term signs of `castCostPct`; the
+  generator asserts no star prices a `castCost` channel), 1 invalid (does not compile). Notes at the code.
+- `firmament.rs`: 123 mutants, 106 killed, 14 equivalent survivors, 3 invalid. The survivors are: `TOL` 1e-9 -> 1e-8; the
+  greedy/`planBuild` `TOL` boundary comparisons and `>`/`>=` swaps (the reachable scores are multiples of 0.15/75 and the
+  purse count is exact); the `> 0` value guard on a star stat (no authored stat is 0); two `planSummary` guards
+  (`skill_names` dedupe and the pct re-skip); and the `100`/`200` percent folds in `effectiveValue` (every `pct.*` total is
+  a whole number <= 20). Each has a one-line `// mutation: equivalent - ...` proof at the mutated expression. The gate
+  prints `FAIL` for equivalent survivors, by design.
+
+
+### The enchant plan constants are cut, not hand-copied
+
+`SLOT_NAMES`, `ARMOR`, `JEWELRY`, `GROUP_PARAM`, `ONE_PIECE`, `STACKS`, `WEAPON_ONLY`, `SHIELD_DEFAULT`, `SOUL_GEM_POINTS`
+and `MAX_RUN_SCENARIO` are `cutLiteral`/`cutScalar` reads of the real source text (the R1 method): the generator throws if
+the text moves or the name is not unique. They are generated now, unused, for stage 2.
+
+## R5d: what is left (stages 2-5; not ported in this session)
+
+Stopped before stage 2 to leave the gates green. The three remaining modules are pure, but each is a large grid; the
+measurements below are the real JS on this machine (2026-11-19):
+
+| Stage | JS | Cost measured | Plan |
+|---|---|---|---|
+| 2 | `src/enchantPlan.js` (346) | `planEnchants` 37-122 ms; `gearPieces` < 1 ms; `bestWeaponForFamily` ~5 ms; `planMatrix` ~350 ms | port `gearPieces`, `planEnchants`, `bestWeaponForFamily`, `planMatrix`, `effectLine`; vectors: every template x soulGem x forceSkills x group x target x repairs/regen/shield. Domain: 23 templates x 2 x 2 x 5 groups x 2 targets x ~6 shield = ~2,760. `effectLine` grouping is en-US (`1,830`), pinned by vectors. `JSON.parse(JSON.stringify(ch))` (lines 102,106,164) is `analyze::json_clone`: every character the builders make holds only finite numbers, so the clone is the same object. The `value / cost` sorts are NaN-equal and stable. `repairs`/`regen` are `Math.max(0, Math.trunc(Number(x) \|\| 0))` (NaN, `''` and both zeros give 0). |
+| 3 | `src/realBuild.js` (194) | `realBuildStages`/`realTemplate` 60-110 ms; `realWeaponLoadouts` ~2.3-2.4 s for 26 sampled rows | port `applyFirmament`, `applyTree`, `realBuildStages`, `realTemplate`, `realWeaponLoadouts`, `isSampledLoadout`. The `clone` at :33 is `analyze::json_clone` with the same proof. Vectors: mode {uncapped, cap} x encounter {breach, skyketch, abyss} x vampire x dual for every template the families hold. Encounter/purse are already ported (`encounters`, `purse`). |
+| 4 | `src/loadoutShortlist.js` (57) | `shortlistLoadouts` k=1 3.0 s, k=3 2.7 s, k=5 4.8 s (uncapped) / 6.1 s (cap) at 1,000 trials and `maxSeconds: 20` | port over `objectives::rank_builds`. `universeCache` is dropped (the universe is a pure function of mode/vampire/encounter). Vectors: k in {1,3,5,all} x both modes x fixed seeds; the 1,000-trial floor is `objectives::MIN_STOCHASTIC_TRIALS`. Keep `maxSeconds` at 20 s or the fixture takes minutes. |
+| 5 | mutation sweeps | — | one sweep per new file, then a vector or a `// mutation: equivalent` note for every survivor. |
+
+`dfo-core/src/enchant_plan.rs` is a comment-only placeholder and `tools/rust-planner-vectors.mjs` throws if imported:
+nothing calls them, so the absence is documented, not hidden. The decoder for `ITEM_ENCHANTMENT_NAMES` /
+`ITEM_ENCHANTMENT_HIT_POINTS` is already generated.
+
 ## R6b: seeded ordinary fights
 
 `simulate_fight` ports the ordinary scheduler and trial loop. `simulate_fights` owns

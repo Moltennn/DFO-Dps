@@ -28,6 +28,7 @@
  * are spelled out). Each table carries `#[rustfmt::skip]`, so `cargo fmt --check` accepts the files as written.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -78,10 +79,29 @@ import { IMPRINT_FAMILIES, WEAPON_IMPRINTS } from '../src/imprints.js';
 import { encodeValue } from './rust-codec.mjs';
 import { mintRow } from '../src/target.js';
 import { GATE_BODY_LEVEL } from '../src/model.js';
+import * as firmament from '../src/firmament.js';
+import * as enchantPlan from '../src/enchantPlan.js';
+import * as realBuild from '../src/realBuild.js';
+import * as firmamentTree from '../vendor/firmament/firmamentTree.js';
+import * as firmamentLaw from '../vendor/firmament/firmamentLaw.js';
 
 const V = 'vendor/upstream/a3eb1605/src';
 const here = dirname(fileURLToPath(import.meta.url));
 const genDir = join(here, '..', 'rust', 'dfo-core', 'src', 'generated');
+// The Firmament sources have no pin elsewhere (vendor/upstream has its own manifest). Their sha256 is recorded in
+// rust/README.md and checked here: a changed star or cap must fail the generator, not silently reshape every plan.
+const FIRMAMENT_PINS = {
+  'README.md': '42e3897b55f85d1e723d06a9cb2fbc4f1a33eec400bb5d276989634df57d6413',
+  'firmamentLaw.js': '1ae04bf3eb869c52a4d9bf96a7b39fca0afab3bb05f4b0b52e51451af5d4b073',
+  'firmamentTree.js': 'ea271b76b777ae41e007565ebf7e6c72444cc39689c8e63d56294ade623c6568',
+};
+for (const [name, pinned] of Object.entries(FIRMAMENT_PINS)) {
+  const hash = createHash('sha256').update(readFileSync(join(here, '..', 'vendor', 'firmament', name))).digest('hex');
+  if (hash !== pinned) {
+    throw new Error(`rust-data: vendor/firmament/${name} changed (sha256 ${hash}, pinned ${pinned}); ` +
+      'update FIRMAMENT_PINS and rust/README.md only after re-checking every Firmament vector');
+  }
+}
 
 /** One generated module per entry. `names: null` takes every export (sorted); otherwise the listed exports, in order. */
 /**
@@ -99,6 +119,14 @@ function cutLiteral(relPath, name, close) {
   const end = text.indexOf(`${close};`, start);
   if (end < 0) throw new Error(`rust-data: ${relPath}: no \`${close};\` ends \`${name}\``);
   return new Function(`return (${text.slice(start + head.length, end + close.length)});`)();
+}
+
+/** A module-private scalar `const NAME = <number>;` cut out of a source file. */
+function cutScalar(relPath, name) {
+  const text = readFileSync(join(here, '..', relPath), 'utf8');
+  const m = [...text.matchAll(new RegExp(`const ${name} = (-?[0-9.]+);`, 'g'))];
+  if (m.length !== 1) throw new Error(`rust-data: ${relPath} must hold exactly one scalar \`const ${name} = <number>;\``);
+  return Number(m[0][1]);
 }
 
 /** EQUIP_SLOT_NAMES: the paperdoll's slot names (the `EQUIP_SLOTS` keys) with their ids, for the names SLOT_RULES holds. */
@@ -294,14 +322,84 @@ function buildItemFacts() {
   };
 }
 
-const SOURCES = [
-  { file: 'data', from: 'src/data.js', mod: data, names: null },
+/**
+ * R5d: the Firmament sky and the enchant plan's frozen constants, generated from the real JS (vendor/firmament is
+ * pinned above). FIRM_NODES is a `Map` in insertion order; its stats are objects whose keys are channel names, so the
+ * table is a keyed list of records. FIRM_ADJ is the same list with each node's sorted neighbour keys.
+ */
+function buildFirmamentTables() {
+  const FIRM_NODES = Object.fromEntries([...firmamentTree.FIRM_NODES.values()].map((n) => [n.key, {
+    key: n.key, kind: n.kind, ring: n.ring, sector: n.sector, cluster: n.cluster, name: n.name,
+    stats: { ...n.stats }, text: n.text ?? null, x: n.x, y: n.y,
+  }]));
+  const FIRM_ADJ = Object.fromEntries([...firmamentTree.FIRM_ADJ.entries()].map(([k, vs]) => [k, [...vs]]));
+  // Every channel statDef answers, so the Rust can resolve a key the way statDef does without the JS tables.
+  const ATTRS = ['strength', 'intelligence', 'willpower', 'agility', 'endurance', 'personality', 'speed', 'luck'];
+  const FAMILIES = {
+    skill: ['ShortBlade', 'LongBlade', 'Axe', 'BluntWeapon', 'HandToHand', 'Archery', 'CriticalStrike', 'Backstabbing', 'Dodging', 'Stealth', 'Running', 'Jumping', 'Destruction', 'Restoration', 'Illusion', 'Alteration', 'Thaumaturgy', 'Mysticism', 'Mercantile', 'Etiquette', 'Streetwise', 'Swimming', 'Climbing', 'Medical', 'Lockpicking', 'Pickpocket'],
+    resist: ['fire', 'frost', 'poison', 'shock', 'magic'],
+    castCost: ['Destruction', 'Restoration', 'Illusion', 'Alteration', 'Thaumaturgy', 'Mysticism'],
+    yield: ['mining', 'logging', 'herbalism', 'hunting', 'fishing'],
+    xp: ['mining', 'logging', 'herbalism', 'hunting', 'fishing', 'smithing', 'building', 'outfitting', 'provisioning', 'enchanting'],
+    act: ['herbalism', 'fishing'],
+    pct: ATTRS,
+    skillPct: ['ShortBlade', 'LongBlade', 'Axe', 'BluntWeapon', 'HandToHand', 'Archery', 'CriticalStrike', 'Backstabbing', 'Dodging', 'Stealth', 'Running', 'Jumping', 'Destruction', 'Restoration', 'Illusion', 'Alteration', 'Thaumaturgy', 'Mysticism', 'Mercantile', 'Etiquette', 'Streetwise', 'Swimming', 'Climbing', 'Medical', 'Lockpicking', 'Pickpocket'],
+  };
+  const keys = [...Object.keys(firmamentLaw.STAT_DEFS)];
+  for (const [fam, args] of Object.entries(FAMILIES)) {
+    for (const arg of args) if (firmamentLaw.statDef(`${fam}.${arg}`) && !keys.includes(`${fam}.${arg}`)) keys.push(`${fam}.${arg}`);
+  }
+  const STAT_DEF_ROWS = Object.fromEntries(keys.map((key) => {
+    const d = firmamentLaw.statDef(key);
+    return [key, { kind: d.kind, max: d.max, min: d.min }];
+  }));
+  // The player-facing line of every channel `planSummary` can print: `statWords(key, v)` for each integer a capped
+  // total can hold (treeStats clamps to min..max, so the words outside it never reach a row).
+  const WORDS = keys
+    .flatMap((key) => {
+      const d = firmamentLaw.statDef(key);
+      const row = [];
+      for (let v = Math.ceil(d.min); v <= Math.floor(d.max); v++) row.push([key, v, firmamentLaw.statWords(key, v)]);
+      return row;
+    });
+  // The builds as the JS objects are: a codec token string (a plan echoes its build verbatim, and `buildById` returns
+  // the same object the vendored module holds, field order included).
+  const BUILDS = encodeValue(firmament.BUILDS);
+  // The scenario `maxRun` prices the deterministic row under (loadoutShortlist.js:10, not exported there).
+  const MAX_RUN_SCENARIO = cutLiteral('src/loadoutShortlist.js', 'MAX_RUN_SCENARIO', '})');
+  const ep = 'src/enchantPlan.js';
+  return {
+    SIGNS: firmamentTree.SIGNS.map((s) => ({ id: s.id, name: s.name })),
+    SERPENT: { id: firmamentTree.SERPENT.id, name: firmamentTree.SERPENT.name },
+    START_KEYS: [...firmamentTree.START_KEYS],
+    ATTR_KEYS: ['strength', 'intelligence', 'willpower', 'agility', 'endurance', 'personality', 'speed', 'luck'],
+    FIRM_NODES, FIRM_ADJ, STAT_DEF_ROWS, STAT_WORDS: WORDS, BUILDS,
+    SLOT_NAMES: cutLiteral(ep, 'SLOT_NAMES', '})'),
+    ARMOR: cutLiteral(ep, 'ARMOR', ']'),
+    SHIELD_DEFAULT: cutScalar(ep, 'SHIELD_DEFAULT'),
+    JEWELRY: cutLiteral(ep, 'JEWELRY', ']'),
+    GROUP_PARAM: cutLiteral(ep, 'GROUP_PARAM', '})'),
+    ONE_PIECE: cutLiteral(ep, 'ONE_PIECE', '])'),
+    STACKS: cutLiteral(ep, 'STACKS', '])'),
+    WEAPON_ONLY: cutLiteral(ep, 'WEAPON_ONLY', '])'),
+    SOUL_GEM_POINTS: enchantPlan.SOUL_GEM_POINTS,
+    FIRMAMENT_STARS: firmament.FIRMAMENT_STARS,
+    MAX_RUN_SCENARIO: MAX_RUN_SCENARIO,
+  };
+}
+
+const SOURCES = [  { file: 'data', from: 'src/data.js', mod: data, names: null },
   { file: 'enchant_data', from: 'src/enchantData.js', mod: {
     ...enchantData,
     ENCHANTMENT_PRICE_ROWS: Object.entries(ENCHANTMENT_TYPES).flatMap(([type, id]) =>
       enchantData.enchantmentParamValues(type).map(param => [id, param, enchantData.enchantmentCost(type, param)])),
     ITEM_ENCHANTMENT_POINTS: Object.fromEntries(JSON.parse(readFileSync(join(here, '..', 'vendor/enchanting/itemTemplates.json'), 'utf8'))
       .map(t => [t.index, enchantData.itemEnchantmentPoints(t.index)])),
+    // gearPieces/equipName and hitPointsOf read the template's name and hitPoints (``?? 400`` when absent).
+    ITEM_ENCHANTMENT_NAMES: Object.fromEntries(JSON.parse(readFileSync(join(here, '..', 'vendor/enchanting/itemTemplates.json'), 'utf8'))
+      .map(t => [t.index, enchantData.itemTemplate(t.index)?.name ?? null]).filter(([, name]) => name !== null)),
+    ITEM_ENCHANTMENT_HIT_POINTS: Object.fromEntries(JSON.parse(readFileSync(join(here, '..', 'vendor/enchanting/itemTemplates.json'), 'utf8'))
+      .map(t => [t.index, enchantData.itemTemplate(t.index)?.hitPoints ?? null]).filter(([, hp]) => hp !== null)),
   }, names: null },
   { file: 'spell_tables', from: 'src/spells.js and systems/mentorMode.js', mod: { ...spells, MENTOR_SKILL_BASELINE },
     names: ['SPELL_RECORD_SIZE', 'MAGIC_ROUND_SECONDS', 'EFFECT_COST_TABLE', 'TARGET_COST_MULT', 'CAST_COST_FLOOR', 'MENTOR_SKILL_BASELINE'] },
@@ -393,6 +491,8 @@ const SOURCES = [
     SKILL_KEYS: Object.keys(data.SKILLS),
   }, names: ['IMPRINT_FAMILIES', 'WEAPON_IMPRINTS', 'LEGENDARIES', 'AFFIX_KINDS', 'AFFIX_RANGES', 'WEAPON_KIN', 'STRIKE_KIN', 'BODY_KIN', 'JEWEL_KIN', 'STREET_KIN', 'FEET_KIN', 'SKILL_KEYS'] },
   { file: 'bow_bloom', from: `${V}/combat/bowBloom.js`, mod: bowBloom, names: ['BOW_FAST'] },
+  { file: 'firmament', from: 'vendor/firmament and src/enchantPlan.js (R5d)', mod: buildFirmamentTables(),
+    names: ['SIGNS', 'SERPENT', 'START_KEYS', 'ATTR_KEYS', 'FIRM_NODES', 'FIRM_ADJ', 'STAT_DEF_ROWS', 'STAT_WORDS', 'BUILDS', 'SLOT_NAMES', 'ARMOR', 'SHIELD_DEFAULT', 'JEWELRY', 'GROUP_PARAM', 'ONE_PIECE', 'STACKS', 'WEAPON_ONLY', 'SOUL_GEM_POINTS', 'FIRMAMENT_STARS', 'MAX_RUN_SCENARIO'] },
   { file: 'hands_law', from: `${V}/combat/twoHands/handsLaw.js`, mod: handsLaw, names: ['DUAL', 'OFF_HAND_BLOW', 'FLURRY_WINDOW'] },
   // R3b
   { file: 'mint_rows', from: `${V}/characters/meanerMonsters.js (target.js mintRow over boot codes 0..7 x classic ids)`, mod: { MINT_ROWS: buildMintRows(), STAND_IN_BASICS: Object.fromEntries(MINT_IDS.filter(id => mintRow(id) !== null).map(id => [id, encodeValue(mintRow(id))])), GATE_BODY_LEVEL }, names: ['MINT_ROWS', 'STAND_IN_BASICS', 'GATE_BODY_LEVEL'], force: true },

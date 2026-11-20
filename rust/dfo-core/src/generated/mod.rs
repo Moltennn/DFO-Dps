@@ -17,6 +17,7 @@ pub mod enemy_equipment;
 pub mod enemy_groups;
 pub mod equip;
 pub mod equip_rules;
+pub mod firmament;
 pub mod formulas;
 pub mod gate_boss;
 pub mod gear_profile;
