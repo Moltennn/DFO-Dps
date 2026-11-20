@@ -379,9 +379,9 @@ function buildFirmamentTables() {
     SHIELD_DEFAULT: cutScalar(ep, 'SHIELD_DEFAULT'),
     JEWELRY: cutLiteral(ep, 'JEWELRY', ']'),
     GROUP_PARAM: cutLiteral(ep, 'GROUP_PARAM', '})'),
-    ONE_PIECE: cutLiteral(ep, 'ONE_PIECE', '])'),
-    STACKS: cutLiteral(ep, 'STACKS', '])'),
-    WEAPON_ONLY: cutLiteral(ep, 'WEAPON_ONLY', '])'),
+    ONE_PIECE: encodeValue(cutLiteral(ep, 'ONE_PIECE', '])')),
+    STACKS: encodeValue(cutLiteral(ep, 'STACKS', '])')),
+    WEAPON_ONLY: encodeValue(cutLiteral(ep, 'WEAPON_ONLY', '])')),
     SOUL_GEM_POINTS: enchantPlan.SOUL_GEM_POINTS,
     FIRMAMENT_STARS: firmament.FIRMAMENT_STARS,
     MAX_RUN_SCENARIO: MAX_RUN_SCENARIO,
@@ -393,6 +393,10 @@ const SOURCES = [  { file: 'data', from: 'src/data.js', mod: data, names: null }
     ...enchantData,
     ENCHANTMENT_PRICE_ROWS: Object.entries(ENCHANTMENT_TYPES).flatMap(([type, id]) =>
       enchantData.enchantmentParamValues(type).map(param => [id, param, enchantData.enchantmentCost(type, param)])),
+    // enchantData.js's catalogue as flat rows: each type's id, and each (id, param) its picker names.
+    ENCHANTMENT_TYPE_ID: Object.entries(ENCHANTMENT_TYPES).map(([type, id]) => [type, id]),
+    ENCHANTMENT_PARAM_NAMES: Object.entries(ENCHANTMENT_TYPES).flatMap(([type, id]) =>
+      enchantData.enchantmentParamValues(type).map(param => [id, param, enchantData.enchantmentParamName(type, param)])),
     ITEM_ENCHANTMENT_POINTS: Object.fromEntries(JSON.parse(readFileSync(join(here, '..', 'vendor/enchanting/itemTemplates.json'), 'utf8'))
       .map(t => [t.index, enchantData.itemEnchantmentPoints(t.index)])),
     // gearPieces/equipName and hitPointsOf read the template's name and hitPoints (``?? 400`` when absent).

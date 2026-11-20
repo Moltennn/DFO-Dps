@@ -1,34 +1,462 @@
 /*
- * R5d, stages 2-5 (NOT DONE): the vector generator for src/enchantPlan.js, src/realBuild.js and
- * src/loadoutShortlist.js.
+ * R5d planner vectors: the enchant plan, the real-build chain and the shortlist.
  *
- * Nothing imports this yet. When the port lands, `tools/rust-vectors.mjs` should call `genPlannerFamilies(Out)` and
- * generate these families (the cost notes are measured with the real JS on this machine, 2026-11-19):
+ * Every family compares whole ordered values through the codec (f64 as bits), generated from the REAL JS.
  *
- *   enchant  planEnchants over every weapon template x soulGem x forceSkills x (target, group) x repairs/regen/shield
- *            variants. ~37-120 ms per call; the grid must stay near 2,000 cases (about 2-4 minutes).
- *   gear     gearPieces over every template x shield ('auto', 'none', 109..112, junk). < 1 ms.
- *   best     bestWeaponForFamily over all six families x both targets (gate, tough). ~5 ms each.
- *   matrix   planMatrix over soulGem x forceSkills x group x target. ~350 ms each: keep this to a handful of cases.
- *   stages   realBuildStages / realTemplate over mode {uncapped, cap} x vampire x dual x encounter {breach,
- *            skyketch, abyss} for each family's templates: ~60-110 ms per stage call.
- *   loadouts realWeaponLoadouts for modes {uncapped, cap} x vampire x encounter: ~2.3-2.4 s per run, 26 eligible
- *            loadouts per mode after isSampledLoadout.
- *   shortlist shortlistLoadouts for k in {1,3,5,all} x mode with fixed seeds: ~2.7-6 s per call (1,000 trials,
- *            maxSeconds 20); the full 1,000-trial/3,600 s default is not affordable in a fixture.
- *
- * Domains smaller than 2,000 and why: `gearPieces` is 23 templates x ~6 shields (~140); `planMatrix` is 2 x 2 x 3 x 2
- * (24); `shortlist` is 2 modes x 4 k values (8). Each test must state its own floor rather than claim 2,000.
- *
- * Hazards already settled by reading the JS (see rust/README.md, "R5d: what is left"):
- *   - `value / cost` sorts: a NaN difference is JS "equal" and keeps insertion order (stable sort).
- *   - firmament.js:397 `localeCompare`: the compared keys are the generated channel names, whose alphabet is ASCII;
- *     the generator asserts `localeCompare` equals byte order over that exact set.
- *   - firmament.js:294 `delete gains[k]` on shared objects: the port owns its pairs, so a rebuild is the same value.
- *   - enchantPlan.js:102/106/164 and realBuild.js:33 `JSON.parse(JSON.stringify())`: plain finite records only, so an
- *     owned clone (`analyze::json_clone`) is the same object.
- *   - effectLine's `toLocaleString()`: en-US grouping, pinned by the vectors ("1,830").
+ * SIZING. The JS is slow here: `planEnchants` 37-122 ms and `realWeaponLoadouts` ~2.3 s per call, so the expensive
+ * families are sized by wall clock, not by case count. Every cheap family is swept over its whole input domain.
+ * Domains below 2,000 and why:
+ *   gear     23 weapon templates x 10 shield forms = 230 (the whole domain of gearPieces)
+ *   plan     ~150 whole plans (~10 s): the domain is 23 templates x 2 soulGem x 2 forceSkills x 5 groups x 3 repairs x
+ *           2 regen x 6 shields = 33,120, each costing ~60 ms, so 2,000 plans would be ~2 minutes and ~40 MB
+ *   best     6 families x 2 targets = 12 (the whole domain)
+ *   matrix   5 whole matrices (~1.7 s)
+ *   stage    2 modes x 3 encounters x 2 vampire x 2 dual x ~7 templates = ~168 stage objects (~15 s)
+ *   template ~40 whole rows (~4 s)
+ *   loadouts 2 modes x 2 vampire = 4 whole universes (~10 s)
+ *   shortlist 2 modes x 4 k values x fixed seed = 8 (~30 s)
+ *   line     every effect of every plan (~1,900 lines)
+ *   sampled  every loadout row of both universes (~200)
  */
-export function genPlannerFamilies() {
-  throw new Error('rust-planner-vectors: the R5d planner stages are not ported yet (see rust/README.md)');
+import * as E from '../src/enchantPlan.js';
+import * as FB from '../src/realBuild.js';
+import * as S from '../src/loadoutShortlist.js';
+import { IMPRINT_FAMILIES } from '../src/imprints.js';
+import { WEAPONS } from '../src/data.js';
+import { enchantmentCost, itemTemplate } from '../src/enchantData.js';
+import { gateTarget, referenceFoe } from '../src/model.js';
+import { ENCHANTMENT_TYPES } from '../src/enchants.js';
+import { maxCharacter, maxRun } from '../src/maxprofile.js';
+import { THEORY_LEVEL } from '../src/theory.js';
+import { arena2Dir } from '../src/save.js';
+import { readSpellsStd } from '../src/spells.js';
+import { readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { encodeValue as V } from './rust-codec.mjs';
+
+const templates = Object.keys(WEAPONS).map(Number).filter((k) => WEAPONS[k]);
+const shields = [undefined, 'auto', 'none', 109, 110, 111, 112, '0', 120, 'x'];
+const groups = [undefined, null, 'none', 'humanoid', 'daedra', 'undead', 'animal', 'Elf', 5];
+const gate = () => gateTarget(THEORY_LEVEL);
+const tough = () => referenceFoe(THEORY_LEVEL, 'tough');
+
+function add(out, counts, kind, args, result) {
+  out.add(kind, ...args.map(V), '=>', V(result));
+  counts[`${out.module}_${kind}`] = (counts[`${out.module}_${kind}`] ?? 0) + 1;
+}
+
+/**
+ * `selectWeaponCandidates` is module-private in src/enchantPlan.js: cut its exact source (the R1 method) so the
+ * vectors test the real selector over a synthetic candidate list.
+ */
+function selectCandidates(cands, budget, maxProcs) {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const text = readFileSync(join(here, '..', 'src', 'enchantPlan.js'), 'utf8');
+  const head = 'function selectWeaponCandidates(cands, budget, maxProcs) {';
+  const at = text.indexOf(head);
+  if (at < 0 || text.indexOf(head, at + 1) >= 0) throw new Error('rust-planner-vectors: selectWeaponCandidates must be unique');
+  const end = text.indexOf('\n}\n', at);
+  if (end < 0) throw new Error('rust-planner-vectors: no close for selectWeaponCandidates');
+  const ITEM = 10;
+  return new Function('ITEM_ENCHANTMENT_MAX', `${text.slice(at, end + 3)}\nreturn selectWeaponCandidates;`)(ITEM)(cands, budget, maxProcs);
+}
+
+/** The descending `dps` comparator (the imprint pool's `best_by('carriedDps')` shape). */
+function sortByDps(values) {
+  const list = values.map((v) => ({ ...v }));
+  list.sort((a, b) => b.dps - a.dps);
+  return list;
+}
+
+/** The value/cost comparator, `(a, b) => b.value / b.cost - a.value / a.cost`. */
+function sortByRate(values) {
+  const list = values.map((v) => ({ ...v }));
+  list.sort((a, b) => b.value / b.cost - a.value / a.cost);
+  return list;
+}
+
+/**
+ * The skill-map write of `skillGain` (enchantPlan.js:104), which the JS inlines rather than naming: one line of the
+ * real source, transcribed so the vectors pin the `?? 0` / `?? {}` defaults. `points` is what `extra` carries.
+ */
+function addSkillPoints(ch, id, points) {
+  const copy = JSON.parse(JSON.stringify(ch));
+  const sid = String(id);
+  copy._mods = { ...(copy._mods ?? {}) };
+  copy._mods.skills = { ...(copy._mods.skills ?? {}), [sid]: (copy._mods.skills?.[sid] ?? 0) + points };
+  return copy;
+}
+
+/** `cost_of`'s JS: `enchantmentCost(kind, param)` with the module's default-param rule. */
+function costOf(kind, param) {
+  const c = enchantmentCost(kind, param);
+  return c === null || c === undefined ? 0 : c;
+}
+
+/** `Number(x).toLocaleString('en-US')`, the formatter the vectors pin. */
+function groupedText(x) {
+  return Number(x).toLocaleString('en-US');
+}
+
+/** `hitPointsOf` from src/enchantPlan.js (module-private): the `?? 400` default is its own line. */
+function hitPointsOf(t) {
+  return Number(itemTemplate(t)?.hitPoints ?? 400);
+}
+
+/**
+ * `applyPlanDps` is private in src/enchantPlan.js, and its `Math.max(1, Number(item.maxCondition) || 800)` line is a
+ * real JS default the catalogue never reaches (every weapon carries a positive condition). Cut the exact source with
+ * its module dependencies passed in, so the vectors can hit the fallback with a hand-edited character.
+ */
+function applyPlanDps(ch, plan, target) {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const text = readFileSync(join(here, '..', 'src', 'enchantPlan.js'), 'utf8');
+  const head = 'function applyPlanDps(ch, plan, target) {';
+  const at = text.indexOf(head);
+  if (at < 0 || text.indexOf(head, at + 1) >= 0) throw new Error('rust-planner-vectors: applyPlanDps must be unique');
+  const end = text.indexOf('\n}\n', at);
+  if (end < 0) throw new Error('rust-planner-vectors: no close for applyPlanDps');
+  const itemEnchantId = { CastWhenStrikes: ENCHANTMENT_TYPES.CastWhenStrikes, PotentVs: ENCHANTMENT_TYPES.PotentVs };
+  const fn = new Function('ITEM_ENCHANT_ID', 'maxRun', `${text.slice(at, end + 3)}\nreturn applyPlanDps;`);
+  return fn(itemEnchantId, maxRun)(ch, plan, target);
+}
+
+/**
+ * The strike spell ids are a literal inside `weaponCandidates` (enchantPlan.js:117): cut them from the source so the
+ * Rust's `strike_params` is compared to the real list, not a copy.
+ */
+function strikeParams() {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const text = readFileSync(join(here, '..', 'src', 'enchantPlan.js'), 'utf8');
+  const m = text.match(/for \(const param of (\[[0-9., ]+\])\)/);
+  if (!m) throw new Error('rust-planner-vectors: the weaponCandidates strike list moved');
+  return JSON.parse(m[1]);
+}
+
+export function genPlannerFamilies(Out) {
+  // The stock spellbook is a vector input (`readSpellsStd`); the file is required and fails loudly.
+  const dir = arena2Dir();
+  if (!dir) throw new Error('rust-planner-vectors: no ARENA2 in the launcher config; SPELLS.STD is required');
+  const book = readSpellsStd(readFileSync(resolve(dir, 'SPELLS.STD')));
+  if (!book.length) throw new Error('rust-planner-vectors: empty SPELLS.STD');
+  const plan = new Out('enchant_plan', 'R5d enchant plan: equip set, priority fill, value/cost sorts and the matrix', true);
+  const real = new Out('real_build', 'R5d real-build chain, loadout universe and the sampled shortlist', true);
+  const counts = {};
+  const put = (kind, args, result) => add(plan, counts, kind, args, result);
+  const putReal = (kind, args, result) => add(real, counts, kind, args, result);
+  // Both files need the stock spellbook (the plans price spells; the real chain runs `simulatePurse`).
+  plan.add('book', V(book));
+  real.add('book', V(book));
+
+  // ---- gearPieces: every template x every shield form ------------------------------------------------
+  for (const weapon of templates) {
+    for (const shield of shields) {
+      let result;
+      let refused = false;
+      try {
+        result = E.gearPieces({ weapon, shield });
+      } catch (e) {
+        refused = true;
+        result = null;
+      }
+      put('gear', [{ weapon, shield }, ...(refused ? [true] : [])], result);
+    }
+  }
+  // The refusal and the missing-argument arms.
+  for (const weapon of [999, '123', -1, 0, 123.5, 'x', undefined]) {
+    let result;
+    let refused = false;
+    try {
+      result = E.gearPieces({ weapon });
+    } catch (e) {
+      refused = true;
+      result = null;
+    }
+    put('gear', [{ weapon }, ...(refused ? [true] : [])], result);
+  }
+  put('gear', [{}], E.gearPieces());
+  put('gear', [[]], E.gearPieces());
+
+  // ---- bestWeaponForFamily: every family x both targets ----------------------------------------------
+  for (const family of IMPRINT_FAMILIES) {
+    for (const target of [gate(), tough()]) put('best', [family, target], E.bestWeaponForFamily(family, target));
+  }
+
+  // ---- planMatrix: the option grid (4 whole matrices) -------------------------------------------------
+  const matrixRows = [];
+  for (const soulGem of [false, true]) {
+    for (const forceSkills of [false, true]) {
+      const opts = { soulGem, forceSkills, group: forceSkills ? 'undead' : 'daedra', target: gate() };
+      matrixRows.push([opts, E.planMatrix(opts)]);
+    }
+  }
+  matrixRows.push([{}, E.planMatrix()]);
+
+  // ---- planEnchants: the whole plan over the option grid ---------------------------------------------
+  const plans = [];
+  const planOpts = [];
+  const addPlan = (opts) => {
+    const result = E.planEnchants(opts);
+    plans.push(result);
+    planOpts.push(opts);
+    put('plan', [opts], result);
+  };
+  // every template at the shipped options (the headline grid)
+  for (const weapon of templates) addPlan({ weapon, target: gate() });
+  // the option grid on a spread of templates: soul gem, force skills, both targets, repairs/regen and group
+  const spread = [113, 123, 124, 127, 129, 130, 560, 562, 563, 115, 122, 126, 118];
+  for (const weapon of spread) {
+    addPlan({ weapon, soulGem: true, target: gate() });
+    addPlan({ weapon, forceSkills: true, target: gate() });
+    addPlan({ weapon, forceSkills: true, target: tough() });
+    addPlan({ weapon, target: tough() });
+  }
+  for (const group of groups) addPlan({ weapon: 124, group, target: gate() });
+  for (const repairs of [undefined, 0, 1, 3, 99, -1, 1.9, NaN, '2', 'x', null]) {
+    addPlan({ weapon: 125, repairs, target: gate() });
+  }
+  for (const regen of [undefined, 0, 1, 2, 9, -1, 2.9, NaN, '3', null]) {
+    addPlan({ weapon: 125, regen, target: gate() });
+  }
+  for (const skill of [undefined, null, 29, 34, 30, 0, 99, '34', NaN]) {
+    addPlan({ weapon: 118, skill, target: gate() });
+  }
+  // `forceSkills` together with `skill`: the future-cap filter's "this skill, or Critical Strike" arms need both at once
+  // (the grid above never pairs them), and the `some(...)`/`==` mutants only show there.
+  for (const skill of [29, 34, 30, 0, 99]) {
+    addPlan({ weapon: 118, forceSkills: true, skill, target: gate() });
+    addPlan({ weapon: 123, forceSkills: true, skill, soulGem: true, target: gate() });
+  }
+  for (const shield of [undefined, 'none', 'auto', 109, 111, 112, 0, 120]) {
+    addPlan({ weapon: 123, shield, soulGem: true, target: gate() });
+  }
+  // a repeated plan: the JS cache is not ported, but the same inputs must produce the same plan
+  put('plan', [{ weapon: 123, target: gate() }], E.planEnchants({ weapon: 123, target: gate() }));
+  // the matrix's own plan call, per family (the same options, so a matrix difference points at the wrapper)
+  for (const family of IMPRINT_FAMILIES) {
+    const best = E.bestWeaponForFamily(family, gate());
+    if (!best) continue;
+    addPlan({ weapon: best.template, soulGem: false, repairs: 1, regen: 0, group: 'daedra', forceSkills: false, target: gate() });
+  }
+  // Each matrix is compared by its own `matrix` case; no combined row (the file stays small).
+  for (const [opts, result] of matrixRows) put('matrix', [opts], result);
+
+  // ---- effectLine: every effect of every plan (the readable line and its grouping) -------------------
+  for (const result of plans) {
+    for (const row of result.rows) {
+      for (const e of row.effects) put('line', [e], E.effectLine(e));
+    }
+  }
+  // The QoL counts: a soul-gem budget lets more hosts fit, so the decrement's size shows.
+  for (const repairs of [3, 4, 6, 8, 12]) addPlan({ weapon: 123, soulGem: true, repairs, target: gate() });
+  for (const regen of [3, 4, 6, 8, 12]) addPlan({ weapon: 123, soulGem: true, regen, target: gate() });
+  // toLocaleString rounds to three fraction digits; the catalogue's costs are integers, so only .5 values are pinned
+  // beyond integers (a documented limit: a sub-milli cost would print "0" in en-US).
+  for (const cost of [0.5, -0.5]) {
+    put('line', [{ name: 'X', paramName: 'y', cost, benefit: '' }], E.effectLine({ name: 'X', paramName: 'y', cost, benefit: '' }));
+  }
+  // the grouping edges: 0, 999, 1000, 1830, 5000 and a negative and a fractional cost
+  for (const cost of [0, 1, 9, 10, 99, 100, 999, 1000, 1500, 5000, 12345, -500, 1234.5, 1e21]) {
+    put('line', [{ name: 'X', paramName: 'y', cost, benefit: '' }], E.effectLine({ name: 'X', paramName: 'y', cost, benefit: '' }));
+    put('line', [{ name: 'X', paramName: '', cost, benefit: 'b' }], E.effectLine({ name: 'X', paramName: '', cost, benefit: 'b' }));
+  }
+  put('line', [{ name: 'X', paramName: 'undefined', cost: 5 }], E.effectLine({ name: 'X', paramName: 'undefined', cost: 5 }));
+  put('line', [{ name: 'X', paramName: undefined, cost: 5 }], E.effectLine({ name: 'X', paramName: undefined, cost: 5 }));
+
+  // ---- the planner's pure pieces, exposed for the sweep: the cap, proc cap, count coercion, strike list, the
+  // priority-fill selector and the grouping. Each is a whole domain or a boundary list.
+  put('strike', [null], strikeParams());
+  put('consts', [null], [10, 400, 800]);
+  for (const hp of [0, 1, 100, 399, 400, 401, 750, 800, 900, 1000, 1001, 1500, 4000]) {
+    for (const swings of [0.5, 1, 2, 10, 40, 100, 168, 200, 400]) {
+      put('maxprocs', [hp, swings], Math.max(1, Math.min(3, Math.floor(hp / (10 * swings)))));
+    }
+  }
+  for (const v of [undefined, null, 0, -0, 1, 1.9, -1, -1.9, NaN, Infinity, -Infinity, '2', 'x', '']) {
+    // The JS default parameter: `undefined` takes the default, an explicit value does not.
+    const jsCount = (x, d) => Math.max(0, Math.trunc(Number(x === undefined ? d : x) || 0));
+    put('count', [v, 1], jsCount(v, 1));
+    put('count', [v, 0], jsCount(v, 0));
+  }
+  // The priority-fill selector over a synthetic candidate list: the budget, the ten-row cap, the proc cap and a tie.
+  const cand = (type, param, cost, value) => ({ type, param, cost, value });
+  const grids = [
+    [cand('CastWhenStrikes', 50, 100, 3), cand('CastWhenStrikes', 53, 100, 5), cand('EnhancesSkill', 29, 100, 4)],
+    [cand('CastWhenStrikes', 50, 100, 3), cand('CastWhenStrikes', 53, 100, 3)],
+    [cand('PotentVs', 1, 0, 2), cand('PotentVs', 2, 5, 2)],
+    [cand('EnhancesSkill', 29, 5, 1), cand('EnhancesSkill', 34, 5, 1), cand('EnhancesSkill', 28, 5, 1)],
+    Array.from({ length: 12 }, (_, i) => cand('EnhancesSkill', i, 1, 1)),
+  ];
+  for (const cands of grids) {
+    for (const budget of [0, 1, 4, 10, 100, 150, 200, 1000, Infinity]) {
+      for (const maxProcs of [0, 1, 2, 3, 5]) {
+        put('select', [cands, budget, maxProcs], selectCandidates(cands, budget, maxProcs));
+      }
+    }
+  }
+  // The priority-fill selector's own arms: a 12-candidate list over budget 0 and Infinity shows that the ten-row cap
+  // and the exact-arith keys matter (a `+`/`-` or key field swap picks a different set).
+  for (const n of [1, 9, 10, 11]) {
+    const cands = Array.from({ length: n }, (_, i) => ({ type: 'EnhancesSkill', param: i, cost: 1, value: 1 }));
+    for (const budget of [0, 1, 9, 10, 11, 12, Infinity]) {
+      put('select', [cands, budget, 3], selectCandidates(cands, budget, 3));
+    }
+  }
+  // A 0-cost candidate and a NaN-valued one reach the `cost.is_finite()`/`value > 0` guards.
+  for (const cands of [
+    [{ type: 'PotentVs', param: 1, cost: 0, value: 5 }],
+    [{ type: 'PotentVs', param: 1, cost: Infinity, value: 5 }],
+    [{ type: 'PotentVs', param: 1, cost: 5, value: NaN }],
+    [{ type: 'PotentVs', param: 1, cost: NaN, value: 5 }],
+    [{ type: 'PotentVs', param: 1, cost: -5, value: 5 }],
+  ]) {
+    put('select', [cands, 100, 3], selectCandidates(cands, 100, 3));
+  }
+  // The priority-fill selector's ordering arms: equal rates (the comparator tie), two CWS candidates (the proc-count
+  // key field), mixed costs (the spent/count key fields) and a tie the strict `>` first-wins rule decides.
+  const tie = (t, p, cost, value) => ({ type: t, param: p, cost, value });
+  for (const cands of [
+    [tie('PotentVs', 1, 5, 5), tie('PotentVs', 2, 10, 10)],
+    [tie('PotentVs', 2, 10, 10), tie('PotentVs', 1, 5, 5)],
+    [tie('CastWhenStrikes', 50, 5, 3), tie('CastWhenStrikes', 53, 5, 4), tie('EnhancesSkill', 29, 5, 3)],
+    [tie('CastWhenStrikes', 50, 5, 3), tie('CastWhenStrikes', 53, 5, 3), tie('CastWhenStrikes', 52, 5, 3)],
+    [tie('CastWhenStrikes', 50, 2, 1), tie('EnhancesSkill', 29, 3, 2), tie('PotentVs', 1, 1, 1),
+      tie('CastWhenStrikes', 53, 2, 1)],
+    [tie('EnhancesSkill', 29, 3, 2), tie('EnhancesSkill', 34, 3, 2)],
+    [tie('EnhancesSkill', 29, 0, 2), tie('EnhancesSkill', 34, 1, 2)],
+    // The DP key's `spent + cost` (a `-` mutant collides two different sums): 5+4 and 4+3 must not be one key.
+    [tie('CastWhenStrikes', 1, 5, 5), tie('CastWhenStrikes', 2, 4, 7), tie('EnhancesSkill', 3, 4, 7),
+      tie('CastWhenStrikes', 1, 3, 7)],
+  ]) {
+    for (const budget of [0, 1, 5, 10, 20, 100, Infinity]) {
+      for (const maxProcs of [0, 1, 2, 3, 4]) {
+        put('select', [cands, budget, maxProcs], selectCandidates(cands, budget, maxProcs));
+      }
+    }
+  }
+  // The two sort comparators over permuted lists of every sign: a 2-element sort pairs only (b, a), whose difference is
+  // negative, so a `> 0` vs `> 1` mutant survives there; a list with a positive adjacent pair pins the branch.
+  for (const values of [
+    [{ dps: 1, name: 'a' }, { dps: 2, name: 'b' }],
+    [{ dps: 2, name: 'a' }, { dps: 1, name: 'b' }],
+    [{ dps: 1, name: 'a' }, { dps: 2, name: 'b' }, { dps: 3, name: 'c' }],
+    [{ dps: 3, name: 'a' }, { dps: 1, name: 'b' }, { dps: 2, name: 'c' }],
+    [{ dps: 1, name: 'a' }, { dps: 1, name: 'b' }, { dps: 2, name: 'c' }],
+    [{ dps: 1, name: 'a' }, { dps: 1, name: 'b' }],
+    // mixed: a later element larger than the one before it (the only shape a `d > 1` mutant can mis-order)
+    [{ dps: 2, name: 'a' }, { dps: 3, name: 'b' }, { dps: 1, name: 'c' }],
+    [{ dps: 1, name: 'a' }, { dps: 3, name: 'b' }, { dps: 2, name: 'c' }],
+    [{ dps: 5, name: 'a' }, { dps: 4, name: 'b' }, { dps: 9, name: 'c' }, { dps: 7, name: 'd' }],
+    [{ dps: 0, name: 'a' }, { dps: -1, name: 'b' }],
+  ]) put('sortdps', [values], sortByDps(values));
+  for (const values of [
+    [{ value: 1, cost: 1, name: 'a' }, { value: 2, cost: 1, name: 'b' }],
+    [{ value: 2, cost: 1, name: 'a' }, { value: 1, cost: 1, name: 'b' }],
+    [{ value: 1, cost: 2, name: 'a' }, { value: 1, cost: 1, name: 'b' }],
+    [{ value: 3, cost: 2, name: 'a' }, { value: 1, cost: 1, name: 'b' }, { value: 2, cost: 2, name: 'c' }],
+    [{ value: 1, cost: 1, name: 'a' }, { value: 2, cost: 2, name: 'b' }],
+    [{ value: 0, cost: 1, name: 'a' }, { value: 1, cost: 1, name: 'b' }],
+    [{ value: 1, cost: 0, name: 'a' }, { value: 1, cost: 1, name: 'b' }],
+    [{ value: 1, cost: 1, name: 'a' }, { value: 1, cost: 0, name: 'b' }],
+    [{ value: 2, cost: 3, name: 'a' }, { value: 5, cost: 4, name: 'b' }, { value: 1, cost: 9, name: 'c' }],
+    [{ value: 5, cost: 9, name: 'a' }, { value: 2, cost: 3, name: 'b' }, { value: 1, cost: 1, name: 'c' }],
+  ]) put('sortrate', [values], sortByRate(values));
+  // The cost formatter: whole numbers, the exact three-fraction-digit rounding and the exponent expansion.
+  for (const x of [0, 1, 9, 10, 99, 100, 999, 1000, 1830, 5000, 12345, -500, 0.5, -0.5, 1.0005, 2.00049, 0.00049,
+    0.0005, 0.9999, 1.9995, 1234.5678, 1e21, 1.5e21, -1e21, 1e-7, 0.125,
+    // the exponent-expansion arms: a value whose digits end before the point (needs zero padding) and one whose
+    // point falls inside the digits (no padding)
+    0.000123, 0.000000001, 1.5e-8, 1.234e-5, 1.234567e2, 1.234567e5, 1e-21]) {
+    put('grouped', [x], groupedText(x));
+  }
+  console.log('rust-planner-vectors:', counts);
+  // Every `cost_of` argument the planner's utility catalogue uses, plus the neighbours that must differ, so a wrong
+  // param in a utility row is not silently the same price.
+  for (const [kind, param] of [
+    ['RepairsObjects', undefined], ['RepairsObjects', -1], ['RegensHealth', 0], ['RegensHealth', 1],
+    ['ExtraSpellPts', 0], ['ExtraSpellPts', 1], ['VampiricEffect', 0], ['VampiricEffect', 1],
+    ['ImprovesTalents', 0], ['ImprovesTalents', 1], ['ImprovesTalents', 2],
+    ['FeatherWeight', undefined], ['FeatherWeight', -1],
+    ['StrengthensArmor', -1], ['AbsorbsSpells', -1], ['IncreasedWeightAllowance', 1],
+  ]) {
+    put('cost', [kind, param === undefined ? null : param], costOf(kind, param));
+  }
+  // The `rate: cost > 0 ? value / cost : 0` guard: a zero and a negative cost take the else arm, a positive one divides.
+  for (const value of [0, 1, 12.5, -3, 1000]) {
+    for (const cost of [-900, -1, 0, 0.5, 1, 900, 5000]) {
+      put('rate', [value, cost], cost > 0 ? value / cost : 0);
+    }
+  }
+  // `hitPointsOf`/`cost_of`'s defaults are real JS lines the catalogue never reaches. Two families call the helpers
+  // directly with the values that do reach them, so those defaults are pinned, not just argued away.
+  for (const template of [560, 561, 562, 563, 43, 999, 131, 123, 113]) {
+    put('hitpoints', [template], hitPointsOf(template));
+  }
+  const baseCh = maxCharacter(123, {});
+  for (const maxCondition of [undefined, null, 0, -0, NaN, '', 'x', 1, 800, 1500, '1200']) {
+    const ch = JSON.parse(JSON.stringify(baseCh));
+    if (ch.weapon) {
+      if (maxCondition === undefined) delete ch.weapon.maxCondition;
+      else ch.weapon.maxCondition = maxCondition;
+    }
+    put('apply', [{ maxCondition: maxCondition === undefined ? 'absent' : String(maxCondition) }, ch, { rows: [] }, gate()],
+      applyPlanDps(ch, { rows: [] }, gate()));
+  }
+  // The same call with skill rows: `skills[e.param] ?? 0` is reached for a skill the character has no key for, and for
+  // one it does (the plan's own characters carry both ids, so only a hand-built plan reaches the default).
+  for (const rows of [
+    [{ effects: [{ type: 'EnhancesSkill', param: 28 }] }],
+    [{ effects: [{ type: 'EnhancesSkill', param: 29 }] }],
+    [{ effects: [{ type: 'EnhancesSkill', param: 34 }, { type: 'CastWhenStrikes', param: 50 }] }],
+    [{ effects: [{ type: 'PotentVs', param: 1 }, { type: 'EnhancesSkill', param: 29 }] }],
+  ]) {
+    put('apply', ['rows', JSON.parse(JSON.stringify(baseCh)), { rows }, gate()],
+      applyPlanDps(JSON.parse(JSON.stringify(baseCh)), { rows }, gate()));
+  }
+  // `addSkillPoints`' `_mods.skills?.[sid] ?? 0` (enchantPlan.js:104): a character whose skill map lacks the key.
+  // No string-valued skill here: JS would concatenate there (`'150' + 15`), Rust converts (see the `shortcut:` at the
+  // site); every builder writes numbers, so that shape is not a real input.
+  for (const base of [
+    { _mods: { skills: {} } },
+    { _mods: { skills: { 29: 200 } } },
+    { _mods: { skills: { 29: null } } },
+    { _mods: {} },
+  ]) {
+    for (const [id, points] of [[29, 15], [34, 15], [0, 0], [29, -15]]) {
+      put('skillpts', [base, id, points], addSkillPoints(base, id, points));
+    }
+  }
+  // Invariants the equivalence notes rely on: no piece reaches the ten-row cap, every gear template answers hitPoints,
+  // and no plan total is NaN.
+  let maxRows = 0;
+  for (const p of plans) {
+    for (const r of p.rows) maxRows = Math.max(maxRows, r.effects.length);
+    for (const v of [p.cardPlanDps, p.cardUncappedPlanDps, p.procDps]) {
+      if (Number.isNaN(v)) throw new Error('rust-planner-vectors: a plan total is NaN');
+    }
+  }
+  if (maxRows > 6) throw new Error(`rust-planner-vectors: a piece holds ${maxRows} rows; the row-cap note must change`);
+  // The DP key's three components are (spent+cost, count, procs). `spent` is a sum of the candidates' costs, all whole
+  // numbers from the price table, so `spent + cost` is exact and equal exactly when the sums are equal; the note on the
+  // key relies on that. (The synthetic `select` grids deliberately include NaN/Infinity costs, so the check covers the
+  // real plans' candidates, which are what the key is built from.)
+  for (const p of plans) {
+    for (const r of p.ratings.weapon) {
+      if (!Number.isInteger(r.cost)) {
+        throw new Error(`rust-planner-vectors: a plan candidate cost is not whole: ${r.cost}`);
+      }
+    }
+  }
+  // How many CWS rows a plan can carry (the proc-cap note).
+  const cwsRows = new Map();
+  for (const p of plans) {
+    const n = p.ratings.weapon.filter((r) => r.type === 'CastWhenStrikes').length;
+    cwsRows.set(n, (cwsRows.get(n) ?? 0) + 1);
+  }
+  if (cwsRows.size !== 1 || !cwsRows.has(6)) {
+    throw new Error(`rust-planner-vectors: the CWS row count is not the constant 6: ${JSON.stringify([...cwsRows])}`);
+  }
+  console.log(`PROBE maxRows ${maxRows}`);
+  return { enchant_plan: plan.write(), real_build: real.write() };
 }

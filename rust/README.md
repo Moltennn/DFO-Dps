@@ -161,21 +161,70 @@ percent totals or hp/mp small stats ever leave the ranges the equivalence notes 
 and `MAX_RUN_SCENARIO` are `cutLiteral`/`cutScalar` reads of the real source text (the R1 method): the generator throws if
 the text moves or the name is not unique. They are generated now, unused, for stage 2.
 
-## R5d: what is left (stages 2-5; not ported in this session)
+## R5d: what is left
 
-Stopped before stage 2 to leave the gates green. The three remaining modules are pure, but each is a large grid; the
-measurements below are the real JS on this machine (2026-11-19):
+**Stage 2 (the enchant plan) is DONE** (see "R5d stage 2" below). **Stages 3 and 4 are NOT ported**: `src/realBuild.js`
+and `src/loadoutShortlist.js` remain a JS-only surface, `dfo-core/src/real_build.rs` is a comment-only placeholder, no
+test reads them, and nothing calls them. They are documented here, not hidden.
 
-| Stage | JS | Cost measured | Plan |
+| Stage | JS | Why it stopped | What it needs |
 |---|---|---|---|
-| 2 | `src/enchantPlan.js` (346) | `planEnchants` 37-122 ms; `gearPieces` < 1 ms; `bestWeaponForFamily` ~5 ms; `planMatrix` ~350 ms | port `gearPieces`, `planEnchants`, `bestWeaponForFamily`, `planMatrix`, `effectLine`; vectors: every template x soulGem x forceSkills x group x target x repairs/regen/shield. Domain: 23 templates x 2 x 2 x 5 groups x 2 targets x ~6 shield = ~2,760. `effectLine` grouping is en-US (`1,830`), pinned by vectors. `JSON.parse(JSON.stringify(ch))` (lines 102,106,164) is `analyze::json_clone`: every character the builders make holds only finite numbers, so the clone is the same object. The `value / cost` sorts are NaN-equal and stable. `repairs`/`regen` are `Math.max(0, Math.trunc(Number(x) \|\| 0))` (NaN, `''` and both zeros give 0). |
-| 3 | `src/realBuild.js` (194) | `realBuildStages`/`realTemplate` 60-110 ms; `realWeaponLoadouts` ~2.3-2.4 s for 26 sampled rows | port `applyFirmament`, `applyTree`, `realBuildStages`, `realTemplate`, `realWeaponLoadouts`, `isSampledLoadout`. The `clone` at :33 is `analyze::json_clone` with the same proof. Vectors: mode {uncapped, cap} x encounter {breach, skyketch, abyss} x vampire x dual for every template the families hold. Encounter/purse are already ported (`encounters`, `purse`). |
-| 4 | `src/loadoutShortlist.js` (57) | `shortlistLoadouts` k=1 3.0 s, k=3 2.7 s, k=5 4.8 s (uncapped) / 6.1 s (cap) at 1,000 trials and `maxSeconds: 20` | port over `objectives::rank_builds`. `universeCache` is dropped (the universe is a pure function of mode/vampire/encounter). Vectors: k in {1,3,5,all} x both modes x fixed seeds; the 1,000-trial floor is `objectives::MIN_STOCHASTIC_TRIALS`. Keep `maxSeconds` at 20 s or the fixture takes minutes. |
-| 5 | mutation sweeps | — | one sweep per new file, then a vector or a `// mutation: equivalent` note for every survivor. |
+| 3 | `src/realBuild.js` (194) | Not started in this session (budget). | Port `applyFirmament`, `applyTree`, `realBuildStages`, `realTemplate`, `realWeaponLoadouts`, `isSampledLoadout`. `clone` at :33 is `analyze::json_clone` with the same proof. Vectors: mode {uncapped, cap} x encounter {breach, skyketch, abyss} x vampire x dual over each family's templates (~168 stage objects, ~15 s). Encounter/purse are already ported. |
+| 4 | `src/loadoutShortlist.js` (57) | Needs stage 3. | Port `shortlistLoadouts` over `objectives::rank_builds`; drop `universeCache` (a pure function), pass `MAX_RUN_SCENARIO` and the `health` argument explicitly. Vectors: k in {1,3,5,all} x both modes x fixed seeds at `maxSeconds: 20` (~8 calls, ~30 s). |
 
-`dfo-core/src/enchant_plan.rs` is a comment-only placeholder and `tools/rust-planner-vectors.mjs` throws if imported:
-nothing calls them, so the absence is documented, not hidden. The decoder for `ITEM_ENCHANTMENT_NAMES` /
-`ITEM_ENCHANTMENT_HIT_POINTS` is already generated.
+## R5d stage 2: the enchant plan (`src/enchantPlan.js`)
+
+- `dfo-core/src/enchant_plan.rs`: `gear_pieces`, `plan_enchants`, `best_weapon_for_family`, `plan_matrix`,
+  `effect_line`, plus the exposed pure pieces `strike_params`, `max_procs_of`, `count_input`,
+  `select_weapon_candidates`, `skill_id_of_template`, `skill_ids_for_template`.
+- `dfo-core/src/enchants.rs` (extended): `item_enchantment_name`, `item_enchantment_hit_points`,
+  `enchantment_type_id`, `enchantment_name`, `default_param_of`, `enchantment_param_name` (the generator writes the
+  (type, param) label table).
+- `generated/firmament.rs` (extended): `ONE_PIECE`, `STACKS`, `WEAPON_ONLY` as codec tokens (the JS objects verbatim,
+  authored field order); `generated/enchant_data.rs`: `ITEM_ENCHANTMENT_NAMES`, `ITEM_ENCHANTMENT_HIT_POINTS`,
+  `ENCHANTMENT_TYPE_ID`, `ENCHANTMENT_PARAM_NAMES`.
+- `tests/enchant_plan.rs` + `tools/rust-planner-vectors.mjs`, `enchant_plan.txt`.
+
+### JS semantics decided here
+
+- **`JSON.parse(JSON.stringify(ch))`** (:102, :106, :164): `analyze::json_clone`, with the same proof as R5b (plain
+  finite records only).
+- **`value / cost` sorts and `b.x - a.x` sorts**: a NaN difference is JS's "equal"; Rust's `sort_by` is stable, so the
+  port returns `Equal` on a NaN difference. This is a real defect class — the first sweep caught the comparator
+  direction inverted (`Less`/`Greater` swapped), which reordered every rating; fixed and the plans/ratings now match.
+- **`effectLine`'s `toLocaleString()`**: en-US grouping (`1,830`), pinned by the vectors. The catalogue's costs are
+  whole numbers; a fractional cost is printed with up to three fraction digits (a documented shortcut: none exists in
+  the catalogue).
+- **In-place passes**: the JS shares the piece objects (a shallow `slice()`), so the utility, skill and QoL passes edit
+  the same rows the final plan reads. The port keeps one `Vec<Value>` of pieces and edits by index.
+- **`Math.max(0, Math.trunc(Number(x) || 0))`** for `repairs`/`regen`; `skill == null` is `skillIdOf`; a `group` of
+  `null`/`'none'` means no Potent Vs.
+- **`selectWeaponCandidates`**: the exact DP over a snapshot per candidate (a state added this round is not extended
+  again); the `0|0|0` seed; strict `>` on the final best (first wins a tie).
+
+### Vectors (`enchant_plan.txt`, 2,952 lines)
+
+| Family | Cases | Domain / why |
+|---|---|---|
+| `plan` | ~150 | whole plans: every template at shipped options, plus the option grid (soulGem, forceSkills, both targets, group, repairs/regen/skill/shield) and the matrix's own plan call per family. Domain 33,120; ~60 ms each, so sized by wall clock. |
+| `gear` | 239 | every template x 10 shield forms + the refusals — the whole domain of `gearPieces` |
+| `best` | 12 | 6 families x 2 targets — the whole domain |
+| `matrix` | 5 | the option grid, each a whole 6-family matrix (~350 ms each) |
+| `line` | ~1,830 | every effect of every plan (plus the grouping edges) |
+| `select` | ~500 | `selectWeaponCandidates` over synthetic candidate lists (budget/proc-cap/row-cap/tie arms) |
+| `maxprocs` / `count` | 117 / 28 | the two scalar coercions at their edges |
+| `strike` / `consts` | 1 / 1 | the summary constants versus the source text |
+
+`node_modules`-free and deterministic; the generator prints the counts. The generator asserts the equivalence notes'
+premises (max rows per piece, no NaN plan total) and throws if they change.
+
+### Mutation sweep (seed 1, count 1000)
+
+`enchant_plan.rs`: 205 mutants, 133 killed, 71 equivalent survivors, 1 invalid. The survivors are the default-fallback
+and unreachable arms (`?? 400`, `?? 0`, the comparator `> 0` zero checks, the `800`/`20`/`10` literals, the
+`toLocaleString` exponent/fraction branches for inputs the catalogue never makes), each proved at a module-level
+`// mutation: equivalent` note and by the generator's assertions. The first sweep found the comparator direction bug,
+which is why the sweep is the acceptance test here.
 
 ## R6b: seeded ordinary fights
 

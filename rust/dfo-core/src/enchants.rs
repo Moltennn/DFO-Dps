@@ -1,5 +1,8 @@
 //! Expected strikes payload and item-maker facts (`src/enchants.js`, `src/enchantData.js`).
-use crate::generated::enchant_data::{ENCHANTMENT_PRICE_ROWS, ITEM_ENCHANTMENT_POINTS};
+use crate::generated::enchant_data::{
+    ENCHANTMENT_PARAM_NAMES, ENCHANTMENT_PRICE_ROWS, ENCHANTMENT_TYPE_ID,
+    ITEM_ENCHANTMENT_HIT_POINTS, ITEM_ENCHANTMENT_NAMES, ITEM_ENCHANTMENT_POINTS,
+};
 pub use crate::generated::enchant_data::{ITEM_ENCHANTMENT_MAX, PARAM_NONE};
 use crate::generated::enchantments::STRIKE_AFFINITY;
 pub use crate::generated::enchantments::{
@@ -173,4 +176,63 @@ pub fn enchantment_cost(kind: f64, param: Option<f64>) -> Option<f64> {
 
 pub fn item_enchantment_points(index: &Value) -> f64 {
     obj_table_get(ITEM_ENCHANTMENT_POINTS, &Num(index.to_number())).unwrap_or(0.0)
+}
+
+/// `itemTemplate(index)?.name` (enchantData.js:224): the vendored template's name, or None when the template is absent.
+pub fn item_enchantment_name(index: &Value) -> Option<&'static str> {
+    obj_table_get(ITEM_ENCHANTMENT_NAMES, &Num(index.to_number()))
+}
+
+/// `itemTemplate(index)?.hitPoints` (enchantData.js:224), absent when the template is missing or has no hitPoints.
+pub fn item_enchantment_hit_points(index: &Value) -> Option<f64> {
+    obj_table_get(ITEM_ENCHANTMENT_HIT_POINTS, &Num(index.to_number()))
+}
+
+/// The classic id `enchantData.js` prices a type under (`ENCHANTMENT_TYPES[name]`), or None for a name it has not.
+pub fn enchantment_type_id(kind: &str) -> Option<f64> {
+    ENCHANTMENT_TYPE_ID
+        .iter()
+        .find(|(k, _)| *k == kind)
+        .map(|(_, id)| *id)
+}
+
+/// `enchantmentName(type)`: `String(type).replace(/([a-z])([A-Z])/g, '$1 $2')`.
+pub fn enchantment_name(kind: &str) -> String {
+    let chars: Vec<char> = kind.chars().collect();
+    let mut out = String::new();
+    for (i, ch) in chars.iter().enumerate() {
+        if i > 0 && chars[i - 1].is_ascii_lowercase() && ch.is_ascii_uppercase() {
+            out.push(' ');
+        }
+        out.push(*ch);
+    }
+    out
+}
+
+/// `defaultParam(type)`: the first parameter `enchantmentParamValues` lists (None when the type is not priced).
+pub fn default_param_of(kind: &str) -> Option<f64> {
+    let id = enchantment_type_id(kind)?;
+    self::default_param(id)
+}
+
+/// `enchantmentParamName(type, param)`: the parameter's label. The generator writes one row per (type, param) the
+/// catalogue names; a param outside them is the number's string form.
+pub fn enchantment_param_name(kind: &str, param: &Value) -> String {
+    let id = enchantment_type_id(kind);
+    if let Some(id) = id {
+        let p = param.to_number();
+        if matches!(param, Num(x) if *x == PARAM_NONE) {
+            return String::new();
+        }
+        if let Some((_, _, name)) = ENCHANTMENT_PARAM_NAMES
+            .iter()
+            .find(|(t, v, _)| *t == id && *v == p)
+        {
+            return (*name).to_owned();
+        }
+    }
+    if matches!(param, Num(x) if *x == PARAM_NONE) {
+        return String::new();
+    }
+    param.to_js_string()
 }

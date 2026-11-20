@@ -32,6 +32,7 @@ pub mod mint;
 pub mod model_blow;
 pub mod objectives;
 pub mod purse;
+pub mod real_build;
 pub mod relay_claim;
 pub mod relay_fight;
 pub mod rng;
