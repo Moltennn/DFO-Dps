@@ -1,10 +1,11 @@
-//! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves`, `rank` and `doctor` slice).
+//! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves`, `build`, `rank` and `doctor` slice).
 //!
-//! This is the JS `src/cli.js` `rank` path, the `saves` listing and `doctor`, and only that: [`main`] parses the flags
-//! the rank card reads, replays the JS validation (`numFlag`, the enum checks) with the same messages, builds either the
-//! level-45 theory character or the one an imported save describes, the target and the scenario, then prints
-//! `printRank` or `{ character, weapons, current }` as `--json` does. `doctor` prints the save/build/ruleset summary
-//! over the same imported character.
+//! This is the JS `src/cli.js` `build` summary, `rank` card, `saves` listing and `doctor`, and only that: [`main`]
+//! parses the flags those read, replays the JS validation (`numFlag`, the enum checks) with the same messages, builds
+//! either the level-45 theory character or the one an imported save describes, the target and the scenario, then prints
+//! `printRank` or `{ character, weapons, current }` as `--json` does. `build --json` prints `summary()` as the JS
+//! `--json` branch does; its text card is not ported yet and is refused by name rather than approximated. `doctor`
+//! prints the save/build/ruleset summary over the same imported character.
 //!
 //! The save is imported READ-ONLY by [`saves`]: discovery and parsing live there, the character normalisation is
 //! `dfo_core::save::character_from_save`, and nothing is retained or written (AGENTS.md rule 11). Every flag this
@@ -19,33 +20,36 @@ use std::collections::HashMap;
 use std::process::ExitCode;
 
 use dfo_core::analyze::{
-    boss_target, current_weapon_row, gate_target, rank_weapons, reference_foe,
+    analyze, boss_target, current_weapon_row, gate_target, marginals, rank_weapons, reference_foe,
 };
 use dfo_core::encounters::{encounter_by_id, encounter_target, ENCOUNTER_IDS};
-use dfo_core::generated::data::{BOSS_TRAITS, SOURCE, WEAPONS};
+use dfo_core::generated::data::{BOSS_TRAITS, RACE_NAMES, SOURCE, WEAPONS};
 use dfo_core::generated::level_cap::LEVEL_CAP;
 use dfo_core::generated::theory::{DEFAULT_BLADE, THEORY_LEVEL, THEORY_RACES};
 use dfo_core::maxprofile::Profiles;
-use dfo_core::model_blow::weapon_of;
+use dfo_core::model_blow::{synthetic_weapon, weapon_of};
 use dfo_core::round::math_round;
 use dfo_core::save::{character_label, live_stat, skill_name, skill_value};
 use dfo_core::spells::Spellbook;
 use dfo_core::theory::theory_character;
-use dfo_core::value::{number_to_string, string_to_number, Value, Value::*};
+use dfo_core::value::{number_to_string, obj_table_get, string_to_number, Value, Value::*};
 
 const HELP: &str = "\
-dfo-cli - the saves, rank and doctor slice of dfo-dps (Rust core)
+dfo-cli - the saves, build, rank and doctor slice of dfo-dps (Rust core)
 
 Usage:
   dfo-cli saves
   dfo-cli doctor [--save <slot|folder|path>] [--offline]
+  dfo-cli build [--save <slot|folder|path>] [options] --json
+  dfo-cli build --theory [options] --json
   dfo-cli rank [weapons] [--save <slot|folder|path>] [options]
   dfo-cli rank [weapons] --theory [options]
 
 `saves` lists the save folders under the DFO user-data folder (newest first). `doctor` prints the model pin, the
-save folders and the imported character's build/ruleset summary. `rank` prices every melee template/material: with
---theory for the level-45 theory character, otherwise for the imported save (read-only). Text is the JS card;
---json is `{ character, weapons, current }`.
+save folders and the imported character's build/ruleset summary. `build` prices one build against one target: with
+--theory for the level-45 theory character, otherwise for the imported save (read-only). `rank` prices every melee
+template/material the same way. `build` prints `summary()` as `--json` only; its text card is not ported yet and is
+refused by name rather than approximated. `rank` text is the JS card, `--json` is `{ character, weapons, current }`.
 
 Flags:
   --save <SAVE4|folder|SaveData.txt>  the save to import (default: the newest under the user-data folder)
@@ -124,6 +128,20 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         check_output_flags(&command, &parsed)?;
         return doctor_command(&values);
     }
+    if command == "build" {
+        if let Some(extra) = parsed.positionals.get(1) {
+            return Err(usage(format!("unexpected positional argument \"{extra}\"")));
+        }
+        check_output_flags(&command, &parsed)?;
+        // The JS `printBuild` card is not ported yet. Refuse it by name rather than printing a different format that
+        // would look like the JS output and drift silently.
+        if !values.json {
+            return Err(usage(
+                "build text output is not ported yet; pass --json for the JS summary() output",
+            ));
+        }
+        return build(&values);
+    }
     if command != "rank" {
         const COMMANDS: [&str; 23] = [
             "build",
@@ -152,7 +170,7 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         ];
         return Err(if COMMANDS.contains(&command.as_str()) {
             usage(format!(
-                "the \"{command}\" command is not ported yet; this slice supports `saves` and `rank`"
+                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `rank` and `doctor`"
             ))
         } else {
             usage(format!("unknown command \"{command}\"\n\n{HELP}"))
@@ -452,7 +470,7 @@ fn parse(args: &[String]) -> Result<Parsed, CliError> {
         }
         if !in_flags(SUPPORTED, name) {
             return Err(usage(format!(
-                "--{name} is not supported by the rank slice (it needs a save, another command, or is not ported yet)"
+                "--{name} is not supported by this CLI slice (it needs a save, another command, or is not ported yet)"
             )));
         }
         if in_flags(BOOLEAN_FLAGS, name) {
@@ -988,6 +1006,214 @@ fn rank(values: &Values) -> Result<String, CliError> {
     } else {
         Ok(format!("{}\n", print_rank(&ch, &rows, values, &current)))
     }
+}
+
+/// `dfo-dps build --json` (`src/cli.js:2302-2312`): the `summary()` object. Only `--json` is ported; the text card is
+/// refused in [`run`] rather than approximated.
+fn build(values: &Values) -> Result<String, CliError> {
+    let book = Spellbook::default();
+    let ch = character(values, &book)?;
+    let target = target_of(&ch, values, &values.traits)?;
+    let mut scenario = scenario_of(&ch, values, &values.traits, &target);
+    // `scenarioOf` (`src/cli.js:559`): `weapon: values.theory ? undefined : weaponOverride(values)`. For the theory
+    // character `--weapon` was already applied when the character was built, so only a save takes the override here.
+    if !values.theory {
+        if let Some((tpl, mat)) = values.weapon {
+            scenario.set("weapon", synthetic_weapon(&Num(tpl), &Num(mat), values.rri));
+        }
+    }
+    let r = analyze(&ch, &scenario, &book);
+    let summary = build_summary(&ch, &r, values, &scenario, &book);
+    Ok(format!("{}\n", json(&summary)))
+}
+
+/// JS `summary()` (`src/cli.js:671-720`): the character, weapon, ruleset, target and result, then the caller's
+/// `preset`, `marginals` and `topWeapons`. The JS `--json` branch asks for `top: n(values.top, 10)`, which resolves to
+/// `--top`'s default 20 because `optsSpec` declares one; this uses the same default.
+fn build_summary(
+    ch: &Value,
+    r: &dfo_core::analyze::Analysis,
+    values: &Values,
+    scenario: &Value,
+    book: &Spellbook,
+) -> Value {
+    let card = r.to_value();
+    let target = card.get("target");
+    let hit = card.get("hit");
+    let damage = card.get("damage");
+    let cadence = card.get("cadence");
+    let weapon = card.get("weapon");
+    let live = |name: &str| Num(live_stat(ch, name));
+    let race = match obj_table_get(RACE_NAMES, ch.get("raceId")) {
+        Some(name) => Str(name.to_owned()),
+        None => ch.get("race").clone(),
+    };
+    let career_name = ch.get("career").get("name");
+    obj([
+        (
+            "character",
+            obj([
+                ("name", ch.get("name").clone()),
+                ("level", ch.get("level").clone()),
+                ("race", race),
+                (
+                    "career",
+                    if career_name.truthy() {
+                        career_name.clone()
+                    } else {
+                        Null
+                    },
+                ),
+                ("path", ch.get("martialPath").clone()),
+                ("online", ch.get("online").clone()),
+                (
+                    "stats",
+                    obj([
+                        ("strength", live("strength")),
+                        ("agility", live("agility")),
+                        ("speed", live("speed")),
+                        ("luck", live("luck")),
+                        ("endurance", live("endurance")),
+                        ("willpower", live("willpower")),
+                    ]),
+                ),
+                (
+                    "skills",
+                    obj([
+                        (
+                            "weapon",
+                            Num(skill_value(
+                                ch,
+                                &match weapon.get("skillId") {
+                                    Undefined | Null => Num(30.0),
+                                    id => id.clone(),
+                                },
+                            )),
+                        ),
+                        ("critical", Num(skill_value(ch, &Num(34.0)))),
+                        ("dodging", Num(skill_value(ch, &Num(20.0)))),
+                    ]),
+                ),
+            ]),
+        ),
+        (
+            "weapon",
+            if weapon.truthy() {
+                obj([
+                    ("name", weapon.get("name").clone()),
+                    ("templateIndex", weapon.get("templateIndex").clone()),
+                    ("material", weapon.get("materialName").clone()),
+                    ("skill", weapon.get("skill").clone()),
+                    ("twoHanded", weapon.get("twoHanded").clone()),
+                    ("condition", weapon.get("conditionPct").clone()),
+                    ("min", weapon.get("min").clone()),
+                    ("max", weapon.get("max").clone()),
+                ])
+            } else {
+                Null
+            },
+        ),
+        (
+            "ruleset",
+            obj([
+                ("core", card.get("core").clone()),
+                ("online", ch.get("online").clone()),
+                ("mentor", Bool(false)),
+            ]),
+        ),
+        (
+            "target",
+            obj([
+                ("preset", Str(values.target.clone())),
+                ("isClass", target.get("isClass").clone()),
+                ("level", target.get("level").clone()),
+                ("group", target.get("group").clone()),
+                (
+                    "armor",
+                    match target.get("armorValues").at(0) {
+                        Undefined | Null => Num(0.0),
+                        v => v.clone(),
+                    },
+                ),
+                ("health", card.get("health").clone()),
+                ("traits", card.get("traits").clone()),
+            ]),
+        ),
+        (
+            "result",
+            obj([
+                ("hit", hit.get("hit").clone()),
+                ("critChance", hit.get("crit").get("chance").clone()),
+                ("critMult", hit.get("crit").get("damageMult").clone()),
+                ("backstab", card.get("backstab").clone()),
+                ("dual", Bool(card.get("dual").truthy())),
+                ("pair", Bool(card.get("pair").truthy())),
+                (
+                    "damage",
+                    obj([
+                        ("min", damage.get("min").clone()),
+                        ("max", damage.get("max").clone()),
+                        ("avg", damage.get("avg").clone()),
+                        ("critMin", damage.get("critMin").clone()),
+                        ("critMax", damage.get("critMax").clone()),
+                        ("critAvg", damage.get("critAvg").clone()),
+                    ]),
+                ),
+                ("perSwing", card.get("perSwing").clone()),
+                ("aps", cadence.get("aps").clone()),
+                ("swingSeconds", cadence.get("seconds").clone()),
+                ("dps", card.get("dps").clone()),
+                ("dpsMin", card.get("dpsMin").clone()),
+                ("dpsMax", card.get("dpsMax").clone()),
+                ("cappedDps", card.get("cappedDps").clone()),
+                ("cappedDpsMin", card.get("cappedDpsMin").clone()),
+                ("cappedDpsMax", card.get("cappedDpsMax").clone()),
+                ("cap", card.get("cap").clone()),
+                ("capLoss", card.get("capLoss").clone()),
+                ("carriedPerSwing", card.get("carriedPerSwing").clone()),
+                ("carriedDps", card.get("carriedDps").clone()),
+                ("carriedCappedDps", card.get("carriedCappedDps").clone()),
+                ("enchantDps", card.get("enchantDps").clone()),
+                ("enchantDpsMin", card.get("enchantDpsMin").clone()),
+                ("enchantDpsMax", card.get("enchantDpsMax").clone()),
+                ("totalDps", card.get("totalDps").clone()),
+                ("totalDpsMin", card.get("totalDpsMin").clone()),
+                ("totalDpsMax", card.get("totalDpsMax").clone()),
+                ("enchantPerSwing", card.get("enchantPerSwing").clone()),
+                ("enchantProcs", card.get("enchantProcs").clone()),
+                ("procsBeforeBreak", card.get("procsBeforeBreak").clone()),
+                (
+                    "procsBeforeBreakBasis",
+                    card.get("procsBeforeBreakBasis").clone(),
+                ),
+                ("ward", card.get("ward").clone()),
+                ("ttk", card.get("ttk").clone()),
+                ("totalTtk", card.get("totalTtk").clone()),
+                ("totalTtkCapOnly", card.get("totalTtkCapOnly").clone()),
+                ("wrath", card.get("wrath").clone()),
+                ("ceilingTotalDps", card.get("ceilingTotalDps").clone()),
+                ("ceilingTotalDpsMin", card.get("ceilingTotalDpsMin").clone()),
+                ("ceilingTotalDpsMax", card.get("ceilingTotalDpsMax").clone()),
+                ("ceilingTotalTtk", card.get("ceilingTotalTtk").clone()),
+                ("claimTotalTtk", card.get("claimTotalTtk").clone()),
+                ("claimSustainedDps", card.get("claimSustainedDps").clone()),
+                ("terms", damage.get("parts").clone()),
+            ]),
+        ),
+        ("preset", Str(values.target.clone())),
+        ("marginals", marginals(ch, r, scenario, book)),
+        (
+            "topWeapons",
+            // The JS text says `n(values.top, 10)`, but `optsSpec` gives `--top` the default "20", so 20 is what an
+            // unspecified flag resolves to; this fallback keeps the same rows.
+            rank_weapons(
+                ch,
+                scenario,
+                &obj([("top", Num(values.num("top", 20.0)))]),
+                book,
+            ),
+        ),
+    ])
 }
 
 /// `loadCharacter` (`src/cli.js:401-449`): the level-45 theory character with `--theory`, otherwise the character the
