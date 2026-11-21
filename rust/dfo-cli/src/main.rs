@@ -1,9 +1,10 @@
-//! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves` and `rank` slice).
+//! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves`, `rank` and `doctor` slice).
 //!
-//! This is the JS `src/cli.js` `rank` path and the `saves` listing, and only that: [`main`] parses the flags the rank
-//! card reads, replays the JS validation (`numFlag`, the enum checks) with the same messages, builds either the
+//! This is the JS `src/cli.js` `rank` path, the `saves` listing and `doctor`, and only that: [`main`] parses the flags
+//! the rank card reads, replays the JS validation (`numFlag`, the enum checks) with the same messages, builds either the
 //! level-45 theory character or the one an imported save describes, the target and the scenario, then prints
-//! `printRank` or `{ character, weapons, current }` as `--json` does.
+//! `printRank` or `{ character, weapons, current }` as `--json` does. `doctor` prints the save/build/ruleset summary
+//! over the same imported character.
 //!
 //! The save is imported READ-ONLY by [`saves`]: discovery and parsing live there, the character normalisation is
 //! `dfo_core::save::character_from_save`, and nothing is retained or written (AGENTS.md rule 11). Every flag this
@@ -21,27 +22,30 @@ use dfo_core::analyze::{
     boss_target, current_weapon_row, gate_target, rank_weapons, reference_foe,
 };
 use dfo_core::encounters::{encounter_by_id, encounter_target, ENCOUNTER_IDS};
-use dfo_core::generated::data::{BOSS_TRAITS, WEAPONS};
+use dfo_core::generated::data::{BOSS_TRAITS, SOURCE, WEAPONS};
 use dfo_core::generated::level_cap::LEVEL_CAP;
 use dfo_core::generated::theory::{DEFAULT_BLADE, THEORY_LEVEL, THEORY_RACES};
 use dfo_core::maxprofile::Profiles;
+use dfo_core::model_blow::weapon_of;
 use dfo_core::round::math_round;
-use dfo_core::save::character_label;
+use dfo_core::save::{character_label, live_stat, skill_name, skill_value};
 use dfo_core::spells::Spellbook;
 use dfo_core::theory::theory_character;
 use dfo_core::value::{number_to_string, string_to_number, Value, Value::*};
 
 const HELP: &str = "\
-dfo-cli - the saves and rank slice of dfo-dps (Rust core)
+dfo-cli - the saves, rank and doctor slice of dfo-dps (Rust core)
 
 Usage:
   dfo-cli saves
+  dfo-cli doctor [--save <slot|folder|path>] [--offline]
   dfo-cli rank [weapons] [--save <slot|folder|path>] [options]
   dfo-cli rank [weapons] --theory [options]
 
-`saves` lists the save folders under the DFO user-data folder (newest first). `rank` prices every melee
-template/material: with --theory for the level-45 theory character, otherwise for the imported save (read-only).
-Text is the JS card; --json is `{ character, weapons, current }`.
+`saves` lists the save folders under the DFO user-data folder (newest first). `doctor` prints the model pin, the
+save folders and the imported character's build/ruleset summary. `rank` prices every melee template/material: with
+--theory for the level-45 theory character, otherwise for the imported save (read-only). Text is the JS card;
+--json is `{ character, weapons, current }`.
 
 Flags:
   --save <SAVE4|folder|SaveData.txt>  the save to import (default: the newest under the user-data folder)
@@ -112,6 +116,13 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         }
         check_output_flags(&command, &parsed)?;
         return saves_command();
+    }
+    if command == "doctor" {
+        if let Some(extra) = parsed.positionals.get(1) {
+            return Err(usage(format!("unexpected positional argument \"{extra}\"")));
+        }
+        check_output_flags(&command, &parsed)?;
+        return doctor_command(&values);
     }
     if command != "rank" {
         const COMMANDS: [&str; 23] = [
@@ -211,6 +222,123 @@ fn saves_command() -> Result<String, CliError> {
             &[false, false, false, false]
         )
     ))
+}
+
+/// `dfo-dps doctor` (`src/cli.js:941-959`): the model pin, the save folders, then the imported character's build and
+/// ruleset summary. A missing or unreadable save is one `save: <message>` line, not an error: the command still exits
+/// 0 (the JS catches it around the whole load-and-print block).
+fn doctor_command(values: &Values) -> Result<String, CliError> {
+    let mut out = format!(
+        "dfo-dps  |  model {} @ {} ({})  |  live-checked {}\n",
+        SOURCE.repo,
+        SOURCE.commit.get(..7).unwrap_or(SOURCE.commit),
+        SOURCE.date,
+        SOURCE.verified
+    );
+    let saves = saves::list_saves().map_err(usage)?;
+    let slots: Vec<&str> = saves.iter().map(|s| s.slot.as_str()).collect();
+    out.push_str(&format!(
+        "saves: {}\n",
+        if slots.is_empty() {
+            "(none)".to_owned()
+        } else {
+            slots.join(", ")
+        }
+    ));
+    let loaded = saves::load_save(values.save.as_deref().unwrap_or(""));
+    let (entry, save) = match loaded {
+        Ok(loaded) => loaded,
+        Err(e) => {
+            out.push_str(&format!("save: {e}\n"));
+            return Ok(out);
+        }
+    };
+    let ch = dfo_core::save::character_from_save(
+        &save,
+        &obj([
+            ("online", Bool(!values.offline)),
+            ("slot", Str(entry.slot)),
+            ("file", Str(entry.file.to_string_lossy().into_owned())),
+        ]),
+    );
+    let field = |name: &str| ch.get(name).to_js_string();
+    out.push_str(&format!("save: {}\n", entry.file.to_string_lossy()));
+    out.push_str(&format!(
+        "character: {}  |  {} rules  |  path {}\n",
+        character_label(&ch),
+        if ch.get("online").truthy() {
+            "online"
+        } else {
+            "offline"
+        },
+        match ch.get("martialPath") {
+            Null | Undefined => "none".to_owned(),
+            path => path.to_js_string(),
+        }
+    ));
+    let mastered: Vec<String> = ch
+        .get("masteredSkills")
+        .items()
+        .iter()
+        .map(|id| skill_name(id).to_js_string())
+        .collect();
+    out.push_str(&format!(
+        "level {}, reflexes {}, masterSkills {}, mastered [{}]\n",
+        field("level"),
+        field("reflexes"),
+        field("masterSkills"),
+        mastered.join(", ")
+    ));
+    let weapon = ch.get("weapon");
+    out.push_str(&format!(
+        "weapon: {}\n",
+        if weapon.truthy() {
+            format!(
+                "{} ({}, material {})",
+                weapon.get("name").to_js_string(),
+                weapon.get("templateIndex").to_js_string(),
+                weapon.get("material").to_js_string()
+            )
+        } else {
+            "bare hands".to_owned()
+        }
+    ));
+    let stats: Vec<String> = [
+        "strength",
+        "agility",
+        "speed",
+        "luck",
+        "endurance",
+        "willpower",
+    ]
+    .iter()
+    .map(|k| format!("{k} {}", number_to_string(live_stat(&ch, k))))
+    .collect();
+    out.push_str(&format!("live stats: {}\n", stats.join(", ")));
+    // `ch.weapon ? (weaponOf(ch.weapon)?.skillId ?? 30) : 30`
+    let skill_id = if weapon.truthy() {
+        match weapon_of(weapon, false).get("skillId") {
+            Num(n) => Num(*n),
+            _ => Num(30.0),
+        }
+    } else {
+        Num(30.0)
+    };
+    let raw_skill = |id: &Value| match ch.get("skills").prop(id) {
+        Undefined | Null => Num(0.0),
+        v => v,
+    };
+    out.push_str(&format!(
+        "weapon skill: {} (raw {})\n",
+        number_to_string(skill_value(&ch, &skill_id)),
+        raw_skill(&skill_id).to_js_string()
+    ));
+    out.push_str(&format!(
+        "crit skill: {} (raw {})\n",
+        number_to_string(skill_value(&ch, &Num(34.0))),
+        raw_skill(&Num(34.0)).to_js_string()
+    ));
+    Ok(out)
 }
 
 fn obj<const N: usize>(pairs: [(&str, Value); N]) -> Value {

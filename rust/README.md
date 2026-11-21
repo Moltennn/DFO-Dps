@@ -12,26 +12,30 @@ keeps every `_mods` channel the character already carried (the gear fold is a de
 equip change). Parity: `tools/rust-forge-vectors.mjs` and `tools/rust-forge-gear-vectors.mjs` write `forge.txt` and
 `forge_gear.txt` from the real engine, replayed by `tests/forge.rs` and `tests/forge_gear.rs`.
 
-## R8: the CLI, the `saves` and `rank` slice
+## R8: the CLI, the `saves`, `rank` and `doctor` slice
 
-`dfo-cli` (`rust/dfo-cli`) is the first CLI slice: the JS `src/cli.js` `saves` listing and `rank` path, for the
-level-45 theory character or for an imported save. It is a thin layer: the parser owns argument text, the output
-formats (`printRank`'s table, `--json`'s `{ character, weapons, current }`) and exit codes; every number comes from
-`dfo_core` (`theory_character`, `Profiles::legal_gear`, `reference_foe`/`boss_target`/`gate_target`/`encounter_target`,
-`rank_weapons`, `current_weapon_row`, `save::character_from_save`). There is no second reading of a rule.
+`dfo-cli` (`rust/dfo-cli`) is the first CLI slice: the JS `src/cli.js` `saves` listing, `doctor` summary and `rank`
+path, for the level-45 theory character or for an imported save. It is a thin layer: the parser owns argument text, the
+output formats (`printRank`'s table, `--json`'s `{ character, weapons, current }`, `doctor`'s plain lines) and exit
+codes; every number comes from `dfo_core` (`theory_character`, `Profiles::legal_gear`,
+`reference_foe`/`boss_target`/`gate_target`/`encounter_target`, `rank_weapons`, `current_weapon_row`,
+`save::character_from_save`, `save::live_stat`/`skill_value`/`skill_name`, `model_blow::weapon_of`). There is no second
+reading of a rule.
 
-- **What runs.** `dfo-cli saves` (the `src/cli.js:934-939` table, newest first, `No saves found.` when empty) and
-  `dfo-cli rank [weapons] [--save ...] [--theory ...]`, text or `--json`, with the theory target remap (`armoured` is
-  the gate for the theory character only; a save keeps it as the reference foe, `src/cli.js:505`), every documented
-  validation message of `validateFlags`, the `starOptions`/`--weapon` checks, and `--offline`/`--passive`/`--bare`/
-  `--no-effects`/`--base-stats` on the imported character. `--json`/`--out` are refused per command as
-  `checkOutputFlags` does.
+- **What runs.** `dfo-cli saves` (the `src/cli.js:934-939` table, newest first, `No saves found.` when empty),
+  `dfo-cli doctor` (`src/cli.js:941-959`: the `SOURCE` pin, the save slots, then the imported character's label,
+  ruleset, level/reflexes/mastery, weapon, live stats and weapon/crit skill; a missing or unreadable save is one
+  `save: <message>` line and still exit 0) and `dfo-cli rank [weapons] [--save ...] [--theory ...]`, text or `--json`,
+  with the theory target remap (`armoured` is the gate for the theory character only; a save keeps it as the reference
+  foe, `src/cli.js:505`), every documented validation message of `validateFlags`, the `starOptions`/`--weapon` checks,
+  and `--offline`/`--passive`/`--bare`/`--no-effects`/`--base-stats` on the imported character. `--json`/`--out` are
+  refused per command as `checkOutputFlags` does (`doctor` and `saves` support neither).
 - **Read-only import.** `dfo-cli/src/saves.rs` owns the I/O half of `src/save.js`: `userDataDir`, `savesDir`,
   `listSaves` (folder names sorted, then a stable newest-first sort on `mtimeMs`), `resolveSave` (a path, a folder, a
   `SAVE<n>` slot or a number) and `loadSave`. The document is opened once for reading, parsed and dropped; the character
   is `dfo_core::save::character_from_save`, so the core keeps doing no file I/O and nothing writes, exports or retains
   a save (AGENTS.md rule 11).
-- **What does not run, explicitly.** Every command outside `saves`/`rank` and every flag outside the slice
+- **What does not run, explicitly.** Every command outside `saves`/`rank`/`doctor` and every flag outside the slice
   (`--encounter`, `--shortlist`, `--objective`, ...) fails with exit 2 instead of being accepted and ignored; an unknown
   command or option also exits 2, and extra positionals are refused (the JS ignores them). `--help` lists the slice and
   the unsupported set.
@@ -39,17 +43,19 @@ formats (`printRank`'s table, `--json`'s `{ character, weapons, current }`) and 
   object keys and `float_roundtrip` for decimal rounding). It is the parser the workbench import
   already uses; the writer is still `JSON.stringify(v, null, 2)` in this file. Two documented edges: a number too large
   for an f64 (`1e400`) is a parse error where `JSON.parse` gives `Infinity`, and a malformed document's message is
-  `serde_json`'s, not V8's (both exit 2).
+  `serde_json`'s, not V8's (both exit 2 for `rank`, one `save:` line and exit 0 for `doctor`).
 - **Hostile input.** The read is bounded at 64 MiB and the parser refuses a document past its nesting limit, so a
   runaway or crafted file is an ordinary error. `SaveInfo.txt` is optional: a missing or malformed one is ignored.
 - **Differential.** `dfo-cli/tests/rank.rs` spawns `node bin/dfo-dps.js rank ... --theory` and the Rust binary on the
   same arguments: stdout must match byte for byte (text and `--json`) across targets, blade/race/gear/firmament flags
   and `--top`; usage cases must match stderr and exit 2. `dfo-cli/tests/saves.rs` does the same over synthetic temp
   fixtures (never a real save) for `saves` and the save-backed `rank`, in the offline shape (`items[].equipSlot`) and
-  the live shape (`equipSlots`, `_mods`, `_enchantMods`, affixes, enchantments and effects). A missing `node` fails the
-  tests rather than skipping them.
+  the live shape (`equipSlots`, `_mods`, `_enchantMods`, affixes, enchantments and effects). `dfo-cli/tests/doctor.rs`
+  covers `doctor` over the same fixtures: empty, missing/named-away, malformed (the parser's text differs, so that case
+  compares the exit code and the `save: could not read <path>: ` prefix), array and `null` saves, the newest-first
+  listing and `--offline`. A missing `node` fails the tests rather than skipping them.
 
-The rest of `src/cli.js` (reports, the page commands, `doctor`) and `src/report.js`/`src/graph.js` are still unported.
+The rest of `src/cli.js` (reports and the other page commands) and `src/report.js`/`src/graph.js` are still unported.
 
 ## R5c: theory builds, legal budgets, and imprint rankings
 

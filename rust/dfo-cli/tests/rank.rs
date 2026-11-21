@@ -357,7 +357,9 @@ fn help_lists_the_slice_and_exits_0() {
     let got = rust(&["--help"]);
     assert_eq!(got.status.code(), Some(0));
     let text = String::from_utf8_lossy(&got.stdout);
-    for flag in ["saves", "rank", "--theory", "--json", "--save", "--blade"] {
+    for flag in [
+        "saves", "rank", "doctor", "--theory", "--json", "--save", "--blade",
+    ] {
         assert!(text.contains(flag), "help names {flag}");
     }
 }
