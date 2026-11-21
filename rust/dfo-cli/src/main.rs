@@ -1,12 +1,14 @@
-//! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves`, `build`, `objective`, `rank` and `doctor` slice).
+//! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves`, `build`, `objective`, `rank`, `compare` and
+//! `doctor` slice).
 //!
-//! This is the JS `src/cli.js` `build` card, `objective` command, `rank` card, `saves` listing and `doctor`, and only
-//! that: [`main`] parses the flags those read, replays the JS validation (`numFlag`, the enum checks, `sampledOptions`)
-//! with the same messages, builds either the level-45 theory character or the one an imported save describes, the target
-//! and the scenario, then prints `printBuild`, `printObjective`, `printRank` or `{ character, weapons, current }` as
-//! `--json` does. `build --json` prints `summary()` and `objective --json` prints the evaluated row; `build`'s text card
-//! is `printBuild` with the what-ifs the JS runs after it. `doctor` prints the save/build/ruleset summary over the same
-//! imported character.
+//! This is the JS `src/cli.js` `build` card, `objective` command, `rank` card, `compare` card, `saves` listing and
+//! `doctor`, and only that: [`main`] parses the flags those read, replays the JS validation (`numFlag`, the enum
+//! checks, `sampledOptions`) with the same messages, builds either the level-45 theory character or the one an imported
+//! save describes, the target and the scenario, then prints `printBuild`, `printObjective`, `printRank`, the `compare`
+//! table or `{ character, weapons, current }` as `--json` does. `build --json` prints `summary()` and `objective
+//! --json` prints the evaluated row; `build`'s text card is `printBuild` with the what-ifs the JS runs after it.
+//! `compare` is the table `compare` prints after applying `--stat` and `--weapon`. `doctor` prints the
+//! save/build/ruleset summary over the same imported character.
 //!
 //! The save is imported READ-ONLY by [`saves`]: discovery and parsing live there, the character normalisation is
 //! `dfo_core::save::character_from_save`, and nothing is retained or written (AGENTS.md rule 11). Every flag this
@@ -40,7 +42,7 @@ use dfo_core::theory::theory_character;
 use dfo_core::value::{number_to_string, obj_table_get, string_to_number, Value, Value::*};
 
 const HELP: &str = "\
-dfo-cli - the saves, build, objective, rank and doctor slice of dfo-dps (Rust core)
+dfo-cli - the saves, build, objective, rank, compare and doctor slice of dfo-dps (Rust core)
 
 Usage:
   dfo-cli saves
@@ -51,13 +53,16 @@ Usage:
   dfo-cli objective --theory [options]
   dfo-cli rank [weapons] [--save <slot|folder|path>] [options]
   dfo-cli rank [weapons] --theory [options]
+  dfo-cli compare [--save <slot|folder|path>] --stat <name=value> [--weapon <template:material>]
+  dfo-cli compare --theory --stat <name=value> [--weapon <template:material>]
 
 `saves` lists the save folders under the DFO user-data folder (newest first). `doctor` prints the model pin, the
 save folders and the imported character's build/ruleset summary. `build` prices one build against one target: with
 --theory for the level-45 theory character, otherwise for the imported save (read-only). `objective` scores one build
 on one named objective (deterministic or sampled), text or `--json`, and `rank` prices every melee template/material
-the same way. `build` prints the JS `printBuild` card; with `--json` it prints `summary()` instead. `rank` text is
-the JS card, `--json` is `{ character, weapons, current }`.
+the same way. `compare` prices the same build twice, before and after the `--stat`/`--weapon` changes. `build` prints
+the JS `printBuild` card; with `--json` it prints `summary()` instead. `rank` text is the JS card, `--json` is
+`{ character, weapons, current }`.
 
 Flags:
   --save <SAVE4|folder|SaveData.txt>  the save to import (default: the newest under the user-data folder)
@@ -83,6 +88,7 @@ Flags:
   --trials <n> --seed <int> --max-seconds <n> --max-blows <n> --no-carry --samples
                                       sampled objective options (defaults 1000, 0, 900, 6000)
   --top <n>                           rows in the ranking (default 20)
+  --stat <name=value>                 compare: one attribute or skill id change (repeatable)
   --json
   -h, --help
 
@@ -154,6 +160,21 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         check_output_flags(&command, &parsed)?;
         return objective(&values);
     }
+    if command == "compare" {
+        // Extra positionals are ignored by the JS and refused here on purpose, as `build` and `rank` do: a strict
+        // refusal, not a silent drop.
+        if let Some(extra) = parsed.positionals.get(1) {
+            return Err(usage(format!("unexpected positional argument \"{extra}\"")));
+        }
+        check_output_flags(&command, &parsed)?;
+        // `src/cli.js:918-920`: checked after `checkOutputFlags`, before the branch.
+        if parsed.flag("all") {
+            return Err(usage(
+                "compare does not take --all; use scale --all for every channel",
+            ));
+        }
+        return compare(&values);
+    }
     if command != "rank" {
         const COMMANDS: [&str; 23] = [
             "build",
@@ -182,7 +203,7 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         ];
         return Err(if COMMANDS.contains(&command.as_str()) {
             usage(format!(
-                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank` and `doctor`"
+                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank`, `compare` and `doctor`"
             ))
         } else {
             usage(format!("unknown command \"{command}\"\n\n{HELP}"))
@@ -203,8 +224,8 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
 }
 
 /// `checkOutputFlags` (`src/cli.js:885-898`): reject a flag the command would ignore instead of accepting it silently.
-/// The commands of this slice (`build`, `rank`, `saves`, `doctor`): only `build` and `rank` read `--json`, none read
-/// `--out`.
+/// The commands of this slice (`build`, `rank`, `compare`, `saves`, `doctor`): only `build` and `rank` read `--json`,
+/// none read `--out`.
 fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
     const FILE_COMMANDS: &str = concat!(
         "report, spells, weapons, skills, firmament, imprints, probe, enchant-plan, gear-plan, loadout, ",
@@ -215,6 +236,17 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
         "imprints, probe, enchant-plan, gear-plan, loadout, real-dps, graph",
     );
     let listed = |list: &str| list.split(", ").any(|f| f.trim() == command);
+    // `--stat`/`--all` are priced by `compare` alone in this slice; JS accepts and ignores them elsewhere, and this
+    // CLI refuses them by name, as it does `--out`, never silently.
+    if command != "compare" {
+        for name in ["stat", "all"] {
+            if parsed.raw(name).is_some() || parsed.flag(name) {
+                return Err(usage(format!(
+                    "--{name} is not supported by this CLI slice (it needs a save, another command, or is not ported yet)"
+                )));
+            }
+        }
+    }
     if parsed.raw("out").is_some() && !listed(FILE_COMMANDS) {
         return Err(usage(format!(
             "--out is only for commands that write a file ({FILE_COMMANDS}), not \"{command}\""
@@ -429,7 +461,7 @@ const SUPPORTED: &str = concat!(
     "theory json vampire firmament rhythm unaware first-blow behind pair dual spam no-crit-damage no-passive no-rri ",
     "help target level armor health traits core weapon swing stacks race blade gear-lb gear-cs star-stat star-skill ",
     "star-damage potency pierce backstab players blow-x health-share self-health-share top damage-pct base-stats ",
-    "no-effects save offline passive bare out objective trials seed max-seconds max-blows no-carry samples",
+    "no-effects save offline passive bare out objective trials seed max-seconds max-blows no-carry samples stat all",
 );
 
 fn in_flags(list: &str, name: &str) -> bool {
@@ -438,10 +470,10 @@ fn in_flags(list: &str, name: &str) -> bool {
 
 const BOOLEAN_FLAGS: &str = concat!(
     "theory json vampire firmament rhythm unaware first-blow behind pair dual spam no-crit-damage no-passive ",
-    "no-rri help offline bare no-effects no-carry samples",
+    "no-rri help offline bare no-effects no-carry samples all",
 );
 
-const MULTI: [&str; 2] = ["star-stat", "star-skill"];
+const MULTI: [&str; 3] = ["star-stat", "star-skill", "stat"];
 
 /// `Object.keys(MARTIAL_PATHS)` (`src/data.js:223-239`): the `--passive` ids, in the table's own order.
 const MARTIAL_PATH_NAMES: &str = concat!(
@@ -616,6 +648,8 @@ struct Values {
     max_blows: Option<String>,
     no_carry: bool,
     samples: bool,
+    /// `--stat` as typed, in order: `compare` parses each one (the JS validates them inside the branch).
+    stat: Vec<String>,
 }
 
 fn range_text(what: &str, min: f64, max: f64, exclusive_min: bool) -> String {
@@ -897,6 +931,7 @@ impl Values {
             max_blows: parsed.raw("max-blows").map(str::to_owned),
             no_carry: parsed.flag("no-carry"),
             samples: parsed.flag("samples"),
+            stat: parsed.multi("stat"),
         })
     }
 
@@ -1079,6 +1114,151 @@ fn build(values: &Values) -> Result<String, CliError> {
         values.target.as_str()
     };
     Ok(format!("{}\n", print_build(&ch, &r, preset, values, &book)))
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// the compare card (src/cli.js:2277-2304)
+// ---------------------------------------------------------------------------------------------------------------
+
+/// `^([a-z]+|\d+)=(-?\d+)$` (the `/i` flag lower-cases the left side): the two `--stat` spellings `compare` accepts.
+fn split_stat(text: &str) -> Option<(String, f64)> {
+    let (left, right) = text.split_once('=')?;
+    let digits_ok = |s: &str| {
+        let body = s.strip_prefix('-').unwrap_or(s);
+        !body.is_empty() && body.chars().all(|c| c.is_ascii_digit())
+    };
+    if !digits_ok(right) {
+        return None;
+    }
+    let letters = !left.is_empty() && left.chars().all(|c| c.is_ascii_alphabetic());
+    let digits = !left.is_empty() && left.chars().all(|c| c.is_ascii_digit());
+    if !letters && !digits {
+        return None;
+    }
+    Some((left.to_lowercase(), string_to_number(right)))
+}
+
+/// `dfo-dps compare` (`src/cli.js:2277-2304`): the same build before and after `--stat`/`--weapon`, as a four-column
+/// table. The base run drops the scenario's weapon override (it prices the equipped weapon), the changed run applies it.
+fn compare(values: &Values) -> Result<String, CliError> {
+    let book = saves::load_spellbook();
+    let ch = character(values, &book)?;
+    let target = target_of(
+        &ch,
+        values,
+        &values.traits,
+        values.nums.get("health").copied(),
+    )?;
+    let scenario = scenario_of(&ch, values, &values.traits, &target);
+    let mut changes: Vec<(String, f64)> = Vec::new();
+    for raw in &values.stat {
+        let Some((name, value)) = split_stat(raw) else {
+            return Err(usage(format!("--stat expects name=value, got {raw}")));
+        };
+        changes.push((name, value));
+    }
+    if changes.is_empty() && values.weapon.is_none() {
+        return Err(usage(
+            "compare needs --stat name=value and/or --weapon template:material",
+        ));
+    }
+    let mut c2 = dfo_core::analyze::json_clone(&ch);
+    for (name, value) in changes {
+        let mut stats = c2.get("stats").clone();
+        // JS `name in ch.stats` counts the inherited `constructor`; any other inherited name has an upper-case letter
+        // and cannot pass `^[a-z]+$`, so this one key is the whole difference. Setting it is a no-op for the model.
+        if stats.has(&name) || name == "constructor" {
+            stats.set(&name, Num(value));
+            c2.set("stats", stats);
+        } else if name.chars().all(|c| c.is_ascii_digit()) {
+            // `ch.skills[Number(name)] = value`: the model reads skill ids 0..34 only (`save.js` `skillValue`,
+            // `model.js`), so a smaller array extends to reach one, and a larger id (a JS hole) changes nothing.
+            let index = string_to_number(&name) as usize;
+            let mut skills = c2.get("skills").clone();
+            if let Value::Arr(items) = &mut skills {
+                if index < 35 {
+                    if items.len() <= index {
+                        items.resize(index + 1, Undefined);
+                    }
+                    items[index] = Num(value);
+                }
+            }
+            c2.set("skills", skills);
+        } else {
+            return Err(usage(format!(
+                "unknown stat \"{name}\" (use strength, agility, speed, luck, endurance, willpower, intelligence, personality, or a skill id)"
+            )));
+        }
+    }
+    let w2 = values
+        .weapon
+        .map(|(tpl, mat)| synthetic_weapon(&Num(tpl), &Num(mat), false))
+        .unwrap_or(Undefined);
+    // `analyze(ch, { ...scenario, weapon: undefined })`: the base run prices the weapon the character carries (for a
+    // save this drops `scenarioOf`'s override), and the changed run applies the `--weapon` override (or none).
+    let mut base = scenario.clone();
+    base.set("weapon", Undefined);
+    let mut changed = scenario.clone();
+    changed.set("weapon", w2);
+    let r = analyze(&ch, &base, &book);
+    let r2 = analyze(&c2, &changed, &book);
+    let signed =
+        |delta: f64, text: String| format!("{}{}", if delta >= 0.0 { "+" } else { "" }, text);
+    let d_dps = r2.dps - r.dps;
+    let d_per_swing = r2.per_swing - r.per_swing;
+    let d_hit = (r2.hit.get("hit").to_number() - r.hit.get("hit").to_number()) * 100.0;
+    let d_crit = (r2.hit.get("crit").get("chance").to_number()
+        - r.hit.get("crit").get("chance").to_number())
+        * 100.0;
+    let d_seconds = r2.cadence.get("seconds").to_number() - r.cadence.get("seconds").to_number();
+    let d_capped = r2.capped_dps - r.capped_dps;
+    let rows: Vec<Vec<String>> = vec![
+        vec![
+            "DPS".to_owned(),
+            fmt(&Num(r.dps)),
+            fmt(&Num(r2.dps)),
+            signed(d_dps, fmt(&Num(d_dps))),
+        ],
+        vec![
+            "Per swing".to_owned(),
+            fmt(&Num(r.per_swing)),
+            fmt(&Num(r2.per_swing)),
+            signed(d_per_swing, fmt(&Num(d_per_swing))),
+        ],
+        vec![
+            "Hit".to_owned(),
+            pc(&r.hit.get("hit").clone()),
+            pc(&r2.hit.get("hit").clone()),
+            signed(d_hit, format!("{} pt", fmt(&Num(d_hit)))),
+        ],
+        vec![
+            "Crit".to_owned(),
+            pc(r.hit.get("crit").get("chance")),
+            pc(r2.hit.get("crit").get("chance")),
+            signed(d_crit, format!("{} pt", fmt(&Num(d_crit)))),
+        ],
+        vec![
+            "Swing time".to_owned(),
+            format!("{}s", fmt2(&r.cadence.get("seconds").clone())),
+            format!("{}s", fmt2(&r2.cadence.get("seconds").clone())),
+            signed(d_seconds, format!("{}s", fmt2(&Num(d_seconds)))),
+        ],
+        vec![
+            "Capped DPS".to_owned(),
+            fmt(&Num(r.capped_dps)),
+            fmt(&Num(r2.capped_dps)),
+            signed(d_capped, fmt(&Num(d_capped))),
+        ],
+    ];
+    Ok(format!(
+        "{}\n{}\n",
+        character_label(&ch),
+        table(
+            &rows,
+            &["Metric", "Before", "After", "Change"],
+            &[false, false, false, false]
+        )
+    ))
 }
 
 // ---------------------------------------------------------------------------------------------------------------
