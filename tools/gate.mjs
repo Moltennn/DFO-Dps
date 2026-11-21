@@ -15,18 +15,21 @@
  * failures. Exit code: 0 all steps passed, 1 a step failed, 2 usage.
  *
  *   --fresh        rust: regenerate the golden vectors even when their inputs are unchanged (cached by input hash)
- *   --test-jobs N  rust: test binaries run in parallel, default 1: 4 parallel was SLOWER (254 s vs ~170 s; memory-bound on 600 MB vector files)
+ *                  the cache key is content-only and portable between copies of one revision (worktree, `git archive`);
+ *                  a vectors directory that is a symlink into another tree is reused but never regenerated through
+ *   --test-jobs N  rust: test binaries run in parallel, default up to 4; use 1 on memory-constrained hosts
  *   --keep-going   do not stop at the first failing step
  *   --no-game      js only: run with a HOME that has no launcher config, i.e. as a machine without the game's
  *                  SPELLS.STD (tests that need it are reported as skipped; see test/harness/spellbook.mjs)
  *   --lines N      how many lines of a failure to show (default 25)
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { cpus, homedir, tmpdir } from 'node:os';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { availableParallelism, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { vectorPlan } from './vector-cache.mjs';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const rustDir = join(root, 'rust');
@@ -126,44 +129,24 @@ function stepCargo(name, args, parse) {
 }
 
 // ---- fast paths ---------------------------------------------------------------------------------------------------
-/** Hash of everything the golden-vector generators read: JS sources, generators, harness (content) and the vendored
- *  trees and the game's spell file (path, size, mtime: hashing 25 MB of vendor per run would defeat the point). */
-function vectorInputsHash() {
-  const h = createHash('sha256');
-  const walk = (dir, filter, contentOf) => {
-    if (!existsSync(dir)) return;
-    for (const name of readdirSync(dir).sort()) {
-      const p = join(dir, name);
-      const st = statSync(p);
-      if (st.isDirectory()) { if (name !== 'node_modules') walk(p, filter, contentOf); continue; }
-      if (!filter(p)) continue;
-      h.update(p.slice(root.length)).update('\0');
-      if (contentOf) h.update(readFileSync(p)); else h.update(`${st.size}:${Math.floor(st.mtimeMs)}`);
-      h.update('\0');
-    }
-  };
-  walk(join(root, 'src'), (p) => p.endsWith('.js'), true);
-  walk(join(root, 'test', 'harness'), () => true, true);
-  walk(join(root, 'tools'), (p) => /rust-.*\.mjs$/.test(p), true);
-  walk(join(root, 'vendor'), () => true, false);
-  walk(join(root, 'rust', 'dfo-core', 'src', 'generated'), () => true, true);
-  try {
-    const cfg = JSON.parse(readFileSync(join(homedir(), '.config', 'dfo-dps', 'config.json'), 'utf8'));
-    if (cfg.arena2Path) walk(cfg.arena2Path, (p) => /SPELLS\.STD$/i.test(p), false);
-  } catch { /* the generator that needs the spell file fails loudly on its own */ }
-  return h.digest('hex');
-}
-
-/** rust-vectors, unless its inputs are unchanged since the vectors on disk were written (--fresh forces it). */
+/** rust-vectors, unless its inputs are unchanged since the vectors on disk were written (--fresh forces it). The key
+ *  and the shared-tree guard live in tools/vector-cache.mjs. */
 function stepVectors() {
-  const stamp = join(rustDir, 'tests', 'vectors', '.inputs-sha256');
-  const want = vectorInputsHash();
-  const have = existsSync(stamp) ? readFileSync(stamp, 'utf8').trim() : '';
-  if (!flag('fresh') && have === want && existsSync(join(rustDir, 'tests', 'vectors', 'value.txt'))) {
-    return report('rust-vectors', true, `cached (inputs unchanged, ${want.slice(0, 10)}); --fresh regenerates`);
+  const vectors = join(rustDir, 'tests', 'vectors');
+  const plan = vectorPlan(root, vectors, flag('fresh'));
+  if (plan.cached) {
+    return report('rust-vectors', true, `cached (inputs unchanged, ${plan.want.slice(0, 10)}); --fresh regenerates`);
+  }
+  if (plan.want === null) {
+    // The generators that read the spell file fail on their own; say so here rather than after a long run.
+    return report('rust-vectors', false, "no readable SPELLS.STD (the launcher config's ARENA2), so nothing can be reused or stamped");
+  }
+  if (plan.link) {
+    // Writing through the link would regenerate the owning tree's vectors: fail closed, regenerate there instead.
+    return report('rust-vectors', false, `refusing to regenerate through ${plan.link}`);
   }
   const ok = stepNode('rust-vectors', ['tools/rust-vectors.mjs'], 'vectors written');
-  if (ok) writeFileSync(stamp, `${want}\n`);
+  if (ok) writeFileSync(plan.stamp, `${plan.want}\n`);
   return ok;
 }
 
@@ -183,7 +166,7 @@ async function stepCargoTestParallel() {
   if (build.status !== 0 || exes.length === 0) {
     return report('cargo test', false, 'build failed', [...diagnostics.slice(0, 6), first(build.out.replace(/^\{.*$/gm, ''), 12)].join('\n'));
   }
-  const jobs = Math.max(1, Number(opt('test-jobs', 1)));
+  const jobs = Math.max(1, Number(opt('test-jobs', Math.min(4, availableParallelism()))));
   const queue = [...exes];
   const outputs = [];
   await Promise.all(Array.from({ length: jobs }, async () => {
