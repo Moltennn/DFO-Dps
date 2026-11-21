@@ -41,7 +41,9 @@ plain lines, the two SVG pages and the report page) and exit codes; every number
   `dfo-cli rank [weapons] [--save ...] [--theory ...]`, text or `--json`, with the theory target remap (`armoured` is
   the gate for the theory character only; a save keeps it as the reference foe, `src/cli.js:505`),
   `dfo-cli compare ... --stat name=value [--weapon ...]` (`src/cli.js:2277-2304`, the four-column before/after table),
-  `dfo-cli graph` (`src/cli.js:2057-2127`, one SVG line per `--series` over `--from`..`--to`), `dfo-cli report`
+  `dfo-cli scale` (`src/cli.js:2128-2203`: one channel's `scaleRange` curve over a JSON copy of the character through
+  `analyze`, text `printScale` or the `--json` rows, or `--all`'s current-to-cap summary; `--all --json` is refused as
+  the JS does), `dfo-cli graph` (`src/cli.js:2057-2127`, one SVG line per `--series` over `--from`..`--to`), `dfo-cli report`
   (`src/cli.js:2263-2275`, the single-file `buildReport` page), plus every documented validation message of
   `validateFlags`, the `starOptions`/`--weapon` checks, and
   `--offline`/`--passive`/`--bare`/`--no-effects`/`--base-stats` on the imported character. `--json`/`--out` are
@@ -101,9 +103,13 @@ plain lines, the two SVG pages and the report page) and exit codes; every number
   `--series` kind, save-backed and theory characters, usage errors, default output name and the create-only writer), and
   `dfo-cli/tests/report.rs` compares `report::build_report` byte for byte with the real `src/report.js` (theory blade,
   classic core, bare fists and literal-marker fixtures); `dfo-cli/tests/cli_report.rs` runs the whole `report` command
-  the same way `cli_graph.rs` does. A missing `node` fails the tests rather than skipping them.
+  the same way `cli_graph.rs` does. `dfo-cli/tests/cli_scale.rs` runs the whole `scale` command against the JS: every
+  `--stat`, `--skill` and `--gear-skill` curve over theory and both synthetic save shapes, the `--all` summary, the
+  `--json` rows, and the usage refusals (no channel, an unknown attribute, two `--stat`s, an out-of-range skill id,
+  `--all --json`, `--out`). A missing `node` fails the tests rather than skipping them.
 
-The rest of `src/cli.js` (the other page commands) is still unported. `src/graph.js` is ported (`src/graph.rs`) and
+The rest of `src/cli.js` (the other page commands, `tradeoff`, `theory`, `spell`, `enchant`, `weapons`, `firmament`,
+`imprints`, `enchant-plan`, `loadout`) is still unported. `src/graph.js` is ported (`src/graph.rs`) and
 wired into `probe`, `graph` and `report`; `src/report.js` is ported (`src/report.rs`) and wired into `report`. `--data`
 (an explicit ARENA2 directory) and nested custom spell records are not ported; the launcher lookup above is the only
 spellbook source.
@@ -170,7 +176,9 @@ changes paths, scores and plans. Never copy these tables by hand.
 ### Files
 
 - `generated/firmament.rs` (new, from `tools/rust-data.mjs`): `FIRM_NODES` (the Map's insertion order: key, kind, ring,
-  sector, cluster, name, stats, text, x, y), `FIRM_ADJ` (each node's sorted neighbours), `SIGNS`, `SERPENT`,
+  sector, cluster, name, stats, text, x, y), `FIRM_ADJ` (each node's sorted neighbours), `FIRM_EDGES` (every line between
+  two stars in the upstream array's insertion order, endpoints only: the page draws its lines in that order), `SIGNS`,
+  `SERPENT`,
   `START_KEYS`, `ATTR_KEYS`, `STAT_DEF_ROWS` (every `statDef` key with its kind/max/min), `STAT_WORDS` (`statWords` for
   every integer in each channel's min..max, the only values a capped total can hold), `BUILDS` (a codec token: a plan
   echoes its build verbatim, field order included), `SLOT_NAMES`, `ARMOR`, `SHIELD_DEFAULT`, `JEWELRY`, `GROUP_PARAM`,

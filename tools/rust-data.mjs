@@ -325,7 +325,9 @@ function buildItemFacts() {
 /**
  * R5d: the Firmament sky and the enchant plan's frozen constants, generated from the real JS (vendor/firmament is
  * pinned above). FIRM_NODES is a `Map` in insertion order; its stats are objects whose keys are channel names, so the
- * table is a keyed list of records. FIRM_ADJ is the same list with each node's sorted neighbour keys.
+ * table is a keyed list of records. FIRM_ADJ is the same list with each node's sorted neighbour keys. FIRM_EDGES keeps
+ * the upstream array's insertion order (the order the page draws its lines in), with the two endpoints only: the `arc`
+ * a wheel or ring line is drawn along is viewer metadata the SVG renderer does not read.
  */
 function buildFirmamentTables() {
   const FIRM_NODES = Object.fromEntries([...firmamentTree.FIRM_NODES.values()].map((n) => [n.key, {
@@ -333,6 +335,7 @@ function buildFirmamentTables() {
     stats: { ...n.stats }, text: n.text ?? null, x: n.x, y: n.y,
   }]));
   const FIRM_ADJ = Object.fromEntries([...firmamentTree.FIRM_ADJ.entries()].map(([k, vs]) => [k, [...vs]]));
+  const FIRM_EDGES = firmamentTree.FIRM_EDGES.map((e) => ({ a: e.a, b: e.b }));
   // Every channel statDef answers, so the Rust can resolve a key the way statDef does without the JS tables.
   const ATTRS = ['strength', 'intelligence', 'willpower', 'agility', 'endurance', 'personality', 'speed', 'luck'];
   const FAMILIES = {
@@ -373,7 +376,7 @@ function buildFirmamentTables() {
     SERPENT: { id: firmamentTree.SERPENT.id, name: firmamentTree.SERPENT.name },
     START_KEYS: [...firmamentTree.START_KEYS],
     ATTR_KEYS: ['strength', 'intelligence', 'willpower', 'agility', 'endurance', 'personality', 'speed', 'luck'],
-    FIRM_NODES, FIRM_ADJ, STAT_DEF_ROWS, STAT_WORDS: WORDS, BUILDS,
+    FIRM_NODES, FIRM_ADJ, FIRM_EDGES, STAT_DEF_ROWS, STAT_WORDS: WORDS, BUILDS,
     SLOT_NAMES: cutLiteral(ep, 'SLOT_NAMES', '})'),
     ARMOR: cutLiteral(ep, 'ARMOR', ']'),
     SHIELD_DEFAULT: cutScalar(ep, 'SHIELD_DEFAULT'),
@@ -496,7 +499,7 @@ const SOURCES = [  { file: 'data', from: 'src/data.js', mod: data, names: null }
   }, names: ['IMPRINT_FAMILIES', 'WEAPON_IMPRINTS', 'LEGENDARIES', 'AFFIX_KINDS', 'AFFIX_RANGES', 'WEAPON_KIN', 'STRIKE_KIN', 'BODY_KIN', 'JEWEL_KIN', 'STREET_KIN', 'FEET_KIN', 'SKILL_KEYS'] },
   { file: 'bow_bloom', from: `${V}/combat/bowBloom.js`, mod: bowBloom, names: ['BOW_FAST'] },
   { file: 'firmament', from: 'vendor/firmament and src/enchantPlan.js (R5d)', mod: buildFirmamentTables(),
-    names: ['SIGNS', 'SERPENT', 'START_KEYS', 'ATTR_KEYS', 'FIRM_NODES', 'FIRM_ADJ', 'STAT_DEF_ROWS', 'STAT_WORDS', 'BUILDS', 'SLOT_NAMES', 'ARMOR', 'SHIELD_DEFAULT', 'JEWELRY', 'GROUP_PARAM', 'ONE_PIECE', 'STACKS', 'WEAPON_ONLY', 'SOUL_GEM_POINTS', 'FIRMAMENT_STARS', 'MAX_RUN_SCENARIO'] },
+    names: ['SIGNS', 'SERPENT', 'START_KEYS', 'ATTR_KEYS', 'FIRM_NODES', 'FIRM_ADJ', 'FIRM_EDGES', 'STAT_DEF_ROWS', 'STAT_WORDS', 'BUILDS', 'SLOT_NAMES', 'ARMOR', 'SHIELD_DEFAULT', 'JEWELRY', 'GROUP_PARAM', 'ONE_PIECE', 'STACKS', 'WEAPON_ONLY', 'SOUL_GEM_POINTS', 'FIRMAMENT_STARS', 'MAX_RUN_SCENARIO'] },
   { file: 'hands_law', from: `${V}/combat/twoHands/handsLaw.js`, mod: handsLaw, names: ['DUAL', 'OFF_HAND_BLOW', 'FLURRY_WINDOW'] },
   // R3b
   { file: 'mint_rows', from: `${V}/characters/meanerMonsters.js (target.js mintRow over boot codes 0..7 x classic ids)`, mod: { MINT_ROWS: buildMintRows(), STAND_IN_BASICS: Object.fromEntries(MINT_IDS.filter(id => mintRow(id) !== null).map(id => [id, encodeValue(mintRow(id))])), GATE_BODY_LEVEL }, names: ['MINT_ROWS', 'STAND_IN_BASICS', 'GATE_BODY_LEVEL'], force: true },

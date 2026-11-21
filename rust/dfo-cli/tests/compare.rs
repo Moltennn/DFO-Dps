@@ -405,11 +405,12 @@ fn unsupported_boundaries_are_explicit() {
         "--out",
         "x.html",
     ]);
-    let got = rust(&["scale", "--theory", "--stat", "strength"]);
+    // `scale` is ported now (`tests/cli_scale.rs`); an unported command still names itself.
+    let got = rust(&["tradeoff", "--theory"]);
     assert_eq!(got.status.code(), Some(2));
     let text = String::from_utf8_lossy(&got.stderr);
     assert!(
-        text.contains("the \"scale\" command is not ported yet"),
+        text.contains("the \"tradeoff\" command is not ported yet"),
         "{text}"
     );
     assert!(text.contains("`compare`"), "{text}");

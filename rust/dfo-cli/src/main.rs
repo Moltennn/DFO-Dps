@@ -1,13 +1,14 @@
-//! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves`, `build`, `objective`, `rank`, `compare`,
+//! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves`, `build`, `objective`, `rank`, `compare`, `scale`,
 //! `doctor`, `probe`, `graph` and `report` slice).
 //!
-//! This is the JS `src/cli.js` `build` card, `objective` command, `rank` card, `compare` card, `saves` listing,
-//! `doctor`, `probe`, `graph` and `report`, and only that: [`main`] parses the flags those read, replays the JS validation
-//! (`numFlag`, the enum checks, `sampledOptions`) with the same messages, builds either the level-45 theory character or
-//! the one an imported save describes, the target and the scenario, then prints `printBuild`, `printObjective`,
-//! `printRank`, the `compare` table or `{ character, weapons, current }` as `--json` does. `build --json` prints
-//! `summary()` and `objective --json` prints the evaluated row; `build`'s text card is `printBuild` with the what-ifs
-//! the JS runs after it. `compare` is the table `compare` prints after applying `--stat` and `--weapon`. `doctor` prints
+//! This is the JS `src/cli.js` `build` card, `objective` command, `rank` card, `compare` card, `scale` curve, `saves`
+//! listing, `doctor`, `probe`, `graph` and `report`, and only that: [`main`] parses the flags those read, replays the JS
+//! validation (`numFlag`, the enum checks, `sampledOptions`) with the same messages, builds either the level-45 theory
+//! character or the one an imported save describes, the target and the scenario, then prints `printBuild`,
+//! `printObjective`, `printRank`, the `compare` table, `printScale` or `{ character, weapons, current }` as `--json`
+//! does. `build --json` prints `summary()` and `objective --json` prints the evaluated row; `build`'s text card is
+//! `printBuild` with the what-ifs the JS runs after it. `compare` is the table `compare` prints after applying `--stat`
+//! and `--weapon`; `scale` is one channel's curve, or `--all`'s current-to-cap summary. `doctor` prints
 //! the save/build/ruleset summary over the same imported character. `probe` reads a Combat Probe capture read-only: its
 //! discovery, terminal card, JSON document and HTML report page live in [`probe`], its rules are `dfo_core::probe`, and
 //! the page's markup comes from [`graph`] (the `src/graph.js` port). The page is written in both modes, as the JS does
@@ -71,6 +72,8 @@ Usage:
   dfo-cli rank [weapons] --theory [options]
   dfo-cli compare [--save <slot|folder|path>] --stat <name=value> [--weapon <template:material>]
   dfo-cli compare --theory --stat <name=value> [--weapon <template:material>]
+  dfo-cli scale [--save <slot|folder|path>] (--stat <name> | --skill <id> | --gear-skill <id> | --all) [--from <n>] [--to <n>] [--step <n>] [--json]
+  dfo-cli scale --theory (--stat <name> | --skill <id> | --gear-skill <id> | --all) [--from <n>] [--to <n>] [--step <n>] [--json]
   dfo-cli probe [capture.json] [--old] [--level <n>] [--players <n>] [--json] [--out <file>]
   dfo-cli graph [--theory] [--series <spec,...>] [--from <n>] [--to <n>] [--step <n>] [--uncapped] [--json] [--out <file>]
   dfo-cli report [--theory] [--save <slot|folder|path>] [options] [--out <file>]
@@ -79,8 +82,10 @@ Usage:
 save folders and the imported character's build/ruleset summary. `build` prices one build against one target: with
 --theory for the level-45 theory character, otherwise for the imported save (read-only). `objective` scores one build
 on one named objective (deterministic or sampled), text or `--json`, and `rank` prices every melee template/material
-the same way. `compare` prices the same build twice, before and after the `--stat`/`--weapon` changes. `build` prints
-the JS `printBuild` card; with `--json` it prints `summary()` instead. `rank` text is the JS card, `--json` is
+the same way. `compare` prices the same build twice, before and after the `--stat`/`--weapon` changes. `scale` prices
+one channel's DPS curve to its cap (`--stat`, `--skill`, `--gear-skill`), text `printScale` or the `--json` rows, or
+`--all`'s current-to-cap summary (text only). `build` prints the JS `printBuild` card; with `--json` it prints
+`summary()` instead. `rank` text is the JS card, `--json` is
 `{ character, weapons, current }`. `probe` reads a Combat Probe capture (the newest under
 ~/.local/share/dfo-tools/probe-mod/captures, or a named file), text or `--json`, and writes the report page the JS
 writes (`probe.html`, or `--out <file>`): text mode also prints the JS `probe page written:` line. The page is
@@ -115,6 +120,11 @@ Flags:
                                       sampled objective options (defaults 1000, 0, 900, 6000)
   --top <n>                           rows in the ranking (default 20)
   --stat <name=value>                 compare: one attribute or skill id change (repeatable)
+  --stat <name>                       scale: one attribute to curve to 100
+  --skill <id>                        scale: one raw skill id to curve to 200
+  --gear-skill <id>                   scale: one gear skill affix to curve to current+100
+  --from <n> --to <n> --step <n>      scale/graph: the channel range (scale default: current to cap; step 10)
+  --all                               scale: every relevant channel at once (text only)
   --data <capture.json>               probe: a capture file (the JS also reads ARENA2 here; not ported)
   --old                               probe: read the newest capture in captures/old
   --out <file>                        probe/graph: the report page (default: probe.html / graph.html; must not exist yet)
@@ -238,6 +248,13 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         check_output_flags(&command, &parsed)?;
         return report_command(&values, parsed.raw("out"));
     }
+    if command == "scale" {
+        if let Some(extra) = parsed.positionals.get(1) {
+            return Err(usage(format!("unexpected positional argument \"{extra}\"")));
+        }
+        check_output_flags(&command, &parsed)?;
+        return scale_command(&values);
+    }
     if command != "rank" {
         const COMMANDS: [&str; 23] = [
             "build",
@@ -266,7 +283,7 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         ];
         return Err(if COMMANDS.contains(&command.as_str()) {
             usage(format!(
-                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank`, `compare`, `doctor`, `probe`, `graph` and `report`"
+                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank`, `compare`, `scale`, `doctor`, `probe`, `graph` and `report`"
             ))
         } else {
             usage(format!("unknown command \"{command}\"\n\n{HELP}"))
@@ -287,8 +304,8 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
 }
 
 /// `checkOutputFlags` (`src/cli.js:885-898`): reject a flag the command would ignore instead of accepting it silently.
-/// The commands of this slice (`build`, `rank`, `compare`, `saves`, `doctor`, `probe`, `graph`): `probe` and `graph`
-/// write a page, `build`, `rank`, `objective`, `probe` and `graph` read `--json`.
+/// The commands of this slice (`build`, `rank`, `compare`, `scale`, `saves`, `doctor`, `probe`, `graph`): `probe` and
+/// `graph` write a page, `build`, `rank`, `objective`, `scale`, `probe` and `graph` read `--json`.
 fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
     const FILE_COMMANDS: &str = concat!(
         "report, spells, weapons, skills, firmament, imprints, probe, enchant-plan, gear-plan, loadout, ",
@@ -299,13 +316,23 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
         "imprints, probe, enchant-plan, gear-plan, loadout, real-dps, graph",
     );
     let listed = |list: &str| list.split(", ").any(|f| f.trim() == command);
-    // `--stat`/`--all` are priced by `compare` alone in this slice; JS accepts and ignores them elsewhere, and this
-    // CLI refuses them by name, as it does `--out`, never silently.
-    if command != "compare" {
+    // `--stat`/`--all` are priced by `compare` and `scale`; JS accepts and ignores them elsewhere, and this CLI refuses
+    // them by name, as it does `--out`, never silently.
+    if command != "compare" && command != "scale" {
         for name in ["stat", "all"] {
             if parsed.raw(name).is_some() || parsed.flag(name) {
                 return Err(usage(format!(
                     "--{name} is not supported by this CLI slice (it needs a save, another command, or is not ported yet)"
+                )));
+            }
+        }
+    }
+    // `--skill`/`--gear-skill` are priced by `scale` alone.
+    if command != "scale" {
+        for name in ["skill", "gear-skill"] {
+            if parsed.raw(name).is_some() || parsed.flag(name) {
+                return Err(usage(format!(
+                    "--{name} is not supported by this CLI slice (it needs the scale command, or is not ported yet)"
                 )));
             }
         }
@@ -319,13 +346,23 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
             }
         }
     }
-    // `--series`/`--from`/`--to`/`--step`/`--uncapped` are priced by `graph` alone; JS accepts and ignores them
-    // elsewhere, and this CLI refuses them by name.
+    // `--series`/`--uncapped` are priced by `graph` alone; JS accepts and ignores them elsewhere, and this CLI refuses
+    // them by name.
     if command != "graph" {
-        for name in ["series", "from", "to", "step", "uncapped"] {
+        for name in ["series", "uncapped"] {
             if parsed.raw(name).is_some() || parsed.flag(name) {
                 return Err(usage(format!(
                     "--{name} is not supported by this CLI slice (it needs the graph, or is not ported yet)"
+                )));
+            }
+        }
+    }
+    // `--from`/`--to`/`--step` are shared by `graph` and `scale`.
+    if command != "graph" && command != "scale" {
+        for name in ["from", "to", "step"] {
+            if parsed.raw(name).is_some() || parsed.flag(name) {
+                return Err(usage(format!(
+                    "--{name} is not supported by this CLI slice (it needs the graph or scale, or is not ported yet)"
                 )));
             }
         }
@@ -335,10 +372,21 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
             "--out is only for commands that write a file ({FILE_COMMANDS}), not \"{command}\""
         )));
     }
-    if parsed.flag("json") && !listed(JSON_COMMANDS) {
-        return Err(usage(format!(
-            "--json is not supported by \"{command}\"; commands with JSON output: {JSON_COMMANDS}"
-        )));
+    // `checkOutputFlags` (`src/cli.js:892-897`): the command name in the message is `spell --list` / `scale --all`
+    // when that branch has no JSON form.
+    let unsupported = if command == "scale" && parsed.flag("all") {
+        Some("scale --all".to_owned())
+    } else if listed(JSON_COMMANDS) {
+        None
+    } else {
+        Some(command.to_owned())
+    };
+    if parsed.flag("json") {
+        if let Some(name) = unsupported {
+            return Err(usage(format!(
+                "--json is not supported by \"{name}\"; commands with JSON output: {JSON_COMMANDS}"
+            )));
+        }
     }
     Ok(())
 }
@@ -545,7 +593,7 @@ const SUPPORTED: &str = concat!(
     "help target level armor health traits core weapon swing stacks race blade gear-lb gear-cs star-stat star-skill ",
     "star-damage potency pierce backstab players blow-x health-share self-health-share top damage-pct base-stats ",
     "no-effects save offline passive bare out objective trials seed max-seconds max-blows no-carry samples stat all ",
-    "data old series from to step uncapped",
+    "data old series from to step uncapped skill gear-skill",
 );
 
 fn in_flags(list: &str, name: &str) -> bool {
@@ -658,7 +706,7 @@ const fn range(min: f64, max: f64, int: bool, exclusive_min: bool) -> Range {
 const ANY: Range = range(f64::NEG_INFINITY, f64::INFINITY, false, false);
 
 /// Every numeric option `validateFlags` bounds, with its JS default.
-const NUMERIC_FLAGS: [(&str, f64, Range); 22] = [
+const NUMERIC_FLAGS: [(&str, f64, Range); 24] = [
     ("level", THEORY_LEVEL, range(1.0, LEVEL_CAP, true, false)),
     ("stacks", 5.0, range(0.0, 5.0, true, false)),
     ("players", 1.0, range(1.0, f64::INFINITY, true, false)),
@@ -689,6 +737,8 @@ const NUMERIC_FLAGS: [(&str, f64, Range); 22] = [
     ("from", 0.0, ANY),
     ("to", 0.0, ANY),
     ("step", 10.0, range(0.0, f64::INFINITY, false, true)),
+    ("skill", -1.0, range(0.0, 34.0, true, false)),
+    ("gear-skill", -1.0, range(0.0, 34.0, true, false)),
 ];
 
 struct Values {
@@ -747,6 +797,8 @@ struct Values {
     uncapped: bool,
     /// `--base-stats` exactly as typed (the graph subtitle prints the JS raw flag text).
     base_stats_raw: Option<String>,
+    /// `--all`: `scale` prices every channel at once.
+    all: bool,
 }
 
 fn range_text(what: &str, min: f64, max: f64, exclusive_min: bool) -> String {
@@ -1034,6 +1086,7 @@ impl Values {
             series: parsed.raw("series").map(str::to_owned),
             uncapped: parsed.flag("uncapped"),
             base_stats_raw: parsed.raw("base-stats").map(str::to_owned),
+            all: parsed.flag("all"),
         })
     }
 
@@ -1497,6 +1550,301 @@ fn graph_command(values: &Values, out_flag: Option<&str>) -> Result<String, CliE
         return Ok(format!("{}\n", json(&doc)));
     }
     Ok(format!("graph written: {}\n", out.display()))
+}
+
+/// `dfo-dps scale` (`src/cli.js:2128-2203`): one channel's DPS curve (text `printScale` or the `--json` rows), or
+/// `--all`'s current-to-cap summary. Every point comes from `analyze` over a JSON copy of the character with the one
+/// field set, exactly as the JS does; nothing here is a second reading of a rule.
+fn scale_command(values: &Values) -> Result<String, CliError> {
+    let book = saves::load_spellbook();
+    let ch = character(values, &book)?;
+    let target = target_of(
+        &ch,
+        values,
+        &values.traits,
+        values.nums.get("health").copied(),
+    )?;
+    let mut scenario = scenario_of(&ch, values, &values.traits, &target);
+    // `scenarioOf` (`src/cli.js:559`): a save's `--weapon` override lives on the scenario; the theory character already
+    // applied it when it was built.
+    if !values.theory {
+        if let Some((tpl, mat)) = values.weapon {
+            scenario.set("weapon", synthetic_weapon(&Num(tpl), &Num(mat), values.rri));
+        }
+    }
+    // `const weaponId = r?.weapon?.skillId ?? weaponOf(ch.weapon)?.skillId ?? 30`: the resolved descriptor is the
+    // scenario's override when there is one, else the character's own weapon (`weaponOf(ch.weapon)`, no RRI).
+    let resolved_weapon = if matches!(scenario.get("weapon"), Undefined) {
+        weapon_of(&ch.get("weapon").clone(), false)
+    } else {
+        scenario.get("weapon").clone()
+    };
+    let weapon_id = match resolved_weapon.get("skillId") {
+        Num(n) => *n,
+        _ => 30.0,
+    };
+    // `one(label, kind, id, current, cap)`: the curve, one row per `scaleRange` point.
+    let one = |label: &str, kind: &str, id: &Value, current: f64, cap: f64| -> Vec<ScaleRow> {
+        let mut rows = Vec::new();
+        for value in scale_range(values, current, cap) {
+            let mut c = dfo_core::analyze::json_clone(&ch);
+            apply_scale(&mut c, kind, id, value);
+            let rr = analyze(&c, &scenario, &book);
+            rows.push(ScaleRow {
+                label: label.to_owned(),
+                value,
+                dps: rr.dps,
+                capped_dps: rr.capped_dps,
+                per_swing: rr.per_swing,
+                ttk: rr.ttk,
+                dps_min: rr.dps_min,
+                dps_max: rr.dps_max,
+                capped_dps_min: rr.capped_dps_min,
+                capped_dps_max: rr.capped_dps_max,
+            });
+        }
+        rows
+    };
+    if values.all {
+        // `addSummary`: price the current and the cap as two whole runs, so the row's DPS pair is the delta.
+        let summary_run = |label: &str, current: f64, cap: f64, make: &dyn Fn(&mut Value, f64)| {
+            let mut c0 = dfo_core::analyze::json_clone(&ch);
+            let mut c1 = dfo_core::analyze::json_clone(&ch);
+            make(&mut c0, current);
+            make(&mut c1, cap);
+            let r0 = analyze(&c0, &scenario, &book);
+            let r1 = analyze(&c1, &scenario, &book);
+            (
+                label.to_owned(),
+                format!("{} → {}", number_to_string(current), number_to_string(cap)),
+                r0.capped_dps,
+                r1.capped_dps - r0.capped_dps,
+                r1.per_swing,
+                r1.ttk,
+            )
+        };
+        let mut summary: Vec<(String, String, f64, f64, f64, Option<f64>)> = Vec::new();
+        for k in [
+            "strength",
+            "agility",
+            "speed",
+            "luck",
+            "endurance",
+            "willpower",
+        ] {
+            let cur = live_stat(&ch, k);
+            let key = Str(k.to_owned());
+            summary.push(summary_run(
+                &format!("stat {k}"),
+                cur,
+                100.0,
+                &move |c, v| {
+                    apply_scale(c, "stat", &key, v);
+                },
+            ));
+        }
+        for (label, id) in [("skill weapon", weapon_id), ("skill critical", 34.0)] {
+            let cur = ch.get("skills").prop(&Num(id)).num_or(0.0);
+            let key = Num(id);
+            summary.push(summary_run(label, cur, 200.0, &move |c, v| {
+                apply_scale(c, "skill", &key, v);
+            }));
+        }
+        let gear_cur = ch
+            .get("_mods")
+            .get("skills")
+            .prop(&Num(weapon_id))
+            .num_or(0.0);
+        let key = Num(weapon_id);
+        summary.push(summary_run(
+            "gear skill",
+            gear_cur,
+            gear_cur + 100.0,
+            &move |c, v| {
+                apply_scale(c, "gear", &key, v);
+            },
+        ));
+        let mut out = format!(
+            "{}  |  {}{}  |  {}\n",
+            character_label(&ch),
+            values.core,
+            if ch.get("online").truthy() {
+                " / online"
+            } else {
+                " / offline"
+            },
+            values.target
+        );
+        let rows: Vec<Vec<String>> = summary
+            .iter()
+            .map(|(label, values_text, capped, delta, per_swing, ttk)| {
+                vec![
+                    label.clone(),
+                    values_text.clone(),
+                    fmt(&Num(*capped)),
+                    format!(
+                        "{}{}",
+                        if *delta >= 0.0 { "+" } else { "" },
+                        fmt(&Num(*delta))
+                    ),
+                    fmt(&Num(*per_swing)),
+                    ttk_cell(*ttk),
+                ]
+            })
+            .collect();
+        out.push_str(&table(
+            &rows,
+            &[
+                "Channel",
+                "Current → cap",
+                "Capped DPS now",
+                "Δ at cap",
+                "Per swing at cap",
+                "TTK at cap",
+            ],
+            &[false, true, true, true, true, true],
+        ));
+        return Ok(format!("{out}\n"));
+    }
+    let mut rows: Vec<ScaleRow> = Vec::new();
+    if let Some(first) = values.stat.first() {
+        if values.stat.len() > 1 {
+            return Err(usage(
+                "scale accepts one --stat per run; run it once per stat",
+            ));
+        }
+        let k = first.to_lowercase();
+        if !STAT_KEYS.contains(&k.as_str()) {
+            return Err(usage(format!("unknown stat {k}")));
+        }
+        rows.extend(one(
+            &format!("stat {k}"),
+            "stat",
+            &Str(k.clone()),
+            live_stat(&ch, &k),
+            100.0,
+        ));
+    } else if let Some(&id) = values.nums.get("skill") {
+        if !(0.0..35.0).contains(&id) {
+            return Err(usage("--skill expects a skill id 0..34"));
+        }
+        let cur = ch.get("skills").prop(&Num(id)).num_or(0.0);
+        rows.extend(one(
+            &format!("skill {}", number_to_string(id)),
+            "skill",
+            &Num(id),
+            cur,
+            200.0,
+        ));
+    } else if let Some(&id) = values.nums.get("gear-skill") {
+        if !(0.0..35.0).contains(&id) {
+            return Err(usage("--gear-skill expects a skill id 0..34"));
+        }
+        let cur = ch.get("_mods").get("skills").prop(&Num(id)).num_or(0.0);
+        rows.extend(one(
+            &format!("gear skill {}", number_to_string(id)),
+            "gear",
+            &Num(id),
+            cur,
+            cur + 100.0,
+        ));
+    } else {
+        return Err(usage(
+            "scale needs --stat <name>, --skill <id>, --gear-skill <id>, or --all",
+        ));
+    }
+    if values.json {
+        let arr = Arr(rows
+            .iter()
+            .map(|r| {
+                obj([
+                    ("label", Str(r.label.clone())),
+                    ("value", Num(r.value)),
+                    ("dps", Num(r.dps)),
+                    ("dpsMin", Num(r.dps_min)),
+                    ("dpsMax", Num(r.dps_max)),
+                    ("cappedDps", Num(r.capped_dps)),
+                    ("cappedDpsMin", Num(r.capped_dps_min)),
+                    ("cappedDpsMax", Num(r.capped_dps_max)),
+                    ("perSwing", Num(r.per_swing)),
+                    ("ttk", r.ttk.map_or(Null, Num)),
+                ])
+            })
+            .collect());
+        return Ok(format!("{}\n", json(&arr)));
+    }
+    let mut out = format!(
+        "{}  |  target {}  |  {}{}\n",
+        character_label(&ch),
+        values.target,
+        values.core,
+        if ch.get("online").truthy() {
+            " / online"
+        } else {
+            " / offline"
+        }
+    );
+    let table_rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|r| {
+            vec![
+                r.label.clone(),
+                number_to_string(r.value),
+                fmt(&Num(r.dps)),
+                fmt(&Num(r.capped_dps)),
+                fmt(&Num(r.per_swing)),
+                ttk_cell(r.ttk),
+            ]
+        })
+        .collect();
+    out.push_str(&table(
+        &table_rows,
+        &["Channel", "Value", "DPS", "Capped", "Per swing", "TTK"],
+        &[false, true, true, true, true, true],
+    ));
+    Ok(format!("{out}\n"))
+}
+
+/// One `scale` curve row: the JS object `{ label, value, dps, ..., perSwing, ttk }` (`src/cli.js:2152`).
+struct ScaleRow {
+    label: String,
+    value: f64,
+    dps: f64,
+    dps_min: f64,
+    dps_max: f64,
+    capped_dps: f64,
+    capped_dps_min: f64,
+    capped_dps_max: f64,
+    per_swing: f64,
+    ttk: Option<f64>,
+}
+
+/// The `one` body's edit, `src/cli.js:2138-2152`: a JSON copy with one field set. `scale` reaches `stat`, `skill` and
+/// `gear`; the JS `one` also has a `star` arm, which only `graph` selects.
+fn apply_scale(c: &mut Value, kind: &str, id: &Value, value: f64) {
+    match kind {
+        "stat" => {
+            let mut stats = c.get("stats").clone();
+            stats.set(&id.to_js_string(), Num(value));
+            c.set("stats", stats);
+        }
+        "skill" => set_skill(c, &id.to_js_string(), value),
+        _ => {
+            // `gear`: `_mods.skills[id] = value`, with the two maps created when absent.
+            let key = id.to_js_string();
+            let mut mods = c.get("_mods").clone();
+            if mods.is_nullish() {
+                mods = obj([("stats", Obj(vec![])), ("skills", Obj(vec![]))]);
+            }
+            let mut skills = mods.get("skills").clone();
+            if skills.is_nullish() {
+                skills = Obj(vec![]);
+            }
+            skills.set(&key, Num(value));
+            mods.set("skills", skills);
+            c.set("_mods", mods);
+        }
+    }
 }
 
 /// `dfo-dps report` (`src/cli.js:2263-2275`): the single-file page from [`report::build_report`] at the scenario the
@@ -2588,6 +2936,14 @@ fn table(rows: &[Vec<String>], headers: &[&str], aligns: &[bool]) -> String {
     ];
     out.extend(rows.iter().map(|r| line(r)));
     out.join("\n")
+}
+
+/// `r.ttk ? `${fmt(r.ttk)} s` : '-'` (`src/cli.js:726,2166`): a null/undefined/zero/NaN ttk prints `-`.
+fn ttk_cell(ttk: Option<f64>) -> String {
+    match ttk {
+        Some(t) if Num(t).truthy() => format!("{} s", fmt(&Num(t))),
+        _ => "-".to_owned(),
+    }
 }
 
 fn print_rank(ch: &Value, rows: &Value, values: &Values, current: &Value) -> String {
