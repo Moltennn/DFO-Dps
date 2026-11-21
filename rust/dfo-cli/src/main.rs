@@ -1,14 +1,16 @@
-//! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves`, `build`, `objective`, `rank`, `compare` and
-//! `doctor` slice).
+//! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves`, `build`, `objective`, `rank`, `compare`,
+//! `doctor` and `probe` slice).
 //!
-//! This is the JS `src/cli.js` `build` card, `objective` command, `rank` card, `compare` card, `saves` listing and
-//! `doctor`, and only that: [`main`] parses the flags those read, replays the JS validation (`numFlag`, the enum
-//! checks, `sampledOptions`) with the same messages, builds either the level-45 theory character or the one an imported
-//! save describes, the target and the scenario, then prints `printBuild`, `printObjective`, `printRank`, the `compare`
-//! table or `{ character, weapons, current }` as `--json` does. `build --json` prints `summary()` and `objective
-//! --json` prints the evaluated row; `build`'s text card is `printBuild` with the what-ifs the JS runs after it.
-//! `compare` is the table `compare` prints after applying `--stat` and `--weapon`. `doctor` prints the
-//! save/build/ruleset summary over the same imported character.
+//! This is the JS `src/cli.js` `build` card, `objective` command, `rank` card, `compare` card, `saves` listing,
+//! `doctor` and `probe`, and only that: [`main`] parses the flags those read, replays the JS validation (`numFlag`, the
+//! enum checks, `sampledOptions`) with the same messages, builds either the level-45 theory character or the one an
+//! imported save describes, the target and the scenario, then prints `printBuild`, `printObjective`, `printRank`, the
+//! `compare` table or `{ character, weapons, current }` as `--json` does. `build --json` prints `summary()` and
+//! `objective --json` prints the evaluated row; `build`'s text card is `printBuild` with the what-ifs the JS runs after
+//! it. `compare` is the table `compare` prints after applying `--stat` and `--weapon`. `doctor` prints the
+//! save/build/ruleset summary over the same imported character. `probe` reads a Combat Probe capture read-only: its
+//! discovery and two output formats are in [`probe`], its rules are `dfo_core::probe`, and the JS page HTML is left to
+//! the shared renderer (so `--out` is refused, never silently ignored).
 //!
 //! The save is imported READ-ONLY by [`saves`]: discovery and parsing live there, the character normalisation is
 //! `dfo_core::save::character_from_save`, and nothing is retained or written (AGENTS.md rule 11). Every flag this
@@ -17,6 +19,7 @@
 //! Every rule lives in `dfo-core`; this file owns argument text, the two output formats and exit codes (a usage
 //! error is 2, as `bin/dfo-dps.js` does).
 
+mod probe;
 mod saves;
 
 use std::collections::HashMap;
@@ -42,7 +45,7 @@ use dfo_core::theory::theory_character;
 use dfo_core::value::{number_to_string, obj_table_get, string_to_number, Value, Value::*};
 
 const HELP: &str = "\
-dfo-cli - the saves, build, objective, rank, compare and doctor slice of dfo-dps (Rust core)
+dfo-cli - the saves, build, objective, rank, compare, doctor and probe slice of dfo-dps (Rust core)
 
 Usage:
   dfo-cli saves
@@ -55,6 +58,7 @@ Usage:
   dfo-cli rank [weapons] --theory [options]
   dfo-cli compare [--save <slot|folder|path>] --stat <name=value> [--weapon <template:material>]
   dfo-cli compare --theory --stat <name=value> [--weapon <template:material>]
+  dfo-cli probe [capture.json] [--old] [--level <n>] [--players <n>] [--json]
 
 `saves` lists the save folders under the DFO user-data folder (newest first). `doctor` prints the model pin, the
 save folders and the imported character's build/ruleset summary. `build` prices one build against one target: with
@@ -62,7 +66,9 @@ save folders and the imported character's build/ruleset summary. `build` prices 
 on one named objective (deterministic or sampled), text or `--json`, and `rank` prices every melee template/material
 the same way. `compare` prices the same build twice, before and after the `--stat`/`--weapon` changes. `build` prints
 the JS `printBuild` card; with `--json` it prints `summary()` instead. `rank` text is the JS card, `--json` is
-`{ character, weapons, current }`.
+`{ character, weapons, current }`. `probe` reads a Combat Probe capture (the newest under
+~/.local/share/dfo-tools/probe-mod/captures, or a named file), text or `--json`; its HTML page belongs to the shared
+renderer and is not ported, so `--out` is refused.
 
 Flags:
   --save <SAVE4|folder|SaveData.txt>  the save to import (default: the newest under the user-data folder)
@@ -89,6 +95,8 @@ Flags:
                                       sampled objective options (defaults 1000, 0, 900, 6000)
   --top <n>                           rows in the ranking (default 20)
   --stat <name=value>                 compare: one attribute or skill id change (repeatable)
+  --data <capture.json>               probe: a capture file (the JS also reads ARENA2 here; not ported)
+  --old                               probe: read the newest capture in captures/old
   --json
   -h, --help
 
@@ -175,6 +183,23 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         }
         return compare(&values);
     }
+    if command == "probe" {
+        // The JS takes at most one positional (`capture.json`) and ignores the rest; this slice refuses extras, as the
+        // other ported commands do. `--out` is refused by the probe module itself (the page HTML is not ported).
+        if let Some(extra) = parsed.positionals.get(2) {
+            return Err(usage(format!("unexpected positional argument \"{extra}\"")));
+        }
+        check_output_flags(&command, &parsed)?;
+        return probe::command(
+            parsed.positionals.get(1).map(String::as_str),
+            values.data.as_deref(),
+            values.old,
+            values.nums.get("level").copied(),
+            values.nums.get("players").copied(),
+            values.json,
+            parsed.raw("out").is_some(),
+        );
+    }
     if command != "rank" {
         const COMMANDS: [&str; 23] = [
             "build",
@@ -203,7 +228,7 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         ];
         return Err(if COMMANDS.contains(&command.as_str()) {
             usage(format!(
-                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank`, `compare` and `doctor`"
+                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank`, `compare`, `doctor` and `probe`"
             ))
         } else {
             usage(format!("unknown command \"{command}\"\n\n{HELP}"))
@@ -243,6 +268,15 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
             if parsed.raw(name).is_some() || parsed.flag(name) {
                 return Err(usage(format!(
                     "--{name} is not supported by this CLI slice (it needs a save, another command, or is not ported yet)"
+                )));
+            }
+        }
+    }
+    if command != "probe" {
+        for name in ["data", "old"] {
+            if parsed.raw(name).is_some() || parsed.flag(name) {
+                return Err(usage(format!(
+                    "--{name} is not supported by this CLI slice (it needs the probe, or is not ported yet)"
                 )));
             }
         }
@@ -461,7 +495,8 @@ const SUPPORTED: &str = concat!(
     "theory json vampire firmament rhythm unaware first-blow behind pair dual spam no-crit-damage no-passive no-rri ",
     "help target level armor health traits core weapon swing stacks race blade gear-lb gear-cs star-stat star-skill ",
     "star-damage potency pierce backstab players blow-x health-share self-health-share top damage-pct base-stats ",
-    "no-effects save offline passive bare out objective trials seed max-seconds max-blows no-carry samples stat all",
+    "no-effects save offline passive bare out objective trials seed max-seconds max-blows no-carry samples stat all ",
+    "data old",
 );
 
 fn in_flags(list: &str, name: &str) -> bool {
@@ -470,7 +505,7 @@ fn in_flags(list: &str, name: &str) -> bool {
 
 const BOOLEAN_FLAGS: &str = concat!(
     "theory json vampire firmament rhythm unaware first-blow behind pair dual spam no-crit-damage no-passive ",
-    "no-rri help offline bare no-effects no-carry samples all",
+    "no-rri help offline bare no-effects no-carry samples all old",
 );
 
 const MULTI: [&str; 3] = ["star-stat", "star-skill", "stat"];
@@ -650,6 +685,10 @@ struct Values {
     samples: bool,
     /// `--stat` as typed, in order: `compare` parses each one (the JS validates them inside the branch).
     stat: Vec<String>,
+    /// `--data`: the probe capture file (the JS also uses it for ARENA2, which this slice does not port).
+    data: Option<String>,
+    /// `--old`: the probe reads `captures/old` instead of the live folder.
+    old: bool,
 }
 
 fn range_text(what: &str, min: f64, max: f64, exclusive_min: bool) -> String {
@@ -932,6 +971,8 @@ impl Values {
             no_carry: parsed.flag("no-carry"),
             samples: parsed.flag("samples"),
             stat: parsed.multi("stat"),
+            data: parsed.raw("data").map(str::to_owned),
+            old: parsed.flag("old"),
         })
     }
 
