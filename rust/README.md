@@ -22,16 +22,18 @@ turned into 0. The floor and the Firmament's share read the PERMANENT stats, as 
 tested: `tests/sidebar.rs` drives `tests/sidebar_oracle.mjs` over the public composition, and the script's header lists
 what this repository cannot execute.
 
-## R8: the CLI, the `build`, `saves`, `rank`, `doctor`, `probe`, `graph`, `report` and `firmament` slice
+## R8: the CLI, the `build`, `saves`, `rank`, `doctor`, `probe`, `graph`, `report`, `firmament` and `imprints` slice
 
 `dfo-cli` (`rust/dfo-cli`) is the R8 CLI slice: the JS `src/cli.js` `build` card, `saves` listing, `doctor` summary,
-`rank` path, `compare` table, Combat Probe `probe` page, `graph` page, `src/report.js` `report` page and the
-`src/firmament.js` `firmament` plans page, for the level-45 theory character or for an imported save. It is a thin
-layer: the parser owns argument text, the output formats (`printBuild`'s card, `printRank`'s table, `--json`'s summary
-and `{ character, weapons, current }`, `doctor`'s plain lines, the two SVG pages, the report page and the firmament
-plans page) and exit codes; every number comes from `dfo_core`
+`rank` path, `compare` table, Combat Probe `probe` page, `graph` page, `src/report.js` `report` page, the
+`src/firmament.js` `firmament` plans page and the `imprints` rankings page, for the level-45 theory character or for an
+imported save. It is a thin layer: the parser owns argument text, the output formats (`printBuild`'s card,
+`printRank`'s table, `--json`'s summary
+and `{ character, weapons, current }`, `doctor`'s plain lines, the two SVG pages, the report page, the firmament
+plans page and the imprint card) and exit codes; every number comes from `dfo_core`
 (`theory_character`, `Profiles::legal_gear`, `reference_foe`/`boss_target`/`gate_target`/`encounter_target`,
-`analyze`/`marginals`/`rank_affixes`/`rank_weapons`, `current_weapon_row`, `save::character_from_save`,
+`analyze`/`marginals`/`rank_affixes`/`rank_weapons`, `current_weapon_row`, `imprints::rank_all`,
+`save::character_from_save`,
 `save::live_stat`/`skill_value`/`skill_name`, `model_blow::weapon_of`). There is no second reading of a rule.
 
 - **What runs.** `dfo-cli saves` (the `src/cli.js:934-939` table, newest first, `No saves found.` when empty),
@@ -74,6 +76,15 @@ plans page) and exit codes; every number comes from `dfo_core`
   and its first line reads `Firmament plans (N cached, M computed)`. This CLI keeps no cache - a plan is a pure function
   of build and purse - so it replans every run, `--refresh` changes nothing, and the line is the bare `Firmament plans`;
   the plans and page are byte-identical. `dfo-cli/tests/cli_firmament.rs` pins that against the JS CLI.
+- **The imprints page.** `dfo-cli imprints [--family <key>] [--sort <boss|uncapped|conditional>] [--uncapped]
+  [--cap-aware] [--vampire] [--firmament] [--json] [--out <file>]` (`src/cli.js:1219-1263`) ranks every Weapon
+  Legendary's power on each family's best max-profile weapon through `dfo_core::imprints::rank_all`, prints the JS card
+  (or the JS `--json` document), and writes `imprints.html` (or `--out`, renaming the `--out` default as `probe`/`graph`
+  do) from `src/imprints.rs` through the same create-only writer. The order is the JS nested ternary: `--uncapped`,
+  then `--cap-aware` (boss), then `--sort`; an unknown `--sort` is a global `validateFlags` refusal, an unknown
+  `--family` is the JS stderr line and exit 2, and `--family ''` keeps every family (falsy in the JS `?`). No save is
+  read. `dfo-cli/tests/cli_imprints.rs` pins the whole command against the JS CLI and `dfo-cli/tests/imprints.rs` the
+  renderer.
 - **The launcher spellbook.** `saves::arena2_dir` reads `config.json`'s `arena2Path` and `saves::load_spellbook` opens
   `SPELLS.STD` read-only, handing the bytes to `dfo_core::spells::read_spells_std`/`spells_by_index_map`
   (`src/save.js:28-40`, `src/spells.js:72-93`). `build` and `rank` use that book for Cast When Strikes, so a save's
@@ -117,13 +128,18 @@ plans page) and exit codes; every number comes from `dfo_core`
   `--json` rows, and the usage refusals (no channel, an unknown attribute, two `--stat`s, an out-of-range skill id,
   `--all --json`, `--out`). `dfo-cli/tests/cli_firmament.rs` runs the whole `firmament` command against the JS: every
   preset and a small purse, no/empty/whitespace `--build`, the text card (after the JS cache parenthetical this CLI does
-  not print), the `--json` document, the default output name, the usage refusals and the create-only writer. A missing
-  `node` fails the tests rather than skipping them.
+  not print), the `--json` document, the default output name, the usage refusals and the create-only writer.
+  `dfo-cli/tests/cli_imprints.rs` runs the whole `imprints` command the same way: every family and one by `--family`,
+  the `--uncapped`/`--cap-aware`/`--sort` precedence, `--firmament`/`--vampire`, the card, the `--json` document, the
+  default output name, the usage refusals and the create-only writer. A missing `node` fails the tests rather than
+  skipping them.
 
-The rest of `src/cli.js` (the other page commands, `tradeoff`, `theory`, `spell`, `enchant`, `weapons`, `imprints`,
+The rest of `src/cli.js` (the other page commands, `tradeoff`, `theory`, `spell`, `enchant`, `weapons`,
 `enchant-plan`, `loadout`) is still unported. `src/graph.js` is ported (`src/graph.rs`) and
-wired into `probe`, `graph`, `report` and `firmament`; `src/report.js` is ported (`src/report.rs`) and wired into
-`report`; `src/firmament.js`'s page is ported (`dfo-cli/src/firmament.rs`) and wired into `firmament`. `--data`
+wired into `probe`, `graph`, `report`, `firmament` and `imprints`; `src/report.js` is ported (`src/report.rs`) and
+wired into `report`; `src/firmament.js`'s page is ported (`dfo-cli/src/firmament.rs`) and wired into `firmament`;
+`src/imprints.js`'s rows are `dfo_core::imprints`, rendered by `dfo-cli/src/imprints.rs` and wired into `imprints`.
+`--data`
 (an explicit ARENA2 directory) and nested custom spell records are not ported; the launcher lookup above is the only
 spellbook source.
 

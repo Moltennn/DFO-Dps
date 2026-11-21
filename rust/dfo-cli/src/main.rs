@@ -1,10 +1,10 @@
 //! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves`, `build`, `objective`, `rank`, `compare`, `scale`,
-//! `doctor`, `probe`, `graph`, `report` and `firmament` slice).
+//! `doctor`, `probe`, `graph`, `report`, `firmament` and `imprints` slice).
 //!
 //! This is the JS `src/cli.js` `build` card, `objective` command, `rank` card, `compare` card, `scale` curve, `saves`
-//! listing, `doctor`, `probe`, `graph`, `report` and `firmament`, and only that: [`main`] parses the flags those read,
-//! replays the JS validation (`numFlag`, the enum checks, `sampledOptions`) with the same messages, builds either the
-//! level-45 theory character or the one an imported save describes, the target and the scenario, then prints
+//! listing, `doctor`, `probe`, `graph`, `report`, `firmament` and `imprints`, and only that: [`main`] parses the flags
+//! those read, replays the JS validation (`numFlag`, the enum checks, `sampledOptions`) with the same messages, builds
+//! either the level-45 theory character or the one an imported save describes, the target and the scenario, then prints
 //! `printBuild`,
 //! `printObjective`, `printRank`, the `compare` table, `printScale` or `{ character, weapons, current }` as `--json`
 //! does. `build --json` prints `summary()` and `objective --json` prints the evaluated row; `build`'s text card is
@@ -24,6 +24,13 @@
 //! unrelated save or report, or any hard/symlink alias - is refused with exit 2 and left untouched, where the JS would
 //! truncate it. Reports must target a new path.
 //!
+//! `imprints` renders `dfo_core::imprints::rank_all` through [`imprints`] (the `src/cli.js:1219-1263` card and page):
+//! `--family` picks one family after the ranking (an unknown one is the JS's stderr line and exit 2), `--sort` takes
+//! `boss`/`uncapped`/`conditional`, and the resolved order is `--uncapped` first, then `--cap-aware` (boss), then
+//! `--sort`. It writes `imprints.html` (or `--out`, create-only, renaming the default report name as `probe`/`graph`
+//! do) and prints the JS `imprints page written:` line in text mode, or the JS `--json` document instead. No save is
+//! read: the rows are the theory max profiles, as the JS branch's `rankAll` call is.
+//!
 //! The JS `firmament` command also keeps a disk cache (`.cache/firmament-plans.json`, keyed by a source fingerprint) and
 //! its card starts `Firmament plans (N cached, M computed)`. This CLI writes no cache at all: a plan is a pure function of
 //! its build and purse, every run replans, and the card says `Firmament plans` with no counts, because reporting a cache
@@ -38,10 +45,11 @@
 //! error is 2, as `bin/dfo-dps.js` does).
 
 // The shared renderer is a whole port of `src/graph.js`: `probe` uses `lineChart`/`multiGraphPage`, `graph` uses
-// `lineChart`/`graphPage`, `firmament` uses `multiGraphPage`, and `barChart` is here for the report commands that follow.
+// `lineChart`/`graphPage`, `firmament` and `imprints` use `multiGraphPage`, and `barChart` serves `imprints`.
 mod firmament;
 #[allow(dead_code)]
 mod graph;
+mod imprints;
 mod probe;
 mod report;
 mod saves;
@@ -90,6 +98,7 @@ Usage:
   dfo-cli graph [--theory] [--series <spec,...>] [--from <n>] [--to <n>] [--step <n>] [--uncapped] [--json] [--out <file>]
   dfo-cli report [--theory] [--save <slot|folder|path>] [options] [--out <file>]
   dfo-cli firmament [--build <id,...>] [--stars <n>] [--refresh] [--json] [--out <file>]
+  dfo-cli imprints [--family <key>] [--sort <boss|uncapped|conditional>] [--uncapped] [--cap-aware] [--vampire] [--firmament] [--json] [--out <file>]
 
 `saves` lists the save folders under the DFO user-data folder (newest first). `doctor` prints the model pin, the
 save folders and the imported character's build/ruleset summary. `build` prices one build against one target: with
@@ -110,7 +119,10 @@ across `--from`..`--to` by `--step`, writes `graph.html` (or `--out`, also creat
 `firmament` plans the star tree for each `--build` (all eight by default) at `--stars`, writes `firmament.html` (or
 `--out`, also create-only) and prints the JS `firmament page written:` line, or the plan document with `--json`; the
 plans are recomputed every run (no disk cache, and so no `N cached, M computed` counts in the card), where the JS keeps
-one in `.cache/firmament-plans.json`.
+one in `.cache/firmament-plans.json`. `imprints` ranks every Weapon Legendary's power on each family's best max-profile
+weapon (or the one `--family` names), writes `imprints.html` (or `--out`, also create-only) and prints the JS
+`imprints page written:` line, or the `--json` rows instead; the order is `--uncapped`, then `--cap-aware` (boss), then
+`--sort`.
 
 Flags:
   --save <SAVE4|folder|SaveData.txt>  the save to import (default: the newest under the user-data folder)
@@ -144,16 +156,20 @@ Flags:
   --all                               scale: every relevant channel at once (text only)
   --data <capture.json>               probe: a capture file (the JS also reads ARENA2 here; not ported)
   --old                               probe: read the newest capture in captures/old
-  --out <file>                        probe/graph/report/firmament: the page (default probe.html / graph.html /
-                                      dfo-dps-report.html / firmament.html; must not exist yet)
+  --out <file>                        probe/graph/report/firmament/imprints: the page (default probe.html / graph.html /
+                                      dfo-dps-report.html / firmament.html / imprints.html; must not exist yet)
   --series <spec,...>                 graph: stat:name, skill:id, gear:id or star:name (default stat:strength,stat:agility)
   --from <n> --to <n> --step <n>      graph: the channel range (default per series kind; step 10)
-  --uncapped                          graph: plot uncapped DPS instead of the per-hit-capped line
+  --uncapped                          graph: plot uncapped DPS instead of the per-hit-capped line;
+                                      imprints: rank by uncapped DPS (wins over --sort)
   --build <id,...>                    firmament: longblade, shortblade, axe, blunt, bow, fists, destruction, tank
                                       (default: all eight)
   --stars <n>                         firmament: stars to spend, 0..98 (default 98)
   --refresh                           firmament: accepted for parity; this CLI keeps no disk cache, so it recomputes
                                       every run either way
+  --family <key>                      imprints: LongBlade, ShortBlade, Axe, BluntWeapon, Archery or HandToHand
+  --sort <boss|uncapped|conditional>  imprints order (default boss; --uncapped wins, then --cap-aware)
+  --cap-aware                         imprints: rank by boss DPS (the default order, named explicitly)
   --json
   -h, --help
 
@@ -278,6 +294,13 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         check_output_flags(&command, &parsed)?;
         return firmament_command(&values, parsed.raw("out"));
     }
+    if command == "imprints" {
+        if let Some(extra) = parsed.positionals.get(1) {
+            return Err(usage(format!("unexpected positional argument \"{extra}\"")));
+        }
+        check_output_flags(&command, &parsed)?;
+        return imprints_command(&values, parsed.raw("out"));
+    }
     if command == "scale" {
         if let Some(extra) = parsed.positionals.get(1) {
             return Err(usage(format!("unexpected positional argument \"{extra}\"")));
@@ -313,7 +336,7 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         ];
         return Err(if COMMANDS.contains(&command.as_str()) {
             usage(format!(
-                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank`, `compare`, `scale`, `doctor`, `probe`, `graph`, `report` and `firmament`"
+                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank`, `compare`, `scale`, `doctor`, `probe`, `graph`, `report`, `firmament` and `imprints`"
             ))
         } else {
             usage(format!("unknown command \"{command}\"\n\n{HELP}"))
@@ -335,8 +358,8 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
 
 /// `checkOutputFlags` (`src/cli.js:885-898`): reject a flag the command would ignore instead of accepting it silently.
 /// The commands of this slice (`build`, `rank`, `compare`, `scale`, `saves`, `doctor`, `probe`, `graph`, `report`,
-/// `firmament`): `probe`, `graph`, `report` and `firmament` write a page, and `build`, `rank`, `objective`, `scale`,
-/// `probe`, `graph` and `firmament` read `--json`.
+/// `firmament`, `imprints`): `probe`, `graph`, `report`, `firmament` and `imprints` write a page, and `build`, `rank`,
+/// `objective`, `scale`, `probe`, `graph`, `firmament` and `imprints` read `--json`.
 fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
     const FILE_COMMANDS: &str = concat!(
         "report, spells, weapons, skills, firmament, imprints, probe, enchant-plan, gear-plan, loadout, ",
@@ -377,16 +400,20 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
             }
         }
     }
-    // `--series`/`--uncapped` are priced by `graph` alone; JS accepts and ignores them elsewhere, and this CLI refuses
-    // them by name.
-    if command != "graph" {
-        for name in ["series", "uncapped"] {
-            if parsed.raw(name).is_some() || parsed.flag(name) {
-                return Err(usage(format!(
-                    "--{name} is not supported by this CLI slice (it needs the graph, or is not ported yet)"
-                )));
-            }
-        }
+    // `--series` is priced by `graph` alone, and `--uncapped` by `graph` and `imprints`; JS accepts and ignores them
+    // elsewhere, and this CLI refuses them by name.
+    if command != "graph" && (parsed.raw("series").is_some() || parsed.flag("series")) {
+        return Err(usage(
+            "--series is not supported by this CLI slice (it needs the graph, or is not ported yet)",
+        ));
+    }
+    if command != "graph"
+        && command != "imprints"
+        && (parsed.raw("uncapped").is_some() || parsed.flag("uncapped"))
+    {
+        return Err(usage(
+            "--uncapped is not supported by this CLI slice (it needs the graph or imprints, or is not ported yet)",
+        ));
     }
     // `--from`/`--to`/`--step` are shared by `graph` and `scale`.
     if command != "graph" && command != "scale" {
@@ -404,6 +431,17 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
             if parsed.raw(name).is_some() || parsed.flag(name) {
                 return Err(usage(format!(
                     "--{name} is not supported by this CLI slice (it needs the firmament command, or is not ported yet)"
+                )));
+            }
+        }
+    }
+    // `--family`/`--sort`/`--cap-aware` are read by `imprints` alone (the JS validates `--sort` globally, which
+    // [`Values::new`] still does before this runs).
+    if command != "imprints" {
+        for name in ["family", "sort", "cap-aware"] {
+            if parsed.raw(name).is_some() || parsed.flag(name) {
+                return Err(usage(format!(
+                    "--{name} is not supported by this CLI slice (it needs the imprints command, or is not ported yet)"
                 )));
             }
         }
@@ -634,7 +672,7 @@ const SUPPORTED: &str = concat!(
     "help target level armor health traits core weapon swing stacks race blade gear-lb gear-cs star-stat star-skill ",
     "star-damage potency pierce backstab players blow-x health-share self-health-share top damage-pct base-stats ",
     "no-effects save offline passive bare out objective trials seed max-seconds max-blows no-carry samples stat all ",
-    "data old series from to step uncapped skill gear-skill build stars refresh",
+    "data old series from to step uncapped skill gear-skill build stars refresh family sort cap-aware",
 );
 
 fn in_flags(list: &str, name: &str) -> bool {
@@ -643,7 +681,7 @@ fn in_flags(list: &str, name: &str) -> bool {
 
 const BOOLEAN_FLAGS: &str = concat!(
     "theory json vampire firmament rhythm unaware first-blow behind pair dual spam no-crit-damage no-passive ",
-    "no-rri help offline bare no-effects no-carry samples all old uncapped refresh",
+    "no-rri help offline bare no-effects no-carry samples all old uncapped refresh cap-aware",
 );
 
 const MULTI: [&str; 3] = ["star-stat", "star-skill", "stat"];
@@ -835,8 +873,14 @@ struct Values {
     old: bool,
     /// `--series`: raw comma list, split and validated by the graph command (the JS splits in the branch).
     series: Option<String>,
-    /// `--uncapped`: the graph plots uncapped DPS.
+    /// `--uncapped`: the graph plots uncapped DPS; `imprints` ranks by uncapped DPS.
     uncapped: bool,
+    /// `--family`: the imprints family key, exactly as typed (the JS looks it up case-insensitively).
+    family: Option<String>,
+    /// `--sort`: the imprints order, exactly as typed; `validateFlags` bounds it before the branch.
+    sort: Option<String>,
+    /// `--cap-aware`: imprints' boss order (the same as the default), named explicitly.
+    cap_aware: bool,
     /// `--base-stats` exactly as typed (the graph subtitle prints the JS raw flag text).
     base_stats_raw: Option<String>,
     /// `--all`: `scale` prices every channel at once.
@@ -1049,6 +1093,14 @@ impl Values {
                 )));
             }
         }
+        // `validateFlags` (`src/cli.js:372-374`): the imprints order, checked here for every command as the JS does.
+        if let Some(sort) = parsed.raw("sort") {
+            if !["boss", "uncapped", "conditional"].contains(&sort) {
+                return Err(usage(format!(
+                    "--sort must be boss, uncapped or conditional, got \"{sort}\""
+                )));
+            }
+        }
         let weapon = match parsed.raw("weapon") {
             Some(raw) => Some(weapon_flag(raw)?),
             None => None,
@@ -1129,6 +1181,9 @@ impl Values {
             old: parsed.flag("old"),
             series: parsed.raw("series").map(str::to_owned),
             uncapped: parsed.flag("uncapped"),
+            family: parsed.raw("family").map(str::to_owned),
+            sort: parsed.raw("sort").map(str::to_owned),
+            cap_aware: parsed.flag("cap-aware"),
             base_stats_raw: parsed.raw("base-stats").map(str::to_owned),
             all: parsed.flag("all"),
             build: parsed.raw("build").map(str::to_owned),
@@ -2061,6 +2116,106 @@ fn firmament_command(values: &Values, out_flag: Option<&str>) -> Result<String, 
     }
     out.push_str(&format!("firmament page written: {}\n", out_path.display()));
     Ok(out)
+}
+
+/// `dfo-dps imprints` (`src/cli.js:1219-1263`): rank every imprint family (or the one `--family` names) through
+/// `dfo_core::imprints::rank_all`, print the JS card or the `--json` rows, and write the page from [`imprints`].
+///
+/// The order is resolved exactly as the JS nested ternary: `--uncapped`, then `--cap-aware` (boss), then `--sort`. The
+/// rows are the theory max profiles; no save is read. `--family ''` is falsy in the JS `values.family ?`, so it keeps
+/// every family rather than raising; an unknown non-empty key is the JS `console.error` + `process.exit(2)`.
+fn imprints_command(values: &Values, out_flag: Option<&str>) -> Result<String, CliError> {
+    let family = values
+        .family
+        .as_deref()
+        .filter(|f| !f.is_empty())
+        .map(|f| {
+            dfo_core::imprints::imprint_family_by_id(&Str(f.to_owned()))
+                .map(|found| found.get("key").to_js_string())
+                .ok_or_else(|| CliError {
+                    message: format!("unknown imprint family: {f}"),
+                    code: 2,
+                })
+        })
+        .transpose()?;
+    let sort = if values.uncapped {
+        "uncapped"
+    } else if values.cap_aware {
+        "boss"
+    } else {
+        match values.sort.as_deref() {
+            Some("uncapped") => "uncapped",
+            Some("conditional") => "conditional",
+            _ => "boss",
+        }
+    };
+    let book = saves::load_spellbook();
+    let mut profiles = Profiles::new(&book);
+    let ranked = dfo_core::imprints::rank_all(
+        &obj([
+            ("firmament", Bool(values.firmament)),
+            ("vampire", Bool(values.vampire)),
+            ("sort", Str(sort.to_owned())),
+        ]),
+        &mut profiles,
+    )
+    .map_err(usage)?;
+    let rows = Arr(ranked
+        .items()
+        .iter()
+        .filter(|f| family.as_ref().is_none_or(|key| f.get("key").is_str(key)))
+        .cloned()
+        .collect());
+    // `path.resolve(values.out === 'dfo-dps-report.html' ? 'imprints.html' : values.out)`.
+    let out = match out_flag {
+        None | Some("dfo-dps-report.html") => "imprints.html".to_owned(),
+        Some(name) => name.to_owned(),
+    };
+    let out = probe::normalized(&out);
+    probe::write_page(&out, &imprints::page(&rows, values.firmament, sort))?;
+    if values.json {
+        return Ok(format!("{}\n", json(&imprints_doc(&rows))));
+    }
+    Ok(format!(
+        "{}imprints page written: {}\n",
+        imprints::text(&rows),
+        out.display()
+    ))
+}
+
+/// The JS `--json` document (`src/cli.js:1262`): one record per family, one row per imprint, field for field.
+fn imprints_doc(rows: &Value) -> Value {
+    let mut families = Vec::new();
+    for f in rows.items() {
+        let mut list = Vec::new();
+        for r in f.get("rows").items() {
+            list.push(obj([
+                ("id", r.get("id").clone()),
+                ("record", r.get("name").clone()),
+                ("power", r.get("power").get("name").clone()),
+                ("weapon", r.get("weapon").clone()),
+                ("baseDps", r.get("baseDps").clone()),
+                ("conditionalDps", r.get("conditionalDps").clone()),
+                ("uncappedDps", r.get("uncappedDps").clone()),
+                ("delta", r.get("delta").clone()),
+                ("uncappedDelta", r.get("uncappedDelta").clone()),
+                ("triggerDelta", r.get("triggerDelta").clone()),
+                ("trigger", r.get("trigger").clone()),
+                ("hit", r.get("hit").clone()),
+                ("effect", r.get("power").get("brief").clone()),
+            ]));
+        }
+        families.push(obj([
+            ("family", f.get("key").clone()),
+            ("weapon", f.get("weapon").clone()),
+            ("template", f.get("template").clone()),
+            ("baseDps", f.get("base").get("carriedCappedDps").clone()),
+            ("cardBaseDps", f.get("base").get("cappedDps").clone()),
+            ("metric", Str("carried".to_owned())),
+            ("rows", Arr(list)),
+        ]));
+    }
+    Arr(families)
 }
 
 /// The card's `Group` cell (`src/cli.js:1408`): the blow row for a weapon build, the cast-cost row for a spell build,
