@@ -200,6 +200,96 @@ A GUI that knows where its own save keeps the sky should hand that value to `dec
 same three answers apply. This is the one requirement this port cannot prove end to end against a real Daggerfall Unity
 save, and the docs say so rather than inventing a field.
 
+## (7) The sidebar's numbers: maxima, and the armour by hit location
+
+`dfo_core::sidebar` is the read-only half a GUI shows beside the build: the effective maximum Health and Spell Points
+and the worn armour, by body part. Plain records in, nothing mutated, and the current pools stay what the save held.
+
+**Import once, then discard the documents.** A GUI calls `import_save` with the raw imported document and its
+**normalized build** (`save::character_from_save`), keeps the typed facts, and never holds either again. Real upstream
+saves carry `items[].equipSlot` or `equipSlots` and **no** `worn` - the build is what normalizes them (`src/save.js:251-259`)
+- so the maxima and pools come from the RAW save and the worn list from the build:
+
+```rust
+use dfo_core::sidebar::{armor_display, armor_fold_parts, firmament_armor_parts, firmament_layer,
+                        import_save, vitals, Layer};
+
+let build = save::character_from_save(&save, opts);   // the normalization: builds `worn` from `items`/`equipSlots`
+let facts = import_save(&save, &build);              // maxima from the raw save; worn/enchant from the build
+// facts.max_health      save.maxHealth = the entity's rawMaxHealth: the stored value with NO limiter
+// facts.max_magicka     save.maxMagicka = the OFFLINE accessor: career base + ExtraSpellPts, Renown/folds taken OFF
+// facts.health/magicka  the saved current pools: snapshots, not maxima
+// facts.endurance       PERMANENT stats.endurance, which the floor and the share read (never the live value)
+// facts.worn            the build's normalized worn list; facts.enchant_mods its `_enchantMods`
+let sky = firmament_layer(&facts, plan.get("totals"));   // the Firmament's shares over the floored body
+let eff = vitals(&facts, &Layer::default(), &sky);       // stored + online + sky, once
+// eff.health / eff.magicka                the maximum a GUI prints
+// eff.stored_health / eff.stored_magicka  the save's own, before the layer
+// eff.online_health / eff.online_magicka  the composed layer
+// eff.snapshot                            the saved current pools
+
+let fold = armor_fold_parts(&facts.worn, &firmament_armor_parts(&plan.get("totals"))); // affixes + sky, ONCE
+let display = armor_display(&facts.worn, &facts.enchant_mods, &fold);
+// display[3] is the Chest, display[0] the Head, ... in `BODY_PARTS` order (0..6)
+
+// A gear edit stays ONE workflow: if the edited build's ExtraSpellPts rows differ from the imported ones, the effective
+// base is Unknown, and the Firmament's Spell-Point share and `vitals.magicka` are Unknown with it (never stale).
+let after = facts.after_gear(&edited_build.get("worn").items().to_vec());
+let after_sky = firmament_layer(&after, plan.get("totals"));
+let after_eff = vitals(&after, &Layer::default(), &after_sky);
+```
+
+**Nothing is defaulted.** A missing maximum is `Fact::Unknown`, never the normalized build's `max(1, health)` or `0`.
+No path reads a maximum from a build's default, and no unknown becomes a zero; only `Sky::asleep()` (the sky not in
+force) and *explicitly stated* online terms are legitimate zeros.
+
+**Health's order** is the vendored one. A save writes the UNLIMITED stored value (`full:systems/save/save.js:342-346`)
+and does not save the lycanthrope's limiter, so this module applies none. The live accessor caps the stored value with
+the limiter only on a live entity, then adds the composed layer `renown + spire + hp-share + floor`
+(`systems/renownLayer.js:83-85`). `Sky` carries `hp`, `mp` and `even` separately; pair it with the per-term `Layer`
+fields for a save import, or use `Layer::laid(&entity)` with `Sky::asleep()` for a live entity whose `renownHp` already
+holds the sky and the floor. There is deliberately **no example that mixes a composed live term with saved facts**: the
+two are different sources, and `health_layer` refuses the mix as `Unknown`.
+
+**Spell Points.** The save's `maxMagicka` is the **offline** accessor (`offlineVitals`, `systems/renownLayer.js:152-168`):
+`floor(LiveInt x multiplier) + maxMagickaModifier`, so it **includes** the ExtraSpellPts channel and **excludes** Renown's
+and the folds' terms. This module re-adds only the online terms; the stored number is never re-derived (the channel is not
+saved), and `spell_points_from_career` is documented as a base explanation, not the save's read.
+
+**The Firmament's arithmetic**, exactly `systems/firmamentPowers.js:253-273`:
+
+```text
+end     = capAt("endurance", totals.endurance + pctOf(stats.endurance, totals."pct.endurance"))
+floored = maxHealth + evenHpOf(maxHealth, level, stats.endurance + end)
+hp      = capAt("hp", totals.hp + pctOf(floored, totals.hpPct))
+mp      = capAt("mp", totals.mp + pctOf(maxMagicka, totals.mpPct))
+```
+
+`pctOf` is `floor(base x pct / 100)`, and **both reads use the PERMANENT `entity.stats`**, never `liveStat`
+(`firmamentPowers.js:128`, `renownLayer.js:84`), so a fortify effect cannot move the floor or the share.
+
+**Armour** is the item rule, not a total: each part's value is what the game's hit chance reads (`armorValues[part]`), a
+shield covers every part it protects, and the gear affixes and the Firmament's `armor` star both land on parts. The
+paperdoll's number is `(100 - value) / 5 + Decreased - Increased + fold[part]`, where `fold` is `armor_fold_parts`,
+passed **once**. The enchantment-and-fold term is `armor_display_mod` = `entityArmorDisplayMod`
+(`systems/entityMods.js:200-204`); the `(100 - value) / 5` term is a **C# cite** in a vendored comment
+(`systems/equip.js:422-423`), so it is DOCUMENTED, not executable here - `armor_display` composes it as documentation and
+the differential proves only `armor_display_mod`. There is no single "armour" total, because the game has none.
+
+**What this is not, and what is unknown.** No movement, regeneration, leech or ordered route: those need units and
+triggers and their own verification, and they are deliberately absent rather than stubbed. Renown's own HP/SP per Renown
+level cannot be read in this repository (`net/renown.js` is a vendored stub), so the `Layer` fields are the caller's.
+Firmament's tree is the account service's and the vendored `firmamentTree`/`firmamentLive` are inert stubs, so a GUI
+passes the law's capped totals for the tree it knows is in force; absent totals are `Unknown`, not 0.
+
+**How it is proven.** `tests/sidebar.rs` runs `tests/sidebar_oracle.mjs` and replays every case through
+`import_save` (with a `character_from_save`-normalized build) + `firmament_layer` + `vitals`. The oracle drives what this
+repository can execute - `levelEven.js`, `chargen.js`'s multiplier/clamp, `equip.js`'s armour table, `lootRarity.js`'s
+affix fold, `entityMods.js`'s display term, `renownLayer.js`'s setters - and its header lists what it CANNOT drive (the
+stubbed `firmamentTree`, the C# paperdoll rating, `renownBonus`). Composition, not a table of constants. The unit tests
+also pin a **real upstream save shape** (`items[]`+`equipSlot`, no `worn`), the before/after wear path, the
+unknown-propagation cases, and no mutation of either input.
+
 ## How parity is checked
 
 `tools/rust-forge-vectors.mjs` writes `rust/tests/vectors/forge.txt` (**41,135** cases) from the **real** vendored law

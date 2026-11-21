@@ -42,6 +42,7 @@ pub mod rng;
 pub mod rolls;
 pub mod round;
 pub mod save;
+pub mod sidebar;
 pub mod simulate_fight;
 pub mod sockets;
 pub mod spells;

@@ -12,6 +12,16 @@ keeps every `_mods` channel the character already carried (the gear fold is a de
 equip change). Parity: `tools/rust-forge-vectors.mjs` and `tools/rust-forge-gear-vectors.mjs` write `forge.txt` and
 `forge_gear.txt` from the real engine, replayed by `tests/forge.rs` and `tests/forge_gear.rs`.
 
+`dfo_core::sidebar` is the read-only half beside a build (FORGE-API.md section 7): the effective maximum Health and
+Spell Points - the save's stored value, the online layer and the Firmament's share kept apart - and the worn armour by
+body part. It reuses `save::live_stat`, `firmament_law::stat_def` and the vendored armour helpers; nothing there is a
+second reading, and no input is mutated. `import_save(save, build)` reads the maxima and pools from the raw document and
+the worn list from the `character_from_save`-normalized build (real saves carry `items[]`/`equipSlots`, not `worn`), then
+neither input is needed again; a missing maximum is `Unknown`, never a normalized default, and an unknown term is never
+turned into 0. The floor and the Firmament's share read the PERMANENT stats, as the vendor does. It is differentially
+tested: `tests/sidebar.rs` drives `tests/sidebar_oracle.mjs` over the public composition, and the script's header lists
+what this repository cannot execute.
+
 ## R8: the CLI, the `saves`, `rank` and `doctor` slice
 
 `dfo-cli` (`rust/dfo-cli`) is the first CLI slice: the JS `src/cli.js` `saves` listing, `doctor` summary and `rank`
