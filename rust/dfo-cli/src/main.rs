@@ -1,11 +1,11 @@
 //! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves`, `build`, `objective`, `rank`, `compare`, `scale`,
-//! `doctor`, `probe`, `graph`, `report`, `firmament` and `imprints` slice).
+//! `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints` and `enchant` slice).
 //!
 //! This is the JS `src/cli.js` `build` card, `objective` command, `rank` card, `compare` card, `scale` curve, `saves`
-//! listing, `doctor`, `probe`, `graph`, `report`, `firmament` and `imprints`, and only that: [`main`] parses the flags
-//! those read, replays the JS validation (`numFlag`, the enum checks, `sampledOptions`) with the same messages, builds
-//! either the level-45 theory character or the one an imported save describes, the target and the scenario, then prints
-//! `printBuild`,
+//! listing, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints` and `enchant`, and only that: [`main`] parses
+//! the flags those read, replays the JS validation (`numFlag`, the enum checks, `sampledOptions`) with the same messages,
+//! builds either the level-45 theory character or the one an imported save describes, the target and the scenario, then
+//! prints `printBuild`,
 //! `printObjective`, `printRank`, the `compare` table, `printScale` or `{ character, weapons, current }` as `--json`
 //! does. `build --json` prints `summary()` and `objective --json` prints the evaluated row; `build`'s text card is
 //! `printBuild` with the what-ifs the JS runs after it. `compare` is the table `compare` prints after applying `--stat`
@@ -31,6 +31,13 @@
 //! do) and prints the JS `imprints page written:` line in text mode, or the JS `--json` document instead. No save is
 //! read: the rows are the theory max profiles, as the JS branch's `rankAll` call is.
 //!
+//! `enchant` renders the equipped weapon's enchantment rows and Cast When Strikes price (`src/cli.js:1449-1477`) through
+//! [`enchant`] (pure data in, strings out): the card is [`enchant::text`], the `--json` object [`enchant::document`], and
+//! the procs are priced by `dfo_core::enchants` from the launcher's `SPELLS.STD` (`saves::load_spellbook`). The target is
+//! the branch's own: a raw `--target armoured` is the Breach gate here too (not the reference foe `target_of` prices), and
+//! `analyze` reruns at that target with the branch's `potency`/`pierce`. A character with no weapon prints the JS
+//! `No weapon equipped.` line and exits 0.
+//!
 //! The JS `firmament` command also keeps a disk cache (`.cache/firmament-plans.json`, keyed by a source fingerprint) and
 //! its card starts `Firmament plans (N cached, M computed)`. This CLI writes no cache at all: a plan is a pure function of
 //! its build and purse, every run replans, and the card says `Firmament plans` with no counts, because reporting a cache
@@ -46,6 +53,7 @@
 
 // The shared renderer is a whole port of `src/graph.js`: `probe` uses `lineChart`/`multiGraphPage`, `graph` uses
 // `lineChart`/`graphPage`, `firmament` and `imprints` use `multiGraphPage`, and `barChart` serves `imprints`.
+mod enchant;
 mod firmament;
 #[allow(dead_code)]
 mod graph;
@@ -99,6 +107,7 @@ Usage:
   dfo-cli report [--theory] [--save <slot|folder|path>] [options] [--out <file>]
   dfo-cli firmament [--build <id,...>] [--stars <n>] [--refresh] [--json] [--out <file>]
   dfo-cli imprints [--family <key>] [--sort <boss|uncapped|conditional>] [--uncapped] [--cap-aware] [--vampire] [--firmament] [--json] [--out <file>]
+  dfo-cli enchant [--theory] [--save <slot|folder|path>] [options] [--json]
 
 `saves` lists the save folders under the DFO user-data folder (newest first). `doctor` prints the model pin, the
 save folders and the imported character's build/ruleset summary. `build` prices one build against one target: with
@@ -122,7 +131,8 @@ plans are recomputed every run (no disk cache, and so no `N cached, M computed` 
 one in `.cache/firmament-plans.json`. `imprints` ranks every Weapon Legendary's power on each family's best max-profile
 weapon (or the one `--family` names), writes `imprints.html` (or `--out`, also create-only) and prints the JS
 `imprints page written:` line, or the `--json` rows instead; the order is `--uncapped`, then `--cap-aware` (boss), then
-`--sort`.
+`--sort`. `enchant` prints the equipped weapon's enchantment rows and its Cast When Strikes price (the same card as the
+JS), text or `--json`; no save with a weapon prints the JS `No weapon equipped.` line and exits 0.
 
 Flags:
   --save <SAVE4|folder|SaveData.txt>  the save to import (default: the newest under the user-data folder)
@@ -301,6 +311,13 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         check_output_flags(&command, &parsed)?;
         return imprints_command(&values, parsed.raw("out"));
     }
+    if command == "enchant" {
+        if let Some(extra) = parsed.positionals.get(1) {
+            return Err(usage(format!("unexpected positional argument \"{extra}\"")));
+        }
+        check_output_flags(&command, &parsed)?;
+        return enchant_command(&values);
+    }
     if command == "scale" {
         if let Some(extra) = parsed.positionals.get(1) {
             return Err(usage(format!("unexpected positional argument \"{extra}\"")));
@@ -336,7 +353,7 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         ];
         return Err(if COMMANDS.contains(&command.as_str()) {
             usage(format!(
-                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank`, `compare`, `scale`, `doctor`, `probe`, `graph`, `report`, `firmament` and `imprints`"
+                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank`, `compare`, `scale`, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints` and `enchant`"
             ))
         } else {
             usage(format!("unknown command \"{command}\"\n\n{HELP}"))
@@ -358,8 +375,8 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
 
 /// `checkOutputFlags` (`src/cli.js:885-898`): reject a flag the command would ignore instead of accepting it silently.
 /// The commands of this slice (`build`, `rank`, `compare`, `scale`, `saves`, `doctor`, `probe`, `graph`, `report`,
-/// `firmament`, `imprints`): `probe`, `graph`, `report`, `firmament` and `imprints` write a page, and `build`, `rank`,
-/// `objective`, `scale`, `probe`, `graph`, `firmament` and `imprints` read `--json`.
+/// `firmament`, `imprints`, `enchant`): `probe`, `graph`, `report`, `firmament` and `imprints` write a page, and `build`,
+/// `rank`, `objective`, `scale`, `probe`, `graph`, `firmament`, `imprints` and `enchant` read `--json`.
 fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
     const FILE_COMMANDS: &str = concat!(
         "report, spells, weapons, skills, firmament, imprints, probe, enchant-plan, gear-plan, loadout, ",
@@ -2181,6 +2198,89 @@ fn imprints_command(values: &Values, out_flag: Option<&str>) -> Result<String, C
         imprints::text(&rows),
         out.display()
     ))
+}
+
+/// `dfo-dps enchant` (`src/cli.js:1449-1477`): the equipped weapon's enchantment procs, text or `--json`. The card and
+/// `--json` document are `enchant::text`/`enchant::document`; this owns the target/scenario the JS branch rebuilds and
+/// the Cast When Strikes payload's spellbook.
+///
+/// The branch resolves `enchantTarget` (a raw `--target armoured` is the gate), rebuilds `r` at that target with the
+/// branch's `potency`/`pierce`, and uses `strikeEnchantments` with `{ level, potencyPct, pierce }` - no `standard`, so
+/// the JS default `standardSpells()` (the launcher's `SPELLS.STD`) prices the procs, exactly as [`saves::load_spellbook`]
+/// does here. A save with no weapon prints the JS line and exits 0.
+fn enchant_command(values: &Values) -> Result<String, CliError> {
+    let book = saves::load_spellbook();
+    let ch = character(values, &book)?;
+    if !ch.get("weapon").truthy() {
+        return Ok("No weapon equipped. Pass --weapon or load a save with a weapon.\n".to_owned());
+    }
+    let target = target_of(
+        &ch,
+        values,
+        &values.traits,
+        values.nums.get("health").copied(),
+    )?;
+    // `const enchantTarget = values.target === 'armoured' ? gateTarget(n(values.level, ch.level), { traits }) : target`
+    // (`src/cli.js:1455`). The test is the RAW flag, not the resolved target, so a save's `--target armoured` is the
+    // gate here too even though `target_of` priced its reference foe. `traits` is the array itself (`traitsOf` gives
+    // `[]`), which `gateTarget`'s `traits ?? relayTraitsFor('breach')` does NOT replace - only null/undefined does.
+    let enchant_target = if values.target == "armoured" {
+        let mut opts = Obj(vec![]);
+        opts.set(
+            "traits",
+            Arr(values.traits.iter().map(|t| Str(t.clone())).collect()),
+        );
+        gate_target(
+            &Num(values.num("level", ch.get("level").to_number())),
+            &opts,
+        )
+    } else {
+        target.clone()
+    };
+    let opts = obj([
+        (
+            "level",
+            Num(values.num("level", ch.get("level").to_number())),
+        ),
+        ("potencyPct", Num(values.num("potency", 0.0))),
+        ("pierce", Num(values.num("pierce", 0.0))),
+    ]);
+    let strike = dfo_core::enchants::strike_enchantments(
+        ch.get("weapon"),
+        &ch,
+        &enchant_target,
+        &opts,
+        &book,
+    );
+    // `analyze(ch, { ...scenario, target: enchantTarget, health: ... , potencyPct, pierce })` (`:1460`).
+    let mut scenario = scenario_of(&ch, values, &values.traits, &target);
+    // `scenarioOf` carries `weapon: values.theory ? undefined : weaponOverride(values)`; the branch overwrites only the
+    // target, health, potency and pierce, so a save's `--weapon` still prices the weapon DPS line (`:559`).
+    if !values.theory {
+        if let Some((tpl, mat)) = values.weapon {
+            scenario.set("weapon", synthetic_weapon(&Num(tpl), &Num(mat), values.rri));
+        }
+    }
+    scenario.set("target", enchant_target.clone());
+    scenario.set(
+        "health",
+        Num(if enchant_target.get("isBoss").truthy() {
+            enchant_target.get("maxHealth").to_number()
+        } else {
+            0.0
+        }),
+    );
+    scenario.set("potencyPct", Num(values.num("potency", 0.0)));
+    scenario.set("pierce", Num(values.num("pierce", 0.0)));
+    let card = analyze(&ch, &scenario, &book).to_value();
+    let item = ch.get("weapon");
+    if values.json {
+        return Ok(format!(
+            "{}\n",
+            json(&enchant::document(item, &strike, &card))
+        ));
+    }
+    Ok(enchant::text(&ch, item, &strike, &card))
 }
 
 /// The JS `--json` document (`src/cli.js:1262`): one record per family, one row per imprint, field for field.
