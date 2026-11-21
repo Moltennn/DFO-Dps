@@ -126,9 +126,18 @@ for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { killAll(); proc
 process.on('exit', killAll);
 
 function prepare(w) {
-  const dir = join(workRoot, `w${w}`);
+  // Mirror the repository's depth below the scratch root: the differential oracles resolve the real JS as
+  // `../../../src|tools|vendor` from `rust/dfo-core/tests/...`, so the scratch tree needs the same two levels.
+  const base = join(workRoot, `w${w}`);
+  const dir = join(base, 'rust');
   mkdirSync(join(dir, 'dfo-core'), { recursive: true });
-  for (const f of ['Cargo.toml', 'Cargo.lock']) cpSync(join(rustDir, f), join(dir, f));
+  cpSync(join(rustDir, 'Cargo.lock'), join(dir, 'Cargo.lock'));
+  // The worker builds ONLY dfo-core: copy the workspace manifest but keep the relative profiles, comments and resolver
+  // (a copied `members = ["dfo-core", "dfo-cli"]` makes cargo fail on the dfo-cli path this worker does not own).
+  const workspace = readFileSync(join(rustDir, 'Cargo.toml'), 'utf8')
+    .replace(/^members\s*=\s*\[[^\]]*\]$/m, 'members = ["dfo-core"]');
+  if (!/^members\s*=\s*\["dfo-core"\]$/m.test(workspace)) throw new Error('rust-mutate: could not narrow the workspace to dfo-core');
+  writeFileSync(join(dir, 'Cargo.toml'), workspace);
   cpSync(join(rustDir, 'dfo-core', 'Cargo.toml'), join(dir, 'dfo-core', 'Cargo.toml'));
   for (const d of ['src', 'tests']) {
     rmSync(join(dir, 'dfo-core', d), { recursive: true, force: true });
@@ -138,6 +147,13 @@ function prepare(w) {
   const link = join(dir, 'tests', 'vectors');
   rmSync(link, { recursive: true, force: true });
   symlinkSync(join(rustDir, 'tests', 'vectors'), link);
+  // A differential oracle (`sidebar_oracle.mjs`, `probe_oracle.mjs`) is spawned with cwd = the scratch root and imports
+  // the repository's JS and vendored modules. The oracles only read through these links; no game save is copied.
+  for (const d of ['src', 'tools', 'vendor']) {
+    const target = join(base, d);
+    rmSync(target, { recursive: true, force: true });
+    symlinkSync(join(root, d), target);
+  }
   return dir;
 }
 
