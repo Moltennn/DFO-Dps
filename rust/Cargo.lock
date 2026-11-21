@@ -3,5 +3,12 @@
 version = 4
 
 [[package]]
+name = "dfo-cli"
+version = "0.1.0"
+dependencies = [
+ "dfo-core",
+]
+
+[[package]]
 name = "dfo-core"
 version = "0.1.0"

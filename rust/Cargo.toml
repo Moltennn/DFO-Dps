@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["dfo-core"]
+members = ["dfo-core", "dfo-cli"]
 
 # Tests are numeric loops over hundreds of thousands of golden vectors: unoptimised they were ~3x slower and used one
 # core for tens of seconds. opt-level 2 keeps overflow checks and debug assertions (the dev profile defaults) and

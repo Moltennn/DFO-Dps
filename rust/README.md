@@ -12,6 +12,31 @@ keeps every `_mods` channel the character already carried (the gear fold is a de
 equip change). Parity: `tools/rust-forge-vectors.mjs` and `tools/rust-forge-gear-vectors.mjs` write `forge.txt` and
 `forge_gear.txt` from the real engine, replayed by `tests/forge.rs` and `tests/forge_gear.rs`.
 
+## R8: the CLI, the `rank --theory` slice
+
+`dfo-cli` (`rust/dfo-cli`) is the first CLI slice: the JS `src/cli.js` `rank` path for the level-45 theory character.
+It is a thin layer: the parser owns argument text, the two output formats (`printRank`'s table, `--json`'s
+`{ character, weapons, current }`) and exit codes; every number comes from `dfo_core` (`theory_character`,
+`Profiles::legal_gear`, `reference_foe`/`boss_target`/`gate_target`/`encounter_target`, `rank_weapons`,
+`current_weapon_row`). There is no second reading of a rule, and no I/O beyond stdout/stderr.
+
+- **What runs.** `dfo-cli rank [weapons] --theory [...]`, text or `--json`, with the target remap
+  (`armoured` is the gate for the theory character; the header keeps the typed name), every documented validation
+  message of `validateFlags`, and the `starOptions`/`--weapon` checks.
+- **What does not run, explicitly.** `rank` without `--theory` (a save is R8's later I/O) and every flag outside the
+  slice (`--save`, `--out`, `--passive`, `--encounter`, ...) fail with exit 2 instead of being accepted and ignored;
+  an unknown command or option also exits 2, and extra positionals beyond `rank [weapons]` are refused (the JS ignores
+  them). `--help` lists the slice and the unsupported set.
+- **No new dependency.** The parser is the small `parseArgs` shape this slice reads (long options, `--x=v`, `--`, a
+  repeated multi-value flag) and the JSON writer is `JSON.stringify(v, null, 2)`, so the crate depends only on
+  `dfo-core`: serde/clap would add a build dependency for two formats the JS prints itself.
+- **Differential.** `dfo-cli/tests/rank.rs` spawns `node bin/dfo-dps.js rank ...` and the Rust binary on the same
+  arguments: stdout must match byte for byte (text and `--json`) across targets, blade/race/gear/firmament flags and
+  `--top`; usage cases must match stderr and exit 2. The JS stays the oracle, so a drifting message or number fails
+  here. A missing `node` fails the test rather than skipping it.
+
+The rest of `src/cli.js` (saves, reports, the page commands) and `src/report.js`/`src/graph.js` are still unported.
+
 ## R5c: theory builds, legal budgets, and imprint rankings
 
 `theory` produces the ordered character records that `analyze` consumes. It
@@ -360,6 +385,7 @@ order (JS `draws()` is an object, so integer-like names such as `"10"` would sor
 node tools/rust-vectors.mjs        # from the repository root: writes rust/tests/vectors/*.txt
 node tools/rust-data.mjs --check   # from the repository root: rust/dfo-core/src/generated is up to date
 cd rust && cargo test
+cd rust && cargo test -p dfo-cli    # the CLI differential; it spawns `node bin/dfo-dps.js` (needs the JS tree)
 cd rust && cargo fmt --check
 cd rust && cargo clippy --all-targets -- -D warnings
 ```

@@ -1,0 +1,10 @@
+[package]
+name = "dfo-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Thin CLI over dfo-core (milestone R8, the rank --theory slice)"
+license = "MIT"
+publish = false
+
+[dependencies]
+dfo-core = { path = "../dfo-core" }
