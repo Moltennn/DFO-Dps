@@ -1,8 +1,8 @@
-//! The pure half of `src/save.js` (R4a): the character a save becomes, read as the model reads it. A character is a
-//! [`Value`] (the object `characterFromSave` builds), so each read is the JS read of its field. Each function cites the
-//! JS lines it ports. Not ported (file and launcher I/O, a save's parse): `userDataDir`, `configPath`, `arena2Dir`,
-//! `savesDir`, `listSaves`, `resolveSave`, `loadSave`, `characterFromSave`. The model reads a built character, not a
-//! file, so no pure function here needs them (see `rust/README.md`, R4a).
+//! The pure half of `src/save.js` (R4a, R8): the character a save becomes, read as the model reads it. A character is a
+//! [`Value`] (the object [`character_from_save`] builds), so each read is the JS read of its field. Each function cites
+//! the JS lines it ports. Not ported (file and launcher I/O, a save's parse): `userDataDir`, `configPath`, `arena2Dir`,
+//! `savesDir`, `listSaves`, `resolveSave`, `loadSave`. The model reads a built character, not a file, so no pure function
+//! here needs them (see `rust/README.md`, R4a).
 //!
 //! The field names are the JS keys: `online`, `masterSkills`, `masteredSkills`, `skills`, `_enchantMods.skillMods`,
 //! `_mods.skills`, `_mods.stats`, `_mods.statMax`, `activeEffects` (each entry's `kind`, `ended`, `statMods`, `stat`,
@@ -11,9 +11,9 @@
 use crate::gear_lines::{valid_item_lines, weapon_damage_pct};
 use crate::generated::data::{RACE_NAMES, SKILL_NAMES};
 use crate::generated::js_prototypes::{ARRAY_PROTOTYPE_KEYS, OBJECT_PROTOTYPE_KEYS};
-use crate::generated::save_tables::{ENHANCE_SKILL_MOD, PROFICIENCY_FLAG, WEAPON_SKILL};
-use crate::round::{js_max, js_min, to_int32};
-use crate::value::{number_to_string, obj_table_get, refuse_inherited, Value};
+use crate::generated::save_tables::{ENHANCE_SKILL_MOD, PROFICIENCY_FLAG, SLOT, WEAPON_SKILL};
+use crate::round::{is_integer, js_max, js_min, to_int32};
+use crate::value::{number_to_string, obj_table_get, refuse_inherited, string_to_number, Value};
 
 /// `WEAPON_SKILL[template]` (save.js:116-123): the skill a template swings with, or `undefined`.
 pub fn weapon_skill(template: &Value) -> Option<f64> {
@@ -211,6 +211,341 @@ pub fn rebuild_mods(items: &Value) -> Value {
         Value::Arr(armored.iter().map(|x| Value::Num(*x)).collect()),
     );
     out
+}
+
+/// The stat keys `characterFromSave` copies (`src/save.js:246`).
+const STAT_KEYS: [&str; 8] = [
+    "strength",
+    "intelligence",
+    "willpower",
+    "agility",
+    "endurance",
+    "personality",
+    "speed",
+    "luck",
+];
+
+/// `v ?? fallback` (null and undefined only, as the JS).
+fn nullish(v: &Value, fallback: Value) -> Value {
+    if v.is_nullish() {
+        fallback
+    } else {
+        v.clone()
+    }
+}
+
+/// `v || fallback` (JS truthiness: `''`, `0`, `NaN`, `null` and `false` take the fallback).
+fn or_default(v: &Value, fallback: Value) -> Value {
+    if v.truthy() {
+        v.clone()
+    } else {
+        fallback
+    }
+}
+
+/// `{ ...v }` (object spread): a new object of `v`'s own enumerable keys. A primitive spreads to `{}`, an array spreads
+/// its indices, a string its UTF-16 units. One half of an astral character is a lone surrogate, which a `Value` cannot
+/// hold (rust/README.md, R4a): that read is refused rather than lossily answered.
+fn spread(v: &Value) -> Value {
+    match v {
+        Value::Obj(entries) => Value::Obj(entries.clone()),
+        Value::Arr(items) => {
+            let mut out = Value::Obj(Vec::new());
+            for (i, item) in items.iter().enumerate() {
+                out.set(&i.to_string(), item.clone());
+            }
+            out
+        }
+        Value::Str(s) => {
+            let mut out = Value::Obj(Vec::new());
+            for (i, unit) in s.encode_utf16().enumerate() {
+                let half = String::from_utf16(&[unit]).unwrap_or_else(|_| {
+                    panic!(
+                        "not representable: spreading a string at a half of an astral character reads a lone surrogate"
+                    )
+                });
+                out.set(&i.to_string(), Value::Str(half));
+            }
+            out
+        }
+        _ => Value::Obj(Vec::new()),
+    }
+}
+
+/// `Object.entries(v)` for the two kinds that are `typeof 'object'`: an object's own keys, an array's indices.
+fn object_entries(v: &Value) -> Vec<(String, Value)> {
+    match v {
+        Value::Obj(entries) => entries.clone(),
+        Value::Arr(items) => items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| (i.to_string(), item.clone()))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// `typeof it === 'object'` (an array is one too; `null` is filtered by the callers' truthiness test).
+fn is_object(v: &Value) -> bool {
+    matches!(v, Value::Obj(_) | Value::Arr(_))
+}
+
+/// `it.group === 'Weapons'` (`src/save.js:264-268`).
+fn is_weapon(it: &Value) -> bool {
+    it.get("group").is_str("Weapons")
+}
+
+/// `it.templateIndex === 563`, the Hand Wraps template (`src/save.js:264-268`).
+fn is_wraps(it: &Value) -> bool {
+    is_weapon(it) && it.get("templateIndex").strict_eq(&Value::Num(563.0))
+}
+
+/// The character the model consumes (`characterFromSave`, `src/save.js:244-306`), from the save's plain object and the
+/// caller's options. `opts.online` defaults to true (only `false` turns it off), `opts.martialPath` overrides the save's
+/// path when present, and `opts.slot` / `opts.file` are the source's own metadata: the save object is never embedded in
+/// the character (see AGENTS.md rule 11, Forge is not a save editor).
+///
+/// The worn list is the live equip table (`save.equipSlots`) when the save carries one, even an empty one; its entries
+/// are the table's own records with `equipSlot: Number(key)` stamped on. Otherwise it is the save's `items` whose
+/// `equipSlot` is a non-negative integer (packed pieces and stale marks drop out). The three folds follow that choice:
+/// a live table re-folds the gear, a save carrying a live `_mods` keeps it (only an absent `stats`/`skills` defaults to
+/// an empty object), and a raw save re-folds the gear. The rest is the model's reads: the softcapped stats and skills,
+/// the active effects, the hands and `wraps`, the `legendaries` records and the two `_mods` / `_enchantMods` copies.
+///
+/// Nothing here mutates `save` or `opts`, and no field outside the ones the model reads is carried over.
+pub fn character_from_save(save: &Value, opts: &Value) -> Value {
+    let mut stats = Value::Obj(Vec::new());
+    for k in STAT_KEYS {
+        stats.set(k, Value::Num(save.get("stats").get(k).finite_or(0.0)));
+    }
+    let skills = Value::Arr(
+        save.get("skills")
+            .items()
+            .iter()
+            .map(|v| Value::Num(v.finite_or(0.0)))
+            .collect(),
+    );
+    let items: Vec<Value> = save.get("items").items().iter().map(spread).collect();
+    // A live snapshot carries the game's real equip table (`equip.slots`). The save's `items[].equipSlot` can be stale
+    // or include packed pieces, so prefer the table: its item affixes are what the live Combat Stats card reads.
+    let equip = save.get("equipSlots");
+    let live_worn: Option<Vec<Value>> = if equip.truthy() && is_object(equip) {
+        let mut out = Vec::new();
+        for (slot, it) in object_entries(equip) {
+            if !(it.truthy() && is_object(&it)) {
+                continue;
+            }
+            let mut record = spread(&it);
+            record.set("equipSlot", Value::Num(string_to_number(&slot)));
+            out.push(record);
+        }
+        Some(out)
+    } else {
+        None
+    };
+    let worn: Vec<Value> = match &live_worn {
+        Some(list) => list.clone(),
+        None => items
+            .iter()
+            .filter(|it| match it.get("equipSlot") {
+                Value::Num(n) => is_integer(*n) && *n >= 0.0,
+                _ => false,
+            })
+            .cloned()
+            .collect(),
+    };
+    let live = live_worn.is_some();
+    let has_mods = live_worn.is_none() && save.get("_mods").truthy();
+    let mods = if live {
+        rebuild_mods(&Value::Arr(worn.clone()))
+    } else if has_mods {
+        let mut out = Value::Obj(Vec::new());
+        out.set(
+            "stats",
+            nullish(save.get("_mods").get("stats"), Value::Obj(Vec::new())),
+        );
+        out.set(
+            "skills",
+            nullish(save.get("_mods").get("skills"), Value::Obj(Vec::new())),
+        );
+        out
+    } else {
+        rebuild_mods(&Value::Arr(items.clone()))
+    };
+    let mut legendaries = Vec::new();
+    for it in &worn {
+        if it.get("legendary").truthy() {
+            let mut record = Value::Obj(Vec::new());
+            record.set("id", it.get("legendary").clone());
+            record.set("name", it.get("name").clone());
+            legendaries.push(record);
+        }
+    }
+    let wraps = worn.iter().find(|it| is_wraps(it)).cloned();
+    // `it !== right` is JS identity: the same entry of the worn list, not an equal one, so the index is the identity.
+    let right_index = worn
+        .iter()
+        .position(|it| {
+            is_weapon(it)
+                && !is_wraps(it)
+                && it.get("equipSlot").strict_eq(&Value::Num(SLOT.right_hand))
+        })
+        .or_else(|| {
+            worn.iter().position(|it| {
+                is_weapon(it)
+                    && !is_wraps(it)
+                    && it.get("equipSlot").strict_eq(&Value::Num(SLOT.left_hand))
+            })
+        });
+    let right = right_index.map(|i| worn[i].clone());
+    let off_weapon = worn.iter().enumerate().find_map(|(i, it)| {
+        let hand = it.get("equipSlot");
+        let in_hand = hand.strict_eq(&Value::Num(SLOT.left_hand))
+            || hand.strict_eq(&Value::Num(SLOT.right_hand));
+        if Some(i) != right_index && is_weapon(it) && !is_wraps(it) && in_hand {
+            Some(it.clone())
+        } else {
+            None
+        }
+    });
+    let mut ch = Value::Obj(Vec::new());
+    ch.set(
+        "name",
+        or_default(save.get("name"), Value::Str("Adventurer".to_owned())),
+    );
+    ch.set("level", Value::Num(save.get("level").finite_or(1.0)));
+    ch.set("raceId", Value::Num(save.get("raceId").finite_or(0.0)));
+    ch.set(
+        "race",
+        or_default(save.get("race"), Value::Str(String::new())),
+    );
+    ch.set(
+        "gender",
+        or_default(save.get("gender"), Value::Str(String::new())),
+    );
+    ch.set("career", nullish(save.get("career"), Value::Null));
+    ch.set("reflexes", Value::Num(save.get("reflexes").finite_or(2.0)));
+    let health = save.get("health").finite_or(1.0);
+    ch.set("health", Value::Num(health));
+    ch.set(
+        "maxHealth",
+        Value::Num(save.get("maxHealth").finite_or(js_max(1.0, health))),
+    );
+    ch.set(
+        "magicka",
+        Value::Num(nullish(save.get("magicka"), save.get("spellPoints").clone()).finite_or(0.0)),
+    );
+    ch.set(
+        "maxMagicka",
+        Value::Num(
+            nullish(save.get("maxMagicka"), save.get("maxSpellPoints").clone()).finite_or(0.0),
+        ),
+    );
+    // A lab fixture may hold a BASE instead of the save's live number; the fold is added where it is read.
+    if let Value::Num(base) = save.get("maxMagickaBase") {
+        if base.is_finite() {
+            ch.set("maxMagickaBase", Value::Num(*base));
+        }
+    }
+    ch.set(
+        "spells",
+        Value::Arr(
+            save.get("spells")
+                .items()
+                .iter()
+                .map(|sp| match sp {
+                    Value::Num(_) => sp.clone(),
+                    _ => spread(sp),
+                })
+                .collect(),
+        ),
+    );
+    ch.set(
+        "readiedSpellIndex",
+        nullish(save.get("readiedSpellIndex"), Value::Null),
+    );
+    ch.set("stats", stats);
+    ch.set("skills", skills);
+    ch.set(
+        "activeEffects",
+        Value::Arr(
+            save.get("activeEffects")
+                .items()
+                .iter()
+                .map(spread)
+                .collect(),
+        ),
+    );
+    ch.set(
+        "masterSkills",
+        Value::Bool(save.get("masterSkills").strict_eq(&Value::Bool(true))),
+    );
+    ch.set(
+        "masteredSkills",
+        Value::Arr(save.get("masteredSkills").items().to_vec()),
+    );
+    let martial = if matches!(opts.get("martialPath"), Value::Undefined) {
+        nullish(save.get("martialPath"), Value::Null)
+    } else {
+        opts.get("martialPath").clone()
+    };
+    ch.set("martialPath", martial);
+    ch.set(
+        "online",
+        Value::Bool(!opts.get("online").strict_eq(&Value::Bool(false))),
+    );
+    ch.set("weapon", right.unwrap_or(Value::Null));
+    ch.set("offWeapon", off_weapon.unwrap_or(Value::Null));
+    ch.set("wraps", wraps.unwrap_or(Value::Null));
+    ch.set("items", Value::Arr(items));
+    ch.set("worn", Value::Arr(worn.clone()));
+    let ch_mods = if live {
+        let mut out = Value::Obj(Vec::new());
+        out.set("stats", mods.get("stats").clone());
+        out.set("skills", mods.get("skills").clone());
+        out
+    } else if has_mods {
+        let mut out = spread(save.get("_mods"));
+        out.set(
+            "stats",
+            spread(&nullish(
+                save.get("_mods").get("stats"),
+                Value::Obj(Vec::new()),
+            )),
+        );
+        out.set(
+            "skills",
+            spread(&nullish(
+                save.get("_mods").get("skills"),
+                Value::Obj(Vec::new()),
+            )),
+        );
+        out
+    } else {
+        let mut out = Value::Obj(Vec::new());
+        out.set("stats", mods.get("stats").clone());
+        out.set("skills", mods.get("skills").clone());
+        out
+    };
+    ch.set("_mods", ch_mods);
+    let enchant = save.get("_enchantMods");
+    let ch_enchant = if enchant.truthy() {
+        let mut out = spread(enchant);
+        out.set(
+            "skillMods",
+            spread(&nullish(enchant.get("skillMods"), Value::Obj(Vec::new()))),
+        );
+        out
+    } else {
+        rebuild_enchant_mods(&Value::Arr(worn))
+    };
+    ch.set("_enchantMods", ch_enchant);
+    ch.set("weaponDamagePct", mods.get("weaponDamagePct").clone());
+    ch.set("slayer", mods.get("slayer").clone());
+    ch.set("legendaries", Value::Arr(legendaries));
+    ch.set("saveSlot", nullish(opts.get("slot"), Value::Null));
+    ch.set("saveFile", nullish(opts.get("file"), Value::Null));
+    ch
 }
 
 /// `characterLabel(ch)` (save.js:309-313): `${name} - ${race}${career}, level ${level}`, where the race is

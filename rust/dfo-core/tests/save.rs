@@ -75,18 +75,53 @@ fn save_helpers_match_the_js_vectors() {
                 let got = proficiency_flag(&id).map_or(Value::Undefined, Value::Num);
                 c.check_out("PROFICIENCY_FLAG[id]", &got);
             }
+            "cfs" => {
+                let save = c.value(&defs);
+                let opts = c.value(&defs);
+                let save_before = dfo_core::value::write(&save);
+                let opts_before = dfo_core::value::write(&opts);
+                let got = character_from_save(&save, &opts);
+                assert_eq!(
+                    save_before,
+                    dfo_core::value::write(&save),
+                    "characterFromSave mutated its save"
+                );
+                assert_eq!(
+                    opts_before,
+                    dfo_core::value::write(&opts),
+                    "characterFromSave mutated its options"
+                );
+                c.check_out("characterFromSave", &got);
+            }
+            "cfsa" => {
+                // The analysis parity: the card the JS `analyze` answers for the character `characterFromSave` built,
+                // answered by this port's own `analyze` over the character it built.
+                let save = c.value(&defs);
+                let opts = c.value(&defs);
+                let save_before = dfo_core::value::write(&save);
+                let ch = character_from_save(&save, &opts);
+                assert_eq!(
+                    save_before,
+                    dfo_core::value::write(&save),
+                    "characterFromSave mutated its save"
+                );
+                let book = dfo_core::spells::Spellbook::default();
+                let card = dfo_core::analyze::analyze(&ch, &Value::Obj(vec![]), &book).to_value();
+                c.check_out("characterFromSave + analyze", &card);
+            }
             other => c.fail(&format!("unknown kind `{other}`")),
         }
         c.done();
         *seen.entry(kind).or_default() += 1;
     }
     for kind in [
-        "eff", "msa", "mcs", "smo", "sv", "ls", "rem", "rm", "cl", "sn", "wsk", "pf",
+        "eff", "msa", "mcs", "smo", "sv", "ls", "rem", "rm", "cl", "sn", "wsk", "pf", "cfs", "cfsa",
     ] {
         let n = seen.get(kind).copied().unwrap_or(0);
+        let floor = if kind == "cfsa" { 5 } else { 2000 };
         assert!(
-            n >= 2000,
-            "save.txt: only {n} `{kind}` cases (expected >= 2000)"
+            n >= floor,
+            "save.txt: only {n} `{kind}` cases (expected >= {floor})"
         );
     }
 }

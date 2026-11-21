@@ -39,6 +39,7 @@ import {
 import { createRelayClaimEngine } from '../src/relayClaim.js';
 import {
   conditionMultiplier, damageModifier, pcaaoDamageModifier, SKILLS, swingFrameSeconds, swingHandling, swingHeft, unityRound,
+  analyze,
 } from '../src/model.js';
 import { SWING_HANDLING, WEAPONS } from '../src/data.js';
 import {
@@ -67,7 +68,7 @@ import { enemyCareerIndex, enemyEntityType } from '../vendor/upstream/a3eb1605/s
 import { encodeValue, numToken } from './rust-codec.mjs';
 import {
   effectiveSkill, masterCappedSkill, masterSkillsActive, PROFICIENCY_FLAG, rebuildEnchantMods, rebuildMods,
-  characterLabel, skillModOf, skillName, skillValue, WEAPON_SKILL,
+  characterLabel, characterFromSave, skillModOf, skillName, skillValue, WEAPON_SKILL,
 } from '../src/save.js';
 import {
   bladeLines, foldLines, laidLines, readItemLines, socketsFor, validItemLines, weaponDamagePct,
@@ -2380,7 +2381,7 @@ function gemStackItems() {
 function genSaveFamily() {
   const out = new Out(
     'save',
-    'defs: `def <i> <value>` (a character projection or an item list); kinds: eff <v> => f64 | msa @ch => b | mcs @ch <id> <raw> => v | smo @ch <id> => f64 | sv @ch <id> => f64 | ls @ch <stat> => f64 | rem @items => v | rm @items => v | cl @ch => s | sn <id> => s | wsk <id> => v | pf <id> => v',
+    'defs: `def <i> <value>` (a character projection, an item list, a save, an options record); kinds: eff <v> => f64 | msa @ch => b | mcs @ch <id> <raw> => v | smo @ch <id> => f64 | sv @ch <id> => f64 | ls @ch <stat> => f64 | rem @items => v | rm @items => v | cl @ch => s | sn <id> => s | wsk <id> => v | pf <id> => v | cfs @save @opts => v (characterFromSave) | cfsa @save @opts => [ch, analysis]',
   );
   const R = makeLcg(0x5a0e01);
   const fam = {};
@@ -2523,6 +2524,198 @@ function genSaveFamily() {
   for (let i = 0; i < 2000; i++) {
     const id = R.chance(0.8) ? R.int(0, 36) : R.pick([28, 29, 30, 31, 32, 33, 'Medical', NaN, undefined, '28']);
     add('pf', encodeValue(id), '=>', encodeValue(PROFICIENCY_FLAG[id]));
+  }
+
+  // ---- characterFromSave: the raw save and the caller's options, exactly as they read the worn list and its folds ----
+  // A save is written once and read with several option records; the shapes that differ are the two the function branches
+  // on: a raw save (items carry `equipSlot`, `_mods` / `_enchantMods` may be absent) and a live snapshot (`equipSlots`
+  // is the game's own table, `equipSlot` on the item may be stale). Absent vs null is kept (a missing key stays missing),
+  // and every top-level field the model does NOT read is present so the reader proves it is ignored.
+  const rawSave = (R) => {
+    const worn = R.chance(0.7);
+    const item = () => {
+      const it = genItem(R);
+      if (worn) it.equipSlot = R.pick([19, 21, 12, 18, 20, 23, 26, 0, -1, 19.5, '19']);
+      else delete it.equipSlot;
+      if (R.chance(0.25)) it.legendary = R.pick(LEGENDARY_FEW);
+      if (R.chance(0.25)) it.group = 'Weapons';
+      if (R.chance(0.1)) it.templateIndex = 563;
+      return it;
+    };
+    const save = {
+      name: R.pick(['', 'Syn', 'Ünï', undefined, null, 3]),
+      level: R.pick([1, 2.5, -0, NaN, 1e21, undefined, null, 7]),
+      raceId: R.pick([1, 2, 8, 9, 0, undefined, null, '1', -1, 1.5, NaN]),
+      race: R.pick(['', 'Nord', undefined, null, 5]),
+      gender: R.pick(['male', 'female', '', undefined]),
+      career: R.pick([null, undefined, { name: 'Mage' }, { name: '' }, { name: 0 }, {}]),
+      reflexes: R.pick([1, 2, 0, undefined, NaN]),
+      health: R.pick([0, 1, 700, -5, undefined, NaN]),
+      maxHealth: R.pick([0, 1, 700, undefined, NaN]),
+      magicka: R.pick([0, 50, undefined, null, NaN]),
+      spellPoints: R.pick([0, 50, undefined, null]),
+      maxMagicka: R.pick([0, 100, undefined, null, NaN]),
+      maxSpellPoints: R.pick([0, 100, undefined, null]),
+      ...(R.chance(0.4) ? { maxMagickaBase: R.pick([100, 0, undefined, NaN, '150']) } : {}),
+      spells: R.chance(0.2) ? undefined : Array.from({ length: R.int(0, 3) }, () => (R.chance(0.3) ? R.int(0, 40) : { name: 'Fireball', effects: [] })),
+      readiedSpellIndex: R.pick([null, undefined, 0, 4, '2']),
+      stats: Object.fromEntries(STAT_NAMES.map((s) => [s, R.chance(0.9) ? R.pick(NUM_POOL) : R.pick([undefined, null, '60'])])),
+      skills: Array.from({ length: R.chance(0.8) ? 35 : R.int(0, 40) }, () => (
+        R.chance(0.1) ? R.pick([undefined, null, '150', ' 50 ', 'x']) : R.pick(NUM_POOL)
+      )),
+      activeEffects: Array.from({ length: R.int(0, 3) }, () => (R.chance(0.1) ? null : {
+        kind: R.pick(['disease', 'racialOverride', 'fortifyAttribute', undefined]),
+        statMods: R.chance(0.5) ? { strength: R.pick(NUM_POOL) } : undefined,
+        magnitude: R.pick(NUM_POOL),
+        ended: R.pick([true, false, undefined]),
+      })),
+      masterSkills: R.pick([true, false, undefined]),
+      masteredSkills: R.chance(0.2) ? undefined : Array.from({ length: R.int(0, 4) }, () => R.pick([5, 28, 33, NaN, 1.5, 0])),
+      martialPath: R.pick([null, undefined, 'assassin', '']),
+      items: R.chance(0.05) ? undefined : Array.from({ length: R.int(0, 5) }, () => (R.chance(0.05) ? null : item())),
+      // A top-level field no read touches: it must not reach the character.
+      ignoredTopLevel: R.pick([undefined, null, 1, 'x', { nested: true }]),
+      folder: R.pick(['SAVE1', undefined]),
+    };
+    // `_mods` / `_enchantMods`: present as the two copies, present but missing a channel, or absent entirely.
+    if (R.chance(0.5)) {
+      save._mods = {
+        stats: R.chance(0.8) ? Object.fromEntries(STAT_NAMES.filter(() => R.chance(0.4)).map((s) => [s, R.pick(NUM_POOL)])) : undefined,
+        statMax: Object.fromEntries(STAT_NAMES.filter(() => R.chance(0.3)).map((s) => [s, R.pick(NUM_POOL)])),
+        skills: R.chance(0.8) ? Object.fromEntries(Array.from({ length: R.int(0, 4) }, () => [String(R.int(0, 34)), R.pick(NUM_POOL)])) : undefined,
+        extraChannel: 7,
+      };
+    }
+    if (R.chance(0.5)) {
+      save._enchantMods = {
+        skillMods: R.chance(0.8) ? Object.fromEntries(Array.from({ length: R.int(0, 4) }, () => [String(R.int(0, 34)), R.pick(NUM_POOL)])) : undefined,
+        chanceToHitMod: R.pick([0, 5, NaN]),
+        other: 'kept',
+      };
+    }
+    // The live equip table: present (even empty), or absent. Its records may differ from `items` on purpose (the stale
+    // `equipSlot` case); the slot key is a number's string form as the game stores it.
+    if (R.chance(0.5)) {
+      save.equipSlots = {};
+      for (const slot of R.pick([[19], [19, 21], [18, 12, 20], [], [19, 21, 23]])) {
+        const it = R.chance(0.08) ? R.pick([null, 0, 'x']) : item();
+        save.equipSlots[String(slot)] = it;
+      }
+    }
+    return save;
+  };
+  const optsRecord = (R) => {
+    const o = {};
+    if (R.chance(0.7)) o.online = R.pick([true, false, undefined, null, 1, 'false']);
+    if (R.chance(0.4)) o.martialPath = R.pick([null, undefined, 'warblade', '']);
+    if (R.chance(0.3)) o.slot = R.pick(['SAVE1', null, undefined, 2]);
+    if (R.chance(0.3)) o.file = R.pick(['/tmp/SaveData.txt', null, undefined]);
+    if (R.chance(0.2)) o.passiveOn = R.pick([true, false]);
+    return o;
+  };
+  const saves = new Map();
+  const saveIdx = [];
+  for (let i = 0; i < 400; i++) {
+    const s = rawSave(R);
+    out.add('def', String(di), encodeValue(s));
+    saves.set(di, s);
+    saveIdx.push(di++);
+  }
+  const optsByIdx = new Map();
+  const optsIdx = [];
+  for (let i = 0; i < 40; i++) {
+    const o = optsRecord(R);
+    out.add('def', String(di), encodeValue(o));
+    optsByIdx.set(di, o);
+    optsIdx.push(di++);
+  }
+  // A focused handful the random draw would rarely pair: an empty live table, no item slot at all, no `items`, a live
+  // table whose record disagrees with the item's own stale mark, and a save with only one of the two folds.
+  const focused = [
+    { items: [{ group: 'Weapons', templateIndex: 117, equipSlot: 19 }], equipSlots: {}, ignoredTopLevel: 'x' },
+    { items: [{ group: 'Weapons', templateIndex: 117 }] },
+    { stats: {}, skills: [] },
+    { items: [], equipSlots: { 19: { group: 'Weapons', templateIndex: 118 } } },
+    { items: [{ group: 'Weapons', templateIndex: 117, equipSlot: 19 }], _mods: { stats: { strength: 5 } } },
+    { items: [{ group: 'Weapons', templateIndex: 117, equipSlot: 19 }], _enchantMods: { skillMods: { 28: 5 } } },
+    { items: [{ group: 'Weapons', templateIndex: 117, equipSlot: 19 }], _mods: {} },
+    { items: [{ group: 'Weapons', templateIndex: 117, equipSlot: 19 }], _enchantMods: {} },
+    // `equipSlots` and `items` disagree on the same piece: the live table wins over the stale mark.
+    {
+      items: [{ group: 'Weapons', templateIndex: 121, equipSlot: 21, name: 'Stale' }, { group: 'Weapons', templateIndex: 121, name: 'Live' }],
+      equipSlots: { 19: { group: 'Weapons', templateIndex: 121, name: 'Live' } },
+    },
+    // A live table with a slot key that is not a canonical index (Number(key) keeps the fraction).
+    { equipSlots: { '19.5': { group: 'Weapons', templateIndex: 124, name: 'Odd' } } },
+    // A raw save whose two-hand piece is at the left hand only (right falls back to left, off hand is then null).
+    { items: [{ group: 'Weapons', templateIndex: 123, equipSlot: 21 }] },
+    // `equipSlots` is truthy but not an object (`typeof` says no): the items' own marks are the worn list.
+    { items: [{ group: 'Weapons', templateIndex: 117, equipSlot: 19 }], equipSlots: 'slot 19' },
+    { items: [{ group: 'Weapons', templateIndex: 117, equipSlot: 19 }], equipSlots: 1 },
+    { items: [{ group: 'Weapons', templateIndex: 117, equipSlot: 19 }], equipSlots: true },
+    // An object/array `equipSlots` that is empty still counts as live (an empty table wins: nothing is worn).
+    { items: [{ group: 'Weapons', templateIndex: 117, equipSlot: 19 }], equipSlots: [] },
+    { items: [{ group: 'Weapons', templateIndex: 563, equipSlot: 19 }, { group: 'Weapons', templateIndex: 117, equipSlot: 19 }] },
+    // Absent vs null: the `??` fallbacks (`magicka ?? spellPoints`) and the `||` defaults read them differently.
+    { magicka: null, spellPoints: 50 },
+    { spellPoints: 50 },
+    { magicka: 0, spellPoints: 50 },
+    { name: '', level: 0, race: null, gender: '' },
+    { career: null, martialPath: null, readiedSpellIndex: null },
+    // A stale raw shape: the same piece in `items` carries a packed/negative mark while the live table holds it at 19.
+    { items: [{ group: 'Weapons', templateIndex: 118, equipSlot: -1 }, { group: 'Weapons', templateIndex: 118, equipSlot: 19 }], equipSlots: { 19: { group: 'Weapons', templateIndex: 118 } } },
+    // `_mods` null (`truthy` false: a re-fold) vs `_mods` with an explicit null channel (`{}`).
+    { items: [], _mods: null },
+    { items: [], _mods: { stats: null, skills: null } },
+    { items: [], _enchantMods: null },
+    { items: [], _enchantMods: { skillMods: null } },
+  ];
+  const focusedIdx = [];
+  for (const s of focused) {
+    out.add('def', String(di), encodeValue(s));
+    saves.set(di, s);
+    focusedIdx.push(di++);
+  }
+  const read = (save, opts) => characterFromSave(structuredClone(save), structuredClone(opts));
+  // The mutation guard: the reader clones and never writes its inputs.
+  for (const idx of [...focusedIdx, ...saveIdx.slice(0, 40)]) {
+    const save = saves.get(idx);
+    const o = optsByIdx.get(optsIdx[0]);
+    const beforeSave = encodeValue(save);
+    const beforeOpts = encodeValue(o);
+    read(save, o);
+    if (beforeSave !== encodeValue(save) || beforeOpts !== encodeValue(o)) {
+      throw new Error(`characterFromSave mutated its input (save @${idx})`);
+    }
+  }
+  for (const idx of focusedIdx) add('cfs', `@${idx}`, encodeValue({}), '=>', encodeValue(read(saves.get(idx), {})));
+  for (let i = 0; i < 2400; i++) {
+    const pick = saveIdx[R.u32() % saveIdx.length];
+    const oi = optsIdx[R.u32() % optsIdx.length];
+    add('cfs', `@${pick}`, `@${oi}`, '=>', encodeValue(read(saves.get(pick), optsByIdx.get(oi))));
+  }
+  // The analysis parity: a save the model can price (the random ones carry absurd stats that make `analyze` itself
+  // throw), and the character `characterFromSave` builds from it must answer the card `analyze` answers for a saved
+  // character. The Rust side runs its own `analyze` over the character it built, with an empty spellbook.
+  const board = (items, extra = {}) => ({
+    level: 45, raceId: 5, career: { name: 'Longblade' },
+    stats: { strength: 60, intelligence: 40, willpower: 40, agility: 60, endurance: 50, personality: 40, speed: 50, luck: 50 },
+    skills: Array.from({ length: 35 }, () => 100), items, health: 700, maxHealth: 700, ...extra,
+  });
+  const analysisSaves = [
+    board([{ group: 'Weapons', templateIndex: 121, material: 9, name: 'Daedric Katana', equipSlot: 19, maxCondition: 100, currentCondition: 100 }]),
+    board([{ group: 'Weapons', templateIndex: 123, material: 9, name: 'Daedric Dai-katana', equipSlot: 19, maxCondition: 100, currentCondition: 100 }]),
+    board([{ group: 'Weapons', templateIndex: 118, material: 3, name: 'Elven Broadsword', equipSlot: 19, maxCondition: 100, currentCondition: 100 },
+      { group: 'Weapons', templateIndex: 121, material: 9, name: 'Daedric Katana', equipSlot: 21, maxCondition: 100, currentCondition: 100 }]),
+    board([{ group: 'Armor', templateIndex: 102, material: 521, name: 'Daedric Cuirass', equipSlot: 18, maxCondition: 100, currentCondition: 100 }]),
+    board([{ group: 'Weapons', templateIndex: 121, material: 9, name: 'Daedric Katana', maxCondition: 100, currentCondition: 100 }],
+      { equipSlots: { 19: { group: 'Weapons', templateIndex: 123, material: 9, name: 'Live Dai-katana', maxCondition: 100, currentCondition: 100 } } }),
+  ];
+  const analysisBook = new Map();
+  for (const save of analysisSaves) {
+    out.add('def', String(di), encodeValue(save));
+    add('cfsa', `@${di}`, encodeValue({ online: false }), '=>', encodeValue(analyze(read(save, { online: false }), { standard: analysisBook })));
+    di++;
   }
   console.log(`save: ${Object.entries(fam).map(([k, v]) => `${k} ${v}`).join(', ')}`);
   return out.write();

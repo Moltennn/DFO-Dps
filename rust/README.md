@@ -987,6 +987,7 @@ the index keys in ascending order, and any other new key last, as a JS object do
 | `save::live_stat` | `src/save.js:167-181` (the character form; `target::live_stat` is the R3a typed form over `Live`) |
 | `save::rebuild_enchant_mods` | `src/save.js:192-204` (with `addMap`, `:183-186`, not used here) |
 | `save::rebuild_mods` | `src/save.js:207-230` |
+| `save::character_from_save` | `src/save.js:244-306` (R8: the save object and caller options to the character the model reads) |
 | `save::character_label` | `src/save.js:309-313` |
 | `save::skill_name` | `src/save.js:315-317` (`SKILL_NAMES` is an array: an index names it) |
 | `gear_lines::laid_lines` | `src/gearLines.js:33-37` (`layGemLines`, lootRarity.js:2085) |
@@ -1018,11 +1019,14 @@ the affix bands, the gem rows, `THUNDERLOCK_TEMPLATE` (560, `characters/thunderl
 
 ### Field lists (what the ported code reads)
 
-- `save.js` (`liveStat`, `skillValue` and its helpers, `rebuildMods`, `rebuildEnchantMods`, `characterLabel`): character
+- `save.js` (`liveStat`, `skillValue` and its helpers, `rebuildMods`, `rebuildEnchantMods`, `characterLabel`,
+  `characterFromSave`): character
   `online`, `masterSkills`, `masteredSkills`, `skills`, `stats`, `activeEffects` (each entry `kind`, `ended`, `statMods`,
   `stat`, `magnitude`, `skillMods`), `_mods` (`stats`, `statMax`, `skills`), `_enchantMods` (`skillMods`), `name`, `raceId`,
-  `race`, `career.name`, `level`. Items: `equipSlot`, `group`, `enchantments` (`type`, `param`), and the item fields of the
-  lines below.
+  `race`, `career.name`, `level`, and (the builder only) `gender`, `reflexes`, `health`, `maxHealth`, `magicka`,
+  `spellPoints`, `maxMagicka`, `maxSpellPoints`, `maxMagickaBase`, `spells`, `readiedSpellIndex`, `martialPath`,
+  `items`, `equipSlots`. Items: `equipSlot`, `group`, `templateIndex`, `legendary`, `name`, `enchantments` (`type`,
+  `param`), and the item fields of the lines below.
 - The lines and sockets (`gearLines.js`, `sockets.js`, lootRarity): an item's `affixes` (each line `id`, `param`, `value`,
   `gem`), `sockets` (a list) or `socket` (one string), `group`, `templateIndex`, `rarity`, `legendary` (a string on a
   Legendary), `imprint` (a Rare's), `gilded`. `foeGroup` reads a target's `isPlayer`, `affinity`, `careerIndex`.
@@ -1034,9 +1038,8 @@ the affix bands, the gem rows, `THUNDERLOCK_TEMPLATE` (560, `characters/thunderl
 ### Not ported, and why
 
 - `save.js` file and launcher I/O: `userDataDir`, `configPath`, `arena2Dir`, `savesDir`, `listSaves`, `resolveSave`,
-  `loadSave`. They read the file system and the launcher's config. `characterFromSave` is pure (no I/O), but the model's
-  inputs are built characters (the vectors build them with `theoryCharacter`, which calls it), so the port does not
-  re-derive a character from a save file in this round. Say if the model needs it before R5.
+  `loadSave`. They read the file system and the launcher's config. `characterFromSave` is pure, and the port's
+  `save::character_from_save` takes the saved object and the caller's options directly (R8).
 - `lootRarity.js` beyond the call tree above: the rarity and pool draws (`rollRarity`, `rollAffixes`, `pickByLines`), the
   kinds' params for techniques (`kindParams`, `techniquesFor`), the setters (`setGem`, `unsetGem`, `socketPass`,
   `weaponSocketPass`), `affixFold`, `affixWeaponDamage` (the cap-free sum of `readLines`, ported as `weapon_damage_pct`).
@@ -1079,6 +1082,16 @@ the affix bands, the gem rows, `THUNDERLOCK_TEMPLATE` (560, `characters/thunderl
   mastered raw unchanged (a string then reads 0 in `effectiveSkill`, as `Number.isFinite` says). Both are in the vectors.
 - `socketCount` takes a number as a template and anything else as an item (`typeof itemOrTemplate === 'number'`): a string
   template reads as an item with no `templateIndex`, so 0 sockets (the vectors cover it).
+- `characterFromSave` (`save::character_from_save`): `equipSlots` is trusted when it is truthy and `typeof 'object'` —
+  an empty object counts — and its entries are the table's records with `Number(key)` on `equipSlot` (a non-index key
+  keeps its fraction). Without a live table the worn list is `items` filtered to a `Number.isInteger` slot `>= 0`, so a
+  fractional or string slot is not worn and a packed piece drops out. The three folds follow that choice: a live table
+  re-folds the gear, a save with a truthy `_mods` keeps it (a missing `stats`/`skills` reads `{}`), otherwise the gear is
+  re-folded. `_enchantMods` is copied with its `skillMods` (`{}` when missing) or rebuilt from the worn list. The spread
+  is a JS spread: a primitive gives `{}`, an array its indices, a string its UTF-16 units (one half of an astral
+  character is a lone surrogate, refused). `it !== right` is identity, so the off hand excludes the main hand entry by
+  index. `opts` is the caller's own record: `online` is on unless exactly `false`, `martialPath` overrides the save's when
+  present, and `slot`/`file` are the source metadata (the save object itself is never embedded).
 
 ### Vectors (`tools/rust-vectors.mjs`, R4a)
 
@@ -1087,7 +1100,7 @@ Every family is at least 2000 cases (the Rust tests assert it per kind; the gene
 | File | Kinds (cases) | Inputs |
 |---|---|---|
 | `value.txt` | `value` 3000, `tonum` 2500, `tostr` 2500, `truthy` 2000, `prop` 2500 | random nested values (depth 3): undefined, null, booleans, the number pool (signed zeros, NaN, infinities, 5e-324, 2^53+2, 1e21, 1e-7, random bits), string pool (numeric forms, whitespace, astral, surrogate-free unicode, separators), keys (integer-like, the index limit, `ünï`, `x;y`) |
-| `save.txt` | `eff` `msa` `mcs` `smo` `sv` `ls` `rem` `rm` `cl` `sn` `wsk` `pf`, 2000 each | defs: 40 characters from `theoryCharacter` over the grid (levels 1/2/9/45, races 1..8, blades, gear and star lines, vampirism, mastery switches varied, mastered lists with odd entries) and 60 synthetic characters (effects of every kind with `ended`, missing and string fields); 80 item lists |
+| `save.txt` | `eff` `msa` `mcs` `smo` `sv` `ls` `rem` `rm` `cl` `sn` `wsk` `pf`, 2000 each; `cfs` 2412, `cfsa` 5 | defs: 40 characters from `theoryCharacter` over the grid (levels 1/2/9/45, races 1..8, blades, gear and star lines, vampirism, mastery switches varied, mastered lists with odd entries) and 60 synthetic characters (effects of every kind with `ended`, missing and string fields); 80 item lists; 400 raw saves (offline shape with `items[].equipSlot`, live shape with `equipSlots`, either `_mods`/`_enchantMods` fold present or absent, an ignored top-level field) and 40 option records, plus 12 focused saves (empty live table, no slot, live/stale disagreement, the left-hand fall back, wraps) |
 | `gear.txt` | `laid` `ril` `vil` `wdp` `bl` `fl` `sf`, 2000 each | defs: 400 items (every group and rarity, templates from the weapon table and the armour, sockets, gem lines with values past the cap, legendaries, imprints, enchantments with type 10); 80 lists with null entries |
 | `sockets.txt` | `scount` `saff` `pgem` `psock`, 2000 each | the same items; templates and string templates |
 | `loot.txt` | `rl` `va` `gl` `sg` `so` `sm` `cp` `pio` `po` `fg`, 2000 each | the same items and lists; affixes at each band's edges (`1`, `max-1`, `max`, `max+1`, the Rare top and its neighbours, `0`, `-1`, `1.5`, `NaN`, `'5'`, `undefined`), gem ids and junk, legendary ids; targets with odd affinity and career indices |
