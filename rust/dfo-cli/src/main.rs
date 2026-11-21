@@ -1,11 +1,12 @@
-//! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves`, `build`, `rank` and `doctor` slice).
+//! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves`, `build`, `objective`, `rank` and `doctor` slice).
 //!
-//! This is the JS `src/cli.js` `build` card, `rank` card, `saves` listing and `doctor`, and only that: [`main`]
-//! parses the flags those read, replays the JS validation (`numFlag`, the enum checks) with the same messages, builds
-//! either the level-45 theory character or the one an imported save describes, the target and the scenario, then prints
-//! `printBuild`, `printRank` or `{ character, weapons, current }` as `--json` does. `build --json` prints `summary()`;
-//! its text card is `printBuild` with the what-ifs the JS runs after it. `doctor` prints the save/build/ruleset summary
-//! over the same imported character.
+//! This is the JS `src/cli.js` `build` card, `objective` command, `rank` card, `saves` listing and `doctor`, and only
+//! that: [`main`] parses the flags those read, replays the JS validation (`numFlag`, the enum checks, `sampledOptions`)
+//! with the same messages, builds either the level-45 theory character or the one an imported save describes, the target
+//! and the scenario, then prints `printBuild`, `printObjective`, `printRank` or `{ character, weapons, current }` as
+//! `--json` does. `build --json` prints `summary()` and `objective --json` prints the evaluated row; `build`'s text card
+//! is `printBuild` with the what-ifs the JS runs after it. `doctor` prints the save/build/ruleset summary over the same
+//! imported character.
 //!
 //! The save is imported READ-ONLY by [`saves`]: discovery and parsing live there, the character normalisation is
 //! `dfo_core::save::character_from_save`, and nothing is retained or written (AGENTS.md rule 11). Every flag this
@@ -29,28 +30,34 @@ use dfo_core::generated::level_cap::LEVEL_CAP;
 use dfo_core::generated::theory::{DEFAULT_BLADE, THEORY_LEVEL, THEORY_RACES};
 use dfo_core::maxprofile::Profiles;
 use dfo_core::model_blow::{synthetic_weapon, weapon_of};
-use dfo_core::round::math_round;
+use dfo_core::objectives::{
+    evaluate_objective, MIN_STOCHASTIC_TRIALS, OBJECTIVE_IDS, STOCHASTIC_OBJECTIVE_IDS,
+};
+use dfo_core::round::{js_max, math_round};
 use dfo_core::save::{character_label, live_stat, skill_name, skill_value};
 use dfo_core::spells::Spellbook;
 use dfo_core::theory::theory_character;
 use dfo_core::value::{number_to_string, obj_table_get, string_to_number, Value, Value::*};
 
 const HELP: &str = "\
-dfo-cli - the saves, build, rank and doctor slice of dfo-dps (Rust core)
+dfo-cli - the saves, build, objective, rank and doctor slice of dfo-dps (Rust core)
 
 Usage:
   dfo-cli saves
   dfo-cli doctor [--save <slot|folder|path>] [--offline]
   dfo-cli build [--save <slot|folder|path>] [options]
   dfo-cli build --theory [options]
+  dfo-cli objective [--save <slot|folder|path>] [options]
+  dfo-cli objective --theory [options]
   dfo-cli rank [weapons] [--save <slot|folder|path>] [options]
   dfo-cli rank [weapons] --theory [options]
 
 `saves` lists the save folders under the DFO user-data folder (newest first). `doctor` prints the model pin, the
 save folders and the imported character's build/ruleset summary. `build` prices one build against one target: with
---theory for the level-45 theory character, otherwise for the imported save (read-only). `rank` prices every melee
-template/material the same way. `build` prints the JS `printBuild` card; with `--json` it prints `summary()` instead.
-`rank` text is the JS card, `--json` is `{ character, weapons, current }`.
+--theory for the level-45 theory character, otherwise for the imported save (read-only). `objective` scores one build
+on one named objective (deterministic or sampled), text or `--json`, and `rank` prices every melee template/material
+the same way. `build` prints the JS `printBuild` card; with `--json` it prints `summary()` instead. `rank` text is
+the JS card, `--json` is `{ character, weapons, current }`.
 
 Flags:
   --save <SAVE4|folder|SaveData.txt>  the save to import (default: the newest under the user-data folder)
@@ -71,12 +78,16 @@ Flags:
   --no-rri --no-crit-damage --no-passive --pair --dual --spam --potency <pct> --pierce <n>
   --no-effects                        drop active effects
   --base-stats <n>                    set all eight base attributes to n
+  --objective <id>                    snapshot, fight, relay, relay-ceiling, stochastic-ttk, kill-probability,
+                                      stochastic-relay (objective command default: snapshot)
+  --trials <n> --seed <int> --max-seconds <n> --max-blows <n> --no-carry --samples
+                                      sampled objective options (defaults 1000, 0, 900, 6000)
   --top <n>                           rows in the ranking (default 20)
   --json
   -h, --help
 
-Unsupported here (another command, or a flag this slice does not read): --out, --encounter, --shortlist,
---objective and the other commands' flags.";
+Unsupported here (another command, or a flag this slice does not read): --out, --encounter, --shortlist and the other
+commands' flags.";
 
 fn main() -> ExitCode {
     match run(std::env::args().skip(1).collect()) {
@@ -136,6 +147,13 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         check_output_flags(&command, &parsed)?;
         return build(&values);
     }
+    if command == "objective" {
+        if let Some(extra) = parsed.positionals.get(1) {
+            return Err(usage(format!("unexpected positional argument \"{extra}\"")));
+        }
+        check_output_flags(&command, &parsed)?;
+        return objective(&values);
+    }
     if command != "rank" {
         const COMMANDS: [&str; 23] = [
             "build",
@@ -164,7 +182,7 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         ];
         return Err(if COMMANDS.contains(&command.as_str()) {
             usage(format!(
-                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `rank` and `doctor`"
+                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank` and `doctor`"
             ))
         } else {
             usage(format!("unknown command \"{command}\"\n\n{HELP}"))
@@ -411,7 +429,7 @@ const SUPPORTED: &str = concat!(
     "theory json vampire firmament rhythm unaware first-blow behind pair dual spam no-crit-damage no-passive no-rri ",
     "help target level armor health traits core weapon swing stacks race blade gear-lb gear-cs star-stat star-skill ",
     "star-damage potency pierce backstab players blow-x health-share self-health-share top damage-pct base-stats ",
-    "no-effects save offline passive bare out",
+    "no-effects save offline passive bare out objective trials seed max-seconds max-blows no-carry samples",
 );
 
 fn in_flags(list: &str, name: &str) -> bool {
@@ -420,7 +438,7 @@ fn in_flags(list: &str, name: &str) -> bool {
 
 const BOOLEAN_FLAGS: &str = concat!(
     "theory json vampire firmament rhythm unaware first-blow behind pair dual spam no-crit-damage no-passive ",
-    "no-rri help offline bare no-effects",
+    "no-rri help offline bare no-effects no-carry samples",
 );
 
 const MULTI: [&str; 2] = ["star-stat", "star-skill"];
@@ -524,7 +542,7 @@ const fn range(min: f64, max: f64, int: bool, exclusive_min: bool) -> Range {
 const ANY: Range = range(f64::NEG_INFINITY, f64::INFINITY, false, false);
 
 /// Every numeric option `validateFlags` bounds, with its JS default.
-const NUMERIC_FLAGS: [(&str, f64, Range); 18] = [
+const NUMERIC_FLAGS: [(&str, f64, Range); 19] = [
     ("level", THEORY_LEVEL, range(1.0, LEVEL_CAP, true, false)),
     ("stacks", 5.0, range(0.0, 5.0, true, false)),
     ("players", 1.0, range(1.0, f64::INFINITY, true, false)),
@@ -533,6 +551,11 @@ const NUMERIC_FLAGS: [(&str, f64, Range); 18] = [
     ("backstab", 0.0, range(0.0, 1.0, false, false)),
     ("blow-x", 1.0, range(0.0, f64::INFINITY, false, true)),
     ("top", 20.0, range(1.0, f64::INFINITY, true, false)),
+    (
+        "trials",
+        MIN_STOCHASTIC_TRIALS as f64,
+        range(1.0, f64::INFINITY, true, false),
+    ),
     ("potency", 0.0, ANY),
     ("pierce", 0.0, ANY),
     ("health-share", 1.0, range(0.0, 1.0, false, false)),
@@ -584,6 +607,15 @@ struct Values {
     bare: bool,
     /// `--passive`: lower-cased path id, or `none` for no path.
     passive: Option<String>,
+    /// `--objective`: the id exactly as typed (`printObjective` validates it against the list).
+    objective: Option<String>,
+    /// `--seed`, `--max-seconds`, `--max-blows`: raw strings, validated by [`sampled_options`] only when an
+    /// objective is priced (the JS validates them inside `printObjective`, not in `validateFlags`).
+    seed: Option<String>,
+    max_seconds: Option<String>,
+    max_blows: Option<String>,
+    no_carry: bool,
+    samples: bool,
 }
 
 fn range_text(what: &str, min: f64, max: f64, exclusive_min: bool) -> String {
@@ -859,6 +891,12 @@ impl Values {
             offline: parsed.flag("offline"),
             bare: parsed.flag("bare"),
             passive,
+            objective: parsed.raw("objective").map(str::to_owned),
+            seed: parsed.raw("seed").map(str::to_owned),
+            max_seconds: parsed.raw("max-seconds").map(str::to_owned),
+            max_blows: parsed.raw("max-blows").map(str::to_owned),
+            no_carry: parsed.flag("no-carry"),
+            samples: parsed.flag("samples"),
         })
     }
 
@@ -985,7 +1023,12 @@ fn rank(values: &Values) -> Result<String, CliError> {
     // `standardSpells()` (`src/spells.js:82-93`): the launcher's `SPELLS.STD`, empty when absent.
     let book = saves::load_spellbook();
     let ch = character(values, &book)?;
-    let target = target_of(&ch, values, &values.traits)?;
+    let target = target_of(
+        &ch,
+        values,
+        &values.traits,
+        values.nums.get("health").copied(),
+    )?;
     let scenario = scenario_of(&ch, values, &values.traits, &target);
     let top = values.num("top", 20.0);
     let rows = rank_weapons(&ch, &scenario, &obj([("top", Num(top))]), &book);
@@ -1009,7 +1052,12 @@ fn build(values: &Values) -> Result<String, CliError> {
     // `standardSpells()` (`src/spells.js:82-93`): the launcher's `SPELLS.STD`, empty when absent.
     let book = saves::load_spellbook();
     let ch = character(values, &book)?;
-    let target = target_of(&ch, values, &values.traits)?;
+    let target = target_of(
+        &ch,
+        values,
+        &values.traits,
+        values.nums.get("health").copied(),
+    )?;
     let mut scenario = scenario_of(&ch, values, &values.traits, &target);
     // `scenarioOf` (`src/cli.js:559`): `weapon: values.theory ? undefined : weaponOverride(values)`. For the theory
     // character `--weapon` was already applied when the character was built, so only a save takes the override here.
@@ -1031,6 +1079,331 @@ fn build(values: &Values) -> Result<String, CliError> {
         values.target.as_str()
     };
     Ok(format!("{}\n", print_build(&ch, &r, preset, values, &book)))
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// the objective command (src/cli.js printObjective, sampledOptions)
+// ---------------------------------------------------------------------------------------------------------------
+const MAX_STOCHASTIC_TRIALS: f64 = 1_000_000.0;
+
+fn safe_integer(x: f64) -> bool {
+    x.is_finite() && x.trunc() == x && x.abs() <= 9_007_199_254_740_991.0
+}
+
+/// `sampledOptions` (`src/cli.js:565-577`): always validated, even for a deterministic objective, because
+/// `printObjective` reads the sampling defaults through it.
+struct Sampling {
+    trials: f64,
+    seed: f64,
+    max_seconds: f64,
+    max_blows: f64,
+}
+
+fn sampled_options(values: &Values) -> Result<Sampling, CliError> {
+    let trials = values.num("trials", MIN_STOCHASTIC_TRIALS as f64);
+    if !safe_integer(trials) {
+        return Err(usage("--trials must be an integer"));
+    }
+    if trials < MIN_STOCHASTIC_TRIALS as f64 {
+        return Err(usage(format!(
+            "--trials: at least {MIN_STOCHASTIC_TRIALS} trials are required"
+        )));
+    }
+    if trials > MAX_STOCHASTIC_TRIALS {
+        return Err(usage(format!(
+            "--trials: at most {} trials are allowed",
+            dfo_core::enchant_plan::grouped_number_of(MAX_STOCHASTIC_TRIALS)
+        )));
+    }
+    let seed = match &values.seed {
+        Some(raw) if raw.trim().is_empty() => {
+            return Err(usage("--seed must be a safe integer"));
+        }
+        Some(raw) => string_to_number(raw.trim()),
+        None => 0.0,
+    };
+    if !safe_integer(seed) {
+        return Err(usage("--seed must be a safe integer"));
+    }
+    let max_seconds = match &values.max_seconds {
+        Some(raw) => string_to_number(raw.trim()),
+        None => 900.0,
+    };
+    if !max_seconds.is_finite() || max_seconds <= 0.0 {
+        return Err(usage("--max-seconds must be positive"));
+    }
+    let max_blows = match &values.max_blows {
+        Some(raw) => string_to_number(raw.trim()),
+        None => 6000.0,
+    };
+    if !safe_integer(max_blows) || max_blows <= 0.0 {
+        return Err(usage("--max-blows must be a positive integer"));
+    }
+    Ok(Sampling {
+        trials,
+        seed,
+        max_seconds,
+        max_blows,
+    })
+}
+
+/// JS destructuring defaults (`= null`): an absent key prints `null`, not omitted as `undefined` would be.
+fn nullish_to_null(v: &Value) -> Value {
+    if v.is_nullish() {
+        Null
+    } else {
+        v.clone()
+    }
+}
+
+/// `isUsageFailure` (`src/usageError.js`): only the library guards it names are bad input (exit 2). Anything else - a
+/// ranged build, a Pistolet pair, a fist schedule the sampler refuses - keeps its crash (exit 1 in `bin/dfo-dps.js`; the
+/// Rust front end prints the message without V8's stack).
+fn objective_error(message: String) -> CliError {
+    const USAGE: [&str; 5] = [
+        "the target is a relay body",
+        "the target is not a relay body",
+        "a positive target health is required",
+        "the build cannot empty the pool",
+        "the relay fight does not terminate",
+    ];
+    let usage_failure = message.starts_with("evaluateObjective(\"")
+        && USAGE.iter().any(|tail| {
+            message
+                .split_once("\"): ")
+                .is_some_and(|(_, rest)| rest.starts_with(tail))
+        });
+    CliError {
+        message,
+        code: if usage_failure { 2 } else { 1 },
+    }
+}
+
+/// `dfo-dps objective` (`src/cli.js:579-634`): one build on one named objective, text or `--json`.
+fn objective(values: &Values) -> Result<String, CliError> {
+    let name = values.objective.as_deref().unwrap_or("snapshot");
+    let known: Vec<&str> = OBJECTIVE_IDS
+        .iter()
+        .chain(STOCHASTIC_OBJECTIVE_IDS.iter())
+        .copied()
+        .collect();
+    if !known.contains(&name) {
+        return Err(usage(format!(
+            "unknown objective: {name} (choose {})",
+            known.join(", ")
+        )));
+    }
+    let sampling = sampled_options(values)?;
+    let seed = sampling.seed;
+    let pool = values.nums.get("health").copied();
+    if let Some(pool) = pool {
+        if !pool.is_finite() || pool <= 0.0 {
+            return Err(usage("a positive target pool is required (set --health)"));
+        }
+    }
+    let book = saves::load_spellbook();
+    let ch = character(values, &book)?;
+    let traits = values.traits.clone();
+    // `targetOf(ch, { ...values, health: undefined }, traits)`: the pool is applied after the body exists.
+    let mut target = target_of(&ch, values, &traits, None)?;
+    if let Some(pool) = pool {
+        if target.get("isBoss").truthy() {
+            target.set("health", Num(pool));
+            target.set("maxHealth", Num(pool));
+        }
+    }
+    if !traits.is_empty() {
+        target.set(
+            "bossTraits",
+            Arr(traits.iter().map(|t| Str(t.clone())).collect()),
+        );
+    }
+    let stochastic = STOCHASTIC_OBJECTIVE_IDS.contains(&name);
+    // `simulateFight` supports a plain ordinary foe only: a boss/gate body or boss traits are refused up front.
+    if stochastic
+        && name != "stochastic-relay"
+        && (target.get("isBoss").truthy()
+            || !target.get("bossTraits").items().is_empty()
+            || target.get("phaseShields").truthy())
+    {
+        return Err(usage(format!(
+            "{name} needs a plain ordinary foe; supported targets: soft, tough, armoured, human (use stochastic-relay for gate or breach)"
+        )));
+    }
+    let health = pool.unwrap_or_else(|| target.get("maxHealth").to_number());
+    // JS `!(health > 0)`: NaN and both zeros refuse; an infinity is a positive pool.
+    if health.is_nan() || health <= 0.0 {
+        return Err(usage("a positive target pool is required (set --health)"));
+    }
+    let carry = !values.no_carry;
+    // `objective === 'stochastic-relay' ? Math.max(1, Number(target.allowance?.players) || 1) : null`
+    let relay_players = if name == "stochastic-relay" {
+        let players = target.get("allowance").get("players").to_number();
+        let players = if players.is_nan() || players == 0.0 {
+            1.0
+        } else {
+            players
+        };
+        Some(js_max(1.0, players))
+    } else {
+        None
+    };
+    let mut scenario = scenario_of(&ch, values, &traits, &target);
+    if !values.theory {
+        if let Some((tpl, mat)) = values.weapon {
+            scenario.set("weapon", synthetic_weapon(&Num(tpl), &Num(mat), values.rri));
+        }
+    }
+    scenario.set("objective", Str(name.to_owned()));
+    scenario.set("health", Num(health));
+    scenario.set("trials", Num(sampling.trials));
+    scenario.set("seed", Num(sampling.seed));
+    scenario.set("maxSeconds", Num(sampling.max_seconds));
+    scenario.set("maxBlows", Num(sampling.max_blows));
+    scenario.set("carry", Bool(carry));
+    let row = evaluate_objective(&ch, &scenario, &book).map_err(objective_error)?;
+
+    let metric = match row.get("metric").as_str() {
+        Some(metric) => metric.to_owned(),
+        None if name == "snapshot" => "snapshot-dps".to_owned(),
+        None if name == "relay-ceiling" => "ceiling-dps".to_owned(),
+        None => "kill-rate".to_owned(),
+    };
+    let damage_mode = match row.get("damageMode").as_str() {
+        Some(mode) => mode.to_owned(),
+        None => {
+            if target.get("allowance").truthy() && name != "snapshot" && name != "fight" {
+                "relay".to_owned()
+            } else {
+                "uncapped".to_owned()
+            }
+        }
+    };
+    let trial_count = nullish_to_null(row.get("n"));
+    let horizon = nullish_to_null(row.get("horizonSeconds"));
+    let kill_probability = nullish_to_null(row.get("killProbability"));
+    let ci = nullish_to_null(row.get("ci"));
+    let assumptions = row.get("assumptions").clone();
+    let detail = row.get("detail").clone();
+    let value = row.get("value").clone();
+
+    if values.json {
+        let detail = if values.samples {
+            detail
+        } else {
+            match &detail {
+                Obj(entries) => Obj(entries
+                    .iter()
+                    .filter(|(k, _)| k.as_str() != "samples" && k.as_str() != "seeds")
+                    .cloned()
+                    .collect()),
+                other => other.clone(),
+            }
+        };
+        let out = obj([
+            ("objective", Str(name.to_owned())),
+            ("metric", Str(metric)),
+            ("unit", row.get("unit").clone()),
+            ("value", value),
+            ("n", trial_count),
+            ("horizonSeconds", horizon),
+            ("damageMode", Str(damage_mode)),
+            ("carry", Bool(carry)),
+            ("seed", Num(seed)),
+            ("killProbability", kill_probability),
+            ("ci", ci),
+            ("assumptions", assumptions),
+            ("detail", detail),
+        ]);
+        return Ok(format!("{}\n", json(&out)));
+    }
+
+    let pct = |v: &Value| format!("{}%", fmt2(&Num(v.to_number() * 100.0)));
+    let kill_line = if kill_probability.truthy() {
+        format!(
+            "{} [{}, {}]",
+            pct(kill_probability.get("p")),
+            pct(kill_probability.get("lo")),
+            pct(kill_probability.get("hi"))
+        )
+    } else {
+        "n/a".to_owned()
+    };
+    let ttk = detail.get("ttk");
+    let kills = if detail.get("kills").is_nullish() {
+        "n/a".to_owned()
+    } else {
+        detail.get("kills").to_js_string()
+    };
+    let ttk_line = if ttk.get("mean").is_nullish() {
+        "n/a".to_owned()
+    } else {
+        let mean = ttk.get("mean").to_number();
+        let ci95 = ttk.get("ci95").to_number();
+        format!(
+            "{} s [{}, {}] from {kills} kills",
+            fmt2(&Num(mean)),
+            fmt2(&Num(mean - ci95)),
+            fmt2(&Num(mean + ci95))
+        )
+    };
+    let censored = if detail.get("censored").is_nullish() {
+        "n/a".to_owned()
+    } else {
+        detail.get("censored").to_js_string()
+    };
+    let n_line = if trial_count.is_nullish() {
+        "n/a".to_owned()
+    } else {
+        trial_count.to_js_string()
+    };
+    let horizon_line = if horizon.is_nullish() {
+        "n/a".to_owned()
+    } else {
+        format!("{} s", horizon.to_js_string())
+    };
+    let pool_label = match relay_players {
+        None => format!("Total pool: {}", Num(health).to_js_string()),
+        Some(players) => format!(
+            "Pool per player (simulated share): {} (total {} / {} players)",
+            fmt2(&Num(health / players)),
+            Num(health).to_js_string(),
+            Num(players).to_js_string()
+        ),
+    };
+    let mut out = String::new();
+    out.push_str(&format!(
+        "Objective: {name} | Metric: {metric} | Value: {} {}\n",
+        fmt2(&value),
+        row.get("unit").to_js_string()
+    ));
+    out.push_str(&format!(
+        "n: {n_line} | Kills: {kills} | Censored: {censored}\n"
+    ));
+    out.push_str(&format!("Kill probability (Wilson 95%): {kill_line}\n"));
+    out.push_str(&format!("Mean TTK (95% CI, kills only): {ttk_line}\n"));
+    out.push_str(&format!(
+        "Horizon: {horizon_line} | Damage mode: {damage_mode} | Carry: {} | Seed: {}\n",
+        if stochastic {
+            if carry {
+                "on"
+            } else {
+                "off"
+            }
+        } else {
+            "n/a"
+        },
+        Num(seed).to_js_string()
+    ));
+    out.push_str(&format!(
+        "Target assumptions: {} | {pool_label}\n",
+        json_compact(assumptions.get("target"))
+    ));
+    out.push_str(&format!(
+        "Basis: {}\n",
+        assumptions.get("basis").to_js_string()
+    ));
+    Ok(out)
 }
 
 /// JS `summary()` (`src/cli.js:671-720`): the character, weapon, ruleset, target and result, then the caller's
@@ -1358,19 +1731,24 @@ fn obj_pairs(pairs: &[(String, f64)]) -> Value {
     out
 }
 
-fn target_of(ch: &Value, values: &Values, traits: &[String]) -> Result<Value, CliError> {
+fn target_of(
+    ch: &Value,
+    values: &Values,
+    traits: &[String],
+    health: Option<f64>,
+) -> Result<Value, CliError> {
     let requested = values.target.to_lowercase();
     let level = values.num("level", ch.get("level").to_number());
     let trait_list = || Arr(traits.iter().map(|t| Str(t.clone())).collect());
     Ok(match requested.as_str() {
         // The JS remap: for the theory character `armoured` is a reference preset that prices the gate; a save keeps it
         // as the reference foe it names (`src/cli.js:505`).
-        "armoured" if values.theory => gate_body(values, traits, level),
-        "gate" | "breach" | "ruhn" => gate_body(values, traits, level),
+        "armoured" if values.theory => gate_body(values, traits, level, health),
+        "gate" | "breach" | "ruhn" => gate_body(values, traits, level, health),
         "boss" => boss_target(&obj([
             ("level", Num(level)),
             ("armorValue", Num(values.num("armor", 0.0))),
-            ("health", Num(values.num("health", 5000.0))),
+            ("health", Num(health.unwrap_or(5000.0))),
             (
                 "traits",
                 if traits.is_empty() {
@@ -1393,13 +1771,13 @@ fn target_of(ch: &Value, values: &Values, traits: &[String]) -> Result<Value, Cl
 }
 
 /// The Breach gate body (`gateTarget`) at the scenario's level and options.
-fn gate_body(values: &Values, traits: &[String], level: f64) -> Value {
+fn gate_body(values: &Values, traits: &[String], level: f64, health: Option<f64>) -> Value {
     let mut opts = obj([
         ("players", Num(values.num("players", 1.0))),
         ("blowX", Num(values.num("blow-x", 1.0))),
     ]);
-    if values.nums.contains_key("health") {
-        opts.set("health", Num(values.num("health", 0.0)));
+    if let Some(health) = health {
+        opts.set("health", Num(health));
     }
     if !traits.is_empty() {
         opts.set(
@@ -2267,6 +2645,52 @@ fn json(v: &Value) -> String {
     let mut out = String::new();
     write_json(v, 0, &mut out);
     out
+}
+
+/// `JSON.stringify(v)`: the compact form the text card embeds with a template literal (`${JSON.stringify(...)}`).
+fn json_compact(v: &Value) -> String {
+    let mut out = String::new();
+    write_json_compact(v, &mut out);
+    out
+}
+
+fn write_json_compact(v: &Value, out: &mut String) {
+    match v {
+        Undefined | Null => out.push_str("null"),
+        Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+        Num(n) => {
+            if n.is_finite() {
+                out.push_str(&number_to_string(*n));
+            } else {
+                out.push_str("null");
+            }
+        }
+        Str(s) => write_json_string(s, out),
+        Arr(items) => {
+            out.push('[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                write_json_compact(item, out);
+            }
+            out.push(']');
+        }
+        Obj(entries) => {
+            out.push('{');
+            let mut first = true;
+            for (k, val) in entries.iter().filter(|(_, v)| !matches!(v, Undefined)) {
+                if !first {
+                    out.push(',');
+                }
+                first = false;
+                write_json_string(k, out);
+                out.push(':');
+                write_json_compact(val, out);
+            }
+            out.push('}');
+        }
+    }
 }
 
 fn write_json(v: &Value, level: usize, out: &mut String) {
