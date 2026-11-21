@@ -1,19 +1,24 @@
 //! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves`, `build`, `objective`, `rank`, `compare`,
-//! `doctor` and `probe` slice).
+//! `doctor`, `probe`, `graph` and `report` slice).
 //!
 //! This is the JS `src/cli.js` `build` card, `objective` command, `rank` card, `compare` card, `saves` listing,
-//! `doctor` and `probe`, and only that: [`main`] parses the flags those read, replays the JS validation (`numFlag`, the
-//! enum checks, `sampledOptions`) with the same messages, builds either the level-45 theory character or the one an
-//! imported save describes, the target and the scenario, then prints `printBuild`, `printObjective`, `printRank`, the
-//! `compare` table or `{ character, weapons, current }` as `--json` does. `build --json` prints `summary()` and
-//! `objective --json` prints the evaluated row; `build`'s text card is `printBuild` with the what-ifs the JS runs after
-//! it. `compare` is the table `compare` prints after applying `--stat` and `--weapon`. `doctor` prints the
-//! save/build/ruleset summary over the same imported character. `probe` reads a Combat Probe capture read-only: its
+//! `doctor`, `probe`, `graph` and `report`, and only that: [`main`] parses the flags those read, replays the JS validation
+//! (`numFlag`, the enum checks, `sampledOptions`) with the same messages, builds either the level-45 theory character or
+//! the one an imported save describes, the target and the scenario, then prints `printBuild`, `printObjective`,
+//! `printRank`, the `compare` table or `{ character, weapons, current }` as `--json` does. `build --json` prints
+//! `summary()` and `objective --json` prints the evaluated row; `build`'s text card is `printBuild` with the what-ifs
+//! the JS runs after it. `compare` is the table `compare` prints after applying `--stat` and `--weapon`. `doctor` prints
+//! the save/build/ruleset summary over the same imported character. `probe` reads a Combat Probe capture read-only: its
 //! discovery, terminal card, JSON document and HTML report page live in [`probe`], its rules are `dfo_core::probe`, and
 //! the page's markup comes from [`graph`] (the `src/graph.js` port). The page is written in both modes, as the JS does
-//! (`probe.html`, or `--out <file>`), and only the text mode prints the JS `probe page written:` line. The write is
-//! create-only (`O_CREAT|O_EXCL`): an existing file - the capture, an unrelated save or report, or any hard/symlink
-//! alias - is refused with exit 2 and left untouched, where the JS would truncate it. Reports must target a new path.
+//! (`probe.html`, or `--out <file>`), and only the text mode prints the JS `probe page written:` line. `graph` prices one
+//! `--series` channel over `--from`..`--to` (`src/cli.js:2057-2127`), writes `graph.html` (or `--out`) through the same
+//! create-only writer, and prints the JS `graph written:` line (text) or the series document (`--json`). `report` renders
+//! `src/report.js` `buildReport` (the page lives in [`report`], pure data in and HTML out) at the shared scenario, writes
+//! `dfo-dps-report.html` (or `--out`) through the same writer, and prints the JS `report written:` line. All three page
+//! writes are create-only (`O_CREAT|O_EXCL`): an existing file - the capture, the graph's own input save, an unrelated
+//! save or report, or any hard/symlink alias - is refused with exit 2 and left untouched, where the JS would truncate it.
+//! Reports must target a new path.
 //!
 //! The save is imported READ-ONLY by [`saves`]: discovery and parsing live there, the character normalisation is
 //! `dfo_core::save::character_from_save`, and nothing is retained or written (AGENTS.md rule 11). Every flag this
@@ -22,11 +27,12 @@
 //! Every rule lives in `dfo-core`; this file owns argument text, the two output formats and exit codes (a usage
 //! error is 2, as `bin/dfo-dps.js` does).
 
-// The shared renderer is a whole port of `src/graph.js`: `probe` uses `lineChart`/`multiGraphPage`, the other primitives
-// are here for the report commands that follow.
+// The shared renderer is a whole port of `src/graph.js`: `probe` uses `lineChart`/`multiGraphPage`, `graph` uses
+// `lineChart`/`graphPage`, and `barChart` is here for the report commands that follow.
 #[allow(dead_code)]
 mod graph;
 mod probe;
+mod report;
 mod saves;
 
 use std::collections::HashMap;
@@ -52,7 +58,7 @@ use dfo_core::theory::theory_character;
 use dfo_core::value::{number_to_string, obj_table_get, string_to_number, Value, Value::*};
 
 const HELP: &str = "\
-dfo-cli - the saves, build, objective, rank, compare, doctor and probe slice of dfo-dps (Rust core)
+dfo-cli - the saves, build, objective, rank, compare, doctor, probe, graph and report slice of dfo-dps (Rust core)
 
 Usage:
   dfo-cli saves
@@ -66,6 +72,8 @@ Usage:
   dfo-cli compare [--save <slot|folder|path>] --stat <name=value> [--weapon <template:material>]
   dfo-cli compare --theory --stat <name=value> [--weapon <template:material>]
   dfo-cli probe [capture.json] [--old] [--level <n>] [--players <n>] [--json] [--out <file>]
+  dfo-cli graph [--theory] [--series <spec,...>] [--from <n>] [--to <n>] [--step <n>] [--uncapped] [--json] [--out <file>]
+  dfo-cli report [--theory] [--save <slot|folder|path>] [options] [--out <file>]
 
 `saves` lists the save folders under the DFO user-data folder (newest first). `doctor` prints the model pin, the
 save folders and the imported character's build/ruleset summary. `build` prices one build against one target: with
@@ -77,7 +85,10 @@ the JS `printBuild` card; with `--json` it prints `summary()` instead. `rank` te
 ~/.local/share/dfo-tools/probe-mod/captures, or a named file), text or `--json`, and writes the report page the JS
 writes (`probe.html`, or `--out <file>`): text mode also prints the JS `probe page written:` line. The page is
 create-only: an existing file (the capture, a save, a report, any alias) is refused and left untouched, so choose a
-new path.
+new path. `graph` prices one channel per `--series` spec (`stat:<name>`, `skill:<id>`, `gear:<id>` or `star:<name>`)
+across `--from`..`--to` by `--step`, writes `graph.html` (or `--out`, also create-only) and prints the JS
+`graph written:` line, or the series document with `--json`. `report` writes the single-file HTML page of
+`src/report.js` (`dfo-dps-report.html`, or `--out`, also create-only) and prints the JS `report written:` line.
 
 Flags:
   --save <SAVE4|folder|SaveData.txt>  the save to import (default: the newest under the user-data folder)
@@ -106,7 +117,10 @@ Flags:
   --stat <name=value>                 compare: one attribute or skill id change (repeatable)
   --data <capture.json>               probe: a capture file (the JS also reads ARENA2 here; not ported)
   --old                               probe: read the newest capture in captures/old
-  --out <file>                        probe: the report page (default: probe.html; must not exist yet)
+  --out <file>                        probe/graph: the report page (default: probe.html / graph.html; must not exist yet)
+  --series <spec,...>                 graph: stat:name, skill:id, gear:id or star:name (default stat:strength,stat:agility)
+  --from <n> --to <n> --step <n>      graph: the channel range (default per series kind; step 10)
+  --uncapped                          graph: plot uncapped DPS instead of the per-hit-capped line
   --json
   -h, --help
 
@@ -210,6 +224,20 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
             parsed.raw("out"),
         );
     }
+    if command == "graph" {
+        if let Some(extra) = parsed.positionals.get(1) {
+            return Err(usage(format!("unexpected positional argument \"{extra}\"")));
+        }
+        check_output_flags(&command, &parsed)?;
+        return graph_command(&values, parsed.raw("out"));
+    }
+    if command == "report" {
+        if let Some(extra) = parsed.positionals.get(1) {
+            return Err(usage(format!("unexpected positional argument \"{extra}\"")));
+        }
+        check_output_flags(&command, &parsed)?;
+        return report_command(&values, parsed.raw("out"));
+    }
     if command != "rank" {
         const COMMANDS: [&str; 23] = [
             "build",
@@ -238,7 +266,7 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         ];
         return Err(if COMMANDS.contains(&command.as_str()) {
             usage(format!(
-                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank`, `compare`, `doctor` and `probe`"
+                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank`, `compare`, `doctor`, `probe`, `graph` and `report`"
             ))
         } else {
             usage(format!("unknown command \"{command}\"\n\n{HELP}"))
@@ -259,8 +287,8 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
 }
 
 /// `checkOutputFlags` (`src/cli.js:885-898`): reject a flag the command would ignore instead of accepting it silently.
-/// The commands of this slice (`build`, `rank`, `compare`, `saves`, `doctor`): only `build` and `rank` read `--json`,
-/// none read `--out`.
+/// The commands of this slice (`build`, `rank`, `compare`, `saves`, `doctor`, `probe`, `graph`): `probe` and `graph`
+/// write a page, `build`, `rank`, `objective`, `probe` and `graph` read `--json`.
 fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
     const FILE_COMMANDS: &str = concat!(
         "report, spells, weapons, skills, firmament, imprints, probe, enchant-plan, gear-plan, loadout, ",
@@ -287,6 +315,17 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
             if parsed.raw(name).is_some() || parsed.flag(name) {
                 return Err(usage(format!(
                     "--{name} is not supported by this CLI slice (it needs the probe, or is not ported yet)"
+                )));
+            }
+        }
+    }
+    // `--series`/`--from`/`--to`/`--step`/`--uncapped` are priced by `graph` alone; JS accepts and ignores them
+    // elsewhere, and this CLI refuses them by name.
+    if command != "graph" {
+        for name in ["series", "from", "to", "step", "uncapped"] {
+            if parsed.raw(name).is_some() || parsed.flag(name) {
+                return Err(usage(format!(
+                    "--{name} is not supported by this CLI slice (it needs the graph, or is not ported yet)"
                 )));
             }
         }
@@ -506,7 +545,7 @@ const SUPPORTED: &str = concat!(
     "help target level armor health traits core weapon swing stacks race blade gear-lb gear-cs star-stat star-skill ",
     "star-damage potency pierce backstab players blow-x health-share self-health-share top damage-pct base-stats ",
     "no-effects save offline passive bare out objective trials seed max-seconds max-blows no-carry samples stat all ",
-    "data old",
+    "data old series from to step uncapped",
 );
 
 fn in_flags(list: &str, name: &str) -> bool {
@@ -515,7 +554,7 @@ fn in_flags(list: &str, name: &str) -> bool {
 
 const BOOLEAN_FLAGS: &str = concat!(
     "theory json vampire firmament rhythm unaware first-blow behind pair dual spam no-crit-damage no-passive ",
-    "no-rri help offline bare no-effects no-carry samples all old",
+    "no-rri help offline bare no-effects no-carry samples all old uncapped",
 );
 
 const MULTI: [&str; 3] = ["star-stat", "star-skill", "stat"];
@@ -619,7 +658,7 @@ const fn range(min: f64, max: f64, int: bool, exclusive_min: bool) -> Range {
 const ANY: Range = range(f64::NEG_INFINITY, f64::INFINITY, false, false);
 
 /// Every numeric option `validateFlags` bounds, with its JS default.
-const NUMERIC_FLAGS: [(&str, f64, Range); 19] = [
+const NUMERIC_FLAGS: [(&str, f64, Range); 22] = [
     ("level", THEORY_LEVEL, range(1.0, LEVEL_CAP, true, false)),
     ("stacks", 5.0, range(0.0, 5.0, true, false)),
     ("players", 1.0, range(1.0, f64::INFINITY, true, false)),
@@ -647,6 +686,9 @@ const NUMERIC_FLAGS: [(&str, f64, Range); 19] = [
     ),
     ("star-damage", 0.0, ANY),
     ("base-stats", 50.0, ANY),
+    ("from", 0.0, ANY),
+    ("to", 0.0, ANY),
+    ("step", 10.0, range(0.0, f64::INFINITY, false, true)),
 ];
 
 struct Values {
@@ -699,6 +741,12 @@ struct Values {
     data: Option<String>,
     /// `--old`: the probe reads `captures/old` instead of the live folder.
     old: bool,
+    /// `--series`: raw comma list, split and validated by the graph command (the JS splits in the branch).
+    series: Option<String>,
+    /// `--uncapped`: the graph plots uncapped DPS.
+    uncapped: bool,
+    /// `--base-stats` exactly as typed (the graph subtitle prints the JS raw flag text).
+    base_stats_raw: Option<String>,
 }
 
 fn range_text(what: &str, min: f64, max: f64, exclusive_min: bool) -> String {
@@ -983,6 +1031,9 @@ impl Values {
             stat: parsed.multi("stat"),
             data: parsed.raw("data").map(str::to_owned),
             old: parsed.flag("old"),
+            series: parsed.raw("series").map(str::to_owned),
+            uncapped: parsed.flag("uncapped"),
+            base_stats_raw: parsed.raw("base-stats").map(str::to_owned),
         })
     }
 
@@ -1168,8 +1219,376 @@ fn build(values: &Values) -> Result<String, CliError> {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// the compare card (src/cli.js:2277-2304)
+// the graph command (src/cli.js:2057-2127)
 // ---------------------------------------------------------------------------------------------------------------
+
+/// `STAT_KEYS` (`src/cli.js:464`): the eight attributes `star:` accepts.
+const STAT_KEYS: [&str; 8] = [
+    "strength",
+    "intelligence",
+    "willpower",
+    "agility",
+    "endurance",
+    "personality",
+    "speed",
+    "luck",
+];
+
+/// `FIRM_CHANNEL_MAX` (`src/cli.js:465`).
+const FIRM_CHANNEL_MAX: f64 = 15.0;
+
+/// `scaleRange` (`src/cli.js:713-722`): `from..=to` in `step` (at least 1) increments, each rounded to two decimals,
+/// with the exact `to` appended when the last rounded point did not land on it (a strict `!==`, as the JS does).
+fn scale_range(values: &Values, current: f64, cap: f64) -> Vec<f64> {
+    let from = values.nums.get("from").copied().unwrap_or(current);
+    let to = values.nums.get("to").copied().unwrap_or(cap);
+    let step = js_max(1.0, values.nums.get("step").copied().unwrap_or(10.0));
+    let mut out = Vec::new();
+    // `!(to >= from)`: a NaN bound fails the check as well, so no point is produced.
+    if !matches!(
+        to.partial_cmp(&from),
+        Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
+    ) {
+        return out;
+    }
+    let mut v = from;
+    while v <= to + 1e-9 {
+        out.push(math_round(v * 100.0) / 100.0);
+        v += step;
+    }
+    if out.last().copied() != Some(to) {
+        out.push(to);
+    }
+    out
+}
+
+/// One `graph` series as the command builds it: its label and the priced `{ x, y }` points.
+struct GraphSeries {
+    name: String,
+    points: Vec<(f64, f64)>,
+}
+
+/// `dfo-dps graph` (`src/cli.js:2057-2127`): one curve per `--series`, the JS page, and the `--json` series document.
+/// The page goes through `probe`'s create-only writer: an existing `graph.html` (or `--out`) is refused, never truncated.
+fn graph_command(values: &Values, out_flag: Option<&str>) -> Result<String, CliError> {
+    let book = saves::load_spellbook();
+    let ch = character(values, &book)?;
+    let target = target_of(
+        &ch,
+        values,
+        &values.traits,
+        values.nums.get("health").copied(),
+    )?;
+    let mut scenario = scenario_of(&ch, values, &values.traits, &target);
+    // `scenarioOf` (`src/cli.js:559`): a save's `--weapon` override lives on the scenario; the theory character already
+    // applied it when it was built.
+    if !values.theory {
+        if let Some((tpl, mat)) = values.weapon {
+            scenario.set("weapon", synthetic_weapon(&Num(tpl), &Num(mat), values.rri));
+        }
+    }
+    let spec_text = values
+        .series
+        .clone()
+        .unwrap_or_else(|| "stat:strength,stat:agility".to_owned());
+    let specs: Vec<&str> = spec_text
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    let mut series = Vec::new();
+    for spec in specs {
+        // `const [kindRaw, idRaw] = spec.split(':')`: a third segment is dropped, as the JS destructuring drops it.
+        let mut parts = spec.split(':');
+        let kind_raw = parts.next().unwrap_or("");
+        let id_raw = parts.next();
+        let kind = kind_raw.to_lowercase();
+        // `if (!idRaw)`: an empty or absent id both take the "needs an attribute name" branch.
+        let id_present = id_raw.filter(|s| !s.is_empty());
+        let apply = |c: &mut Value, id: &str, value: f64| match kind.as_str() {
+            "stat" => {
+                let mut stats = c.get("stats").clone();
+                stats.set(id, Num(value));
+                c.set("stats", stats);
+            }
+            "skill" => set_skill(c, id, value),
+            "star" => {
+                let mut mods = c.get("_mods").clone();
+                if mods.is_nullish() {
+                    mods = obj([("stats", Obj(vec![])), ("skills", Obj(vec![]))]);
+                }
+                let mut stats = mods.get("stats").clone();
+                if stats.is_nullish() {
+                    stats = Obj(vec![]);
+                }
+                stats.set(id, Num(value));
+                mods.set("stats", stats);
+                let mut stat_max = mods.get("statMax").clone();
+                if stat_max.is_nullish() {
+                    stat_max = Obj(vec![]);
+                }
+                stat_max.set(id, Num(js_max(0.0, value)));
+                mods.set("statMax", stat_max);
+                c.set("_mods", mods);
+            }
+            _ => {
+                let mut mods = c.get("_mods").clone();
+                if mods.is_nullish() {
+                    mods = obj([("stats", Obj(vec![])), ("skills", Obj(vec![]))]);
+                }
+                let mut skills = mods.get("skills").clone();
+                if skills.is_nullish() {
+                    skills = Obj(vec![]);
+                }
+                skills.set(id, Num(value));
+                mods.set("skills", skills);
+                c.set("_mods", mods);
+            }
+        };
+        let (id, from, to, label): (String, f64, f64, String) = match kind.as_str() {
+            "stat" => {
+                let Some(id) = id_present else {
+                    return Err(usage(format!(
+                        "graph series {spec} needs an attribute name (stat:strength)"
+                    )));
+                };
+                let id = id.to_lowercase();
+                (
+                    id.clone(),
+                    values.nums.get("from").copied().unwrap_or(50.0),
+                    values.nums.get("to").copied().unwrap_or(100.0),
+                    format!("stat {id}"),
+                )
+            }
+            "skill" | "gear" => {
+                let id = skill_id_flag(id_raw)?;
+                let current = if kind == "skill" {
+                    ch.get("skills").prop(&Num(id)).num_or(0.0)
+                } else {
+                    ch.get("_mods").get("skills").prop(&Num(id)).num_or(0.0)
+                };
+                let (def_from, def_to) = if kind == "skill" {
+                    (100.0, 200.0)
+                } else {
+                    (current, current + 100.0)
+                };
+                let key = number_to_string(id);
+                (
+                    key.clone(),
+                    values.nums.get("from").copied().unwrap_or(def_from),
+                    values.nums.get("to").copied().unwrap_or(def_to),
+                    format!("{kind} {key}"),
+                )
+            }
+            "star" => {
+                let Some(id) = id_present else {
+                    return Err(usage(format!(
+                        "graph series {spec} needs an attribute name (star:strength)"
+                    )));
+                };
+                let id = id.to_lowercase();
+                if !STAT_KEYS.contains(&id.as_str()) {
+                    return Err(usage(format!("bad star attribute {id}")));
+                }
+                (
+                    id.clone(),
+                    values.nums.get("from").copied().unwrap_or(0.0),
+                    values.nums.get("to").copied().unwrap_or(FIRM_CHANNEL_MAX),
+                    format!("star {id}"),
+                )
+            }
+            _ => {
+                return Err(usage(format!(
+                    "graph series must be stat:name, skill:id, gear:id or star:name ({spec})"
+                )));
+            }
+        };
+        let mut points = Vec::new();
+        for value in scale_range(values, from, to) {
+            let mut c = dfo_core::analyze::json_clone(&ch);
+            apply(&mut c, &id, value);
+            let r = analyze(&c, &scenario, &book);
+            points.push((value, if values.uncapped { r.dps } else { r.capped_dps }));
+        }
+        series.push(GraphSeries {
+            name: label,
+            points,
+        });
+    }
+    let title = "DFO DPS - stat curves";
+    let mut flags: Vec<String> = Vec::new();
+    if values.bare {
+        flags.push("bare".into());
+    }
+    if values.no_effects {
+        flags.push("no effects".into());
+    }
+    if let Some(raw) = &values.base_stats_raw {
+        flags.push(format!("base {raw}"));
+    }
+    flags.push(
+        if values.uncapped {
+            "uncapped"
+        } else {
+            "capped"
+        }
+        .into(),
+    );
+    let flags = flags.join(", ");
+    let health = target.get("health");
+    let subtitle = format!(
+        "{} | {}{} | {}{} | {flags}",
+        character_label(&ch),
+        values.core,
+        if ch.get("online").truthy() {
+            " / online"
+        } else {
+            " / offline"
+        },
+        values.target,
+        if health.truthy() {
+            format!(" {} HP", grouped(target.get("maxHealth")))
+        } else {
+            String::new()
+        }
+    );
+    let chart_series: Vec<graph::Series> = series
+        .iter()
+        .map(|s| graph::Series {
+            name: s.name.clone(),
+            points: s
+                .points
+                .iter()
+                .map(|&(x, y)| graph::Point { x, y })
+                .collect(),
+        })
+        .collect();
+    let chart = graph::line_chart(&graph::LineChart::new(
+        title,
+        "Value",
+        if values.uncapped { "DPS" } else { "Capped DPS" },
+        chart_series,
+    ));
+    let html = graph::graph_page(title, &subtitle, &chart);
+    // `path.resolve(values.out === 'dfo-dps-report.html' ? 'graph.html' : values.out)` (`:2121`).
+    let out = match out_flag {
+        None | Some("dfo-dps-report.html") => "graph.html".to_owned(),
+        Some(name) => name.to_owned(),
+    };
+    let out = probe::normalized(&out);
+    probe::write_page(&out, &html)?;
+    if values.json {
+        let doc = Arr(series
+            .iter()
+            .map(|s| {
+                obj([
+                    ("name", Str(s.name.clone())),
+                    (
+                        "points",
+                        Arr(s
+                            .points
+                            .iter()
+                            .map(|&(x, y)| obj([("x", Num(x)), ("y", Num(y))]))
+                            .collect()),
+                    ),
+                ])
+            })
+            .collect());
+        return Ok(format!("{}\n", json(&doc)));
+    }
+    Ok(format!("graph written: {}\n", out.display()))
+}
+
+/// `dfo-dps report` (`src/cli.js:2263-2275`): the single-file page from [`report::build_report`] at the scenario the
+/// other page commands share, written through `probe`'s create-only writer. The JS `writeFileSync` truncates an
+/// existing path; this refuses it with exit 2 and leaves it untouched (the same deliberate deviation `probe`/`graph`
+/// pin). stdout is the JS `report written: <file>` line in both modes - `report` has no `--json` branch.
+fn report_command(values: &Values, out_flag: Option<&str>) -> Result<String, CliError> {
+    let book = saves::load_spellbook();
+    let ch = character(values, &book)?;
+    let target = target_of(
+        &ch,
+        values,
+        &values.traits,
+        values.nums.get("health").copied(),
+    )?;
+    let mut scenario = scenario_of(&ch, values, &values.traits, &target);
+    // `scenarioOf` (`src/cli.js:559`): a save's `--weapon` override lives on the scenario; the theory character already
+    // applied it when it was built.
+    if !values.theory {
+        if let Some((tpl, mat)) = values.weapon {
+            scenario.set("weapon", synthetic_weapon(&Num(tpl), &Num(mat), values.rri));
+        }
+    }
+    // The JS passes `traitsOf(values)`, not the scenario's nullish fallback: an empty `--traits` stays a list, so the
+    // target's own traits do not replace it (`buildReport`'s `traits ?? target?.bossTraits ?? []`).
+    let opts = obj([
+        ("target", target),
+        ("core", scenario.get("core").clone()),
+        (
+            "traits",
+            Arr(values.traits.iter().map(|t| Str(t.clone())).collect()),
+        ),
+        ("health", scenario.get("health").clone()),
+        ("swing", scenario.get("swing").clone()),
+        ("passiveOn", scenario.get("passiveOn").clone()),
+        ("stacks", scenario.get("stacks").clone()),
+        ("rhythm", scenario.get("rhythm").clone()),
+        ("unaware", scenario.get("unaware").clone()),
+        ("firstBlow", scenario.get("firstBlow").clone()),
+        ("healthShare", scenario.get("healthShare").clone()),
+        (
+            "attackerHealthShare",
+            scenario.get("attackerHealthShare").clone(),
+        ),
+        ("backstabUptime", scenario.get("backstabUptime").clone()),
+        ("players", Num(values.num("players", 1.0))),
+        ("blowX", Num(values.num("blow-x", 1.0))),
+        ("rri", Bool(values.rri)),
+        ("pair", Bool(values.pair)),
+        ("bowSpam", Bool(values.spam)),
+        ("potencyPct", Num(values.num("potency", 0.0))),
+        ("pierce", Num(values.num("pierce", 0.0))),
+        ("weapon", scenario.get("weapon").clone()),
+    ]);
+    let html = report::build_report(&ch, &opts, &book);
+    // `path.resolve(values.out)`: the JS default name, with no per-command rename (unlike probe/graph).
+    let out = probe::normalized(out_flag.unwrap_or("dfo-dps-report.html"));
+    probe::write_page(&out, &html)?;
+    Ok(format!("report written: {}\n", out.display()))
+}
+
+/// `ch.skills[id] = value` for a skill id the JS accepts (`Number(idRaw)` in `0..35`). A fractional id is a named
+/// property of the array in the JS, which no analysis reads: the write is a no-op there too, so the curve is flat.
+fn set_skill(c: &mut Value, id: &str, value: f64) {
+    let id = string_to_number(id);
+    let mut skills = c.get("skills").clone();
+    if let Value::Arr(items) = &mut skills {
+        if id.trunc() == id {
+            let index = id as usize;
+            if items.len() <= index {
+                items.resize(index + 1, Undefined);
+            }
+            items[index] = Num(value);
+        }
+    }
+    c.set("skills", skills);
+}
+
+/// `Number(idRaw)` for a `skill:`/`gear:` spec, with the JS's `!(id >= 0 && id < 35)` check and `bad skill id ${idRaw}`
+/// message.
+/// `Number(idRaw)` for a `skill:`/`gear:` spec, with the JS's `!(id >= 0 && id < 35)` check and `bad skill id ${idRaw}`
+/// message. `Number(undefined)` is NaN, so a bare `skill` spec is refused; `skill:` is `Number("")` = 0, a real skill.
+fn skill_id_flag(id_raw: Option<&str>) -> Result<f64, CliError> {
+    let Some(raw) = id_raw else {
+        return Err(usage("bad skill id undefined"));
+    };
+    let id = string_to_number(raw);
+    if !(0.0..35.0).contains(&id) {
+        return Err(usage(format!("bad skill id {raw}")));
+    }
+    Ok(id)
+}
 
 /// `^([a-z]+|\d+)=(-?\d+)$` (the `/i` flag lower-cases the left side): the two `--stat` spellings `compare` accepts.
 fn split_stat(text: &str) -> Option<(String, f64)> {

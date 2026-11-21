@@ -102,7 +102,7 @@ fn out_path(given: Option<&str>) -> PathBuf {
 /// The page write, create-only (`src/cli.js:868-873` with a deliberate difference, module doc): `O_CREAT|O_EXCL` never
 /// truncates an existing file, so the capture, an unrelated save and an alias all survive; the caller must pick a new
 /// path. A failed write may leave a partial report; do not unlink a path that may have been replaced.
-fn write_page(out: &Path, page: &str) -> Result<(), CliError> {
+pub(crate) fn write_page(out: &Path, page: &str) -> Result<(), CliError> {
     let created = OpenOptions::new().write(true).create_new(true).open(out);
     let mut file = created.map_err(|e| CliError {
         message: format!(
@@ -151,7 +151,7 @@ fn node_write_error(e: &std::io::Error, path: &Path) -> String {
 
 /// `path.resolve(p)`'s output shape: absolute, `.` dropped, `..` folded lexically. A `..` that climbs above the root
 /// is dropped (Node clamps it there).
-fn normalized(p: &str) -> PathBuf {
+pub(crate) fn normalized(p: &str) -> PathBuf {
     let mut out = PathBuf::new();
     for component in absolute(p).components() {
         match component {

@@ -22,12 +22,13 @@ turned into 0. The floor and the Firmament's share read the PERMANENT stats, as 
 tested: `tests/sidebar.rs` drives `tests/sidebar_oracle.mjs` over the public composition, and the script's header lists
 what this repository cannot execute.
 
-## R8: the CLI, the `build`, `saves`, `rank` and `doctor` slice
+## R8: the CLI, the `build`, `saves`, `rank`, `doctor`, `probe`, `graph` and `report` slice
 
-`dfo-cli` (`rust/dfo-cli`) is the first CLI slice: the JS `src/cli.js` `build` card, `saves` listing, `doctor` summary
-and `rank` path, for the level-45 theory character or for an imported save. It is a thin layer: the parser owns
-argument text, the output formats (`printBuild`'s card, `printRank`'s table, `--json`'s summary and
-`{ character, weapons, current }`, `doctor`'s plain lines) and exit codes; every number comes from `dfo_core`
+`dfo-cli` (`rust/dfo-cli`) is the R8 CLI slice: the JS `src/cli.js` `build` card, `saves` listing, `doctor` summary,
+`rank` path, `compare` table, Combat Probe `probe` page, `graph` page and `src/report.js` `report` page, for the
+level-45 theory character or for an imported save. It is a thin layer: the parser owns argument text, the output
+formats (`printBuild`'s card, `printRank`'s table, `--json`'s summary and `{ character, weapons, current }`, `doctor`'s
+plain lines, the two SVG pages and the report page) and exit codes; every number comes from `dfo_core`
 (`theory_character`, `Profiles::legal_gear`, `reference_foe`/`boss_target`/`gate_target`/`encounter_target`,
 `analyze`/`marginals`/`rank_affixes`/`rank_weapons`, `current_weapon_row`, `save::character_from_save`,
 `save::live_stat`/`skill_value`/`skill_name`, `model_blow::weapon_of`). There is no second reading of a rule.
@@ -36,12 +37,16 @@ argument text, the output formats (`printBuild`'s card, `printRank`'s table, `--
   `dfo-cli doctor` (`src/cli.js:941-959`: the `SOURCE` pin, the save slots, then the imported character's label,
   ruleset, level/reflexes/mastery, weapon, live stats and weapon/crit skill; a missing or unreadable save is one
   `save: <message>` line and still exit 0), `dfo-cli build [--save ...] [--theory ...]`, text or `--json` (the JS
-  `printBuild` card vs `summary()`; text is the default, as `build` is the default command), and
+  `printBuild` card vs `summary()`; text is the default, as `build` is the default command),
   `dfo-cli rank [weapons] [--save ...] [--theory ...]`, text or `--json`, with the theory target remap (`armoured` is
-  the gate for the theory character only; a save keeps it as the reference foe, `src/cli.js:505`), every documented
-  validation message of `validateFlags`, the `starOptions`/`--weapon` checks, and
+  the gate for the theory character only; a save keeps it as the reference foe, `src/cli.js:505`),
+  `dfo-cli compare ... --stat name=value [--weapon ...]` (`src/cli.js:2277-2304`, the four-column before/after table),
+  `dfo-cli graph` (`src/cli.js:2057-2127`, one SVG line per `--series` over `--from`..`--to`), `dfo-cli report`
+  (`src/cli.js:2263-2275`, the single-file `buildReport` page), plus every documented validation message of
+  `validateFlags`, the `starOptions`/`--weapon` checks, and
   `--offline`/`--passive`/`--bare`/`--no-effects`/`--base-stats` on the imported character. `--json`/`--out` are
-  refused per command as `checkOutputFlags` does (`doctor` and `saves` support neither).
+  refused per command as `checkOutputFlags` does (`doctor` and `saves` support neither; `report` writes a file but has no
+  `--json`).
 - **Read-only import.** `dfo-cli/src/saves.rs` owns the I/O half of `src/save.js`: `userDataDir`, `savesDir`,
   `listSaves` (folder names sorted, then a stable newest-first sort on `mtimeMs`), `resolveSave` (a path, a folder, a
   `SAVE<n>` slot or a number) and `loadSave`. The document is opened once for reading, parsed and dropped; the character
@@ -53,6 +58,11 @@ argument text, the output formats (`printBuild`'s card, `printRank`'s table, `--
   untouched - the capture, an unrelated save or report, a hard/symlink/dangling alias - where the JS `writeFileSync`
   truncates. Reports must target a new path; that is the one intentional CLI difference on this path. The page's other
   deviation is escaping capture-derived text the JS inserts raw; a safe capture's page is byte-identical.
+- **The graph and report pages.** `dfo-cli graph` prices one `--series` channel over `--from`..`--to` and writes
+  `graph.html` (or `--out`) from the `src/graph.js` port; `dfo-cli report` renders `src/report.js` `buildReport` at the
+  scenario the other page commands share and writes `dfo-dps-report.html` (or `--out`). Both pages go through the
+  same create-only writer as `probe` (`O_CREAT|O_EXCL`): an existing file is refused with exit 2 and left untouched,
+  where the JS `writeFileSync` truncates. `report` inserts only what the JS escapes, so a safe page is byte-identical.
 - **The launcher spellbook.** `saves::arena2_dir` reads `config.json`'s `arena2Path` and `saves::load_spellbook` opens
   `SPELLS.STD` read-only, handing the bytes to `dfo_core::spells::read_spells_std`/`spells_by_index_map`
   (`src/save.js:28-40`, `src/spells.js:72-93`). `build` and `rank` use that book for Cast When Strikes, so a save's
@@ -63,8 +73,8 @@ argument text, the output formats (`printBuild`'s card, `printRank`'s table, `--
   `table` measures widths in UTF-16 code units, as JS `length`/`padStart` do. `grouped_number` is fixed to en-US
   grouping: the JS `toLocaleString()` follows the host locale, so a non-en-US host would format its own way - a
   documented, deliberate limitation (no locale dependency is added).
-- **What does not run, explicitly.** Every command outside `build`/`saves`/`rank`/`doctor` and every flag outside the
-  slice (`--encounter`, `--shortlist`, `--objective`, ...) fails with exit 2 instead of being accepted and ignored; an
+- **What does not run, explicitly.** Every command outside the slice and every flag outside it
+  (`--encounter`, `--shortlist`, `--objective`, ...) fails with exit 2 instead of being accepted and ignored; an
   unknown command or option also exits 2, and extra positionals are refused (the JS ignores them). `--help` lists the
   slice and the unsupported set.
 - **The JSON parser.** Discovery parses a user-supplied document, so the slice uses `serde_json` (`preserve_order` for
@@ -86,11 +96,17 @@ argument text, the output formats (`printBuild`'s card, `printRank`'s table, `--
   shape (`items[].equipSlot`) and the live shape (`equipSlots`, `_mods`, `_enchantMods`, affixes, enchantments and
   effects). `dfo-cli/tests/doctor.rs` covers `doctor` over the same fixtures: empty, missing/named-away, malformed (the
   parser's text differs, so that case compares the exit code and the `save: could not read <path>: ` prefix), array and
-  `null` saves, the newest-first listing and `--offline`. A missing `node` fails the tests rather than skipping them.
+  `null` saves, the newest-first listing and `--offline`. `dfo-cli/tests/graph.rs` drives the shared `src/graph.js`
+  port over synthetic charts, `dfo-cli/tests/cli_graph.rs` runs the whole `graph` command (text/`--json`, every
+  `--series` kind, save-backed and theory characters, usage errors, default output name and the create-only writer), and
+  `dfo-cli/tests/report.rs` compares `report::build_report` byte for byte with the real `src/report.js` (theory blade,
+  classic core, bare fists and literal-marker fixtures); `dfo-cli/tests/cli_report.rs` runs the whole `report` command
+  the same way `cli_graph.rs` does. A missing `node` fails the tests rather than skipping them.
 
-The rest of `src/cli.js` (reports and the other page commands) and `src/report.js` are still unported. `src/graph.js`
-is ported (`src/graph.rs`) and wired into `probe` for its report page. `--data` (an explicit ARENA2 directory) and nested
-custom spell records are not ported; the launcher lookup above is the only spellbook source.
+The rest of `src/cli.js` (the other page commands) is still unported. `src/graph.js` is ported (`src/graph.rs`) and
+wired into `probe`, `graph` and `report`; `src/report.js` is ported (`src/report.rs`) and wired into `report`. `--data`
+(an explicit ARENA2 directory) and nested custom spell records are not ported; the launcher lookup above is the only
+spellbook source.
 
 ## R5c: theory builds, legal budgets, and imprint rankings
 
