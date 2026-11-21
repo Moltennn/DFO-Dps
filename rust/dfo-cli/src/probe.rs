@@ -1,29 +1,42 @@
-//! `dfo-cli probe`: the capture discovery and text/`--json` output of `src/cli.js:1266-1302` and `:1385-1386`.
+//! `dfo-cli probe`: the capture discovery, terminal card, HTML page and `--json` output of `src/cli.js:1266-1386`.
 //!
 //! The rules are all in `dfo_core::probe` (`src/probe.js`); this module owns only the I/O the core refuses: the newest
 //! capture under `~/.local/share/dfo-tools/probe-mod/captures` (or its `old/` folder with `--old`), `JSON.parse`, the
-//! text card and `JSON.stringify(summary, null, 2)`.
+//! text card, `JSON.stringify(summary, null, 2)` and the report page. The page's markup is assembled here exactly as
+//! `src/cli.js:1329-1384` does, from the shared renderer (`crate::graph`, a port of `src/graph.js`). Like the JS, the
+//! page is written in BOTH modes (`probe.html` by default, `--out <file>` otherwise) and only the text mode prints the
+//! `probe page written: <file>` line.
 //!
-//! Boundary, deliberately: the probe HTML page (`src/cli.js:1329-1384`, `multiGraphPage`/`writePage`) belongs to the
-//! shared HTML/SVG renderer and is not ported here. So this command never writes `probe.html`, never prints the JS
-//! `probe page written: <file>` line, and refuses an explicit `--out` instead of accepting a file it would not write.
-//! The text card and the JSON document are otherwise byte-for-byte the JS ones. Discovery reads `capturedAt` the same
-//! way `Date.parse(...) || mtime` does, but the parser here understands only the ISO-8601 shapes a capture writes: a
-//! timezone-less stamp is read as UTC (V8 reads the host's local zone), and a shape V8 would also parse but this does
-//! not (a bare year such as `2026`, a numeric stamp) keeps the file's mtime. A malformed capture's `JSON.parse` message
-//! is `serde_json`'s, not V8's, as everywhere else in this CLI.
+//! Deliberate deviations, all on the write path, never on a number:
+//! - **The page is create-only.** It is opened with `create_new(true)` (`O_CREAT|O_EXCL`), so no existing file is ever
+//!   truncated - not the capture, not an unrelated save or report, not a hard/symlink/dangling alias. An existing
+//!   `--out` (including the default `probe.html`, and including the capture itself) is refused with exit 2 and a path
+//!   that names the collision; choose a new file. The JS `fs.writeFileSync` truncates instead, so an existing report
+//!   path must be removed or renamed first - intentional, and the reason no lexical same-path check is kept.
+//! - A write failure returns no partial card on stdout (the JS prints the card before it writes).
+//! - Capture-derived text inserted into the page (the chart names in a note, the table's values) is HTML-escaped, where
+//!   the JS inserts it raw. Safe captures render byte-identically; a hostile name is shown as text, not markup.
+//! - `path.resolve` is normalised here with `Components`; a `..` that climbs above the root is dropped instead of
+//!   clamped the Node way. The produced page for a fresh path is byte-identical to the JS's.
+//!
+//! Discovery reads `capturedAt` the same way `Date.parse(...) || mtime` does, but the parser here understands only the
+//! ISO-8601 shapes a capture writes: a timezone-less stamp is read as UTC (V8 reads the host's local zone), and a shape
+//! V8 would also parse but this does not (a bare year such as `2026`, a numeric stamp) keeps the file's mtime. A
+//! malformed capture's `JSON.parse` message is `serde_json`'s, not V8's, as everywhere else in this CLI, and a write
+//! failure's OS text is Rust's where Node's wording differs.
 
-use std::fs;
-use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::fs::{self, OpenOptions};
+use std::io::{Read, Write};
+use std::path::{Component, Path, PathBuf};
 
-use dfo_core::probe::summarize_probe;
+use dfo_core::probe::{chart_totals, summarize_probe};
 use dfo_core::value::{number_to_string, Value};
 use serde_json::Value as JsonValue;
 
+use crate::graph::{self, escape, LineChart, Point, Section, Series};
 use crate::{fmt, json, pc, table, CliError};
 
-/// `probe [capture.json]`, `--data <capture>`, `--old`, `--level`, `--players`, `--json`.
+/// `probe [capture.json]`, `--data <capture>`, `--old`, `--level`, `--players`, `--json`, `--out <file>`.
 ///
 /// `level`/`players` are `Some` only when the flag was given, as the JS `levelOverride`/`playersOverride` reads them
 /// from `argv` rather than from the parsed defaults.
@@ -34,15 +47,8 @@ pub fn command(
     level: Option<f64>,
     players: Option<f64>,
     as_json: bool,
-    out_given: bool,
+    out_flag: Option<&str>,
 ) -> Result<String, CliError> {
-    if out_given {
-        return Err(CliError {
-            message: "--out is not supported by this CLI slice yet: the probe page HTML needs the shared renderer"
-                .into(),
-            code: 2,
-        });
-    }
     // `parsed.positionals[1] ?? values.data`, then `if (!file)`: an empty string is falsy in JS, so it falls through
     // to discovery rather than reading the working directory.
     let named = positional.or(data_flag).filter(|f| !f.is_empty());
@@ -70,10 +76,93 @@ pub fn command(
     };
     let summary =
         summarize_probe(&capture, &opts).map_err(|message| CliError { message, code: 1 })?;
+    // `const out = path.resolve(values.out === 'dfo-dps-report.html' ? 'probe.html' : values.out)` (`:1329`).
+    let out = out_path(out_flag);
+    write_page(&out, &html(&summary))?;
     if as_json {
-        return Ok(format!("{}\n", json(&summary)));
+        Ok(format!("{}\n", json(&summary)))
+    } else {
+        Ok(format!(
+            "{}probe page written: {}\n",
+            text(&summary),
+            out.display()
+        ))
     }
-    Ok(text(&summary))
+}
+
+/// `values.out`'s default was `dfo-dps-report.html`, which `probe` renames to `probe.html`, then resolved (`:1329`).
+fn out_path(given: Option<&str>) -> PathBuf {
+    let name = match given {
+        None | Some("dfo-dps-report.html") => "probe.html",
+        Some(name) => name,
+    };
+    normalized(name)
+}
+
+/// The page write, create-only (`src/cli.js:868-873` with a deliberate difference, module doc): `O_CREAT|O_EXCL` never
+/// truncates an existing file, so the capture, an unrelated save and an alias all survive; the caller must pick a new
+/// path. A failed write may leave a partial report; do not unlink a path that may have been replaced.
+fn write_page(out: &Path, page: &str) -> Result<(), CliError> {
+    let created = OpenOptions::new().write(true).create_new(true).open(out);
+    let mut file = created.map_err(|e| CliError {
+        message: format!(
+            "cannot write {}: {}",
+            out.display(),
+            node_write_error(&e, out)
+        ),
+        code: 2,
+    })?;
+    file.write_all(page.as_bytes()).map_err(|e| CliError {
+        message: format!(
+            "cannot write {}: {}",
+            out.display(),
+            node_write_error(&e, out)
+        ),
+        code: 2,
+    })
+}
+
+/// Node's `writeFileSync` wording for the failures a create-only page write meets, where the OS fact is the same.
+/// `EEXIST` is the intended refusal for every existing file (see the module doc), so it says what to do instead.
+fn node_write_error(e: &std::io::Error, path: &Path) -> String {
+    match e.kind() {
+        std::io::ErrorKind::AlreadyExists => format!(
+            "EEXIST: file already exists, open '{}' (the report page is create-only: choose a new path)",
+            path.display()
+        ),
+        std::io::ErrorKind::NotFound => {
+            format!(
+                "ENOENT: no such file or directory, open '{}'",
+                path.display()
+            )
+        }
+        std::io::ErrorKind::IsADirectory => {
+            format!(
+                "EISDIR: illegal operation on a directory, open '{}'",
+                path.display()
+            )
+        }
+        std::io::ErrorKind::PermissionDenied => {
+            format!("EACCES: permission denied, open '{}'", path.display())
+        }
+        _ => e.to_string(),
+    }
+}
+
+/// `path.resolve(p)`'s output shape: absolute, `.` dropped, `..` folded lexically. A `..` that climbs above the root
+/// is dropped (Node clamps it there).
+fn normalized(p: &str) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in absolute(p).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 /// `path.resolve(p)`: an absolute path, or the working directory joined with a relative one.
@@ -347,14 +436,19 @@ fn text(summary: &Value) -> String {
             },
             fmt(f.get("seconds"))
         ));
-        out.push_str(&table(&fight_rows(f), &["Metric", "Value"], &[false, true]));
+        out.push_str(&table(
+            &fight_rows(f, false),
+            &["Metric", "Value"],
+            &[false, true],
+        ));
         out.push('\n');
     }
     out
 }
 
-/// The same row list `src/cli.js:1303-1326` builds, in the same order and with the same fallbacks.
-fn fight_rows(f: &Value) -> Vec<Vec<String>> {
+/// The same row list `src/cli.js:1303-1326` builds, in the same order and with the same fallbacks. `page` picks the
+/// HTML table's own `Split samples` wording (`${f.halves.length}`, `:1364`) over the card's.
+fn fight_rows(f: &Value, page: bool) -> Vec<Vec<String>> {
     let estimated = f.get("maxHpEstimated").truthy();
     let tilde = if estimated { "~" } else { "" };
     let mid = f.get("midFight").truthy();
@@ -450,7 +544,11 @@ fn fight_rows(f: &Value) -> Vec<Vec<String>> {
             },
         ],
         vec![
-            "Largest 0.1s step".into(),
+            if page {
+                "Largest 0.1 s step".into()
+            } else {
+                "Largest 0.1s step".into()
+            },
             if f.get("maxStep").is_nullish() {
                 format!("{}%", fmt(f.get("maxStepPct")))
             } else {
@@ -495,6 +593,8 @@ fn fight_rows(f: &Value) -> Vec<Vec<String>> {
             let halves = f.get("halves").items().len();
             if halves == 0 {
                 "-".to_owned()
+            } else if page {
+                halves.to_string()
             } else {
                 format!("{halves} samples with halves")
             }
@@ -530,6 +630,129 @@ fn fight_rows(f: &Value) -> Vec<Vec<String>> {
         ]);
     }
     rows
+}
+
+/// The report page `src/cli.js:1329-1384`: one section pair per fight, then `multiGraphPage`.
+///
+/// The JS inserts the summary's own strings (weapon, imprint, sub-phase and chart names) raw into the table and the
+/// note; this port escapes them (module doc). A capture of ordinary text renders byte-identically.
+fn html(summary: &Value) -> String {
+    let fights = summary.get("fights").items();
+    let mut sections = Vec::new();
+    for (i, f) in fights.iter().enumerate() {
+        let content = f.get("content").to_js_string();
+        let seconds = fmt(f.get("seconds"));
+        let hp_curve = line_chart(
+            &format!("{content} fight {} - boss health", i + 1),
+            "Seconds",
+            "Boss HP %",
+            "HP",
+            f.get("curve").items(),
+            ("t", "hp"),
+        );
+        let dps_curve = line_chart(
+            &format!("{content} fight {} - landed DPS", i + 1),
+            "Seconds",
+            "DPS",
+            "Landed DPS",
+            f.get("dpsCurve").items(),
+            ("x", "y"),
+        );
+        // `chartTotals(f.chart)`: capture-derived names reach the note unescaped in the JS.
+        let totals = chart_totals(f.get("chart"));
+        let names: Vec<String> = totals
+            .get("names")
+            .items()
+            .iter()
+            .map(|n| escape(&n.to_js_string()))
+            .collect();
+        sections.push(Section {
+            title: format!(
+                "{content} - {} ({seconds} s)",
+                if f.get("name").truthy() {
+                    f.get("name").to_js_string()
+                } else {
+                    "boss".to_owned()
+                }
+            ),
+            note: format!(
+                "HP-derived figures, not the fight-end chart. Largest 0.1 s step is the best cap probe; no-damage time is the known immunity (tuning forks, phase shields). A tilde means the chart listed only the top 10 and the remaining players are filled at the median known level. The top-10 best blow and blows are the chart's rows, not the whole group.{}",
+                if names.is_empty() {
+                    String::new()
+                } else {
+                    format!(" Chart names: {}.", names.join(", "))
+                }
+            ),
+            chart: hp_curve,
+            table: html_table(f),
+        });
+        sections.push(Section {
+            title: format!("{content} - landed DPS over time"),
+            note: "Per-sample health delta at 10 Hz; a gap is an immune window or a phase shield."
+                .to_owned(),
+            chart: dps_curve,
+            table: String::new(),
+        });
+    }
+    if sections.is_empty() {
+        sections.push(Section {
+            title: "No fights".to_owned(),
+            note: "No boss health samples found.".to_owned(),
+            chart: String::new(),
+            table: String::new(),
+        });
+    }
+    let players = summary.get("players").to_js_string();
+    graph::multi_graph_page(
+        "DFO Combat Probe",
+        &format!(
+            "Read-only boss-bar capture. Level {}, {players} player{}. HP-derived figures; the fight-end chart is shown only as a cross-check.",
+            summary.get("level").to_js_string(),
+            if summary.get("players").to_number() == 1.0 { "" } else { "s" }
+        ),
+        &sections,
+    )
+}
+
+/// One `lineChart` call of the report. `keys` reads each point's axes (`("t", "hp")` for the health curve, `("x", "y")`
+/// for the DPS curve), as the JS's own `p.t`/`p.hp` do.
+fn line_chart(
+    title: &str,
+    x_label: &str,
+    y_label: &str,
+    name: &str,
+    points: &[Value],
+    keys: (&str, &str),
+) -> String {
+    let mut chart = LineChart::new(title, x_label, y_label, Vec::new());
+    chart.series = vec![Series {
+        name: name.to_owned(),
+        points: points
+            .iter()
+            .map(|p| Point {
+                x: p.get(keys.0).to_number(),
+                y: p.get(keys.1).to_number(),
+            })
+            .collect(),
+    }];
+    graph::line_chart(&chart)
+}
+
+/// The page's table (`src/cli.js:1352-1370`): the card rows, HTML-escaped, in `<tr><td class="k">key</td><td>value</td></tr>`.
+fn html_table(f: &Value) -> String {
+    let rows: String = fight_rows(f, true)
+        .iter()
+        .map(|row| {
+            format!(
+                "<tr><td class=\"k\">{}</td><td>{}</td></tr>",
+                escape(&row[0]),
+                escape(&row[1])
+            )
+        })
+        .collect();
+    format!(
+        "<div class=\"table\"><table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>{rows}</tbody></table></div>"
+    )
 }
 
 #[cfg(test)]

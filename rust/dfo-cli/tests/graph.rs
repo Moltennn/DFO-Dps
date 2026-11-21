@@ -1,10 +1,10 @@
 //! The R8 report-rendering primitives, differentially against the REAL `src/graph.js`.
 //!
 //! One `node --input-type=module` run imports `src/graph.js`, renders the case list below, and prints its answers as
-//! JSON; each is compared byte for byte with the module's own rendering (`src/graph.js:4-96`). The cases carry HTML
-//! metacharacters in every caller-supplied string (titles, axis labels, tick labels, series names, page headings) and
-//! `toFixed` ties (`0.125`, `2.675`, x-axis labels), which is where a hand-written renderer drifts. A skipped
-//! differential proves nothing, so a missing `node` panics.
+//! JSON; each is compared byte for byte with the module's own rendering (`src/graph.js:4-113`). The cases carry HTML
+//! metacharacters in every caller-supplied string (titles, axis labels, tick labels, series names, bar labels, units,
+//! page headings) and `toFixed` ties (`0.125`, `2.675`, x-axis labels, bar values), which is where a hand-written
+//! renderer drifts. A skipped differential proves nothing, so a missing `node` panics.
 //!
 //! `src/graph.rs` is not wired into `main.rs` by this slice (the `graph` command owns that), so this test includes it
 //! by path and exercises its public API directly.
@@ -16,7 +16,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-use graph::{LineChart, Point, Section, Series, Tick};
+use graph::{BarChart, BarSeries, LineChart, Point, Section, Series, Tick};
 use serde_json::{json, Value};
 
 fn repo_root() -> PathBuf {
@@ -27,11 +27,12 @@ fn repo_root() -> PathBuf {
 
 const ORACLE: &str = r#"
 import { readFileSync } from 'node:fs';
-import { lineChart, graphPage, multiGraphPage } from './src/graph.js';
+import { lineChart, graphPage, multiGraphPage, barChart } from './src/graph.js';
 const calls = JSON.parse(readFileSync(0, 'utf8'));
 const out = calls.map((c) => c.kind === 'line'
   ? lineChart(c.input)
-  : c.kind === 'page' ? graphPage(c.input) : multiGraphPage(c.input));
+  : c.kind === 'page' ? graphPage(c.input)
+  : c.kind === 'multi' ? multiGraphPage(c.input) : barChart(c.input));
 process.stdout.write(JSON.stringify(out));
 "#;
 
@@ -100,6 +101,41 @@ fn section(title: &str, note: &str, chart: &str, table: &str) -> Section {
         chart: chart.to_owned(),
         table: table.to_owned(),
     }
+}
+
+fn bars(name: &str, values: &[f64]) -> BarSeries {
+    BarSeries {
+        name: name.to_owned(),
+        values: values.to_vec(),
+    }
+}
+
+/// The JS-shaped `barChart` argument: `unit` and `width` are the JS names.
+fn bar_call(c: &BarChart) -> Value {
+    json!({
+        "title": c.title,
+        "labels": c.labels,
+        "width": c.width,
+        "unit": c.unit,
+        "series": c.series.iter().map(|s| json!({
+            "name": s.name, "values": s.values,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn bar_chart(c: &BarChart) -> Case {
+    Case {
+        expected: graph::bar_chart(c),
+        call: json!({ "kind": "bar", "input": bar_call(c) }),
+    }
+}
+
+fn bar(title: &str, labels: &[&str], series: Vec<BarSeries>) -> Case {
+    bar_chart(&BarChart::new(
+        title,
+        labels.iter().map(|l| (*l).to_owned()).collect(),
+        series,
+    ))
 }
 
 fn multi(title: &str, subtitle: &str, sections: &[Section]) -> Case {
@@ -194,6 +230,37 @@ fn cases() -> Vec<Case> {
     ];
     cases.push(multi("Probe <page> & 'x'", "Level 1 & <2>", &sections));
     cases.push(multi("Probe", "No sections", &[]));
+
+    // Bars: escaped titles, labels, series names and unit; one row per label and thin bars per series.
+    cases.push(bar(
+        "DPS <by> & 'weapon'",
+        &[
+            "Vampire <clan> & \"one\"",
+            "order 'chaos'",
+            "plain",
+            "negative",
+        ],
+        vec![
+            bars("Boss <total>", &[120.5, 180.25, 0.0, -12.5]),
+            bars("Trigger & 'value'", &[90.0, 150.75, 3.0, 7.0]),
+            bars("Uncapped", &[200.0, 260.5, 1.0, 0.5]),
+        ],
+    ));
+
+    // Width, unit and `toFixed(0)` ties: a value below 1 still draws its minimum bar, and a huge one overflows.
+    let mut wide = BarChart::new(
+        "Ranks <&>",
+        vec!["a".to_owned(), "b".to_owned()],
+        vec![bars("only", &[0.125, 2.5]), bars("second", &[1e21, 9.995])],
+    );
+    wide.width = 1000.5;
+    wide.unit = "/s <&>".to_owned();
+    cases.push(bar_chart(&wide));
+
+    // Empty labels: no rows; empty series: no legend. Both still render the frame at the same height.
+    cases.push(bar("Empty", &[], vec![bars("none", &[])]));
+    cases.push(bar("No series", &[], vec![]));
+    cases.push(bar("Labels, no series", &["only <row>"], vec![]));
 
     cases
 }

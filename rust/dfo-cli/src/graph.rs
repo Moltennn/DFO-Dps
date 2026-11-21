@@ -1,16 +1,17 @@
-//! The dependency-free report rendering primitives of `src/graph.js` (R8): `lineChart`, `graphPage` and
-//! `multiGraphPage`, ready for the `graph` and `probe` commands of `dfo-cli`.
+//! The dependency-free report rendering primitives of `src/graph.js` (R8): `lineChart`, `graphPage`,
+//! `multiGraphPage` and `barChart`, ready for the `graph`, `probe` and report commands of `dfo-cli`.
 //!
 //! Only rendering lives here: plain data in, one HTML/SVG string out, no file I/O, no clock, no randomness, and no
-//! decision that changes a DPS number. The JS module (`src/graph.js:4-42`, `:44-49`, `:52-96`) is the source of truth;
+//! decision that changes a DPS number. The JS module (`src/graph.js:4-113`) is the source of truth;
 //! `tests/graph.rs` drives the real module over synthetic charts and compares every byte. The page writer (`writePage`,
 //! `src/cli.js:868-873`) and the `graph`/`probe` commands are not part of this file.
 //!
 //! Escaping is the JS `esc` (`src/graph.js:4`), applied to every caption and label a caller passes (`title`,
-//! `xLabel`, `yLabel`, tick labels, series names, page headings). `multiGraphPage` keeps the JS's deliberate raw
-//! insertion for a section's `note`, `chart` and `table` (`:69-70`): those strings are markup the caller assembled,
-//! and the probe's chart names reach the note unescaped in the JS too. Number formatting is JS `toFixed`, not Rust's
-//! `{:.N}` (the two round exact ties differently: `(0.125).toFixed(2)` is `"0.13"`, Rust's is `"0.12"`).
+//! `xLabel`, `yLabel`, tick labels, series names, bar labels, bar units, page headings). `multiGraphPage` keeps the
+//! JS's deliberate raw insertion for a section's `note`, `chart` and `table` (`:69-70`): those strings are markup the
+//! caller assembled, and the probe's chart names reach the note unescaped in the JS too. Number formatting is JS
+//! `toFixed`, not Rust's `{:.N}` (the two round exact ties differently: `(0.125).toFixed(2)` is `"0.13"`, Rust's is
+//! `"0.12"`).
 
 use dfo_core::round::{js_max, js_min};
 use dfo_core::value::number_to_string;
@@ -325,6 +326,121 @@ pub fn line_chart(chart: &LineChart) -> String {
     out.push_str(&grid);
     out.push_str(&lines);
     out.push_str(&legend);
+    out.push_str("\n  </svg>");
+    out
+}
+
+/// One `{ name, values }` series of a bar chart: `values[i]` pairs with `labels[i]`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BarSeries {
+    pub name: String,
+    pub values: Vec<f64>,
+}
+
+/// A `barChart` call. [`BarChart::new`] takes the arguments the report commands pass; `width` and `unit` are the JS
+/// options and default as its parameters do.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BarChart {
+    pub title: String,
+    pub labels: Vec<String>,
+    pub series: Vec<BarSeries>,
+    pub width: f64,
+    pub unit: String,
+}
+
+impl BarChart {
+    pub fn new(title: impl Into<String>, labels: Vec<String>, series: Vec<BarSeries>) -> Self {
+        Self {
+            title: title.into(),
+            labels,
+            series,
+            width: 920.0,
+            unit: String::new(),
+        }
+    }
+}
+
+/// `barChart` (`src/graph.js:89-113`): the horizontal grouped bars the report pages embed. Each series must carry one
+/// value per label; a missing one panics, as the JS's `undefined.toFixed(0)` throws.
+pub fn bar_chart(chart: &BarChart) -> String {
+    let left = 170.0;
+    let right = 70.0;
+    let top = 48.0;
+    let row_h = 26.0;
+    let bottom = 24.0;
+    let height = top + chart.labels.len() as f64 * row_h + bottom;
+    let mut max = 1.0;
+    for s in &chart.series {
+        for &v in &s.values {
+            max = js_max(max, v);
+        }
+    }
+    let w = chart.width - left - right;
+    let sx = |v: f64| left + (v / max) * w;
+    let n_series = chart.series.len() as f64;
+    let bh = js_max(3.0, (row_h - 7.0) / n_series - 1.0);
+    let unit = escape(&chart.unit);
+
+    let mut rows = String::new();
+    for (i, label) in chart.labels.iter().enumerate() {
+        let y = top + i as f64 * row_h;
+        rows.push_str(&format!(
+            "<text x=\"{}\" y=\"{}\" fill=\"#e9e4d9\" font-size=\"11\" text-anchor=\"end\">{}</text>",
+            n(left - 8.0),
+            n(y + row_h / 2.0 + 4.0),
+            escape(label)
+        ));
+        for (j, s) in chart.series.iter().enumerate() {
+            let val = s.values[i];
+            let by = y + 3.0 + j as f64 * (bh + 1.0);
+            let bw = js_max(1.0, sx(val) - left);
+            rows.push_str(&format!(
+                "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\" rx=\"2\"/><text x=\"{}\" y=\"{}\" fill=\"#a8a092\" font-size=\"10\">{}{}</text>",
+                n(left),
+                n(by),
+                n(bw),
+                n(bh),
+                COLORS[j % COLORS.len()],
+                n(left + bw + 6.0),
+                n(by + bh - 1.0),
+                to_fixed(val, 0),
+                unit
+            ));
+        }
+    }
+
+    let mut legend = String::new();
+    for (j, s) in chart.series.iter().enumerate() {
+        legend.push_str(&format!(
+            "<g transform=\"translate({}, {})\"><rect width=\"10\" height=\"10\" fill=\"{}\"/><text x=\"15\" y=\"9\" fill=\"#e9e4d9\" font-size=\"12\">{}</text></g>",
+            n(left + j as f64 * 190.0),
+            n(top - 20.0),
+            COLORS[j % COLORS.len()],
+            escape(&s.name)
+        ));
+    }
+
+    let title = escape(&chart.title);
+    let mut out = String::new();
+    out.push_str(&format!(
+        "<svg viewBox=\"0 0 {} {}\" width=\"100%\" role=\"img\" aria-label=\"{}\" style=\"display:block;max-width:100%;height:auto\">\n",
+        n(chart.width),
+        n(height),
+        title
+    ));
+    out.push_str(&format!(
+        "    <rect x=\"0\" y=\"0\" width=\"{}\" height=\"{}\" fill=\"#12100e\"/>\n",
+        n(chart.width),
+        n(height)
+    ));
+    out.push_str(&format!(
+        "    <text x=\"{}\" y=\"24\" fill=\"#e0b76a\" font-size=\"16\" font-family=\"Georgia,serif\">{}</text>\n",
+        n(left),
+        title
+    ));
+    out.push_str("    ");
+    out.push_str(&legend);
+    out.push_str(&rows);
     out.push_str("\n  </svg>");
     out
 }

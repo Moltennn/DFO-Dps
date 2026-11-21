@@ -9,8 +9,11 @@
 //! `objective --json` prints the evaluated row; `build`'s text card is `printBuild` with the what-ifs the JS runs after
 //! it. `compare` is the table `compare` prints after applying `--stat` and `--weapon`. `doctor` prints the
 //! save/build/ruleset summary over the same imported character. `probe` reads a Combat Probe capture read-only: its
-//! discovery and two output formats are in [`probe`], its rules are `dfo_core::probe`, and the JS page HTML is left to
-//! the shared renderer (so `--out` is refused, never silently ignored).
+//! discovery, terminal card, JSON document and HTML report page live in [`probe`], its rules are `dfo_core::probe`, and
+//! the page's markup comes from [`graph`] (the `src/graph.js` port). The page is written in both modes, as the JS does
+//! (`probe.html`, or `--out <file>`), and only the text mode prints the JS `probe page written:` line. The write is
+//! create-only (`O_CREAT|O_EXCL`): an existing file - the capture, an unrelated save or report, or any hard/symlink
+//! alias - is refused with exit 2 and left untouched, where the JS would truncate it. Reports must target a new path.
 //!
 //! The save is imported READ-ONLY by [`saves`]: discovery and parsing live there, the character normalisation is
 //! `dfo_core::save::character_from_save`, and nothing is retained or written (AGENTS.md rule 11). Every flag this
@@ -19,6 +22,10 @@
 //! Every rule lives in `dfo-core`; this file owns argument text, the two output formats and exit codes (a usage
 //! error is 2, as `bin/dfo-dps.js` does).
 
+// The shared renderer is a whole port of `src/graph.js`: `probe` uses `lineChart`/`multiGraphPage`, the other primitives
+// are here for the report commands that follow.
+#[allow(dead_code)]
+mod graph;
 mod probe;
 mod saves;
 
@@ -58,7 +65,7 @@ Usage:
   dfo-cli rank [weapons] --theory [options]
   dfo-cli compare [--save <slot|folder|path>] --stat <name=value> [--weapon <template:material>]
   dfo-cli compare --theory --stat <name=value> [--weapon <template:material>]
-  dfo-cli probe [capture.json] [--old] [--level <n>] [--players <n>] [--json]
+  dfo-cli probe [capture.json] [--old] [--level <n>] [--players <n>] [--json] [--out <file>]
 
 `saves` lists the save folders under the DFO user-data folder (newest first). `doctor` prints the model pin, the
 save folders and the imported character's build/ruleset summary. `build` prices one build against one target: with
@@ -67,8 +74,10 @@ on one named objective (deterministic or sampled), text or `--json`, and `rank` 
 the same way. `compare` prices the same build twice, before and after the `--stat`/`--weapon` changes. `build` prints
 the JS `printBuild` card; with `--json` it prints `summary()` instead. `rank` text is the JS card, `--json` is
 `{ character, weapons, current }`. `probe` reads a Combat Probe capture (the newest under
-~/.local/share/dfo-tools/probe-mod/captures, or a named file), text or `--json`; its HTML page belongs to the shared
-renderer and is not ported, so `--out` is refused.
+~/.local/share/dfo-tools/probe-mod/captures, or a named file), text or `--json`, and writes the report page the JS
+writes (`probe.html`, or `--out <file>`): text mode also prints the JS `probe page written:` line. The page is
+create-only: an existing file (the capture, a save, a report, any alias) is refused and left untouched, so choose a
+new path.
 
 Flags:
   --save <SAVE4|folder|SaveData.txt>  the save to import (default: the newest under the user-data folder)
@@ -97,10 +106,11 @@ Flags:
   --stat <name=value>                 compare: one attribute or skill id change (repeatable)
   --data <capture.json>               probe: a capture file (the JS also reads ARENA2 here; not ported)
   --old                               probe: read the newest capture in captures/old
+  --out <file>                        probe: the report page (default: probe.html; must not exist yet)
   --json
   -h, --help
 
-Unsupported here (another command, or a flag this slice does not read): --out, --encounter, --shortlist and the other
+Unsupported here (another command, or a flag this slice does not read): --encounter, --shortlist and the other
 commands' flags.";
 
 fn main() -> ExitCode {
@@ -197,7 +207,7 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
             values.nums.get("level").copied(),
             values.nums.get("players").copied(),
             values.json,
-            parsed.raw("out").is_some(),
+            parsed.raw("out"),
         );
     }
     if command != "rank" {

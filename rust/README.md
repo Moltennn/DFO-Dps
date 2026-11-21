@@ -47,6 +47,12 @@ argument text, the output formats (`printBuild`'s card, `printRank`'s table, `--
   `SAVE<n>` slot or a number) and `loadSave`. The document is opened once for reading, parsed and dropped; the character
   is `dfo_core::save::character_from_save`, so the core keeps doing no file I/O and nothing writes, exports or retains
   a save (AGENTS.md rule 11).
+- **The probe page.** `dfo-cli probe` reads a Combat Probe capture read-only, prints the JS card or `--json`, and
+  writes the report page the JS does (`probe.html`, or `--out <file>`), assembled from the `src/graph.js` port in
+  `src/graph.rs`. The write is create-only (`O_CREAT|O_EXCL`): an existing file is refused with exit 2 and left
+  untouched - the capture, an unrelated save or report, a hard/symlink/dangling alias - where the JS `writeFileSync`
+  truncates. Reports must target a new path; that is the one intentional CLI difference on this path. The page's other
+  deviation is escaping capture-derived text the JS inserts raw; a safe capture's page is byte-identical.
 - **The launcher spellbook.** `saves::arena2_dir` reads `config.json`'s `arena2Path` and `saves::load_spellbook` opens
   `SPELLS.STD` read-only, handing the bytes to `dfo_core::spells::read_spells_std`/`spells_by_index_map`
   (`src/save.js:28-40`, `src/spells.js:72-93`). `build` and `rank` use that book for Cast When Strikes, so a save's
@@ -82,9 +88,9 @@ argument text, the output formats (`printBuild`'s card, `printRank`'s table, `--
   parser's text differs, so that case compares the exit code and the `save: could not read <path>: ` prefix), array and
   `null` saves, the newest-first listing and `--offline`. A missing `node` fails the tests rather than skipping them.
 
-The rest of `src/cli.js` (reports and the other page commands) and `src/report.js`/`src/graph.js` are still unported.
-`--data` (an explicit ARENA2 directory) and nested custom spell records are not ported; the launcher lookup above is the
-only spellbook source.
+The rest of `src/cli.js` (reports and the other page commands) and `src/report.js` are still unported. `src/graph.js`
+is ported (`src/graph.rs`) and wired into `probe` for its report page. `--data` (an explicit ARENA2 directory) and nested
+custom spell records are not ported; the launcher lookup above is the only spellbook source.
 
 ## R5c: theory builds, legal budgets, and imprint rankings
 
