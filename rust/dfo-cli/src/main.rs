@@ -1,11 +1,11 @@
 //! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves`, `build`, `rank` and `doctor` slice).
 //!
-//! This is the JS `src/cli.js` `build` summary, `rank` card, `saves` listing and `doctor`, and only that: [`main`]
+//! This is the JS `src/cli.js` `build` card, `rank` card, `saves` listing and `doctor`, and only that: [`main`]
 //! parses the flags those read, replays the JS validation (`numFlag`, the enum checks) with the same messages, builds
 //! either the level-45 theory character or the one an imported save describes, the target and the scenario, then prints
-//! `printRank` or `{ character, weapons, current }` as `--json` does. `build --json` prints `summary()` as the JS
-//! `--json` branch does; its text card is not ported yet and is refused by name rather than approximated. `doctor`
-//! prints the save/build/ruleset summary over the same imported character.
+//! `printBuild`, `printRank` or `{ character, weapons, current }` as `--json` does. `build --json` prints `summary()`;
+//! its text card is `printBuild` with the what-ifs the JS runs after it. `doctor` prints the save/build/ruleset summary
+//! over the same imported character.
 //!
 //! The save is imported READ-ONLY by [`saves`]: discovery and parsing live there, the character normalisation is
 //! `dfo_core::save::character_from_save`, and nothing is retained or written (AGENTS.md rule 11). Every flag this
@@ -20,7 +20,8 @@ use std::collections::HashMap;
 use std::process::ExitCode;
 
 use dfo_core::analyze::{
-    analyze, boss_target, current_weapon_row, gate_target, marginals, rank_weapons, reference_foe,
+    analyze, boss_target, current_weapon_row, gate_target, marginals, rank_affixes, rank_weapons,
+    reference_foe,
 };
 use dfo_core::encounters::{encounter_by_id, encounter_target, ENCOUNTER_IDS};
 use dfo_core::generated::data::{BOSS_TRAITS, RACE_NAMES, SOURCE, WEAPONS};
@@ -40,16 +41,16 @@ dfo-cli - the saves, build, rank and doctor slice of dfo-dps (Rust core)
 Usage:
   dfo-cli saves
   dfo-cli doctor [--save <slot|folder|path>] [--offline]
-  dfo-cli build [--save <slot|folder|path>] [options] --json
-  dfo-cli build --theory [options] --json
+  dfo-cli build [--save <slot|folder|path>] [options]
+  dfo-cli build --theory [options]
   dfo-cli rank [weapons] [--save <slot|folder|path>] [options]
   dfo-cli rank [weapons] --theory [options]
 
 `saves` lists the save folders under the DFO user-data folder (newest first). `doctor` prints the model pin, the
 save folders and the imported character's build/ruleset summary. `build` prices one build against one target: with
 --theory for the level-45 theory character, otherwise for the imported save (read-only). `rank` prices every melee
-template/material the same way. `build` prints `summary()` as `--json` only; its text card is not ported yet and is
-refused by name rather than approximated. `rank` text is the JS card, `--json` is `{ character, weapons, current }`.
+template/material the same way. `build` prints the JS `printBuild` card; with `--json` it prints `summary()` instead.
+`rank` text is the JS card, `--json` is `{ character, weapons, current }`.
 
 Flags:
   --save <SAVE4|folder|SaveData.txt>  the save to import (default: the newest under the user-data folder)
@@ -133,13 +134,6 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
             return Err(usage(format!("unexpected positional argument \"{extra}\"")));
         }
         check_output_flags(&command, &parsed)?;
-        // The JS `printBuild` card is not ported yet. Refuse it by name rather than printing a different format that
-        // would look like the JS output and drift silently.
-        if !values.json {
-            return Err(usage(
-                "build text output is not ported yet; pass --json for the JS summary() output",
-            ));
-        }
         return build(&values);
     }
     if command != "rank" {
@@ -191,7 +185,8 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
 }
 
 /// `checkOutputFlags` (`src/cli.js:885-898`): reject a flag the command would ignore instead of accepting it silently.
-/// Only `rank` (JSON) and `saves` (neither) are commands of this slice, so `--out` is a usage error for both.
+/// The commands of this slice (`build`, `rank`, `saves`, `doctor`): only `build` and `rank` read `--json`, none read
+/// `--out`.
 fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
     const FILE_COMMANDS: &str = concat!(
         "report, spells, weapons, skills, firmament, imprints, probe, enchant-plan, gear-plan, loadout, ",
@@ -987,7 +982,8 @@ fn split_pair(part: &str, letters: bool) -> Option<(String, String)> {
 // ---------------------------------------------------------------------------------------------------------------
 
 fn rank(values: &Values) -> Result<String, CliError> {
-    let book = Spellbook::default();
+    // `standardSpells()` (`src/spells.js:82-93`): the launcher's `SPELLS.STD`, empty when absent.
+    let book = saves::load_spellbook();
     let ch = character(values, &book)?;
     let target = target_of(&ch, values, &values.traits)?;
     let scenario = scenario_of(&ch, values, &values.traits, &target);
@@ -1008,10 +1004,10 @@ fn rank(values: &Values) -> Result<String, CliError> {
     }
 }
 
-/// `dfo-dps build --json` (`src/cli.js:2302-2312`): the `summary()` object. Only `--json` is ported; the text card is
-/// refused in [`run`] rather than approximated.
+/// `dfo-dps build` (`src/cli.js:2306-2314`): the `summary()` object with `--json`, `printBuild` otherwise.
 fn build(values: &Values) -> Result<String, CliError> {
-    let book = Spellbook::default();
+    // `standardSpells()` (`src/spells.js:82-93`): the launcher's `SPELLS.STD`, empty when absent.
+    let book = saves::load_spellbook();
     let ch = character(values, &book)?;
     let target = target_of(&ch, values, &values.traits)?;
     let mut scenario = scenario_of(&ch, values, &values.traits, &target);
@@ -1023,8 +1019,18 @@ fn build(values: &Values) -> Result<String, CliError> {
         }
     }
     let r = analyze(&ch, &scenario, &book);
-    let summary = build_summary(&ch, &r, values, &scenario, &book);
-    Ok(format!("{}\n", json(&summary)))
+    if values.json {
+        let summary = build_summary(&ch, &r, values, &scenario, &book);
+        return Ok(format!("{}\n", json(&summary)));
+    }
+    // `printBuild(ch, r, values.theory && values.target === 'armoured' ? 'gate' : values.target, values)`: the preset
+    // text stays as typed, even when `armoured` was analysed as the gate.
+    let preset = if values.theory && values.target == "armoured" {
+        "gate"
+    } else {
+        values.target.as_str()
+    };
+    Ok(format!("{}\n", print_build(&ch, &r, preset, values, &book)))
 }
 
 /// JS `summary()` (`src/cli.js:671-720`): the character, weapon, ruleset, target and result, then the caller's
@@ -1459,28 +1465,47 @@ fn scenario_of(ch: &Value, values: &Values, traits: &[String], target: &Value) -
 // the rank card (src/cli.js printRank, fmt, fmt2, pc, table)
 // ---------------------------------------------------------------------------------------------------------------
 
+/// JS `(Math.round(v * 10) / 10).toFixed(1)`. A result of `-0` prints unsigned (`(-0).toFixed(1)` is `"0.0"`), and
+/// `toFixed` itself switches to `String(x)` at 1e21 and above (`(1e21).toFixed(1)` is `"1e+21"`).
 fn fmt(v: &Value) -> String {
     let n = v.to_number();
     if n.is_finite() {
-        format!("{:.1}", math_round(n * 10.0) / 10.0)
+        let r = math_round(n * 10.0) / 10.0;
+        if r.abs() >= 1e21 {
+            number_to_string(r)
+        } else if r == 0.0 {
+            "0.0".to_owned()
+        } else {
+            format!("{r:.1}")
+        }
     } else {
         "-".to_owned()
     }
 }
 
+/// JS `(Math.round(v * 100) / 100).toFixed(2)`, with the same `-0` and 1e21 rules as [`fmt`].
 fn fmt2(v: &Value) -> String {
     let n = v.to_number();
     if n.is_finite() {
-        format!("{:.2}", math_round(n * 100.0) / 100.0)
+        let r = math_round(n * 100.0) / 100.0;
+        if r.abs() >= 1e21 {
+            number_to_string(r)
+        } else if r == 0.0 {
+            "0.00".to_owned()
+        } else {
+            format!("{r:.2}")
+        }
     } else {
         "-".to_owned()
     }
 }
 
+/// JS `` `${Math.round(v * 100)}%` ``: `String(-0)` is `"0"`, so a rounded `-0` prints `"0%"`. `number_to_string` is
+/// JS `String`, so a huge rounded value keeps JS's exponent form (`1e+21`, not a long digit run).
 fn pc(v: &Value) -> String {
     let n = v.to_number();
     if n.is_finite() {
-        format!("{}%", math_round(n * 100.0))
+        format!("{}%", number_to_string(math_round(n * 100.0)))
     } else {
         "-".to_owned()
     }
@@ -1493,24 +1518,33 @@ fn cell(v: &Value) -> String {
     }
 }
 
+/// JS `String.prototype.length`: UTF-16 code units, not bytes or chars.
+fn utf16_len(s: &str) -> usize {
+    s.encode_utf16().count()
+}
+
+/// `s.padStart(width)` / `s.padEnd(width)`: pad to `width` UTF-16 code units, as the JS `table` does.
+fn pad(s: &str, width: usize, right: bool) -> String {
+    let fill = width.saturating_sub(utf16_len(s));
+    if right {
+        format!("{}{s}", " ".repeat(fill))
+    } else {
+        format!("{s}{}", " ".repeat(fill))
+    }
+}
+
 fn table(rows: &[Vec<String>], headers: &[&str], aligns: &[bool]) -> String {
-    let mut widths: Vec<usize> = headers.iter().map(|h| h.len()).collect();
+    let mut widths: Vec<usize> = headers.iter().map(|h| utf16_len(h)).collect();
     for row in rows {
         for (i, c) in row.iter().enumerate() {
-            widths[i] = widths[i].max(c.len());
+            widths[i] = widths[i].max(utf16_len(c));
         }
     }
     let line = |cells: &[String]| {
         let joined: Vec<String> = cells
             .iter()
             .enumerate()
-            .map(|(i, c)| {
-                if aligns.get(i).copied().unwrap_or(false) {
-                    format!("{:>width$}", c, width = widths[i])
-                } else {
-                    format!("{:<width$}", c, width = widths[i])
-                }
-            })
+            .map(|(i, c)| pad(c, widths[i], aligns.get(i).copied().unwrap_or(false)))
             .collect();
         joined.join("  ").trim_end().to_owned()
     };
@@ -1520,7 +1554,7 @@ fn table(rows: &[Vec<String>], headers: &[&str], aligns: &[bool]) -> String {
         line(
             &headers
                 .iter()
-                .map(|h| "-".repeat(h.len()))
+                .map(|h| "-".repeat(utf16_len(h)))
                 .collect::<Vec<_>>(),
         ),
     ];
@@ -1587,6 +1621,642 @@ fn print_rank(ch: &Value, rows: &Value, values: &Values, current: &Value) -> Str
         values.target,
         table
     )
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// the build card (src/cli.js printBuild, allowanceRows, weaponLabel, the table helpers above)
+// ---------------------------------------------------------------------------------------------------------------
+
+/// `MARTIAL_PATHS[id]?.name ?? id` for a path id. Deliberately narrow: a JS prototype key such as `toString` would
+/// resolve to an inherited function there, which this port does not reproduce (an inherited member is not a path
+/// name), so any other id keeps its own text.
+fn martial_path_name(id: Value) -> Value {
+    let p = &dfo_core::generated::data::MARTIAL_PATHS;
+    let name = match id.as_str() {
+        Some("blademaster") => p.blademaster.name,
+        Some("warblade") => p.warblade.name,
+        Some("vanguard") => p.vanguard.name,
+        Some("ranger") => p.ranger.name,
+        Some("bladedancer") => p.bladedancer.name,
+        Some("bloodletter") => p.bloodletter.name,
+        Some("cutthroat") => p.cutthroat.name,
+        Some("assassin") => p.assassin.name,
+        Some("shadowdancer") => p.shadowdancer.name,
+        Some("juggernaut") => p.juggernaut.name,
+        Some("woodsman") => p.woodsman.name,
+        Some("berserker") => p.berserker.name,
+        Some("crusader") => p.crusader.name,
+        Some("brawler") => p.brawler.name,
+        Some("windrunner") => p.windrunner.name,
+        _ => return id,
+    };
+    Str(name.to_owned())
+}
+
+/// `weaponLabel` (`src/cli.js:269`): `Material Name`, unless the name already carries the material.
+fn weapon_label(w: &Value) -> String {
+    if !w.truthy() {
+        return "bare hands".to_owned();
+    }
+    let name = w.get("name").to_js_string();
+    let material = w.get("materialName").to_js_string();
+    if name.starts_with(&material) {
+        name
+    } else {
+        format!("{material} {name}")
+    }
+}
+
+/// `r.health.toLocaleString()` (en-US grouping; the same formatter the enchant plan pins). Every caller guards the
+/// value with its JS truthiness first, and `health` is finite by construction (`finite_or`), so the formatter only sees
+/// a finite number.
+fn grouped(v: &Value) -> String {
+    dfo_core::enchant_plan::grouped_number_of(v.to_number())
+}
+
+/// `allowanceRows` (`src/cli.js:729-737`): the relay's verdict, one named row per metric.
+fn allowance_rows(a: &Value) -> Vec<Vec<String>> {
+    let law = a.get("law");
+    let dry = a.get("dryAt");
+    vec![
+        vec![
+            "Allowance-sustained DPS".to_owned(),
+            fmt(a.get("sustainedDps")),
+            format!(
+                "the allowance's refill {}/s{}",
+                fmt(law.get("rate")),
+                if a.get("saturated").truthy() {
+                    " - this build exceeds it, so it is the limit"
+                } else {
+                    " - this build is below it"
+                }
+            ),
+        ],
+        vec![
+            "Opening burst".to_owned(),
+            fmt(a.get("burst5Dps")),
+            format!(
+                "first 5 s: the {} bucket plus refill{}",
+                fmt(law.get("depth")),
+                // JS `a.dryAt != null`: a spent bucket at exactly 0 s is a real value (only null/undefined mean "never").
+                // JS `a.dryAt != null`: a spent bucket at exactly 0 s is a real value (only null/undefined mean "never").
+                if dry.is_nullish() {
+                    "; never spent".to_owned()
+                } else {
+                    format!("; spent after {} s", fmt(dry))
+                }
+            ),
+        ],
+        vec![
+            "Kill-average DPS".to_owned(),
+            if a.get("averageDps").truthy() {
+                fmt(a.get("averageDps"))
+            } else {
+                "-".to_owned()
+            },
+            format!(
+                "{} HP share over the whole fight, shields included",
+                fmt(a.get("share"))
+            ),
+        ],
+        vec![
+            "Allowance kept".to_owned(),
+            pc(a.get("landedShare")),
+            "of the claims that won a blow token, the part the relay accepted".to_owned(),
+        ],
+    ]
+}
+
+/// The what-if scenario `printBuild` hands `marginals` and `rankAffixes` (`src/cli.js:794-808`): the card's target
+/// and traits, not the full `scenarioOf` record (no pair/dual/bowSpam/potency/pierce).
+fn whatif_scenario(r: &dfo_core::analyze::Analysis, values: &Values) -> Value {
+    let card = r.to_value();
+    let health = card.get("health");
+    obj([
+        ("target", card.get("target").clone()),
+        ("core", card.get("core").clone()),
+        ("traits", card.get("traits").clone()),
+        (
+            "health",
+            if health.truthy() {
+                health.clone()
+            } else {
+                Num(0.0)
+            },
+        ),
+        ("swing", Str(values.swing.clone())),
+        ("passiveOn", Bool(values.passive_on)),
+        ("stacks", Num(values.num("stacks", 5.0))),
+        ("rhythm", Bool(values.rhythm)),
+        ("unaware", Bool(values.unaware)),
+        ("firstBlow", Bool(values.first_blow)),
+        ("healthShare", Num(values.num("health-share", 1.0))),
+        (
+            "backstabUptime",
+            Num(if values.behind {
+                1.0
+            } else {
+                values.num("backstab", 0.0)
+            }),
+        ),
+        ("critDamage", Bool(values.crit_damage)),
+        ("rri", Bool(values.rri)),
+    ])
+}
+
+/// `printBuild` (`src/cli.js:739-821`).
+fn print_build(
+    ch: &Value,
+    r: &dfo_core::analyze::Analysis,
+    target_preset: &str,
+    values: &Values,
+    book: &Spellbook,
+) -> String {
+    let card = r.to_value();
+    let w = card.get("weapon");
+    let traits = card.get("traits");
+    let mut out = String::new();
+    out.push_str(&format!("{}\n", character_label(ch)));
+    let path = ch.get("martialPath");
+    out.push_str(&format!(
+        "{}{}{}  |  {}{}{}\n",
+        weapon_label(w),
+        if card.get("dual").truthy() {
+            " / dual"
+        } else {
+            ""
+        },
+        if card.get("pair").truthy() {
+            " / pair"
+        } else {
+            ""
+        },
+        cell(card.get("core")),
+        if ch.get("online").truthy() {
+            " / online"
+        } else {
+            " / offline"
+        },
+        if path.truthy() {
+            format!(" / {}", martial_path_name(path.clone()).to_js_string())
+        } else {
+            String::new()
+        },
+    ));
+    let health = card.get("health");
+    out.push_str(&format!(
+        "target: {}{}, level {}{}{}\n",
+        target_preset,
+        if card.get("target").get("isClass").truthy() {
+            " (class)"
+        } else {
+            ""
+        },
+        card.get("target").get("level").to_js_string(),
+        if health.truthy() {
+            format!(", {} HP", grouped(health))
+        } else {
+            String::new()
+        },
+        if traits.items().is_empty() {
+            String::new()
+        } else {
+            format!(
+                ", traits: {}",
+                traits
+                    .items()
+                    .iter()
+                    .map(|v| v.to_js_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        },
+    ));
+    out.push('\n');
+
+    let has_allowance = card.get("target").get("allowance").truthy();
+    let totals = &r.totals;
+    let ttk_line = if let Some(t) = totals.total_ttk {
+        format!("{} s", fmt(&Num(t)))
+    } else if card.get("allowance").truthy() {
+        "no kill".to_owned()
+    } else if has_allowance {
+        "no allowance run".to_owned()
+    } else {
+        "-".to_owned()
+    };
+    let ttk_label = if has_allowance {
+        "Time to kill (allowance-sustained)"
+    } else {
+        "Time to kill (per-hit-capped ceiling)"
+    };
+    let ttk_note = if health.truthy() {
+        format!(
+            "{} HP{}{}",
+            grouped(health),
+            if card.get("ward").truthy() {
+                format!(" + {} ward", card.get("ward").to_js_string())
+            } else {
+                String::new()
+            },
+            if has_allowance {
+                format!(
+                    "; ceiling: {}",
+                    totals
+                        .ceiling_total_ttk
+                        .map_or("-".to_owned(), |t| format!("{} s", fmt(&Num(t))))
+                )
+            } else if card.get("enchantDps").to_number() > 0.0 {
+                " (weapon + procs)".to_owned()
+            } else {
+                String::new()
+            }
+        )
+    } else {
+        "no boss health".to_owned()
+    };
+    let damage = card.get("damage");
+    let hit = card.get("hit");
+    let backstab = card.get("backstab");
+    let cadence = card.get("cadence");
+    let mut rows: Vec<Vec<String>> = vec![vec![
+        "Hit chance".to_owned(),
+        pc(hit.get("hit")),
+        format!(
+            "{} critical, x{}",
+            pc(hit.get("crit").get("chance")),
+            fmt2(hit.get("crit").get("damageMult"))
+        ),
+    ]];
+    let has_backstab = backstab.get("chance").to_number() > 0.0;
+    if has_backstab {
+        rows.push(vec![
+            "Backstab".to_owned(),
+            format!("{} x3", pc(backstab.get("chance"))),
+            if backstab.get("uptime").to_number() > 0.0 {
+                format!(
+                    "uptime {}; expected x{}",
+                    pc(backstab.get("uptime")),
+                    fmt2(backstab.get("expectedMult"))
+                )
+            } else {
+                "available; use --behind".to_owned()
+            },
+        ]);
+    }
+    rows.push(vec![
+        "Damage / hit".to_owned(),
+        format!(
+            "{}-{}",
+            damage.get("min").to_js_string(),
+            damage.get("max").to_js_string()
+        ),
+        format!(
+            "avg {}; crit {}-{}",
+            fmt(damage.get("avg")),
+            damage.get("critMin").to_js_string(),
+            damage.get("critMax").to_js_string()
+        ),
+    ]);
+    if has_backstab {
+        rows.push(vec![
+            "Backstab hit".to_owned(),
+            format!(
+                "{}-{}",
+                backstab.get("min").to_js_string(),
+                backstab.get("max").to_js_string()
+            ),
+            format!(
+                "crit {}-{}",
+                backstab.get("critMin").to_js_string(),
+                backstab.get("critMax").to_js_string()
+            ),
+        ]);
+    }
+    rows.push(vec![
+        "Expected / swing".to_owned(),
+        fmt(card.get("perSwing")),
+        "hit chance and criticals included".to_owned(),
+    ]);
+    rows.push(vec![
+        "Swing time".to_owned(),
+        format!("{} s", fmt2(cadence.get("seconds"))),
+        format!("{} swings/s", fmt2(cadence.get("aps"))),
+    ]);
+    let cap = card.get("cap");
+    rows.push(vec![
+        "Uncapped weapon DPS".to_owned(),
+        fmt(card.get("dps")),
+        if cap.truthy() {
+            format!(
+                "per-hit-capped {} ({} lost) - a ceiling{}",
+                fmt(card.get("cappedDps")),
+                pc(card.get("capLoss")),
+                if has_allowance {
+                    ", not what the boss accepts"
+                } else {
+                    ""
+                }
+            )
+        } else {
+            "no per-hit cap".to_owned()
+        },
+    ]);
+    if card.get("enchantDps").to_number() > 0.0 {
+        let before = card.get("procsBeforeBreak");
+        rows.push(vec![
+            "Enchant procs (ceiling component)".to_owned(),
+            fmt(card.get("enchantDps")),
+            format!(
+                "{} per landed hit{}",
+                fmt(card.get("enchantPerSwing")),
+                if before.truthy() {
+                    format!(
+                        "; {}",
+                        dfo_core::enchants::bill_capacity_note(before.to_number())
+                    )
+                } else {
+                    String::new()
+                }
+            ),
+        ]);
+        rows.push(vec![
+            "Total (per-hit-capped ceiling)".to_owned(),
+            fmt(card.get("ceilingTotalDps")),
+            "capped weapon + proc estimate before allowance".to_owned(),
+        ]);
+    }
+    if let Some(a) = match card.get("allowance") {
+        Null | Undefined => None,
+        v => Some(v.clone()),
+    } {
+        rows.extend(allowance_rows(&a));
+    }
+    rows.push(vec![ttk_label.to_owned(), ttk_line, ttk_note]);
+    out.push_str(&format!(
+        "{}\n",
+        table(&rows, &["Metric", "Value", "Notes"], &[false, false, false])
+    ));
+
+    // `ttkGap` is truthiness-guarded on both figures, so a 0 reads as "no gap".
+    let claim_ttk = totals.claim_total_ttk;
+    let ceiling_ttk = totals.ceiling_total_ttk;
+    let gap = match (claim_ttk, ceiling_ttk) {
+        (Some(claim), Some(ceiling)) if claim != 0.0 && ceiling != 0.0 => {
+            Some((claim - ceiling).abs() / claim)
+        }
+        _ => None,
+    };
+    if card.get("allowance").truthy()
+        && ceiling_ttk.is_some_and(|c| c != 0.0)
+        && (claim_ttk.is_none() || gap.is_some_and(|g| g > 0.01))
+    {
+        let ceiling = ceiling_ttk.unwrap();
+        let figures = match (claim_ttk, gap) {
+            (None, _) => format!(
+                "ceiling {} s; the allowance-sustained run never kills - the ceiling can promise a kill the allowance refuses",
+                fmt(&Num(ceiling))
+            ),
+            (Some(claim), Some(_)) if claim > ceiling => format!(
+                "ceiling {} s; allowance-sustained {} s - the ceiling can promise a kill the allowance refuses",
+                fmt(&Num(ceiling)),
+                fmt(&Num(claim))
+            ),
+            (Some(claim), Some(g)) => format!(
+                "ceiling {} s; allowance-sustained {} s - ceiling and allowance-sustained differ by {}",
+                fmt(&Num(ceiling)),
+                fmt(&Num(claim)),
+                pc(&Num(g))
+            ),
+            // Unreachable: the guard above needs a gap above 0.01 when the claim run exists.
+            (Some(claim), None) => format!(
+                "ceiling {} s; allowance-sustained {} s",
+                fmt(&Num(ceiling)),
+                fmt(&Num(claim))
+            ),
+        };
+        out.push_str(&format!("\nCeiling vs allowance: {figures}.\n"));
+    }
+    if cap.truthy() {
+        out.push_str(&format!(
+            "\n{}: {} per hit{}.\n",
+            if card.get("capSource").is_str("hit cap") {
+                "Per-hit hit cap"
+            } else {
+                "Curbing cap"
+            },
+            cap.to_js_string(),
+            if card.get("capSource").is_str("curbing") {
+                format!(" (5% of {} HP)", grouped(health))
+            } else {
+                String::new()
+            }
+        ));
+    }
+    let target = card.get("target");
+    if target.get("phaseShields").truthy() {
+        out.push_str(&format!(
+            "Phase shields: {} x {}s ({}s added to ceiling TTK).\n",
+            target.get("phaseShields").to_js_string(),
+            target.get("shieldSeconds").to_js_string(),
+            card.get("shields").to_js_string()
+        ));
+    }
+    if card.get("wrath").truthy() {
+        out.push_str(&format!(
+            "Wrathful: enrages at {}s.\n",
+            card.get("wrathAt").to_js_string()
+        ));
+    }
+
+    out.push_str("\nWhere the damage comes from\n");
+    let p = damage.get("parts");
+    let roll = p.get("roll");
+    let signed = |v: &Value| {
+        format!(
+            "{}{}",
+            if v.to_number() >= 0.0 { "+" } else { "" },
+            v.to_js_string()
+        )
+    };
+    out.push_str(&format!(
+        "{}\n",
+        table(
+            &[
+                vec![
+                    "weapon roll".to_owned(),
+                    format!(
+                        "{}-{}",
+                        roll.at(0).to_js_string(),
+                        roll.at(1).to_js_string()
+                    ),
+                ],
+                vec![
+                    "material".to_owned(),
+                    format!(
+                        "{} ({})",
+                        signed(p.get("matMod")),
+                        if w.truthy() {
+                            w.get("materialName").to_js_string()
+                        } else {
+                            "-".to_owned()
+                        }
+                    ),
+                ],
+                vec![
+                    "strength".to_owned(),
+                    format!(
+                        "{}{}",
+                        signed(p.get("strMod")),
+                        if p.get("twoHanded").truthy() {
+                            " (two-handed x2)"
+                        } else {
+                            ""
+                        }
+                    ),
+                ],
+                vec!["proficiency".to_owned(), signed(p.get("prof"))],
+                vec!["race".to_owned(), signed(p.get("racial"))],
+                vec![
+                    "mastery / gear".to_owned(),
+                    format!("{}%", fmt(p.get("mastery"))),
+                ],
+                vec!["martial".to_owned(), format!("{}%", fmt(p.get("martial")))],
+                vec!["slayer".to_owned(), format!("{}%", fmt(p.get("slayer")))],
+                vec![
+                    "hit terms".to_owned(),
+                    format!(
+                        "base {}, armor {}, other {}",
+                        hit.get("terms").get("base").to_js_string(),
+                        hit.get("terms").get("armour").to_js_string(),
+                        hit.get("terms").get("other").to_js_string()
+                    ),
+                ],
+                vec![
+                    "speed".to_owned(),
+                    format!(
+                        "tick {}s, heft {}, handling {}, pace {}%",
+                        fmt2(cadence.get("tick")),
+                        fmt2(cadence.get("heft")),
+                        fmt2(cadence.get("handling")),
+                        fmt(cadence.get("pace"))
+                    ),
+                ],
+            ],
+            &["Term", "Value"],
+            &[false, false],
+        )
+    ));
+
+    let marginal_ch = match values.weapon {
+        Some((tpl, mat)) => {
+            let mut c = dfo_core::analyze::json_clone(ch);
+            c.set(
+                "weapon",
+                synthetic_weapon(&Num(tpl), &Num(mat), values.rri)
+                    .get("item")
+                    .clone(),
+            );
+            c
+        }
+        None => ch.clone(),
+    };
+    let whatif = whatif_scenario(r, values);
+    let base = if cap.truthy() { "capped DPS" } else { "DPS" };
+    let ms = marginals(&marginal_ch, r, &whatif, book);
+    out.push_str(&format!("\nWhat matters ({base})\n"));
+    out.push_str(&format!(
+        "{}\n",
+        table(
+            &ms.items()
+                .iter()
+                .map(|m| {
+                    let delta = m.get("delta").to_number();
+                    vec![
+                        m.get("label").to_js_string(),
+                        format!(
+                            "{}{}",
+                            if delta >= 0.0 { "+" } else { "" },
+                            fmt(m.get("delta"))
+                        ),
+                        format!(
+                            "{}{}%",
+                            if delta >= 0.0 { "+" } else { "" },
+                            fmt(m.get("pct"))
+                        ),
+                    ]
+                })
+                .collect::<Vec<_>>(),
+            &[
+                "Change",
+                if cap.truthy() { "Capped DPS" } else { "DPS" },
+                "%"
+            ],
+            &[false, true, true],
+        )
+    ));
+    let affixes = rank_affixes(&marginal_ch, r, &whatif, book);
+    out.push_str(&format!("\nAffixes / enchants ({base})\n"));
+    out.push_str(&format!(
+        "{}\n",
+        table(
+            &affixes
+                .items()
+                .iter()
+                .map(|m| {
+                    let delta = m.get("delta").to_number();
+                    vec![
+                        m.get("label").to_js_string(),
+                        format!(
+                            "{}{}",
+                            if delta >= 0.0 { "+" } else { "" },
+                            fmt(m.get("delta"))
+                        ),
+                        format!(
+                            "{}{}%",
+                            if delta >= 0.0 { "+" } else { "" },
+                            fmt(m.get("pct"))
+                        ),
+                    ]
+                })
+                .collect::<Vec<_>>(),
+            &[
+                "Change",
+                if cap.truthy() { "Capped DPS" } else { "DPS" },
+                "%"
+            ],
+            &[false, true, true],
+        )
+    ));
+    let ranking = rank_weapons(ch, &whatif, &obj([("top", Num(8.0))]), book);
+    out.push_str("\nTop melee weapons\n");
+    out.push_str(&table(
+        &ranking
+            .items()
+            .iter()
+            .map(|x| {
+                vec![
+                    format!(
+                        "{} {}",
+                        x.get("materialName").to_js_string(),
+                        x.get("name").to_js_string()
+                    ),
+                    if x.get("twoHanded").truthy() {
+                        "2H".to_owned()
+                    } else {
+                        "1H".to_owned()
+                    },
+                    fmt(x.get("dps")),
+                    fmt(x.get("cappedDps")),
+                    fmt(x.get("perSwing")),
+                    fmt2(x.get("aps")),
+                ]
+            })
+            .collect::<Vec<_>>(),
+        &["Weapon", "Hands", "DPS", "Capped", "Per swing", "APS"],
+        &[false, false, true, true, true, true],
+    ));
+    out
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1676,4 +2346,88 @@ fn write_json_string(s: &str, out: &mut String) {
         }
     }
     out.push('"');
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Local invariants (not oracle checks): these pin the JS facts the formatters must reproduce, each read from the
+    // real engine while writing this port (`(-0).toFixed(1)` is `"0.0"`, `String(-0)` is `"0"`).
+    #[test]
+    fn padded_zero_is_unsigned_like_to_fixed() {
+        assert_eq!(fmt(&Num(-0.0)), "0.0");
+        assert_eq!(fmt(&Num(-0.04)), "0.0");
+        assert_eq!(fmt(&Num(-0.06)), "-0.1");
+        assert_eq!(fmt2(&Num(-0.0)), "0.00");
+        assert_eq!(fmt2(&Num(-0.004)), "0.00");
+        // `Math.round(-0.001 * 100)` is `-0`, and `(-0).toFixed(2)` is `"0.00"`.
+        assert_eq!(fmt2(&Num(-0.001)), "0.00");
+        assert_eq!(fmt2(&Num(-0.04)), "-0.04");
+        assert_eq!(fmt2(&Num(-0.006)), "-0.01");
+        assert_eq!(pc(&Num(-0.0)), "0%");
+        assert_eq!(pc(&Num(-0.004)), "0%");
+        assert_eq!(pc(&Num(-0.006)), "-1%");
+        assert_eq!(pc(&Num(-0.04)), "-4%");
+        // `String` keeps the exponent form a huge number rounds to (`1e+21`), not a long digit run.
+        assert_eq!(pc(&Num(1e19)), "1e+21%");
+        // `toFixed` switches to `String(x)` at 1e21 and above, after the rounding step.
+        assert_eq!(fmt(&Num(1e20)), "100000000000000000000.0");
+        assert_eq!(fmt(&Num(1e21)), "1e+21");
+        assert_eq!(fmt(&Num(1.5e21)), "1.5e+21");
+        assert_eq!(fmt2(&Num(1e21)), "999999999999999868928.00");
+        assert_eq!(fmt2(&Num(1.5e21)), "1.5e+21");
+    }
+
+    #[test]
+    fn allowance_dry_at_zero_is_spent_not_never() {
+        let report = obj([
+            (
+                "law",
+                obj([
+                    ("rate", Num(150.0)),
+                    ("depth", Num(750.0)),
+                    ("share", Num(12000.0)),
+                ]),
+            ),
+            ("sustainedDps", Num(150.0)),
+            ("saturated", Bool(true)),
+            ("burst5Dps", Num(259.6)),
+            // JS `dryAt != null` is true for 0; only null/undefined mean "never spent".
+            ("dryAt", Num(0.0)),
+            ("averageDps", Num(157.9)),
+            ("share", Num(12000.0)),
+            ("landedShare", Num(0.22)),
+        ]);
+        let rows = allowance_rows(&report);
+        assert_eq!(
+            rows[1][2],
+            "first 5 s: the 750.0 bucket plus refill; spent after 0.0 s"
+        );
+        let mut never = report.clone();
+        never.set("dryAt", Null);
+        assert_eq!(
+            allowance_rows(&never)[1][2],
+            "first 5 s: the 750.0 bucket plus refill; never spent"
+        );
+    }
+
+    #[test]
+    fn table_widths_count_utf16_units() {
+        // `'あ'.length === 1`; Rust `'あ'.len_utf8()` is 3. A two-character name must pad to the header's width, not
+        // past it, so a table of CJK text keeps JS's column alignment.
+        assert_eq!(utf16_len("あ"), 1);
+        assert_eq!(utf16_len("😀"), 2);
+        assert_eq!(pad("あい", 5, false), "あい   ");
+        assert_eq!(pad("あい", 5, true), "   あい");
+        assert_eq!(pad("😀", 3, false), "😀 ");
+        let out = table(
+            &[vec!["あ".to_owned(), "1".to_owned()]],
+            &["名前", "n"],
+            &[false, true],
+        );
+        // The JS oracle for these exact inputs: `header.length` counts UTF-16 units (NOT bytes), so the column is two
+        // wide and `あ` pads with one space, never with three.
+        assert_eq!(out, "名前  n\n--  -\nあ   1");
+    }
 }

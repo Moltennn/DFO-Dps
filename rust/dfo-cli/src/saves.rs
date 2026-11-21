@@ -1,5 +1,7 @@
 //! Read-only save discovery and loading: the I/O half of `src/save.js` (`:17-104`), which `dfo-core` deliberately does
-//! not own.
+//! not own. It also resolves the launcher's `config.json` to the ARENA2 directory and loads `SPELLS.STD` into the
+//! caller-owned [`Spellbook`] (`src/save.js:28-40`, `src/spells.js:72-93`): the core parses the bytes, this file only
+//! opens them.
 //!
 //! A save is discovered under the DFO user-data folder (`DAGGER_USER_DATA` first, then the client's platform folder),
 //! opened once for reading and parsed to a [`Value`]; nothing here writes, copies or retains the document. The
@@ -13,12 +15,17 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use dfo_core::spells::{read_spells_std, spells_by_index_map, Spellbook};
 use dfo_core::value::Value;
 use serde_json::Value as JsonValue;
 
 /// The largest document this will read (a save or a `SaveInfo.txt`): 64 MiB, as the workbench import uses. A real
 /// `SaveData.txt` is a few hundred KiB, so this refuses a runaway file while leaving ordinary saves untouched.
 pub const MAX_SAVE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// The largest `SPELLS.STD` this will read. The stock file is under 8 KiB; the cap only stops a runaway replacement
+/// from being read whole (the JS `readFileSync` has no bound, so this is a port choice, not a behaviour change).
+pub const MAX_SPELL_BYTES: u64 = 8 * 1024 * 1024;
 
 /// One save folder, as `listSaves` reports it (`src/save.js:47-70`).
 #[derive(Debug, Clone, PartialEq)]
@@ -81,6 +88,54 @@ pub fn user_data_dir() -> PathBuf {
 /// `savesDir(home)` (`src/save.js:42-44`).
 pub fn saves_dir() -> PathBuf {
     user_data_dir().join("Saves")
+}
+
+/// `configPath(home)` (`src/save.js:28-30`): the launcher's `config.json` in the user-data folder.
+pub fn config_path() -> PathBuf {
+    user_data_dir().join("config.json")
+}
+
+/// `arena2Dir()` (`src/save.js:33-40`): `cfg.arena2Path || null`. A missing, malformed or non-object config is `None`;
+/// a falsy `arena2Path` (empty string, `0`, `false`, `null`) is `None` too, and a value that is not a string is `None`
+/// because `path.join` would throw inside `standardSpells`' own try and fall back to the empty book.
+pub fn arena2_dir() -> Option<PathBuf> {
+    let cfg = read_json(&config_path()).ok()?;
+    if !matches!(cfg, Value::Obj(_)) {
+        return None;
+    }
+    let path = cfg.get("arena2Path");
+    if !path.truthy() || path.as_str().is_none() {
+        return None;
+    }
+    Some(absolute(&path.to_js_string()))
+}
+
+/// `standardSpells()` (`src/spells.js:82-93`) minus the module cache: the launcher's `SPELLS.STD` as a caller-owned
+/// [`Spellbook`]. A missing config, a missing/oversized/unreadable file, or a path that is not a string is an empty
+/// book, exactly as the JS's `try`/`catch` returns a fresh empty `Map` without caching it.
+pub fn load_spellbook() -> Spellbook {
+    let Some(dir) = arena2_dir() else {
+        return Spellbook::default();
+    };
+    let bytes = read_bounded(&dir.join("SPELLS.STD"), MAX_SPELL_BYTES).ok();
+    match bytes {
+        Some(bytes) => spells_by_index_map(read_spells_std(&bytes)),
+        None => Spellbook::default(),
+    }
+}
+
+/// Read a file at most `limit` bytes; a bigger one is an error (`take` reads one byte past to tell the two apart).
+fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, std::io::Error> {
+    let file = fs::File::open(path)?;
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "file larger than the limit",
+        ));
+    }
+    Ok(bytes)
 }
 
 /// `JSON.parse(fs.readFileSync(path))` for the files here, as the JS-like [`Value`] the core reads.

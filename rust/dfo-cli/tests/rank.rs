@@ -19,6 +19,8 @@ fn repo_root() -> PathBuf {
 
 fn js(args: &[&str]) -> Output {
     Command::new("node")
+        .env("LC_ALL", "en_US.UTF-8")
+        .env("LANG", "en_US.UTF-8")
         .arg("bin/dfo-dps.js")
         .args(args)
         .current_dir(repo_root())
@@ -320,8 +322,7 @@ fn rank_usage_errors_exit_2_with_the_same_message() {
 
 #[test]
 fn unsupported_and_unknown_options_fail_explicitly() {
-    let cases: [&[&str]; 6] = [
-        &["build", "--theory"],
+    let cases: [&[&str]; 5] = [
         &["rank", "--theory", "--out", "x.html"],
         &["rank", "--theory", "--bogus"],
         &["rank", "--theory", "--encounter", "breach"],

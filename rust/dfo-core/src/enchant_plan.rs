@@ -1418,9 +1418,24 @@ pub fn effect_line(e: &Value) -> String {
 /// A big number's JS string form is exponential (`1e21`); `toLocaleString` writes it in full, so the exponent is
 /// expanded first. Costs in the enchant catalogue are whole numbers, so the fraction path is only reached by a
 /// hand-built effect; `tests/enchant_plan.rs` pins both a whole number and a rounded fraction against the real JS.
+///
+/// DELIBERATE LOCALE PIN: the JS calls `toLocaleString()` with no argument, so it follows the host's default locale
+/// (`1 830` in fr-FR, `1.830` in de-DE). This formatter is fixed to en-US, which is what the differential vectors and
+/// the reference machine print. That is a documented limitation, not a bug to "fix" by adding a locale dependency:
+/// the numbers a report carries are pinned to one deterministic rendering.
+///
+/// `-0` prints `"-0"` (`(-0).toLocaleString('en-US')`), unlike `String(-0)` which is `"0"`; a value that rounds to
+/// zero keeps the sign of the value it came from (`(-0.0004).toLocaleString('en-US')` is `"-0"`).
 fn grouped_number(x: f64) -> String {
-    // Round to three fraction digits on the exact decimal value (half up, as Intl does for positives).
+    if x == 0.0 {
+        return if x.is_sign_negative() { "-0" } else { "0" }.to_owned();
+    }
+    // Round to three fraction digits on the exact decimal value (half expand, as Intl does; Rust's `round` is away
+    // from zero at a tie, which is the same rule).
     let scaled = (x * 1000.0).round() / 1000.0;
+    if scaled == 0.0 {
+        return if x < 0.0 { "-0" } else { "0" }.to_owned();
+    }
     let text = number_to_string(scaled);
     let (sign, rest) = match text.strip_prefix('-') {
         Some(r) => ("-", r),
@@ -1475,4 +1490,24 @@ pub fn skill_id_of_template(template: f64) -> Option<f64> {
 /// `skillIdsFor`, the two skills a weapon's plan considers.
 pub fn skill_ids_for_template(template: f64) -> Vec<f64> {
     skill_ids_for(template)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::grouped_number_of;
+
+    // Local invariants read from the real engine while writing the port (not oracle vectors): Intl's en-US
+    // `toLocaleString()` keeps a negative zero's sign (`(-0).toLocaleString('en-US')` is `"-0"`), rounds a value that
+    // falls below the default three fraction digits to `"-0"`/`"0"` by its sign, and writes a big number in full.
+    #[test]
+    fn locale_grouping_matches_en_us_to_locale_string() {
+        assert_eq!(grouped_number_of(0.0), "0");
+        assert_eq!(grouped_number_of(-0.0), "-0");
+        assert_eq!(grouped_number_of(-0.0004), "-0");
+        assert_eq!(grouped_number_of(0.0005), "0.001");
+        assert_eq!(grouped_number_of(-0.001), "-0.001");
+        assert_eq!(grouped_number_of(1500.0005), "1,500.001");
+        assert_eq!(grouped_number_of(-1234.5678), "-1,234.568");
+        assert_eq!(grouped_number_of(1e21), "1,000,000,000,000,000,000,000");
+    }
 }
