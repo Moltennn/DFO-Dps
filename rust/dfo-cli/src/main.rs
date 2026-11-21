@@ -1,10 +1,11 @@
 //! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves`, `build`, `objective`, `rank`, `compare`, `scale`,
-//! `doctor`, `probe`, `graph` and `report` slice).
+//! `doctor`, `probe`, `graph`, `report` and `firmament` slice).
 //!
 //! This is the JS `src/cli.js` `build` card, `objective` command, `rank` card, `compare` card, `scale` curve, `saves`
-//! listing, `doctor`, `probe`, `graph` and `report`, and only that: [`main`] parses the flags those read, replays the JS
-//! validation (`numFlag`, the enum checks, `sampledOptions`) with the same messages, builds either the level-45 theory
-//! character or the one an imported save describes, the target and the scenario, then prints `printBuild`,
+//! listing, `doctor`, `probe`, `graph`, `report` and `firmament`, and only that: [`main`] parses the flags those read,
+//! replays the JS validation (`numFlag`, the enum checks, `sampledOptions`) with the same messages, builds either the
+//! level-45 theory character or the one an imported save describes, the target and the scenario, then prints
+//! `printBuild`,
 //! `printObjective`, `printRank`, the `compare` table, `printScale` or `{ character, weapons, current }` as `--json`
 //! does. `build --json` prints `summary()` and `objective --json` prints the evaluated row; `build`'s text card is
 //! `printBuild` with the what-ifs the JS runs after it. `compare` is the table `compare` prints after applying `--stat`
@@ -16,10 +17,18 @@
 //! `--series` channel over `--from`..`--to` (`src/cli.js:2057-2127`), writes `graph.html` (or `--out`) through the same
 //! create-only writer, and prints the JS `graph written:` line (text) or the series document (`--json`). `report` renders
 //! `src/report.js` `buildReport` (the page lives in [`report`], pure data in and HTML out) at the shared scenario, writes
-//! `dfo-dps-report.html` (or `--out`) through the same writer, and prints the JS `report written:` line. All three page
-//! writes are create-only (`O_CREAT|O_EXCL`): an existing file - the capture, the graph's own input save, an unrelated
-//! save or report, or any hard/symlink alias - is refused with exit 2 and left untouched, where the JS would truncate it.
-//! Reports must target a new path.
+//! `dfo-dps-report.html` (or `--out`) through the same writer, and prints the JS `report written:` line. `firmament`
+//! plans each `--build` at `--stars` (`dfo_core::firmament::plan_build`), prints the JS card or its `--json` document,
+//! and writes `firmament.html` (or `--out`) from [`firmament::firmament_section`] through the same [`graph`] page. All
+//! four page writes are create-only (`O_CREAT|O_EXCL`): an existing file - the capture, the graph's own input save, an
+//! unrelated save or report, or any hard/symlink alias - is refused with exit 2 and left untouched, where the JS would
+//! truncate it. Reports must target a new path.
+//!
+//! The JS `firmament` command also keeps a disk cache (`.cache/firmament-plans.json`, keyed by a source fingerprint) and
+//! its card starts `Firmament plans (N cached, M computed)`. This CLI writes no cache at all: a plan is a pure function of
+//! its build and purse, every run replans, and the card says `Firmament plans` with no counts, because reporting a cache
+//! hit it never had would be an invented fact. `--refresh` is accepted and changes nothing (there is no cache to
+//! invalidate); a plan's numbers are identical either way.
 //!
 //! The save is imported READ-ONLY by [`saves`]: discovery and parsing live there, the character normalisation is
 //! `dfo_core::save::character_from_save`, and nothing is retained or written (AGENTS.md rule 11). Every flag this
@@ -29,7 +38,8 @@
 //! error is 2, as `bin/dfo-dps.js` does).
 
 // The shared renderer is a whole port of `src/graph.js`: `probe` uses `lineChart`/`multiGraphPage`, `graph` uses
-// `lineChart`/`graphPage`, and `barChart` is here for the report commands that follow.
+// `lineChart`/`graphPage`, `firmament` uses `multiGraphPage`, and `barChart` is here for the report commands that follow.
+mod firmament;
 #[allow(dead_code)]
 mod graph;
 mod probe;
@@ -44,6 +54,8 @@ use dfo_core::analyze::{
     reference_foe,
 };
 use dfo_core::encounters::{encounter_by_id, encounter_target, ENCOUNTER_IDS};
+use dfo_core::firmament::{build_by_id, build_ids, plan_build};
+use dfo_core::firmament_law::FIRMAMENT_NODES;
 use dfo_core::generated::data::{BOSS_TRAITS, RACE_NAMES, SOURCE, WEAPONS};
 use dfo_core::generated::level_cap::LEVEL_CAP;
 use dfo_core::generated::theory::{DEFAULT_BLADE, THEORY_LEVEL, THEORY_RACES};
@@ -59,7 +71,7 @@ use dfo_core::theory::theory_character;
 use dfo_core::value::{number_to_string, obj_table_get, string_to_number, Value, Value::*};
 
 const HELP: &str = "\
-dfo-cli - the saves, build, objective, rank, compare, doctor, probe, graph and report slice of dfo-dps (Rust core)
+dfo-cli - the saves, build, objective, rank, compare, doctor, probe, graph, report and firmament slice of dfo-dps (Rust core)
 
 Usage:
   dfo-cli saves
@@ -77,6 +89,7 @@ Usage:
   dfo-cli probe [capture.json] [--old] [--level <n>] [--players <n>] [--json] [--out <file>]
   dfo-cli graph [--theory] [--series <spec,...>] [--from <n>] [--to <n>] [--step <n>] [--uncapped] [--json] [--out <file>]
   dfo-cli report [--theory] [--save <slot|folder|path>] [options] [--out <file>]
+  dfo-cli firmament [--build <id,...>] [--stars <n>] [--refresh] [--json] [--out <file>]
 
 `saves` lists the save folders under the DFO user-data folder (newest first). `doctor` prints the model pin, the
 save folders and the imported character's build/ruleset summary. `build` prices one build against one target: with
@@ -94,6 +107,10 @@ new path. `graph` prices one channel per `--series` spec (`stat:<name>`, `skill:
 across `--from`..`--to` by `--step`, writes `graph.html` (or `--out`, also create-only) and prints the JS
 `graph written:` line, or the series document with `--json`. `report` writes the single-file HTML page of
 `src/report.js` (`dfo-dps-report.html`, or `--out`, also create-only) and prints the JS `report written:` line.
+`firmament` plans the star tree for each `--build` (all eight by default) at `--stars`, writes `firmament.html` (or
+`--out`, also create-only) and prints the JS `firmament page written:` line, or the plan document with `--json`; the
+plans are recomputed every run (no disk cache, and so no `N cached, M computed` counts in the card), where the JS keeps
+one in `.cache/firmament-plans.json`.
 
 Flags:
   --save <SAVE4|folder|SaveData.txt>  the save to import (default: the newest under the user-data folder)
@@ -127,10 +144,16 @@ Flags:
   --all                               scale: every relevant channel at once (text only)
   --data <capture.json>               probe: a capture file (the JS also reads ARENA2 here; not ported)
   --old                               probe: read the newest capture in captures/old
-  --out <file>                        probe/graph: the report page (default: probe.html / graph.html; must not exist yet)
+  --out <file>                        probe/graph/report/firmament: the page (default probe.html / graph.html /
+                                      dfo-dps-report.html / firmament.html; must not exist yet)
   --series <spec,...>                 graph: stat:name, skill:id, gear:id or star:name (default stat:strength,stat:agility)
   --from <n> --to <n> --step <n>      graph: the channel range (default per series kind; step 10)
   --uncapped                          graph: plot uncapped DPS instead of the per-hit-capped line
+  --build <id,...>                    firmament: longblade, shortblade, axe, blunt, bow, fists, destruction, tank
+                                      (default: all eight)
+  --stars <n>                         firmament: stars to spend, 0..98 (default 98)
+  --refresh                           firmament: accepted for parity; this CLI keeps no disk cache, so it recomputes
+                                      every run either way
   --json
   -h, --help
 
@@ -248,6 +271,13 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         check_output_flags(&command, &parsed)?;
         return report_command(&values, parsed.raw("out"));
     }
+    if command == "firmament" {
+        if let Some(extra) = parsed.positionals.get(1) {
+            return Err(usage(format!("unexpected positional argument \"{extra}\"")));
+        }
+        check_output_flags(&command, &parsed)?;
+        return firmament_command(&values, parsed.raw("out"));
+    }
     if command == "scale" {
         if let Some(extra) = parsed.positionals.get(1) {
             return Err(usage(format!("unexpected positional argument \"{extra}\"")));
@@ -283,7 +313,7 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         ];
         return Err(if COMMANDS.contains(&command.as_str()) {
             usage(format!(
-                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank`, `compare`, `scale`, `doctor`, `probe`, `graph` and `report`"
+                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank`, `compare`, `scale`, `doctor`, `probe`, `graph`, `report` and `firmament`"
             ))
         } else {
             usage(format!("unknown command \"{command}\"\n\n{HELP}"))
@@ -304,8 +334,9 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
 }
 
 /// `checkOutputFlags` (`src/cli.js:885-898`): reject a flag the command would ignore instead of accepting it silently.
-/// The commands of this slice (`build`, `rank`, `compare`, `scale`, `saves`, `doctor`, `probe`, `graph`): `probe` and
-/// `graph` write a page, `build`, `rank`, `objective`, `scale`, `probe` and `graph` read `--json`.
+/// The commands of this slice (`build`, `rank`, `compare`, `scale`, `saves`, `doctor`, `probe`, `graph`, `report`,
+/// `firmament`): `probe`, `graph`, `report` and `firmament` write a page, and `build`, `rank`, `objective`, `scale`,
+/// `probe`, `graph` and `firmament` read `--json`.
 fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
     const FILE_COMMANDS: &str = concat!(
         "report, spells, weapons, skills, firmament, imprints, probe, enchant-plan, gear-plan, loadout, ",
@@ -363,6 +394,16 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
             if parsed.raw(name).is_some() || parsed.flag(name) {
                 return Err(usage(format!(
                     "--{name} is not supported by this CLI slice (it needs the graph or scale, or is not ported yet)"
+                )));
+            }
+        }
+    }
+    // `--build`/`--stars`/`--refresh` are priced by `firmament` alone; the JS accepts and ignores them elsewhere.
+    if command != "firmament" {
+        for name in ["build", "stars", "refresh"] {
+            if parsed.raw(name).is_some() || parsed.flag(name) {
+                return Err(usage(format!(
+                    "--{name} is not supported by this CLI slice (it needs the firmament command, or is not ported yet)"
                 )));
             }
         }
@@ -593,7 +634,7 @@ const SUPPORTED: &str = concat!(
     "help target level armor health traits core weapon swing stacks race blade gear-lb gear-cs star-stat star-skill ",
     "star-damage potency pierce backstab players blow-x health-share self-health-share top damage-pct base-stats ",
     "no-effects save offline passive bare out objective trials seed max-seconds max-blows no-carry samples stat all ",
-    "data old series from to step uncapped skill gear-skill",
+    "data old series from to step uncapped skill gear-skill build stars refresh",
 );
 
 fn in_flags(list: &str, name: &str) -> bool {
@@ -602,7 +643,7 @@ fn in_flags(list: &str, name: &str) -> bool {
 
 const BOOLEAN_FLAGS: &str = concat!(
     "theory json vampire firmament rhythm unaware first-blow behind pair dual spam no-crit-damage no-passive ",
-    "no-rri help offline bare no-effects no-carry samples all old uncapped",
+    "no-rri help offline bare no-effects no-carry samples all old uncapped refresh",
 );
 
 const MULTI: [&str; 3] = ["star-stat", "star-skill", "stat"];
@@ -706,7 +747,7 @@ const fn range(min: f64, max: f64, int: bool, exclusive_min: bool) -> Range {
 const ANY: Range = range(f64::NEG_INFINITY, f64::INFINITY, false, false);
 
 /// Every numeric option `validateFlags` bounds, with its JS default.
-const NUMERIC_FLAGS: [(&str, f64, Range); 24] = [
+const NUMERIC_FLAGS: [(&str, f64, Range); 25] = [
     ("level", THEORY_LEVEL, range(1.0, LEVEL_CAP, true, false)),
     ("stacks", 5.0, range(0.0, 5.0, true, false)),
     ("players", 1.0, range(1.0, f64::INFINITY, true, false)),
@@ -727,6 +768,7 @@ const NUMERIC_FLAGS: [(&str, f64, Range); 24] = [
     ("gear-lb", 0.0, range(0.0, f64::INFINITY, false, false)),
     ("gear-cs", 0.0, range(0.0, f64::INFINITY, false, false)),
     ("damage-pct", 0.0, ANY),
+    ("stars", 98.0, range(0.0, 98.0, true, false)),
     (
         "blade",
         DEFAULT_BLADE,
@@ -799,6 +841,8 @@ struct Values {
     base_stats_raw: Option<String>,
     /// `--all`: `scale` prices every channel at once.
     all: bool,
+    /// `--build`: raw comma list of firmament build ids (the command splits and trims it, as the JS does).
+    build: Option<String>,
 }
 
 fn range_text(what: &str, min: f64, max: f64, exclusive_min: bool) -> String {
@@ -1087,6 +1131,7 @@ impl Values {
             uncapped: parsed.flag("uncapped"),
             base_stats_raw: parsed.raw("base-stats").map(str::to_owned),
             all: parsed.flag("all"),
+            build: parsed.raw("build").map(str::to_owned),
         })
     }
 
@@ -1904,6 +1949,142 @@ fn report_command(values: &Values, out_flag: Option<&str>) -> Result<String, Cli
     let out = probe::normalized(out_flag.unwrap_or("dfo-dps-report.html"));
     probe::write_page(&out, &html)?;
     Ok(format!("report written: {}\n", out.display()))
+}
+
+/// `dfo-dps firmament` (`src/cli.js:1390-1441`): plan each `--build` at `--stars`, print the JS card (or the `--json`
+/// document), and write the multi-section page from [`firmament::firmament_section`] through the shared renderer.
+///
+/// The JS also keeps a disk cache (`.cache/firmament-plans.json`) and prints `Firmament plans (N cached, M computed)`;
+/// this CLI writes no cache, replans every run, and prints the bare `Firmament plans` line, so it never claims a cache
+/// hit it did not have (module doc). `--refresh` therefore changes nothing. The page is create-only, as `report`'s is.
+fn firmament_command(values: &Values, out_flag: Option<&str>) -> Result<String, CliError> {
+    let all: Vec<String> = build_ids().iter().map(|id| id.to_js_string()).collect();
+    // `values.build ? String(values.build).split(',').map(trim).filter(Boolean) : buildIds()`; an empty string is falsy
+    // in the JS `values.build ?`, so it takes every build, while a whitespace-only value is truthy and splits to none.
+    let ids: Vec<String> = match values.build.as_deref() {
+        None | Some("") => all.clone(),
+        Some(raw) => raw
+            .split(',')
+            .map(str::trim)
+            .filter(|x| !x.is_empty())
+            .map(str::to_owned)
+            .collect(),
+    };
+    let unknown: Vec<&str> = ids
+        .iter()
+        .filter(|id| build_by_id(&Str((*id).clone())).is_none())
+        .map(String::as_str)
+        .collect();
+    if !unknown.is_empty() {
+        return Err(usage(format!(
+            "unknown firmament build: {} (choose {})",
+            unknown.join(", "),
+            all.join(", ")
+        )));
+    }
+    // `--stars` is validated as an integer 0..98, so the JS re-clamp here is an identity; absent is 98.
+    let stars = values.nums.get("stars").copied().unwrap_or(98.0);
+    // The JS `--refresh` drops its disk cache; this CLI keeps none, so it recomputes either way (module doc).
+    let plans: Vec<Value> = ids
+        .iter()
+        .filter_map(|id| build_by_id(&Str(id.clone())))
+        .map(|build| plan_build(build, &obj([("stars", Num(stars))])))
+        .collect();
+    let mut out = String::from("Firmament plans\n");
+    if !values.json {
+        let rows: Vec<Vec<String>> = plans
+            .iter()
+            .map(|p| {
+                let sum = dfo_core::firmament::plan_summary(p);
+                vec![
+                    p.get("build").get("name").to_js_string(),
+                    p.get("startName").to_js_string(),
+                    format!(
+                        "{}/{}{}",
+                        p.get("stars").to_js_string(),
+                        p.get("starBudget").to_js_string(),
+                        if p.get("freeStars").truthy() {
+                            format!(" (+{} free)", p.get("freeStars").to_js_string())
+                        } else {
+                            String::new()
+                        }
+                    ),
+                    group_cell(p, &sum),
+                    sum.get("counts").get("notable").to_js_string(),
+                    sum.get("counts").get("keystone").to_js_string(),
+                ]
+            })
+            .collect();
+        out.push_str(&format!(
+            "{}\n",
+            table(
+                &rows,
+                &["Build", "Start", "Stars", "Group", "Notables", "Keystones"],
+                &[false, false, true, true, true, true]
+            )
+        ));
+    }
+    let sections: Vec<graph::Section> = plans.iter().map(firmament::firmament_section).collect();
+    let html = graph::multi_graph_page(
+        "DFO Firmament trees",
+        &format!(
+            "The game's own {FIRMAMENT_NODES} stars, {} Stars per build, no Craft points assumed. One deterministic channel-coverage plan per build; keystones are never walked through. The weapons page +Firmament column is the flat channel ceiling, not this allocation.",
+            number_to_string(stars)
+        ),
+        &sections,
+    );
+    // `path.resolve(values.out === 'dfo-dps-report.html' ? 'firmament.html' : values.out)` (`:1431`).
+    let out_path = match out_flag {
+        None | Some("dfo-dps-report.html") => "firmament.html".to_owned(),
+        Some(name) => name.to_owned(),
+    };
+    let out_path = probe::normalized(&out_path);
+    probe::write_page(&out_path, &html)?;
+    if values.json {
+        let doc = Arr(plans
+            .iter()
+            .map(|p| {
+                obj([
+                    ("build", p.get("build").get("id").clone()),
+                    ("name", p.get("build").get("name").clone()),
+                    ("start", p.get("tree").get("start").clone()),
+                    ("startName", p.get("startName").clone()),
+                    ("stars", p.get("stars").clone()),
+                    ("budget", p.get("starBudget").clone()),
+                    ("freeStars", p.get("freeStars").clone()),
+                    ("keys", p.get("tree").get("keys").clone()),
+                    ("totals", p.get("totals").clone()),
+                ])
+            })
+            .collect());
+        return Ok(format!("{}\n", json(&doc)));
+    }
+    out.push_str(&format!("firmament page written: {}\n", out_path.display()));
+    Ok(out)
+}
+
+/// The card's `Group` cell (`src/cli.js:1408`): the blow row for a weapon build, the cast-cost row for a spell build,
+/// else the plan's own HP. `s.rows.find(...)?.value ?? 0` is the first row with that key, or 0 when there is none.
+fn group_cell(plan: &Value, sum: &Value) -> String {
+    let build = plan.get("build");
+    let row = |key: &str| -> Value {
+        for r in sum.get("rows").items() {
+            if r.get("key").is_str(key) {
+                return r.get("value").clone();
+            }
+        }
+        Num(0.0)
+    };
+    if build.get("skill").truthy() {
+        format!("{}%", row("blow").to_js_string())
+    } else if build.get("school").truthy() {
+        format!("{}%", row("castCost").to_js_string())
+    } else {
+        format!(
+            "{} HP",
+            number_to_string(plan.get("totals").get("hp").num_or(0.0))
+        )
+    }
 }
 
 /// `ch.skills[id] = value` for a skill id the JS accepts (`Number(idRaw)` in `0..35`). A fractional id is a named

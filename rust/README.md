@@ -22,13 +22,14 @@ turned into 0. The floor and the Firmament's share read the PERMANENT stats, as 
 tested: `tests/sidebar.rs` drives `tests/sidebar_oracle.mjs` over the public composition, and the script's header lists
 what this repository cannot execute.
 
-## R8: the CLI, the `build`, `saves`, `rank`, `doctor`, `probe`, `graph` and `report` slice
+## R8: the CLI, the `build`, `saves`, `rank`, `doctor`, `probe`, `graph`, `report` and `firmament` slice
 
 `dfo-cli` (`rust/dfo-cli`) is the R8 CLI slice: the JS `src/cli.js` `build` card, `saves` listing, `doctor` summary,
-`rank` path, `compare` table, Combat Probe `probe` page, `graph` page and `src/report.js` `report` page, for the
-level-45 theory character or for an imported save. It is a thin layer: the parser owns argument text, the output
-formats (`printBuild`'s card, `printRank`'s table, `--json`'s summary and `{ character, weapons, current }`, `doctor`'s
-plain lines, the two SVG pages and the report page) and exit codes; every number comes from `dfo_core`
+`rank` path, `compare` table, Combat Probe `probe` page, `graph` page, `src/report.js` `report` page and the
+`src/firmament.js` `firmament` plans page, for the level-45 theory character or for an imported save. It is a thin
+layer: the parser owns argument text, the output formats (`printBuild`'s card, `printRank`'s table, `--json`'s summary
+and `{ character, weapons, current }`, `doctor`'s plain lines, the two SVG pages, the report page and the firmament
+plans page) and exit codes; every number comes from `dfo_core`
 (`theory_character`, `Profiles::legal_gear`, `reference_foe`/`boss_target`/`gate_target`/`encounter_target`,
 `analyze`/`marginals`/`rank_affixes`/`rank_weapons`, `current_weapon_row`, `save::character_from_save`,
 `save::live_stat`/`skill_value`/`skill_name`, `model_blow::weapon_of`). There is no second reading of a rule.
@@ -65,6 +66,14 @@ plain lines, the two SVG pages and the report page) and exit codes; every number
   scenario the other page commands share and writes `dfo-dps-report.html` (or `--out`). Both pages go through the
   same create-only writer as `probe` (`O_CREAT|O_EXCL`): an existing file is refused with exit 2 and left untouched,
   where the JS `writeFileSync` truncates. `report` inserts only what the JS escapes, so a safe page is byte-identical.
+- **The firmament page.** `dfo-cli firmament [--build <id,...>] [--stars <n>] [--refresh] [--json] [--out <file>]`
+  (`src/cli.js:1390-1441`) plans each preset at the purse through `dfo_core::firmament::plan_build`, prints the JS
+  `Firmament plans` card (or its `{ build, name, start, startName, stars, budget, freeStars, keys, totals }` document),
+  and writes `firmament.html` (or `--out`) from `src/firmament.rs`'s sections through the same create-only writer.
+  One observable difference, documented in `src/main.rs`: the JS keeps a disk cache in `.cache/firmament-plans.json`
+  and its first line reads `Firmament plans (N cached, M computed)`. This CLI keeps no cache - a plan is a pure function
+  of build and purse - so it replans every run, `--refresh` changes nothing, and the line is the bare `Firmament plans`;
+  the plans and page are byte-identical. `dfo-cli/tests/cli_firmament.rs` pins that against the JS CLI.
 - **The launcher spellbook.** `saves::arena2_dir` reads `config.json`'s `arena2Path` and `saves::load_spellbook` opens
   `SPELLS.STD` read-only, handing the bytes to `dfo_core::spells::read_spells_std`/`spells_by_index_map`
   (`src/save.js:28-40`, `src/spells.js:72-93`). `build` and `rank` use that book for Cast When Strikes, so a save's
@@ -106,11 +115,15 @@ plain lines, the two SVG pages and the report page) and exit codes; every number
   the same way `cli_graph.rs` does. `dfo-cli/tests/cli_scale.rs` runs the whole `scale` command against the JS: every
   `--stat`, `--skill` and `--gear-skill` curve over theory and both synthetic save shapes, the `--all` summary, the
   `--json` rows, and the usage refusals (no channel, an unknown attribute, two `--stat`s, an out-of-range skill id,
-  `--all --json`, `--out`). A missing `node` fails the tests rather than skipping them.
+  `--all --json`, `--out`). `dfo-cli/tests/cli_firmament.rs` runs the whole `firmament` command against the JS: every
+  preset and a small purse, no/empty/whitespace `--build`, the text card (after the JS cache parenthetical this CLI does
+  not print), the `--json` document, the default output name, the usage refusals and the create-only writer. A missing
+  `node` fails the tests rather than skipping them.
 
-The rest of `src/cli.js` (the other page commands, `tradeoff`, `theory`, `spell`, `enchant`, `weapons`, `firmament`,
-`imprints`, `enchant-plan`, `loadout`) is still unported. `src/graph.js` is ported (`src/graph.rs`) and
-wired into `probe`, `graph` and `report`; `src/report.js` is ported (`src/report.rs`) and wired into `report`. `--data`
+The rest of `src/cli.js` (the other page commands, `tradeoff`, `theory`, `spell`, `enchant`, `weapons`, `imprints`,
+`enchant-plan`, `loadout`) is still unported. `src/graph.js` is ported (`src/graph.rs`) and
+wired into `probe`, `graph`, `report` and `firmament`; `src/report.js` is ported (`src/report.rs`) and wired into
+`report`; `src/firmament.js`'s page is ported (`dfo-cli/src/firmament.rs`) and wired into `firmament`. `--data`
 (an explicit ARENA2 directory) and nested custom spell records are not ported; the launcher lookup above is the only
 spellbook source.
 

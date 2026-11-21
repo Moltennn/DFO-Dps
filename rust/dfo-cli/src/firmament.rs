@@ -10,8 +10,8 @@
 //! upstream array's insertion order (the order the SVG draws its lines in; `FIRM_ADJ` is sorted and cannot rebuild it).
 //! The bounds are not pinned: they are the min/max over the stars, as `FIRM_BOUNDS` is.
 //!
-//! No file I/O and no CLI wiring here (the scale command owns both); [`firmament_section`] returns the page section the
-//! `firmament` command hands to `graph::multi_graph_page`.
+//! No file I/O here: [`firmament_section`] returns the page section the `firmament` command hands to
+//! `graph::multi_graph_page`, and the command owns the card, the JSON document and the create-only write.
 
 use std::collections::{HashMap, HashSet};
 
