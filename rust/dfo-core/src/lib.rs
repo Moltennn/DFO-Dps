@@ -34,6 +34,7 @@ pub mod maxprofile;
 pub mod mint;
 pub mod model_blow;
 pub mod objectives;
+pub mod probe;
 pub mod purse;
 pub mod real_build;
 pub mod relay_claim;
