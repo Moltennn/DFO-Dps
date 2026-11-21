@@ -5,7 +5,8 @@
 //! a port that drifts from `src/cli.js`, `src/model.js` or `src/theory.js` fails here.
 //!
 //! The repo is a Node project and this test spawns `node`; if it cannot, the test panics rather than skips (a skipped
-//! differential proves nothing). No save is read: every case passes `--theory`.
+//! differential proves nothing). Every case here passes `--theory`, so no save is read; `tests/saves.rs` covers the
+//! save-backed card over temp fixtures.
 
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -29,6 +30,16 @@ fn rust(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_dfo-cli"))
         .args(args)
         .current_dir(repo_root())
+        .output()
+        .expect("the Rust CLI binary runs")
+}
+
+/// The Rust binary with a specific user-data root, for a case that must not read the player's saves.
+fn rust_env(args: &[&str], root: &std::path::Path) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_dfo-cli"))
+        .args(args)
+        .current_dir(repo_root())
+        .env("DAGGER_USER_DATA", root)
         .output()
         .expect("the Rust CLI binary runs")
 }
@@ -309,13 +320,10 @@ fn rank_usage_errors_exit_2_with_the_same_message() {
 
 #[test]
 fn unsupported_and_unknown_options_fail_explicitly() {
-    let cases: [&[&str]; 9] = [
-        &["rank", "--save", "SAVE4"],
+    let cases: [&[&str]; 6] = [
         &["build", "--theory"],
         &["rank", "--theory", "--out", "x.html"],
         &["rank", "--theory", "--bogus"],
-        &["rank", "--theory", "--passive", "none"],
-        &["rank", "--theory", "--bare"],
         &["rank", "--theory", "--encounter", "breach"],
         &["rank", "--theory", "--target"],
         &["rank", "weapons", "extra"],
@@ -332,11 +340,16 @@ fn unsupported_and_unknown_options_fail_explicitly() {
             "a refusal explains itself for {args:?}"
         );
     }
-    // A bare `rank` really does need a save, and says so instead of printing a save-less card.
-    let got = rust(&["rank"]);
+    // A bare `rank` really does need a save. `--save` names a slot that cannot exist in a fresh root, so this case
+    // does not depend on the player's real saves (tests/saves.rs prices the save-backed card).
+    let root = std::env::temp_dir().join(format!("dfo-cli-rank-nosave-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("Saves")).expect("temp root");
+    let got = rust_env(&["rank", "--save", "SAVE-cli-test-none"], &root);
     assert_eq!(got.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&got.stderr).contains("--theory"));
+    assert!(String::from_utf8_lossy(&got.stderr).contains("not found"));
     assert!(got.stdout.is_empty());
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
@@ -344,7 +357,7 @@ fn help_lists_the_slice_and_exits_0() {
     let got = rust(&["--help"]);
     assert_eq!(got.status.code(), Some(0));
     let text = String::from_utf8_lossy(&got.stdout);
-    for flag in ["rank", "--theory", "--json", "--target", "--blade"] {
+    for flag in ["saves", "rank", "--theory", "--json", "--save", "--blade"] {
         assert!(text.contains(flag), "help names {flag}");
     }
 }

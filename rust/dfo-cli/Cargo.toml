@@ -2,9 +2,12 @@
 name = "dfo-cli"
 version = "0.1.0"
 edition = "2021"
-description = "Thin CLI over dfo-core (milestone R8, the rank --theory slice)"
+description = "Thin CLI over dfo-core (milestone R8)"
 license = "MIT"
 publish = false
 
 [dependencies]
 dfo-core = { path = "../dfo-core" }
+# Save discovery parses a user-supplied document; `serde_json` is the parser the workbench import already uses.
+# `preserve_order` keeps an object's own key order, which `Value::set` and the JS reads rely on.
+serde_json = { version = "1.0.154", features = ["float_roundtrip", "preserve_order"] }

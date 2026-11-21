@@ -1,13 +1,18 @@
-//! `dfo-cli`: the thin command line over `dfo-core` (R8, the `rank --theory` slice).
+//! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves` and `rank` slice).
 //!
-//! This is the JS `src/cli.js` `rank` path, and only that: [`main`] parses the flags the rank card reads, replays
-//! the JS validation (`numFlag`, the enum checks) with the same messages, builds the level-45 theory character, the
-//! target and the scenario, then prints `printRank` or `{ character, weapons, current }` as `--json` does.
-//! No save is read or written (R8's I/O lands later): `rank` without `--theory` fails explicitly, and every flag the
-//! slice does not price is refused by name instead of being accepted and ignored.
+//! This is the JS `src/cli.js` `rank` path and the `saves` listing, and only that: [`main`] parses the flags the rank
+//! card reads, replays the JS validation (`numFlag`, the enum checks) with the same messages, builds either the
+//! level-45 theory character or the one an imported save describes, the target and the scenario, then prints
+//! `printRank` or `{ character, weapons, current }` as `--json` does.
+//!
+//! The save is imported READ-ONLY by [`saves`]: discovery and parsing live there, the character normalisation is
+//! `dfo_core::save::character_from_save`, and nothing is retained or written (AGENTS.md rule 11). Every flag this
+//! slice does not price, and every other command, is refused by name instead of being accepted and ignored.
 //!
 //! Every rule lives in `dfo-core`; this file owns argument text, the two output formats and exit codes (a usage
 //! error is 2, as `bin/dfo-dps.js` does).
+
+mod saves;
 
 use std::collections::HashMap;
 use std::process::ExitCode;
@@ -27,15 +32,22 @@ use dfo_core::theory::theory_character;
 use dfo_core::value::{number_to_string, string_to_number, Value, Value::*};
 
 const HELP: &str = "\
-dfo-cli - the rank slice of dfo-dps (Rust core)
+dfo-cli - the saves and rank slice of dfo-dps (Rust core)
 
 Usage:
+  dfo-cli saves
+  dfo-cli rank [weapons] [--save <slot|folder|path>] [options]
   dfo-cli rank [weapons] --theory [options]
 
-Rank every melee template/material for the level-45 theory character. No save is read; `rank` without
---theory fails. Text is the JS `rank` card; --json is `{ character, weapons, current }`.
+`saves` lists the save folders under the DFO user-data folder (newest first). `rank` prices every melee
+template/material: with --theory for the level-45 theory character, otherwise for the imported save (read-only).
+Text is the JS card; --json is `{ character, weapons, current }`.
 
 Flags:
+  --save <SAVE4|folder|SaveData.txt>  the save to import (default: the newest under the user-data folder)
+  --offline                           offline rules (past-100 skills read as 100)
+  --passive <path|none>               martial path override
+  --bare                              strip gear affixes/enchants/legendaries
   --target <soft|tough|armoured|human|boss|gate|breach|ruhn|skyketch|abyss>  (default armoured; with --theory
                                       armoured is analysed as the Breach gate, as src/cli.js does)
   --level <n> --armor <n> --health <n> --traits <a,b> --players <n> --blow-x <n>
@@ -54,8 +66,8 @@ Flags:
   --json
   -h, --help
 
-Unsupported here (they need a save or another command): --save, --offline, --passive, --bare, --encounter,
---out and the other commands' flags.";
+Unsupported here (another command, or a flag this slice does not read): --out, --encounter, --shortlist,
+--objective and the other commands' flags.";
 
 fn main() -> ExitCode {
     match run(std::env::args().skip(1).collect()) {
@@ -94,6 +106,13 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         .first()
         .cloned()
         .unwrap_or_else(|| "build".into());
+    if command == "saves" {
+        if let Some(extra) = parsed.positionals.get(1) {
+            return Err(usage(format!("unexpected positional argument \"{extra}\"")));
+        }
+        check_output_flags(&command, &parsed)?;
+        return saves_command();
+    }
     if command != "rank" {
         const COMMANDS: [&str; 23] = [
             "build",
@@ -122,7 +141,7 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         ];
         return Err(if COMMANDS.contains(&command.as_str()) {
             usage(format!(
-                "the \"{command}\" command is not ported yet; this slice supports only `rank --theory`"
+                "the \"{command}\" command is not ported yet; this slice supports `saves` and `rank`"
             ))
         } else {
             usage(format!("unknown command \"{command}\"\n\n{HELP}"))
@@ -138,7 +157,60 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
     if let Some(extra) = parsed.positionals.get(2) {
         return Err(usage(format!("unexpected positional argument \"{extra}\"")));
     }
+    check_output_flags(&command, &parsed)?;
     rank(&values)
+}
+
+/// `checkOutputFlags` (`src/cli.js:885-898`): reject a flag the command would ignore instead of accepting it silently.
+/// Only `rank` (JSON) and `saves` (neither) are commands of this slice, so `--out` is a usage error for both.
+fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
+    const FILE_COMMANDS: &str = concat!(
+        "report, spells, weapons, skills, firmament, imprints, probe, enchant-plan, gear-plan, loadout, ",
+        "real-dps, graph",
+    );
+    const JSON_COMMANDS: &str = concat!(
+        "build, objective, rank, scale, tradeoff, theory, spell, spells, enchant, weapons, skills, firmament, ",
+        "imprints, probe, enchant-plan, gear-plan, loadout, real-dps, graph",
+    );
+    let listed = |list: &str| list.split(", ").any(|f| f.trim() == command);
+    if parsed.raw("out").is_some() && !listed(FILE_COMMANDS) {
+        return Err(usage(format!(
+            "--out is only for commands that write a file ({FILE_COMMANDS}), not \"{command}\""
+        )));
+    }
+    if parsed.flag("json") && !listed(JSON_COMMANDS) {
+        return Err(usage(format!(
+            "--json is not supported by \"{command}\"; commands with JSON output: {JSON_COMMANDS}"
+        )));
+    }
+    Ok(())
+}
+
+/// `dfo-dps saves` (`src/cli.js:934-939`): the whole card, or `No saves found.` with an empty folder.
+fn saves_command() -> Result<String, CliError> {
+    let saves = saves::list_saves().map_err(usage)?;
+    if saves.is_empty() {
+        return Ok("No saves found.\n".to_owned());
+    }
+    let rows: Vec<Vec<String>> = saves
+        .iter()
+        .map(|s| {
+            vec![
+                s.slot.clone(),
+                s.name.clone(),
+                s.character.clone(),
+                saves::iso_minute(s.mtime),
+            ]
+        })
+        .collect();
+    Ok(format!(
+        "{}\n",
+        table(
+            &rows,
+            &["Slot", "Save", "Character", "Modified"],
+            &[false, false, false, false]
+        )
+    ))
 }
 
 fn obj<const N: usize>(pairs: [(&str, Value); N]) -> Value {
@@ -198,7 +270,7 @@ const SUPPORTED: &str = concat!(
     "theory json vampire firmament rhythm unaware first-blow behind pair dual spam no-crit-damage no-passive no-rri ",
     "help target level armor health traits core weapon swing stacks race blade gear-lb gear-cs star-stat star-skill ",
     "star-damage potency pierce backstab players blow-x health-share self-health-share top damage-pct base-stats ",
-    "no-effects",
+    "no-effects save offline passive bare out",
 );
 
 fn in_flags(list: &str, name: &str) -> bool {
@@ -211,6 +283,12 @@ const BOOLEAN_FLAGS: &str = concat!(
 );
 
 const MULTI: [&str; 2] = ["star-stat", "star-skill"];
+
+/// `Object.keys(MARTIAL_PATHS)` (`src/data.js:223-239`): the `--passive` ids, in the table's own order.
+const MARTIAL_PATH_NAMES: &str = concat!(
+    "blademaster warblade vanguard ranger bladedancer bloodletter cutthroat assassin shadowdancer ",
+    "juggernaut woodsman berserker crusader brawler windrunner",
+);
 
 fn parse(args: &[String]) -> Result<Parsed, CliError> {
     let mut positionals = Vec::new();
@@ -359,6 +437,12 @@ struct Values {
     no_effects: bool,
     star_stats: Vec<(String, f64)>,
     star_skills: Vec<(String, f64)>,
+    /// `--save`: the slot, folder or `SaveData.txt` path; `None` takes the newest save.
+    save: Option<String>,
+    offline: bool,
+    bare: bool,
+    /// `--passive`: lower-cased path id, or `none` for no path.
+    passive: Option<String>,
 }
 
 fn range_text(what: &str, min: f64, max: f64, exclusive_min: bool) -> String {
@@ -586,6 +670,22 @@ impl Values {
         let star_damage = nums.get("star-damage").copied();
         let base_stats = nums.get("base-stats").copied();
         let (star_stats, star_skills) = star_options(parsed)?;
+        let passive = match parsed.raw("passive") {
+            Some(raw) => {
+                let passive = raw.to_lowercase();
+                if passive != "none" && !in_flags(MARTIAL_PATH_NAMES, &passive) {
+                    return Err(usage(format!(
+                        "--passive must be none or one of {}, got \"{raw}\"",
+                        MARTIAL_PATH_NAMES
+                            .split_whitespace()
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )));
+                }
+                Some(passive)
+            }
+            None => None,
+        };
         Ok(Values {
             theory: parsed.flag("theory"),
             json: parsed.flag("json"),
@@ -614,6 +714,10 @@ impl Values {
             no_effects: parsed.flag("no-effects"),
             star_stats,
             star_skills,
+            save: parsed.raw("save").map(str::to_owned),
+            offline: parsed.flag("offline"),
+            bare: parsed.flag("bare"),
+            passive,
         })
     }
 
@@ -737,11 +841,6 @@ fn split_pair(part: &str, letters: bool) -> Option<(String, String)> {
 // ---------------------------------------------------------------------------------------------------------------
 
 fn rank(values: &Values) -> Result<String, CliError> {
-    if !values.theory {
-        return Err(usage(
-            "rank without --theory needs a save; the Rust slice has no save I/O yet (pass --theory)",
-        ));
-    }
     let book = Spellbook::default();
     let ch = character(values, &book)?;
     let target = target_of(&ch, values, &values.traits)?;
@@ -763,7 +862,32 @@ fn rank(values: &Values) -> Result<String, CliError> {
     }
 }
 
+/// `loadCharacter` (`src/cli.js:401-449`): the level-45 theory character with `--theory`, otherwise the character the
+/// imported save describes. The save is read-only and dropped after the character is built (AGENTS.md rule 11).
 fn character(values: &Values, book: &Spellbook) -> Result<Value, CliError> {
+    if !values.theory {
+        let (entry, save) =
+            saves::load_save(values.save.as_deref().unwrap_or("")).map_err(usage)?;
+        let martial = match values.passive.as_deref() {
+            Some("none") => Null,
+            Some(path) => Str(path.to_owned()),
+            None => Undefined,
+        };
+        let ch = dfo_core::save::character_from_save(
+            &save,
+            &obj([
+                ("online", Bool(!values.offline)),
+                ("slot", Str(entry.slot)),
+                ("file", Str(entry.file.to_string_lossy().into_owned())),
+                ("martialPath", martial),
+            ]),
+        );
+        let mut ch = if values.bare { bare_character(&ch) } else { ch };
+        if values.no_effects {
+            ch.set("activeEffects", Arr(vec![]));
+        }
+        return Ok(set_base_stats(ch, values.base_stats));
+    }
     let mut blade = values.blade;
     let mut material = 9.0;
     if let Some((tpl, mat)) = values.weapon {
@@ -821,7 +945,12 @@ fn character(values: &Values, book: &Spellbook) -> Result<Value, CliError> {
     if values.no_effects {
         ch.set("activeEffects", Arr(vec![]));
     }
-    if let Some(v) = values.base_stats {
+    Ok(set_base_stats(ch, values.base_stats))
+}
+
+/// `--base-stats`: every one of the eight base attributes.
+fn set_base_stats(mut ch: Value, base_stats: Option<f64>) -> Value {
+    if let Some(v) = base_stats {
         let mut stats = ch.get("stats").clone();
         for k in [
             "strength",
@@ -837,7 +966,28 @@ fn character(values: &Values, book: &Spellbook) -> Result<Value, CliError> {
         }
         ch.set("stats", stats);
     }
-    Ok(ch)
+    ch
+}
+
+/// `bareCharacter` (`src/cli.js:451-458`): `JSON.parse(JSON.stringify(ch))` with the gear folds, the legendaries and the
+/// main-hand affixes stripped.
+fn bare_character(ch: &Value) -> Value {
+    let mut c = dfo_core::analyze::json_clone(ch);
+    let mut mods = Obj(vec![]);
+    mods.set("stats", Obj(vec![]));
+    mods.set("skills", Obj(vec![]));
+    c.set("_mods", mods);
+    let mut enchant = Obj(vec![]);
+    enchant.set("skillMods", Obj(vec![]));
+    enchant.set("chanceToHitMod", Num(0.0));
+    c.set("_enchantMods", enchant);
+    c.set("legendaries", Arr(vec![]));
+    if c.get("weapon").truthy() {
+        let mut weapon = c.get("weapon").clone();
+        weapon.set("affixes", Arr(vec![]));
+        c.set("weapon", weapon);
+    }
+    c
 }
 
 fn obj_pairs(pairs: &[(String, f64)]) -> Value {
@@ -853,20 +1003,10 @@ fn target_of(ch: &Value, values: &Values, traits: &[String]) -> Result<Value, Cl
     let level = values.num("level", ch.get("level").to_number());
     let trait_list = || Arr(traits.iter().map(|t| Str(t.clone())).collect());
     Ok(match requested.as_str() {
-        // The JS remap: `armoured` is a reference preset, but the theory character prices the gate.
-        "armoured" | "gate" | "breach" | "ruhn" => {
-            let mut opts = obj([
-                ("players", Num(values.num("players", 1.0))),
-                ("blowX", Num(values.num("blow-x", 1.0))),
-            ]);
-            if values.nums.contains_key("health") {
-                opts.set("health", Num(values.num("health", 0.0)));
-            }
-            if !traits.is_empty() {
-                opts.set("traits", trait_list());
-            }
-            gate_target(&Num(level), &opts)
-        }
+        // The JS remap: for the theory character `armoured` is a reference preset that prices the gate; a save keeps it
+        // as the reference foe it names (`src/cli.js:505`).
+        "armoured" if values.theory => gate_body(values, traits, level),
+        "gate" | "breach" | "ruhn" => gate_body(values, traits, level),
         "boss" => boss_target(&obj([
             ("level", Num(level)),
             ("armorValue", Num(values.num("armor", 0.0))),
@@ -890,6 +1030,24 @@ fn target_of(ch: &Value, values: &Values, traits: &[String]) -> Result<Value, Cl
         }
         preset => reference_foe(&Num(level), &Str(preset.to_owned())),
     })
+}
+
+/// The Breach gate body (`gateTarget`) at the scenario's level and options.
+fn gate_body(values: &Values, traits: &[String], level: f64) -> Value {
+    let mut opts = obj([
+        ("players", Num(values.num("players", 1.0))),
+        ("blowX", Num(values.num("blow-x", 1.0))),
+    ]);
+    if values.nums.contains_key("health") {
+        opts.set("health", Num(values.num("health", 0.0)));
+    }
+    if !traits.is_empty() {
+        opts.set(
+            "traits",
+            Arr(traits.iter().map(|t| Str(t.clone())).collect()),
+        );
+    }
+    gate_target(&Num(level), &opts)
 }
 
 fn scenario_of(ch: &Value, values: &Values, traits: &[String], target: &Value) -> Value {
