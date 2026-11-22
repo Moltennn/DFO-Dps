@@ -105,6 +105,7 @@ pub struct Entity {
 
 /// `ARROW_TEMPLATE` (systems/inventory.js:142, `WEAPONS.Arrow`): 131 (`ARROW_TEMPLATE_INDEX`, scenes/corpseMarker.js:29).
 /// The arm draws a roll for the arrow pile only when a template is this one, so the vectors check it.
+// mutation: equivalent - the arrow pile is the only `create_weapon` call handed this constant (assign_class passes ARROW_TEMPLATE itself), and no bow the arm mints is 131 or 132 (`random_bow` draws 129..=130), so the draw and the arm's answer are the same for 131 and 132; the pile's Piece is never read (module doc).
 const ARROW_TEMPLATE: f64 = 131.0;
 
 fn weapon(name: &str) -> f64 {
@@ -140,10 +141,20 @@ fn range_excl(r: &mut dyn Rolls, lo: f64, hi: f64) -> f64 {
 /// formula override registry (`formulaOverride`, combat/formulas.js) is empty on this path: no mod registers one.
 pub fn random_material(player_level: f64, r: &mut dyn Rolls) -> f64 {
     let mut level_mod = player_level - 10.0;
+    // mutation: equivalent - every player level the arms receive is a whole number (`enemy_target` refuses anything else,
+    // `wholeLevel`), so `level_mod` is an integer: `>= 0`, `> 0` and `>= 1` differ only at level_mod 0, where the product
+    // is 0 x either factor = 0.
     level_mod *= if level_mod >= 0.0 { 2.0 } else { 4.0 };
     let random_mod = (r.roll() * 256.0).floor();
+    // mutation: equivalent - the lower clamp 0 and 1 both leave material 0 (MATERIALS_BY_MODIFIER[0] is 64, so every
+    // combined below 64 takes the same first step); a cap of 256 and one of 257 both end at material 9, because the nine
+    // ladder steps before the last sum to 254 and the clamp keeps 256 or 257 within 2..=3 of it.
     let mut combined = js_max(0.0, js_min(256.0, level_mod + random_mod));
     let mut material = 0usize;
+    // mutation: equivalent - the last ladder step (5) only has to be tested while the loop is in range, and the bound
+    // `material < len` never lets an out-of-range index through: `<= len` would read MATERIALS_BY_MODIFIER[10] on the 10th
+    // iteration, but the nine prior steps sum to 254 and the clamp holds `combined` at most 256, so the tenth test is
+    // either false or already out of the search (`material` reaches 10 only after subtracting all nine, leaves 2).
     while material < MATERIALS_BY_MODIFIER.len() && MATERIALS_BY_MODIFIER[material] < combined {
         combined -= MATERIALS_BY_MODIFIER[material];
         material += 1;
@@ -173,6 +184,7 @@ fn coin_flip(r: &mut dyn Rolls) -> bool {
 fn forbidden_armors(career: Option<&Career>) -> u32 {
     let bits = career
         .and_then(|c| c.weapon_armor_shields_bitfield)
+        // mutation: equivalent - the shift right by 6 and the mask 7 discard every bit below 64, so the fallback 0 and 1 both answer 0 for a foe with no career bitfield.
         .unwrap_or(0.0);
     (to_uint32(bits) >> 6) & 0x07
 }
@@ -182,6 +194,11 @@ fn forbidden_armors(career: Option<&Career>) -> u32 {
 const HAND_RIGHT_ONLY: u8 = 1;
 const HAND_LEFT_ONLY: u8 = 2;
 const HAND_EITHER: u8 = 3;
+// mutation: equivalent - each constant is only ever compared with the same constant (`item_hands`'s answer against
+// HAND_BOTH in `leavers_for`/`wear_leavers`, and the `HAND_RIGHT_ONLY | HAND_BOTH` arm of `get_equip_slot`), so aliasing
+// Both onto RightOnly (4 -> 1) changes nothing the arms can mint: the classic weapon rows the arms mint are Either or Both
+// (WEAPON_HANDS never says RightOnly), so no Piece carries HAND_RIGHT_ONLY and the two tests agree. 4 -> 5 or 6 collides
+// with no other constant. 4 -> 0 (None) and 4 -> 2 (LeftOnly) are observable, and the vectors and unit tests kill them.
 const HAND_BOTH: u8 = 4;
 
 /// The settings the equip table and the arms read: the RRI switches and the bow (`BowLeftHandWithSwitching`).
@@ -201,6 +218,9 @@ fn custom(template: f64, ctx: &Ctx) -> Option<crate::vendored::CustomClass> {
 /// unreachable from the enemy arms (their templates are never minted here).
 fn item_hands(p: &Piece, ctx: &Ctx) -> u8 {
     if p.group != Group::Weapons && p.group != Group::Armor {
+        // mutation: equivalent - every `Piece` the arms add is Weapons, Armor or MensClothing (mint_weapon, mint_piece_armour,
+        // mint_clothing), and the callers test `item_hands == HAND_BOTH` / `!= HAND_LEFT_ONLY` after their own group test;
+        // a MensClothing piece therefore only needs an answer that is neither (0 and 1 both are).
         return 0;
     }
     if p.group == Group::Weapons && (p.template == 129.0 || p.template == 130.0) {
@@ -405,17 +425,26 @@ fn get_equip_slot(t: &Table, p: &Piece, ctx: &Ctx) -> f64 {
                 Group::MensClothing => SLOT_RULES
                     .mens_clothing
                     .iter()
+                    // mutation: equivalent - the arm's only clothing piece is MENS_PLAIN_ROBES (163, `mint_clothing`); the
+                    // first row whose key differs is 141 and it names the same slot (ChestClothes) as 163's row, so the
+                    // mutated search still answers ChestClothes.
                     .find(|(k, _)| *k as f64 == p.template)
                     .map(|(_, r)| (r.slot, r.pair)),
                 _ => SLOT_RULES
                     .womens_clothing
                     .iter()
+                    // mutation: equivalent - `mint_clothing` is the arms' only clothing mint and always answers
+                    // Group::MensClothing (the player is absent, so `female` is false, rriEnemyEquipment.js:185/:363); no Piece
+                    // an arm adds is WomensClothing, so this search never runs.
                     .find(|(k, _)| *k as f64 == p.template)
                     .map(|(_, r)| (r.slot, r.pair)),
             };
             match rule {
                 None => EQUIP_SLOTS.none,
                 Some((Some(slot), _)) => slot_named(slot),
+                // mutation: equivalent - the arms' one clothing piece is MENS_PLAIN_ROBES (163), whose row names ChestClothes;
+                // the only pair rows are the cloaks (154, 155, 191, 192) and `mint_clothing` never mints one, so no piece
+                // reaches this arm and `first_slot` is not called.
                 Some((None, Some(pair))) => t.first_slot(slot_named(pair[0]), slot_named(pair[1])),
                 Some((None, None)) => EQUIP_SLOTS.none,
             }
@@ -443,6 +472,9 @@ fn wear_leavers(t: &Table, p: &Piece, slot: f64, ctx: &Ctx) -> Vec<f64> {
         return Vec::new();
     }
     let mut out = Vec::new();
+    // mutation: equivalent - `item_hands` answers HAND_BOTH only for a Weapons piece (the armour rows' hands are 0/LeftOnly,
+    // clothing and any other group 0), so the group conjunct never changes the answer: `p.group != Weapons && hands == BOTH`
+    // and `p.group == Weapons || hands == BOTH` are both false exactly when the hands are not Both.
     if p.group == Group::Weapons && item_hands(p, ctx) == HAND_BOTH {
         out.push(EQUIP_SLOTS.left_hand);
         out.push(EQUIP_SLOTS.right_hand);
@@ -505,13 +537,25 @@ fn armour_max(template: f64, material: f64) -> f64 {
         .and_then(|(_, f)| f.hit_points)
         .unwrap_or(0.0);
     let mut max = hit;
+    // mutation: equivalent, all four on this line. (1) `max > 0`, `max > 1`, `max >= 0`: the armour rows the arms wear
+    // have hit points 512..4096 (102..=112) or none at all (RRI 515..=526), so no piece has 1, and a 0 piece computes
+    // trunc(0 x mult / 4) = 0 under every guard. (2) `material >=` -> `>` differs only at iron (512), whose ladder entry is
+    // 4.0: trunc(max x 4 / 4) is max, exactly what skipping the scale leaves. (3) `&&` -> `||` admits a below-iron material
+    // with a nonzero max (leather 0 or chain 256): `(material - 512) as usize` saturates to 0, table entry 0 is 4.0, and
+    // trunc(max x 4 / 4) is max again -- the same as not scaling.
     if max > 0.0 && material >= AM.iron {
         let mult = if material <= AM.daedric {
             CONDITION_MULTIPLIERS_BY_MATERIAL
                 .get((material - AM.iron) as usize)
                 .copied()
+                // mutation: equivalent - `material` is an ARMOR_MATERIAL value the arms can mint (leather 0 through daedric
+                // 521), so this branch runs only for >= iron and the index is inside the ten-entry table: `get` always
+                // answers and the fallback is never read. (`>=` vs `>` differs only at iron, whose table entry is 4.0, and
+                // trunc(max x 4 / 4) is max: the same as skipping the scale.)
                 .unwrap_or(4.0)
         } else {
+            // mutation: equivalent - unreachable, see the note above: no armour material exceeds daedric, so this `4.0` never
+            // reaches `max` and 4 and 5 answer the same.
             4.0
         };
         max = trunc(max * mult / 4.0);
@@ -727,6 +771,8 @@ fn convert_orcish(e: &Entity, mob: Option<f64>, eq: &mut Rolled, r: &mut dyn Rol
         }
     }
     if let Some(Hand::Item(p)) = eq.left.as_mut() {
+        // mutation: equivalent - a `Hand::Item` in `left` is only ever minted as a weapon: `roll_enemy_equipment`'s else
+        // branch answers `Hand::Shield` or a `Hand::Item` built by `createWeapon` (group Weapons), never an armour piece.
         if p.group == Group::Weapons && orcish(p.material) {
             p.material = WM.orcish;
         }
@@ -768,10 +814,15 @@ fn dex_class_table(mobile: f64, mudex: bool) -> Option<f64> {
         return None;
     }
     let key = format!("{}/{}", u8::from(mudex), mobile as i64);
+    // mutation: equivalent - DEX_EQUIPMENT_TABLE is empty (the generated rows are `props.equipmentTable`, and no mod
+    // registers one: `buildDexEquipment` finds none, and rust-data.mjs asserts templates 513..526 stay unregistered), so
+    // every search answers None for `==` and for `!=` alike, and the pair is the foe's own class either way.
     match DEX_EQUIPMENT_TABLE.iter().find(|(k, _)| *k == key.as_str()) {
         None => Some(mobile),
         Some((_, table)) => {
             let name = table.to_lowercase();
+            // mutation: equivalent - this arm runs only when the search answered Some, and DEX_EQUIPMENT_TABLE is empty
+            // (no mod table is registered), so `name` is never built from a row and the "guard" test is unreachable.
             if name == "guard" {
                 Some(MT.knight_city_watch)
             } else {
@@ -914,6 +965,9 @@ fn classic_piece(slot: &str) -> f64 {
         "Feet" => ARMOR_ENUM.boots,
         "Gloves" => ARMOR_ENUM.gauntlets,
         "Head" => ARMOR_ENUM.helm,
+        // mutation: equivalent - the arm's armour pass calls `armour_slot` with exactly these seven names (assign_class's
+        // ChestArmor, LegsArmor, Feet, Head, RightArm, LeftArm, Gloves, rriEnemyEquipment.js:383-399), so this arm is
+        // unreachable and -1 and 0 answer the same nothing.
         _ => -1.0,
     }
 }
@@ -928,6 +982,8 @@ fn chain_piece(slot: &str) -> f64 {
         "Feet" => 519.0,
         "Gloves" => 524.0,
         "Head" => 522.0,
+        // mutation: equivalent - `chain_piece` is reached only from `dex_armour_template` with the same seven slot names the
+        // armour pass uses (assign_class), so this arm is unreachable and -1 and 0 answer the same nothing.
         _ => -1.0,
     }
 }
@@ -942,6 +998,8 @@ fn leather_piece(slot: &str) -> f64 {
         "Feet" => 523.0,
         "Gloves" => 524.0,
         "Head" => 522.0,
+        // mutation: equivalent - `leather_piece` is reached only from `dex_armour_template` with the seven slot names the
+        // armour pass uses (assign_class), so this arm is unreachable and -1 and 0 answer the same nothing.
         _ => -1.0,
     }
 }
@@ -952,15 +1010,23 @@ fn leather_piece(slot: &str) -> f64 {
 fn mint_clothing(r: &mut dyn Rolls, template: f64) -> Piece {
     let variants = ITEM_TEMPLATE_FACTS
         .iter()
+        // mutation: equivalent - the arm mints only MENS_PLAIN_ROBES (163), whose row exists (variants 2), so the fallback
+        // is never read; and a `!=` search instead lands on row 0 (variants 12), which still draws exactly one roll below.
         .find(|(k, _)| *k as f64 == template)
         .and_then(|(_, f)| f.variants)
+        // mutation: equivalent - the row for 163 carries variants 2, so `and_then` answers Some and no default is read.
         .unwrap_or(0.0);
+    // mutation: equivalent - the row carries variants 2, so `> 0` and `> 1` both draw; the drawn variant is discarded
+    // (a `Piece` holds no variant), so the range's lower end only has to keep the draw, which 0 and 1 both do.
     if variants > 0.0 {
         let _ = range_excl(r, 0.0, variants);
     }
     Piece {
         group: Group::MensClothing,
         template,
+        // mutation: equivalent - a clothing Piece's material is never read: `enemy_armor_values_with` reads a material only
+        // for a non-shield armour piece, and the robes are MensClothing, which `enemyArmorValues` skips (a clothing piece is
+        // not "Armor"); so 0 and 1 answer the same `Piece`.
         material: 0.0,
     }
 }
@@ -978,6 +1044,8 @@ fn mint_weapon(template: f64, material: f64) -> Piece {
 /// `createWeapon(templateIndex, material, rolls)` (enemyEquipment.js:146-180): the arrow draws its stack (one roll).
 fn create_weapon(template: f64, material: f64, r: &mut dyn Rolls) -> Piece {
     if template == ARROW_TEMPLATE {
+        // mutation: equivalent - `stackCount` is a number on a throwaway object the arm drops (createWeapon's answer is
+        // read only for an arrow's draw), so the multiplier's value never reaches a Piece; 20 and 21 both draw one roll.
         let _ = (r.roll() * 20.0).floor();
     }
     mint_weapon(template, material)
@@ -1117,6 +1185,8 @@ fn assign_class(
             add(&mut t, r, ctx, mint_weapon(w2, m2), false);
             // The arrow pile: its stack (CreateWeapon, one roll) and `range(rolls, 4, 17)` (one roll). Never worn.
             let _ = create_weapon(ARROW_TEMPLATE, WM.iron, r);
+            // mutation: equivalent - the pile's `stackCount` is discarded (`items.push(arrowPile)` in the JS, nothing in the
+            // port), so only the one drawn roll matters: 4..17, 5..17 and 4..18 all draw exactly one roll.
             let _ = range_excl(r, 4.0, 17.0);
             armored = 60.0;
         }
@@ -1202,6 +1272,9 @@ fn assign_class(
             let w = random_longblade(r);
             let m = random_material(item_level, r);
             add(&mut t, r, ctx, mint_weapon(w, m), true);
+            // mutation: equivalent - `cls_of`'s table names every class id (128..=146), and `dex_class_table` answers the
+            // foe's own id because the DEX table is empty (see the note there); so `cls_id` is never None and `Cls::Unknown`
+            // is never selected: this arm's armoured value feeds no armour-pass decision.
             armored = 50.0;
         }
     }
@@ -1226,6 +1299,9 @@ fn assign_class(
         armour_slot(&mut t, r, ctx, item_level, career.as_ref(), "Head");
     }
     armored -= 20.0;
+    // mutation: equivalent - `armored` starts at 100, 90, 80, 75, 65, 60, 50, 35 or 30 and the four steps below subtract
+    // 10+10+10+20, so the value here is start - 50: 50, 40, 30, 25, 15, 10, 0, -15 or -20. None is 1, so `> 0` and `> 1`
+    // admit exactly the same classes (the sneaky arm's 0 and the barbarian's -20 stay out either way).
     if armored > 0.0 {
         if dice100(armored, r.roll()) {
             armour_slot(&mut t, r, ctx, item_level, career.as_ref(), "RightArm");
@@ -1316,6 +1392,8 @@ pub fn entity_of(t: &Target) -> Entity {
         mobile_type: t.mobile_type,
         is_class: t.is_class == Some(true),
         level: t.level,
+        // mutation: equivalent - every Target the arms read comes from `make_target`, which fills seven armour values
+        // (`f.armor_values.unwrap_or_else(|| vec![0.0; 7])`), so `first()` is always Some and the fallback is never read.
         armor: t.armor_values.first().copied().unwrap_or(0.0),
         career: if t.has_career { Some(t.career) } else { None },
         team: t.basics.and_then(|b| b.team),
@@ -1341,6 +1419,8 @@ pub fn equip_armour_descriptors(
 /// are worn (`equipArmour`), and the target's armour values are the loadout's. A target with no variant is unchanged.
 /// `player_level` `None` is `target.level ?? 1` (the JS default).
 pub fn gear_enemy(target: &mut Target, boot: &Boot, player_level: Option<f64>, r: &mut dyn Rolls) {
+    // mutation: equivalent - every Target the gear vectors read comes from `make_target`, which sets `level` (`Some(level)`,
+    // default 1), so `target.level` is always Some and the `1.0` fallback is never read.
     let pl = player_level.unwrap_or_else(|| target.level.unwrap_or(1.0));
     let Some(variant) =
         equipment_variant_for(target.career_index, target.is_class == Some(true), r)
@@ -1348,6 +1428,9 @@ pub fn gear_enemy(target: &mut Target, boot: &Boot, player_level: Option<f64>, r
         return;
     };
     let e = entity_of(target);
+    // mutation: equivalent - `assign_rri_enemy_equipment` (the only reader) passes `mudex` straight to `dex_class_table`,
+    // whose `!=` search over the empty DEX_EQUIPMENT_TABLE answers None for either bit, and the class is the foe's own id
+    // in both cases; so the two rows are the same table set, as the module doc says (`dexInstall.js:190` with no DEX rows).
     let mudex = boot.enemy_expansion && boot.meaner_monsters;
     let delegated = if boot.enemy_expansion {
         assign_rri_enemy_equipment(&e, Some(variant), pl, mudex, boot, r)
@@ -1453,6 +1536,42 @@ mod tests {
         let shield = item("Armor", 112.0, None);
         assert!(!can_hold_main_hand(&shield, &ctx()));
         assert!(can_hold_main_hand(&one, &ctx()));
+    }
+
+    /// LOCAL INVARIANT: the Piece form of the hand law (`item_hands`), which the arms read, agrees with the whole-item form
+    /// and reads the bow setting: 129/130 are LeftOnly with `BowLeftHandWithSwitching` and Both without
+    /// (characters/equipTable.js:43-51). The vectors run the shipped boot only (both hands), so this pins the other setting;
+    /// a minted bow takes the same branch either way, so the rest of the row set is pinned once.
+    #[test]
+    fn the_piece_hand_law_reads_the_bow_setting() {
+        let both = ctx();
+        let left_bow = Ctx {
+            bow_left_hand: true,
+            ..both
+        };
+        let piece = |group: Group, template: f64| Piece {
+            group,
+            template,
+            material: 0.0,
+        };
+        for bow in [129.0, 130.0] {
+            assert_eq!(item_hands(&piece(Group::Weapons, bow), &both), HAND_BOTH);
+            assert_eq!(
+                item_hands(&piece(Group::Weapons, bow), &left_bow),
+                HAND_LEFT_ONLY
+            );
+        }
+        // The classic rows beside it, and a group with no hands at all.
+        assert_eq!(
+            item_hands(&piece(Group::Weapons, 113.0), &both),
+            HAND_EITHER
+        );
+        assert_eq!(item_hands(&piece(Group::Weapons, 115.0), &both), HAND_BOTH);
+        assert_eq!(
+            item_hands(&piece(Group::Armor, 109.0), &both),
+            HAND_LEFT_ONLY
+        );
+        assert_eq!(item_hands(&piece(Group::Armor, 102.0), &both), 0);
     }
 
     /// LOCAL INVARIANT: the player-facing hand law over every row the game's tables hold, at both bow settings, so the

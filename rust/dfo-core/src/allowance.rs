@@ -43,17 +43,23 @@ pub struct Phase {
     pub shield_s: f64,
 }
 
-/// `BREACH_PHASES` (`:43-46`; gateBrain.js:328-329).
-pub const BREACH_PHASES: [Phase; 2] = [
-    Phase {
-        at: 0.66,
-        shield_s: 3.0,
-    },
-    Phase {
-        at: 0.33,
-        shield_s: 3.0,
-    },
-];
+/// `BREACH_PHASES` (`:43-46`; gateBrain.js:328-329). The fractions and the ward are the generated rows
+/// (`generated::allowance`, from the real JS): never hand-copied here.
+pub const BREACH_PHASES: [Phase; 2] = {
+    let [a, b] = crate::generated::allowance::BREACH_PHASES else {
+        panic!("generated BREACH_PHASES has two phases")
+    };
+    [
+        Phase {
+            at: a.0,
+            shield_s: a.1,
+        },
+        Phase {
+            at: b.0,
+            shield_s: b.1,
+        },
+    ]
+};
 
 /// `refOf(level)` (`:49`): `5 + clamp(floor(Number(level) || 1), 1, 60)`.
 pub fn ref_of(level: f64) -> f64 {
@@ -393,6 +399,9 @@ pub fn simulate_allowance(p: &SimParams) -> Option<Run> {
     let ttk = if killed {
         Some(
             or_default(p.opening_s, 0.0)
+                // mutation: equivalent - `immune` is clamped to [0, 0.95] just above, so `1.0 - immune` is in
+                // [0.05, 1.0] and every floor this line could hold (1e-9, 1e-10, ...) is far below 0.05: js_max
+                // never picks it, so changing the constant cannot change any reachable ttk.
                 + t / js_max(1e-9, 1.0 - immune)
                 + js_max(0.0, p.split_penalty_s),
         )
@@ -534,6 +543,22 @@ mod tests {
         assert_eq!(l.cap, 180.0);
         assert_eq!(l.hit_hz, 4.0);
         assert_eq!(l.share, Some(3600.0));
+    }
+
+    /// The JS defaults of `simulateAllowance` (`src/allowance.js:134`), which `SimParams::new` must carry: only a
+    /// hand-built `SimParams` that skips a default can observe these, so no vector can pin them.
+    #[test]
+    fn sim_params_new_keeps_the_js_defaults() {
+        let law = allowance_law(1.0);
+        let p = SimParams::new(100.0, law, &[]);
+        assert_eq!(p.opening_s, 0.0);
+        assert_eq!(p.split_penalty_s, 0.0);
+        assert_eq!(p.max_seconds, 3600.0);
+        assert_eq!(p.burst_window_s, 5.0);
+        assert!(p.phases.is_empty());
+        assert_eq!(p.immunity_share, None);
+        assert!(p.fresh);
+        assert!(p.per_claim_at.is_none());
     }
 
     #[test]

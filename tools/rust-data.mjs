@@ -69,6 +69,7 @@ import * as gemGrades from '../vendor/upstream/a3eb1605/src/systems/loot/gemGrad
 import * as thunderlockIds from '../vendor/upstream/a3eb1605/src/characters/thunderlockIds.js';
 import { HAND_WRAPS_TEMPLATE } from '../vendor/upstream/a3eb1605/src/characters/handWrapsIds.js';
 import { REGISTERED_ENCHANTMENT_TYPES, POTENT_VS_FLAT, PROCS_BEFORE_BREAK_BASIS, ENCHANTMENT_TYPES } from '../src/enchants.js';
+import { BREACH_PHASES } from '../src/allowance.js';
 import * as spells from '../src/spells.js';
 import { RELAY_BOSSES } from '../src/bossTraits.js';
 import { MENTOR_SKILL_BASELINE } from '../vendor/upstream/a3eb1605/src/systems/mentorMode.js';
@@ -501,6 +502,10 @@ const SOURCES = [  { file: 'data', from: 'src/data.js', mod: data, names: null }
   { file: 'firmament', from: 'vendor/firmament and src/enchantPlan.js (R5d)', mod: buildFirmamentTables(),
     names: ['SIGNS', 'SERPENT', 'START_KEYS', 'ATTR_KEYS', 'FIRM_NODES', 'FIRM_ADJ', 'FIRM_EDGES', 'STAT_DEF_ROWS', 'STAT_WORDS', 'BUILDS', 'SLOT_NAMES', 'ARMOR', 'SHIELD_DEFAULT', 'JEWELRY', 'GROUP_PARAM', 'ONE_PIECE', 'STACKS', 'WEAPON_ONLY', 'SOUL_GEM_POINTS', 'FIRMAMENT_STARS', 'MAX_RUN_SCENARIO'] },
   { file: 'hands_law', from: `${V}/combat/twoHands/handsLaw.js`, mod: handsLaw, names: ['DUAL', 'OFF_HAND_BLOW', 'FLURRY_WINDOW'] },
+  // The relay's own constants (src/allowance.js:37,43-46). BREACH_PHASES is a list of objects, so it is emitted as rows.
+  { file: 'allowance', from: 'src/allowance.js (BREACH_PHASES)', mod: {
+    BREACH_PHASES: BREACH_PHASES.map((p) => [p.at, p.shieldS]),
+  }, names: ['BREACH_PHASES'] },
   // R3b
   { file: 'mint_rows', from: `${V}/characters/meanerMonsters.js (target.js mintRow over boot codes 0..7 x classic ids)`, mod: { MINT_ROWS: buildMintRows(), STAND_IN_BASICS: Object.fromEntries(MINT_IDS.filter(id => mintRow(id) !== null).map(id => [id, encodeValue(mintRow(id))])), GATE_BODY_LEVEL }, names: ['MINT_ROWS', 'STAND_IN_BASICS', 'GATE_BODY_LEVEL'], force: true },
   { file: 'dex_equipment', from: `${V}/systems/enemyExpansion/dexInstall.js (classic props.equipmentTable, per mudex)`, mod: { DEX_EQUIPMENT_TABLE: buildDexEquipment() }, names: ['DEX_EQUIPMENT_TABLE'], hints: { DEX_EQUIPMENT_TABLE: { t: 'skeyed', of: { t: 'str' } } } },

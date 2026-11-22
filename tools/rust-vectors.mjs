@@ -537,6 +537,12 @@ function genAllowance() {
   for (let i = 0; i < 150; i++) builds.push(randomBuild(R));
   for (const hit of [0.5, 1, 0.0001]) builds.push({ level: 10, players: 1, hit, aps: 2, cappedPerSwing: 100, cap: 50, procs: [{ name: 'a', damage: 10, dotTick: 3 }, { name: undefined, damage: 0, dotTick: 4 }], withProcs: true });
   builds.push({ level: 10, players: 1, hit: 0.5, aps: 2, cappedPerSwing: 100, cap: 0, procs: [{ name: 'a', damage: 10, dotTick: 3 }], withProcs: false });
+  // Exactly at the small guards: a positive per-swing below 1, a cap below 1, a single proc worth
+  // below 1 and a dot sum below 1 all still produce their stream (`!(per > 0)`, `cap > 0`, `instant > 0`, `dot > 0`).
+  builds.push({ level: 10, players: 1, hit: 0.5, aps: 2, cappedPerSwing: 0.5, cap: 0, procs: [], withProcs: false });
+  builds.push({ level: 10, players: 1, hit: 1, aps: 2, cappedPerSwing: 100, cap: 0.5, procs: [], withProcs: false });
+  builds.push({ level: 10, players: 1, hit: 1, aps: 2, cappedPerSwing: 100, cap: 0, procs: [{ name: 'p', damage: 0.5, dotTick: 0 }], withProcs: true });
+  builds.push({ level: 10, players: 1, hit: 1, aps: 2, cappedPerSwing: 100, cap: 0, procs: [{ name: 'p', damage: 0, dotTick: 0.5 }], withProcs: true });
   for (const b of builds) {
     const s = claimStreams({ cappedPerSwing: b.cappedPerSwing, hit: b.hit, aps: b.aps, procs: b.procs, cap: b.cap, withProcs: b.withProcs });
     out.add('streams', F(b.cappedPerSwing), F(b.hit), F(b.aps), F(b.cap), B(b.withProcs), I(b.procs.length),
@@ -554,6 +560,27 @@ function genAllowance() {
   }
   for (const st0 of [[], [{ perClaim: 10, interval: 1 }], [{ perClaim: 10, interval: 0.1 }, { perClaim: 1, interval: 0.1 }], [{ perClaim: 0, interval: 5 }], [{ perClaim: 5, interval: 0 }]]) {
     const law = laws[1];
+    const st = steadyState(st0, law);
+    out.add('steady', F(law.depth), F(law.rate), F(law.cap), F(law.hitHz), ...streamTokens(st0), '=>', F(st.offeredDps), F(st.claimsPerSecond), F(st.claimLimitedDps), F(st.refill), F(st.sustainedDps), B(st.saturated));
+  }
+  // Exactly saturated: one claim a second worth the refill makes claimLimitedDps equal rate, where `>` and `>=` differ.
+  for (const law of [{ depth: 90, rate: 18, cap: 72, hitHz: 4 }, { depth: 90, rate: 18, cap: 72, hitHz: 1 }]) {
+    const st0 = [{ perClaim: law.rate, interval: 1 }];
+    const st = steadyState(st0, law);
+    out.add('steady', F(law.depth), F(law.rate), F(law.cap), F(law.hitHz), ...streamTokens(st0), '=>', F(st.offeredDps), F(st.claimsPerSecond), F(st.claimLimitedDps), F(st.refill), F(st.sustainedDps), B(st.saturated));
+  }
+  // Exactly at the claim-rate bucket: claims/s equal hitHz makes the thinning ratio exactly 1.
+  {
+    const law = laws[1];
+    const st0 = [{ perClaim: 10, interval: 0.25 }];
+    const st = steadyState(st0, law);
+    out.add('steady', F(law.depth), F(law.rate), F(law.cap), F(law.hitHz), ...streamTokens(st0), '=>', F(st.offeredDps), F(st.claimsPerSecond), F(st.claimLimitedDps), F(st.refill), F(st.sustainedDps), B(st.saturated));
+  }
+  // No claims at all with a zero token rate: claims/s and hitHz are both 0, so `claimsPerS > hitHz` is false and the
+  // ratio is 1 (a `>=` test would take 0 / 0 = NaN and report a NaN ceiling).
+  {
+    const law = { depth: 90, rate: 18, cap: 72, hitHz: 0 };
+    const st0 = [];
     const st = steadyState(st0, law);
     out.add('steady', F(law.depth), F(law.rate), F(law.cap), F(law.hitHz), ...streamTokens(st0), '=>', F(st.offeredDps), F(st.claimsPerSecond), F(st.claimLimitedDps), F(st.refill), F(st.sustainedDps), B(st.saturated));
   }
@@ -608,6 +635,35 @@ function genAllowance() {
   boundary.push(base({ share: 100, law: wide, streams: [{ perClaim: 10, interval: 1, start: 1 }], phases: [{ at: 0.66, shieldS: 1 }, { at: 0.66, shieldS: 0 }] }));
   boundary.push(base({ share: 100, law: wide, streams: [{ perClaim: 10, interval: 0.25, start: 0.25 }], phases: [{ at: 0.5, shieldS: 1 }] }));
   for (const c of boundary) { c.kind = 'simulate_shield_end'; simCases.push(c); }
+
+  // The small guards and epsilons (src/allowance.js:143,163-208,180-210). Each case puts one comparison or
+  // constant exactly on its boundary, so flipping it changes a published field.
+  // share > 0: a share below 1 is still a run (the guard is `!(total > 0)`).
+  simCases.push(base({ share: 0.5, law: wide, streams: [{ perClaim: 0.5, interval: 1, start: 1 }] }));
+  // hp boundary and loop epsilon: hp lands on exactly 1e-9 (2e-9 - 1e-9 is exact) and inside (1e-9, 1e-8].
+  simCases.push(base({ share: 2e-9, law: wide, streams: [{ perClaim: 1e-9, interval: 1, start: 1 }] }));
+  simCases.push(base({ share: 1e-8, law: wide, streams: [{ perClaim: 5e-9, interval: 1, start: 1 }] }));
+  // t < maxSeconds: a claim exactly at maxSeconds is inside the loop only for the `<=` mutant.
+  simCases.push(base({ share: 1000, law: wide, maxSeconds: 2, streams: [{ perClaim: 10, interval: 1, start: 1 }] }));
+  // stream merge tolerance 1e-12: pairs whose starts differ by exactly 1e-12, 1e-13 and a few adjacent doubles.
+  for (const [a, b] of [[0, 1e-12], [1e-12, 2e-12], [1e-13, 2e-13], [1e-13, 6e-13], [0.5, 0.5 + 5e-13], [0.5, 0.5 + 2e-12]]) {
+    simCases.push(base({ share: 1e6, law: wide, streams: [{ perClaim: 10, interval: 1, start: a }, { perClaim: 1000, interval: 1, start: b }] }));
+  }
+  // The merge tolerance itself: the later stream's next time is exactly 1e-12 after the first's (1e-12 - 0 is exact), so
+  // `next[i] < next[k] - 1e-12` is false and stream 0 claims; a 1e-13 tolerance picks the larger stream 1 at t = 0.
+  simCases.push(base({ share: 1e6, law: wide, streams: [{ perClaim: 1, interval: 1, start: 1e-12 }, { perClaim: 1000, interval: 1, start: 0 }] }));
+  // dryAt: the shortage against the refilled bucket is exactly 1e-9 (not dry) and 5e-10 (dry).
+  simCases.push(base({ share: 1e6, law: { depth: 1e-9, rate: 100, cap: 1, hitHz: 4 }, streams: [{ perClaim: 2e-9, interval: 1, start: 1 }] }));
+  simCases.push(base({ share: 1e6, law: { depth: 1.5e-9, rate: 100, cap: 1, hitHz: 4 }, streams: [{ perClaim: 2e-9, interval: 1, start: 1 }] }));
+  // `hp <= total * at` at equality: 100 - 50 is exactly 50, so the phase raises at its fraction. The stream keeps
+  // claiming through the ward, so the `<=`/`<` difference moves fight time, refusals and ttk, not only a later ward.
+  simCases.push(base({ share: 100, law: wide, streams: [{ perClaim: 50, interval: 0.5, start: 0.5 }], phases: [{ at: 0.5, shieldS: 1 }] }));
+  // the same cross with the claim before the ward and the kill on its end, so a ward raised one claim late is visible
+  simCases.push(base({ share: 200, law: wide, streams: [{ perClaim: 50, interval: 0.5, start: 0.5 }], phases: [{ at: 0.75, shieldS: 1 }] }));
+  // a phase with a zero ward: its shield adds no time (`Number(shieldS) || 0`).
+  simCases.push(base({ share: 100, law: wide, streams: [{ perClaim: 50, interval: 1, start: 1 }], phases: [{ at: 0.5, shieldS: 0 }] }));
+  // landedShare for a claimed total below 1: 0.5 / 0.5 is 1, not 0.
+  simCases.push(base({ share: 100, law: wide, streams: [{ perClaim: 0.5, interval: 1, start: 1 }] }));
 
   for (let i = 0; i < 160; i++) {
     const b = randomBuild(R);
@@ -667,6 +723,11 @@ function genAllowance() {
   runCases.push({ level: 30, share: 5000, spec: allowanceSpec(30, {}), streams: [{ perClaim: 100, interval: 0.5, start: 0.5 }], fresh: true, split: 0 });
   runCases.push({ level: 30, share: 5000, spec: allowanceSpec(30, { openingS: 0, immunityShare: 0 }), streams: [{ perClaim: 100, interval: 0.5, start: 0.5 }], fresh: true, split: 0 }); // ttk path
   runCases.push({ level: 30, share: 5000, spec: undefined, streams: [{ perClaim: 100000, interval: 0.5, start: 0 }], fresh: true, split: 0 }); // first claim at t=0: ttk may be 0 (falsy)
+  // ttk exactly 1: one claim at t=1 kills (share 60 <= the level-1 cap 72), with no opening, immunity or split penalty,
+  // so `share / ttk` is well defined; `ttk == 1` is truthy in JS, so the mutant that drops only ttk == 0 lands.
+  runCases.push({ level: 1, share: 60, spec: allowanceSpec(1, { immunityShare: 0 }), streams: [{ perClaim: 60, interval: 1, start: 1 }], fresh: true, split: 0 });
+  // ttk exactly 0 (falsy): a claim at t=0 over the whole share, so averageDps must be null.
+  runCases.push({ level: 1, share: 60, spec: allowanceSpec(1, { immunityShare: 0 }), streams: [{ perClaim: 60, interval: 0.5, start: 0 }], fresh: true, split: 0 });
   for (const c of runCases) {
     const r = runAllowance({ level: c.level, share: c.share, spec: c.spec, streams: c.streams, fresh: c.fresh, splitPenaltyS: c.split });
     const sp = c.spec;
@@ -1950,12 +2011,15 @@ async function genMaketarget() {
   for (let id = 128; id <= 146; id++) GEAR_BOUND.push({ id, code: 7, L: 9, pl: undefined, indexed: id <= 131 });
   for (const id of [135, 139, 146, 141]) GEAR_BOUND.push({ id, code: 5, L: 37, pl: undefined });
   for (const id of [0, 6, 7, 8, 12, 21, 24]) GEAR_BOUND.push({ id, code: 7, L: undefined, pl: 9 });
+  // A career that forbids plate puts the DEX copy's chain or leather set (RRI rows 515..=526) in the armour slots:
+  // `dex_armour_template` reads `(bitfield >> 6) & 7` = Plate (4), so bitfield 256 forbids plate alone.
+  for (const id of [128, 143, 146]) GEAR_BOUND.push({ id, code: 7, L: 9, pl: undefined, career: { weaponArmorShieldsBitfield: 256 } });
   for (const b of GEAR_BOUND) {
-    probeBase('bgear', [F(b.id), I(b.code), O(b.L), O(b.pl), '-'],
+    probeBase('bgear', [F(b.id), I(b.code), O(b.L), O(b.pl), ...careerTokens(b.career ?? null)],
       (rolls) => {
         let target;
         try {
-          target = enemyTarget(b.id, { playerLevel: b.L, exactLevel: true, boot: bootOfCode(b.code) });
+          target = enemyTarget(b.id, { playerLevel: b.L, career: b.career ?? undefined, exactLevel: true, boot: bootOfCode(b.code) });
         } catch (e) {
           return refused(e);
         }

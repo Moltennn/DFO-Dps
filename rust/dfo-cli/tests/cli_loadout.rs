@@ -309,7 +309,15 @@ fn shortlist_json_matches_the_js() {
     );
     // `--samples` keeps every row's `detail`; off, it is pruned. Both are pinned.
     same_json(
-        &["loadout", "--shortlist", "1", "--max-blows", "20", "--json"],
+        &[
+            "loadout",
+            "--shortlist",
+            "1",
+            "--max-blows",
+            "20",
+            "--samples",
+            "--json",
+        ],
         &root,
     );
     same_json(
