@@ -26,12 +26,13 @@ what this repository cannot execute.
 
 `dfo-cli` (`rust/dfo-cli`) is the R8 CLI slice: the JS `src/cli.js` `build` card, `saves` listing, `doctor` summary,
 `rank` path, `compare` table, Combat Probe `probe` page, `graph` page, `src/report.js` `report` page, the
-`src/firmament.js` `firmament` plans page, the `imprints` rankings page and the `enchant` weapon card, for the level-45
-theory character or for an imported save. It is a thin layer: the parser owns argument text, the output formats
+`src/firmament.js` `firmament` plans page, the `imprints` rankings page, the `enchant` weapon card and the `tradeoff`
+speed-vs-damage card, for the level-45 theory character or for an imported save. It is a thin layer: the parser owns
+argument text, the output formats
 (`printBuild`'s card,
 `printRank`'s table, `--json`'s summary
 and `{ character, weapons, current }`, `doctor`'s plain lines, the two SVG pages, the report page, the firmament
-plans page, the imprint card and the enchant card) and exit codes; every number comes from `dfo_core`
+plans page, the imprint card, the enchant card and the tradeoff card) and exit codes; every number comes from `dfo_core`
 (`theory_character`, `Profiles::legal_gear`, `reference_foe`/`boss_target`/`gate_target`/`encounter_target`,
 `analyze`/`marginals`/`rank_affixes`/`rank_weapons`, `current_weapon_row`, `imprints::rank_all`,
 `save::character_from_save`,
@@ -97,6 +98,17 @@ plans page, the imprint card and the enchant card) and exit codes; every number 
   written. `dfo-cli/tests/cli_enchant.rs` pins the whole command against the JS CLI (theory variants, text and `--json`,
   a save with no weapon, an armed save with and without a book, a nonzero Cast When Strikes price over a synthetic temp
   `SPELLS.STD`, and the flag refusals).
+- **The tradeoff card.** `dfo-cli tradeoff [--theory] [--save ...] [options] [--json]` (`src/cli.js:2204-2252`) prices
+  `+5%` attack speed against `+5%` weapon damage over the Breach gate and five Curbing reference pools, then the top
+  five weapons at the gate and at 1,000 HP, then the best weapon at twelve Curbing healths (the speed/damage crossover).
+  The rows are `src/tradeoff.rs` `tradeoff::text`/`tradeoff::document` (pure data in and strings out, pinned by
+  `tests/tradeoff.rs`); every number is the shared `analyze`/`gate_target`/`boss_target`/`rank_weapons`. The branch
+  never resolves `--target` through `targetOf`: each pool's `scenarioOf(ch, values, traits, t)` is overwritten at
+  `target`, `health` and `traits` (`:2218`), so `--target`/`--health`/`--armor` change no pool number, `--level` only
+  moves the theory character, and `--blow-x`/`--players` move the gate's cap and pool. A save's `--weapon` override
+  still rides the scenario. `dfo-cli/tests/cli_tradeoff.rs` pins the whole command against the JS CLI (theory text and
+  `--json`, that override assertion, the shared scenario flags, an offline save, a live save with and without a
+  synthetic `SPELLS.STD`, and the refusals).
 - **The launcher spellbook.** `saves::arena2_dir` reads `config.json`'s `arena2Path` and `saves::load_spellbook` opens
   `SPELLS.STD` read-only, handing the bytes to `dfo_core::spells::read_spells_std`/`spells_by_index_map`
   (`src/save.js:28-40`, `src/spells.js:72-93`). `build` and `rank` use that book for Cast When Strikes, so a save's
@@ -147,14 +159,19 @@ plans page, the imprint card and the enchant card) and exit codes; every number 
   `enchant` command against the JS: the theory card and `--json` document across targets, potency/pierce/traits/core/
   level/weapon/blade/race, a save with no weapon (the JS line, exit 0), an armed save with an empty book and with a
   synthetic temp `SPELLS.STD` (a nonzero Cast When Strikes price), and the `--out`/`--data`/extra-positional refusals.
+  `dfo-cli/tests/cli_tradeoff.rs` runs the whole `tradeoff` command against the JS the same way: theory text and
+  `--json`, a direct check that `--target`/`--health`/`--armor` leave the pools byte-identical while `--blow-x` moves
+  the gate cap, the shared scenario flags, an offline save, a live save with and without a synthetic `SPELLS.STD`, and
+  the `--out`/`--target`/`--core`/`--sort`/`--swing`/`--traits`/extra-positional refusals.
   A missing `node` fails the tests rather than skipping them.
 
-The rest of `src/cli.js` (the other page commands, `tradeoff`, `theory`, `spell`, `weapons`,
+The rest of `src/cli.js` (the other page commands, `theory`, `spell`, `weapons`,
 `enchant-plan`, `loadout`, `real-dps`) is still unported. `src/graph.js` is ported (`src/graph.rs`) and
 wired into `probe`, `graph`, `report`, `firmament` and `imprints`; `src/report.js` is ported (`src/report.rs`) and
 wired into `report`; `src/firmament.js`'s page is ported (`dfo-cli/src/firmament.rs`) and wired into `firmament`;
 `src/imprints.js`'s rows are `dfo_core::imprints`, rendered by `dfo-cli/src/imprints.rs` and wired into `imprints`;
-`src/cli.js`'s `enchant` branch is rendered by `dfo-cli/src/enchant.rs` and wired into `enchant`.
+`src/cli.js`'s `enchant` branch is rendered by `dfo-cli/src/enchant.rs` and wired into `enchant`; its `tradeoff` branch
+is rendered by `dfo-cli/src/tradeoff.rs` and wired into `tradeoff`.
 `--data`
 (an explicit ARENA2 directory) and nested custom spell records are not ported; the launcher lookup above is the only
 spellbook source.

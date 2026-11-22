@@ -1,11 +1,11 @@
 //! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves`, `build`, `objective`, `rank`, `compare`, `scale`,
-//! `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints` and `enchant` slice).
+//! `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant` and `tradeoff` slice).
 //!
 //! This is the JS `src/cli.js` `build` card, `objective` command, `rank` card, `compare` card, `scale` curve, `saves`
-//! listing, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints` and `enchant`, and only that: [`main`] parses
-//! the flags those read, replays the JS validation (`numFlag`, the enum checks, `sampledOptions`) with the same messages,
-//! builds either the level-45 theory character or the one an imported save describes, the target and the scenario, then
-//! prints `printBuild`,
+//! listing, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant` and `tradeoff`, and only that:
+//! [`main`] parses the flags those read, replays the JS validation (`numFlag`, the enum checks, `sampledOptions`) with
+//! the same messages, builds either the level-45 theory character or the one an imported save describes, the target and
+//! the scenario, then prints `printBuild`,
 //! `printObjective`, `printRank`, the `compare` table, `printScale` or `{ character, weapons, current }` as `--json`
 //! does. `build --json` prints `summary()` and `objective --json` prints the evaluated row; `build`'s text card is
 //! `printBuild` with the what-ifs the JS runs after it. `compare` is the table `compare` prints after applying `--stat`
@@ -61,6 +61,7 @@ mod imprints;
 mod probe;
 mod report;
 mod saves;
+mod tradeoff;
 
 use std::collections::HashMap;
 use std::process::ExitCode;
@@ -87,7 +88,7 @@ use dfo_core::theory::theory_character;
 use dfo_core::value::{number_to_string, obj_table_get, string_to_number, Value, Value::*};
 
 const HELP: &str = "\
-dfo-cli - the saves, build, objective, rank, compare, doctor, probe, graph, report and firmament slice of dfo-dps (Rust core)
+dfo-cli - the saves, build, objective, rank, compare, doctor, probe, graph, report, firmament, imprints, enchant and tradeoff slice of dfo-dps (Rust core)
 
 Usage:
   dfo-cli saves
@@ -108,6 +109,7 @@ Usage:
   dfo-cli firmament [--build <id,...>] [--stars <n>] [--refresh] [--json] [--out <file>]
   dfo-cli imprints [--family <key>] [--sort <boss|uncapped|conditional>] [--uncapped] [--cap-aware] [--vampire] [--firmament] [--json] [--out <file>]
   dfo-cli enchant [--theory] [--save <slot|folder|path>] [options] [--json]
+  dfo-cli tradeoff [--theory] [--save <slot|folder|path>] [options] [--json]
 
 `saves` lists the save folders under the DFO user-data folder (newest first). `doctor` prints the model pin, the
 save folders and the imported character's build/ruleset summary. `build` prices one build against one target: with
@@ -132,7 +134,9 @@ one in `.cache/firmament-plans.json`. `imprints` ranks every Weapon Legendary's 
 weapon (or the one `--family` names), writes `imprints.html` (or `--out`, also create-only) and prints the JS
 `imprints page written:` line, or the `--json` rows instead; the order is `--uncapped`, then `--cap-aware` (boss), then
 `--sort`. `enchant` prints the equipped weapon's enchantment rows and its Cast When Strikes price (the same card as the
-JS), text or `--json`; no save with a weapon prints the JS `No weapon equipped.` line and exits 0.
+JS), text or `--json`; no save with a weapon prints the JS `No weapon equipped.` line and exits 0. `tradeoff` prices
++5% attack speed against +5% weapon damage over the Breach gate and five Curbing pools, then the top weapons and the
+speed/damage crossover by boss health (`--target`/`--health`/`--armor` do not reach those fixed pools).
 
 Flags:
   --save <SAVE4|folder|SaveData.txt>  the save to import (default: the newest under the user-data folder)
@@ -318,6 +322,13 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         check_output_flags(&command, &parsed)?;
         return enchant_command(&values);
     }
+    if command == "tradeoff" {
+        if let Some(extra) = parsed.positionals.get(1) {
+            return Err(usage(format!("unexpected positional argument \"{extra}\"")));
+        }
+        check_output_flags(&command, &parsed)?;
+        return tradeoff_command(&values);
+    }
     if command == "scale" {
         if let Some(extra) = parsed.positionals.get(1) {
             return Err(usage(format!("unexpected positional argument \"{extra}\"")));
@@ -353,7 +364,7 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         ];
         return Err(if COMMANDS.contains(&command.as_str()) {
             usage(format!(
-                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank`, `compare`, `scale`, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints` and `enchant`"
+                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank`, `compare`, `scale`, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant` and `tradeoff`"
             ))
         } else {
             usage(format!("unknown command \"{command}\"\n\n{HELP}"))
@@ -375,8 +386,9 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
 
 /// `checkOutputFlags` (`src/cli.js:885-898`): reject a flag the command would ignore instead of accepting it silently.
 /// The commands of this slice (`build`, `rank`, `compare`, `scale`, `saves`, `doctor`, `probe`, `graph`, `report`,
-/// `firmament`, `imprints`, `enchant`): `probe`, `graph`, `report`, `firmament` and `imprints` write a page, and `build`,
-/// `rank`, `objective`, `scale`, `probe`, `graph`, `firmament`, `imprints` and `enchant` read `--json`.
+/// `firmament`, `imprints`, `enchant`, `tradeoff`): `probe`, `graph`, `report`, `firmament` and `imprints` write a page,
+/// and `build`, `rank`, `objective`, `scale`, `probe`, `graph`, `firmament`, `imprints`, `enchant` and `tradeoff` read
+/// `--json`.
 fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
     const FILE_COMMANDS: &str = concat!(
         "report, spells, weapons, skills, firmament, imprints, probe, enchant-plan, gear-plan, loadout, ",
@@ -2281,6 +2293,48 @@ fn enchant_command(values: &Values) -> Result<String, CliError> {
         ));
     }
     Ok(enchant::text(&ch, item, &strike, &card))
+}
+
+/// `dfo-dps tradeoff` (`src/cli.js:2204-2252`): speed vs damage over the Breach gate and five Curbing pools, text or
+/// `--json`. The pools, the verdict text and the crossover are [`tradeoff`]'s; this owns the character, the base
+/// scenario and the two flags the gate carries.
+///
+/// The branch never calls `targetOf`: it builds `scenarioOf(ch, values, traits, t)` per pool with that pool's own
+/// target, then overwrites `target`, `health` and `traits` (`src/cli.js:2218`). So `--target`, `--health` and
+/// `--armor` do not reach the pools (they are overridden), and `--level` only moves the theory character; the fields
+/// that do reach them are the shared scenario options and a save's `--weapon`. The gate's level is `ch.level`, not
+/// `n(values.level, ch.level)` (`src/cli.js:2207`).
+fn tradeoff_command(values: &Values) -> Result<String, CliError> {
+    let book = saves::load_spellbook();
+    let ch = character(values, &book)?;
+    let players = values.num("players", 1.0);
+    let blow_x = values.num("blow-x", 1.0);
+    let gate = gate_target(
+        ch.get("level"),
+        &obj([("players", Num(players)), ("blowX", Num(blow_x))]),
+    );
+    // The per-pool spread replaces `target`, `health` and `traits`, so any target prices the same shared options; the
+    // gate body is the one the branch names. A save's `--weapon` still rides the scenario (`src/cli.js:559`).
+    let mut scenario = scenario_of(&ch, values, &values.traits, &gate);
+    if !values.theory {
+        if let Some((tpl, mat)) = values.weapon {
+            scenario.set("weapon", synthetic_weapon(&Num(tpl), &Num(mat), values.rri));
+        }
+    }
+    if values.json {
+        return Ok(format!(
+            "{}\n",
+            json(&tradeoff::document(&ch, &scenario, players, blow_x, &book))
+        ));
+    }
+    Ok(tradeoff::text(
+        &ch,
+        &scenario,
+        &values.core,
+        players,
+        blow_x,
+        &book,
+    ))
 }
 
 /// The JS `--json` document (`src/cli.js:1262`): one record per family, one row per imprint, field for field.
