@@ -95,32 +95,64 @@ pub fn config_path() -> PathBuf {
     user_data_dir().join("config.json")
 }
 
-/// `arena2Dir()` (`src/save.js:33-40`): `cfg.arena2Path || null`. A missing, malformed or non-object config is `None`;
-/// a falsy `arena2Path` (empty string, `0`, `false`, `null`) is `None` too, and a value that is not a string is `None`
-/// because `path.join` would throw inside `standardSpells`' own try and fall back to the empty book.
-pub fn arena2_dir() -> Option<PathBuf> {
+/// The launcher's `arena2Path` exactly as `arena2Dir()` reads it (`src/save.js:33-40`, `cfg.arena2Path || null`):
+/// `None` when the config is missing, unparseable or not an object, and `None` for a falsy `arena2Path` (empty string,
+/// `0`, `false`, `null`). Any truthy value is `Some`, string or not: the JS does not type-check it, and a non-string
+/// makes `path.join` throw later - a distinction [`launcher_book`] keeps.
+fn launcher_path() -> Option<Value> {
     let cfg = read_json(&config_path()).ok()?;
     if !matches!(cfg, Value::Obj(_)) {
         return None;
     }
     let path = cfg.get("arena2Path");
-    if !path.truthy() || path.as_str().is_none() {
-        return None;
-    }
-    Some(absolute(&path.to_js_string()))
+    path.truthy().then(|| path.clone())
+}
+
+/// The launcher arm of `standardSpells()` (`src/spells.js:82-93`) as the JS module cache fills it: `None` only when
+/// `arena2Dir()` is falsy, i.e. when the JS `if (!resolved) return new Map()` fires and a caller's `dir` can still win.
+/// `Some` otherwise, though the book may itself be empty (a missing/oversized file, or a truthy non-string
+/// `arena2Path`, which makes `path.join` throw inside the JS `try`).
+pub fn launcher_book() -> Option<Spellbook> {
+    let path = launcher_path()?;
+    Some(match path.as_str() {
+        Some(_) => load_spellbook_from(&absolute(&path.to_js_string())),
+        None => Spellbook::default(),
+    })
 }
 
 /// `standardSpells()` (`src/spells.js:82-93`) minus the module cache: the launcher's `SPELLS.STD` as a caller-owned
-/// [`Spellbook`]. A missing config, a missing/oversized/unreadable file, or a path that is not a string is an empty
-/// book, exactly as the JS's `try`/`catch` returns a fresh empty `Map` without caching it.
+/// [`Spellbook`]. A missing config, a missing/oversized/unreadable file, or an unusable path is an empty book, exactly
+/// as the JS's `try`/`catch` returns a fresh empty `Map` without caching it.
 pub fn load_spellbook() -> Spellbook {
-    let Some(dir) = arena2_dir() else {
+    launcher_book().unwrap_or_default()
+}
+
+/// `standardSpells(values.data ?? undefined)` as one fresh process observes it (`src/cli.js:1520`, `src/spells.js:82-93`).
+///
+/// The JS `_standard` cache is filled before the `spell` branch: `loadCharacter`'s `legalGear` (including for
+/// `--theory`) and the CLI's own `analyze` both call `standardSpells()` with no argument. So a resolvable launcher
+/// config - even one whose `SPELLS.STD` is missing or unreadable, or whose `arena2Path` is a truthy non-string - wins,
+/// and the branch's `--data` is ignored. Only when `arena2Dir()` is falsy does `standardSpells(dataDir)` return (and
+/// cache) the explicit directory; with neither the book is empty. Reproduced rather than "fixed": `--data` is honoured
+/// exactly when the launcher has no usable config, and the differential pins both arms.
+pub fn standard_spells(data: Option<&str>) -> Spellbook {
+    launcher_book().unwrap_or_else(|| {
+        data.map_or_else(Spellbook::default, |dir| {
+            load_spellbook_from(Path::new(dir))
+        })
+    })
+}
+
+/// `standardSpells(dir)` with an explicit directory (`--data`): the same bounded read and empty-book fallback, so a
+/// missing, oversized or unreadable `SPELLS.STD` is the JS `try`/`catch`'s empty map. A falsy `dir` (the JS
+/// `if (!resolved) return new Map()`) is the empty book without touching the filesystem.
+pub fn load_spellbook_from(dir: &Path) -> Spellbook {
+    if dir.as_os_str().is_empty() {
         return Spellbook::default();
-    };
-    let bytes = read_bounded(&dir.join("SPELLS.STD"), MAX_SPELL_BYTES).ok();
-    match bytes {
-        Some(bytes) => spells_by_index_map(read_spells_std(&bytes)),
-        None => Spellbook::default(),
+    }
+    match read_bounded(&dir.join("SPELLS.STD"), MAX_SPELL_BYTES) {
+        Ok(bytes) => spells_by_index_map(read_spells_std(&bytes)),
+        Err(_) => Spellbook::default(),
     }
 }
 

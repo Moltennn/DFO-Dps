@@ -1,10 +1,11 @@
 //! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves`, `build`, `objective`, `rank`, `compare`, `scale`,
-//! `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant` and `tradeoff` slice).
+//! `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`, `tradeoff` and `spell --list` slice).
 //!
 //! This is the JS `src/cli.js` `build` card, `objective` command, `rank` card, `compare` card, `scale` curve, `saves`
-//! listing, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant` and `tradeoff`, and only that:
-//! [`main`] parses the flags those read, replays the JS validation (`numFlag`, the enum checks, `sampledOptions`) with
-//! the same messages, builds either the level-45 theory character or the one an imported save describes, the target and
+//! listing, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`, `tradeoff` and `spell --list`,
+//! and only that: [`main`] parses the flags those read, replays the JS validation (`numFlag`, the enum checks,
+//! `sampledOptions`) with the same messages, builds either the level-45 theory character or the one an imported save
+//! describes, the target and
 //! the scenario, then prints `printBuild`,
 //! `printObjective`, `printRank`, the `compare` table, `printScale` or `{ character, weapons, current }` as `--json`
 //! does. `build --json` prints `summary()` and `objective --json` prints the evaluated row; `build`'s text card is
@@ -38,6 +39,13 @@
 //! `analyze` reruns at that target with the branch's `potency`/`pierce`. A character with no weapon prints the JS
 //! `No weapon equipped.` line and exits 0.
 //!
+//! `spell --list` is the one `spell` mode this slice ports (`src/cli.js:1550-1554`): the resolved spellbook table from
+//! [`spell`] (pure data in, strings out), `--standard` showing every standard record, and the theory caster tweak applied
+//! inside the branch. The book is the JS `standardSpells()` one, including its module cache: a resolvable launcher
+//! `config.json` -> `arena2Path` wins over `--data`, which is read only when the launcher has no usable config (see
+//! [`saves::standard_spells`]). `--all-spells`, `--spell <index|name>` and the single-spell rotation card are refused by
+//! name, never approximated; `--json` with `--list` is refused as the JS `checkOutputFlags` refuses it ("spell --list").
+//!
 //! The JS `firmament` command also keeps a disk cache (`.cache/firmament-plans.json`, keyed by a source fingerprint) and
 //! its card starts `Firmament plans (N cached, M computed)`. This CLI writes no cache at all: a plan is a pure function of
 //! its build and purse, every run replans, and the card says `Firmament plans` with no counts, because reporting a cache
@@ -61,6 +69,7 @@ mod imprints;
 mod probe;
 mod report;
 mod saves;
+mod spell;
 mod tradeoff;
 
 use std::collections::HashMap;
@@ -83,12 +92,12 @@ use dfo_core::objectives::{
 };
 use dfo_core::round::{js_max, math_round};
 use dfo_core::save::{character_label, live_stat, skill_name, skill_value};
-use dfo_core::spells::Spellbook;
+use dfo_core::spells::{resolve_spells, Spellbook};
 use dfo_core::theory::theory_character;
 use dfo_core::value::{number_to_string, obj_table_get, string_to_number, Value, Value::*};
 
 const HELP: &str = "\
-dfo-cli - the saves, build, objective, rank, compare, doctor, probe, graph, report, firmament, imprints, enchant and tradeoff slice of dfo-dps (Rust core)
+dfo-cli - the saves, build, objective, rank, compare, doctor, probe, graph, report, firmament, imprints, enchant, tradeoff and spell --list slice of dfo-dps (Rust core)
 
 Usage:
   dfo-cli saves
@@ -109,6 +118,7 @@ Usage:
   dfo-cli firmament [--build <id,...>] [--stars <n>] [--refresh] [--json] [--out <file>]
   dfo-cli imprints [--family <key>] [--sort <boss|uncapped|conditional>] [--uncapped] [--cap-aware] [--vampire] [--firmament] [--json] [--out <file>]
   dfo-cli enchant [--theory] [--save <slot|folder|path>] [options] [--json]
+  dfo-cli spell --list [--theory] [--save <slot|folder|path>] [--data <dir>] [--standard] [options]
   dfo-cli tradeoff [--theory] [--save <slot|folder|path>] [options] [--json]
 
 `saves` lists the save folders under the DFO user-data folder (newest first). `doctor` prints the model pin, the
@@ -134,7 +144,11 @@ one in `.cache/firmament-plans.json`. `imprints` ranks every Weapon Legendary's 
 weapon (or the one `--family` names), writes `imprints.html` (or `--out`, also create-only) and prints the JS
 `imprints page written:` line, or the `--json` rows instead; the order is `--uncapped`, then `--cap-aware` (boss), then
 `--sort`. `enchant` prints the equipped weapon's enchantment rows and its Cast When Strikes price (the same card as the
-JS), text or `--json`; no save with a weapon prints the JS `No weapon equipped.` line and exits 0. `tradeoff` prices
+JS), text or `--json`; no save with a weapon prints the JS `No weapon equipped.` line and exits 0. `spell --list` prints
+the resolved spellbook table (the JS `spell` command's one ported mode): `--standard` shows every standard record
+instead of the character's spellbook, `--data <dir>` names an ARENA2 directory, and the theory character gets the
+branch's caster tweak. As in the JS, a resolvable launcher config wins over `--data` (the module book cache is filled
+before the branch reads it). The other `spell` modes are refused by name. `tradeoff` prices
 +5% attack speed against +5% weapon damage over the Breach gate and five Curbing pools, then the top weapons and the
 speed/damage crossover by boss health (`--target`/`--health`/`--armor` do not reach those fixed pools).
 
@@ -155,6 +169,9 @@ Flags:
   --damage-pct <n> --vampire
   --firmament --star-stat <name=n,...> --star-skill <id=n,...> --star-damage <pct>
   --no-rri --no-crit-damage --no-passive --pair --dual --spam --potency <pct> --pierce <n>
+  --cast-speed <pct> --magicka <n>     spell: cast rate / magicka-pool override
+  --mana-limit                         spell: price the magicka pool (default: mana is solved)
+  --seconds <n>                        spell: fight length for sustain (30; only the unported rotation reads it)
   --no-effects                        drop active effects
   --base-stats <n>                    set all eight base attributes to n
   --objective <id>                    snapshot, fight, relay, relay-ceiling, stochastic-ttk, kill-probability,
@@ -168,7 +185,11 @@ Flags:
   --gear-skill <id>                   scale: one gear skill affix to curve to current+100
   --from <n> --to <n> --step <n>      scale/graph: the channel range (scale default: current to cap; step 10)
   --all                               scale: every relevant channel at once (text only)
-  --data <capture.json>               probe: a capture file (the JS also reads ARENA2 here; not ported)
+  --data <dir>                        spell: an ARENA2 directory holding SPELLS.STD (read only when the launcher has no
+                                      usable config: the JS module cache is filled before the branch; see README)
+  --data <capture.json>               probe: a capture file
+  --list                              spell: the resolved spellbook table (the only ported spell mode)
+  --standard                          spell: list every standard record, not just the character's spellbook
   --old                               probe: read the newest capture in captures/old
   --out <file>                        probe/graph/report/firmament/imprints: the page (default probe.html / graph.html /
                                       dfo-dps-report.html / firmament.html / imprints.html; must not exist yet)
@@ -187,8 +208,8 @@ Flags:
   --json
   -h, --help
 
-Unsupported here (another command, or a flag this slice does not read): --encounter, --shortlist and the other
-commands' flags.";
+Unsupported here (another command, or a flag this slice does not read): --encounter, --shortlist, `spell --all-spells`,
+`spell --spell`, and the other commands' flags.";
 
 fn main() -> ExitCode {
     match run(std::env::args().skip(1).collect()) {
@@ -322,6 +343,13 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         check_output_flags(&command, &parsed)?;
         return enchant_command(&values);
     }
+    if command == "spell" {
+        if let Some(extra) = parsed.positionals.get(1) {
+            return Err(usage(format!("unexpected positional argument \"{extra}\"")));
+        }
+        check_output_flags(&command, &parsed)?;
+        return spell_command(&values);
+    }
     if command == "tradeoff" {
         if let Some(extra) = parsed.positionals.get(1) {
             return Err(usage(format!("unexpected positional argument \"{extra}\"")));
@@ -364,7 +392,7 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         ];
         return Err(if COMMANDS.contains(&command.as_str()) {
             usage(format!(
-                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank`, `compare`, `scale`, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant` and `tradeoff`"
+                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank`, `compare`, `scale`, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`, `tradeoff` and `spell --list`"
             ))
         } else {
             usage(format!("unknown command \"{command}\"\n\n{HELP}"))
@@ -420,11 +448,32 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
             }
         }
     }
-    if command != "probe" {
-        for name in ["data", "old"] {
+    // `--data` is the probe's capture file and the spell command's ARENA2 directory; `--old` is the probe's alone.
+    if command != "probe" && command != "spell" && parsed.raw("data").is_some() {
+        return Err(usage(
+            "--data is not supported by this CLI slice (it needs the probe or spell, or is not ported yet)",
+        ));
+    }
+    if command != "probe" && parsed.flag("old") {
+        return Err(usage(
+            "--old is not supported by this CLI slice (it needs the probe, or is not ported yet)",
+        ));
+    }
+    // The spell flags are read by `spell` alone; the JS accepts and ignores them elsewhere, this CLI names them.
+    if command != "spell" {
+        for name in [
+            "list",
+            "all-spells",
+            "standard",
+            "spell",
+            "mana-limit",
+            "seconds",
+            "cast-speed",
+            "magicka",
+        ] {
             if parsed.raw(name).is_some() || parsed.flag(name) {
                 return Err(usage(format!(
-                    "--{name} is not supported by this CLI slice (it needs the probe, or is not ported yet)"
+                    "--{name} is not supported by this CLI slice (it needs the spell command, or is not ported yet)"
                 )));
             }
         }
@@ -481,9 +530,12 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
         )));
     }
     // `checkOutputFlags` (`src/cli.js:892-897`): the command name in the message is `spell --list` / `scale --all`
-    // when that branch has no JSON form.
+    // when that branch has no JSON form. `spell` reads `--json` only outside its `--list` branch, which this slice
+    // does not port, so the refusal names `spell --list` as the JS does.
     let unsupported = if command == "scale" && parsed.flag("all") {
         Some("scale --all".to_owned())
+    } else if command == "spell" && parsed.flag("list") {
+        Some("spell --list".to_owned())
     } else if listed(JSON_COMMANDS) {
         None
     } else {
@@ -701,7 +753,8 @@ const SUPPORTED: &str = concat!(
     "help target level armor health traits core weapon swing stacks race blade gear-lb gear-cs star-stat star-skill ",
     "star-damage potency pierce backstab players blow-x health-share self-health-share top damage-pct base-stats ",
     "no-effects save offline passive bare out objective trials seed max-seconds max-blows no-carry samples stat all ",
-    "data old series from to step uncapped skill gear-skill build stars refresh family sort cap-aware",
+    "data old series from to step uncapped skill gear-skill build stars refresh family sort cap-aware ",
+    "list all-spells standard spell mana-limit seconds cast-speed magicka",
 );
 
 fn in_flags(list: &str, name: &str) -> bool {
@@ -710,7 +763,8 @@ fn in_flags(list: &str, name: &str) -> bool {
 
 const BOOLEAN_FLAGS: &str = concat!(
     "theory json vampire firmament rhythm unaware first-blow behind pair dual spam no-crit-damage no-passive ",
-    "no-rri help offline bare no-effects no-carry samples all old uncapped refresh cap-aware",
+    "no-rri help offline bare no-effects no-carry samples all old uncapped refresh cap-aware list all-spells standard ",
+    "mana-limit",
 );
 
 const MULTI: [&str; 3] = ["star-stat", "star-skill", "stat"];
@@ -814,7 +868,7 @@ const fn range(min: f64, max: f64, int: bool, exclusive_min: bool) -> Range {
 const ANY: Range = range(f64::NEG_INFINITY, f64::INFINITY, false, false);
 
 /// Every numeric option `validateFlags` bounds, with its JS default.
-const NUMERIC_FLAGS: [(&str, f64, Range); 25] = [
+const NUMERIC_FLAGS: [(&str, f64, Range); 28] = [
     ("level", THEORY_LEVEL, range(1.0, LEVEL_CAP, true, false)),
     ("stacks", 5.0, range(0.0, 5.0, true, false)),
     ("players", 1.0, range(1.0, f64::INFINITY, true, false)),
@@ -848,6 +902,9 @@ const NUMERIC_FLAGS: [(&str, f64, Range); 25] = [
     ("step", 10.0, range(0.0, f64::INFINITY, false, true)),
     ("skill", -1.0, range(0.0, 34.0, true, false)),
     ("gear-skill", -1.0, range(0.0, 34.0, true, false)),
+    ("seconds", 30.0, range(0.0, f64::INFINITY, false, true)),
+    ("cast-speed", 0.0, ANY),
+    ("magicka", 0.0, ANY),
 ];
 
 struct Values {
@@ -916,6 +973,16 @@ struct Values {
     all: bool,
     /// `--build`: raw comma list of firmament build ids (the command splits and trims it, as the JS does).
     build: Option<String>,
+    /// `--list`: `spell --list`, the resolved spellbook table.
+    list: bool,
+    /// `--all-spells`: price every damaging spell (unported; refused by name).
+    all_spells: bool,
+    /// `--standard`: `spell --list` shows every standard record, not just the character's spellbook.
+    standard: bool,
+    /// `--spell`: the record to price by index or name (unported; refused by name).
+    spell_query: Option<String>,
+    /// `--mana-limit`: price the magicka pool instead of solving mana.
+    mana_limit: bool,
 }
 
 fn range_text(what: &str, min: f64, max: f64, exclusive_min: bool) -> String {
@@ -1216,6 +1283,11 @@ impl Values {
             base_stats_raw: parsed.raw("base-stats").map(str::to_owned),
             all: parsed.flag("all"),
             build: parsed.raw("build").map(str::to_owned),
+            list: parsed.flag("list"),
+            all_spells: parsed.flag("all-spells"),
+            standard: parsed.flag("standard"),
+            spell_query: parsed.raw("spell").map(str::to_owned),
+            mana_limit: parsed.flag("mana-limit"),
         })
     }
 
@@ -2293,6 +2365,135 @@ fn enchant_command(values: &Values) -> Result<String, CliError> {
         ));
     }
     Ok(enchant::text(&ch, item, &strike, &card))
+}
+
+/// `dfo-dps spell --list` (`src/cli.js:1550-1554`): the resolved spellbook table. The only `spell` branch this slice
+/// ports: `--all-spells`, `--spell <index|name>` and the single-spell rotation card are refused by name (below), and
+/// `--json` is refused with `--list` by [`check_output_flags`], as the JS `checkOutputFlags` does.
+///
+/// The book is `standardSpells(values.data ?? undefined)` as one fresh JS process observes it: the module cache is
+/// already warm from `loadCharacter`'s `legalGear` and the pre-branch `analyze`, so a resolvable launcher config wins
+/// over `--data` ([`saves::standard_spells`]). `resolveSpells(ch.spells, standard)` then takes the save's indices and
+/// custom records, and `pool = values.standard ? standardList : (known.length ? known : standardList)`; the empty-book
+/// line still fires from the `priced` pool before the list is printed. Those are this command's, not [`spell`]'s.
+fn spell_command(values: &Values) -> Result<String, CliError> {
+    // Unported modes are explicit refusals, never a half-correct card. `--list` returns before them in the JS, so
+    // `--list --all-spells` / `--list --spell X` are supported and show the list exactly as the JS does.
+    if !values.list {
+        let mode = if values.all_spells {
+            "spell --all-spells"
+        } else if values.spell_query.is_some() {
+            "spell --spell <index|name>"
+        } else {
+            "spell without --list"
+        };
+        return Err(usage(format!(
+            "{mode} is not ported yet; this slice supports `spell --list` only"
+        )));
+    }
+    let book = saves::load_spellbook();
+    let ch = character(values, &book)?;
+    // `src/cli.js:1517`: the theory caster tweak, inside the branch (so a save is untouched).
+    let ch = if values.theory { theory_caster(ch) } else { ch };
+    let level = values.num("level", ch.get("level").to_number());
+    // `standardSpells(values.data ?? undefined)`: the module cache is already warm from the pre-branch analysis, so a
+    // resolvable launcher config wins over `--data` (see [`saves::standard_spells`]).
+    let data_book = saves::standard_spells(values.data.as_deref());
+    let standard_list: Vec<Value> = data_book
+        .entries()
+        .iter()
+        .map(|(_, sp)| sp.clone())
+        .collect();
+    let known: Vec<Value> = resolve_spells(ch.get("spells"), &data_book)
+        .into_iter()
+        .cloned()
+        .collect();
+    let pool: Vec<Value> = if values.standard || known.is_empty() {
+        standard_list
+    } else {
+        known
+    };
+    // `spellTarget = values.target === 'armoured' ? gateTarget(level, { traits }) : target` (`:1527`): the RAW flag,
+    // and `traits` is the array itself, even empty, so no relay traits are substituted (`?? ` only replaces nullish).
+    let spell_target = if values.target == "armoured" {
+        let mut opts = Obj(vec![]);
+        opts.set(
+            "traits",
+            Arr(values.traits.iter().map(|t| Str(t.clone())).collect()),
+        );
+        gate_target(&Num(level), &opts)
+    } else {
+        target_of(
+            &ch,
+            values,
+            &values.traits,
+            values.nums.get("health").copied(),
+        )?
+    };
+    // The branch's `opts` (`:1528-1538`), in the JS key order.
+    let mut opts = obj([
+        ("level", Num(level)),
+        ("online", Bool(!ch.get("online").strict_eq(&Bool(false)))),
+        ("potencyPct", Num(values.num("potency", 0.0))),
+        ("pierce", Num(values.num("pierce", 0.0))),
+        ("castSpeedPct", Num(values.num("cast-speed", 0.0))),
+        ("manaSolved", Bool(!values.mana_limit)),
+        (
+            "health",
+            Num(if spell_target.get("isBoss").truthy() {
+                spell_target.get("maxHealth").to_number()
+            } else {
+                0.0
+            }),
+        ),
+        (
+            "traits",
+            Arr(spell_target.get("bossTraits").items().to_vec()),
+        ),
+    ]);
+    if let Some(magicka) = values.nums.get("magicka") {
+        opts.set("magicka", Num(*magicka));
+    }
+    // `if (!priced.length && values.spell == null && !values.standard)` (`:1546-1549`): the `--spell` flag is part of
+    // the test even though the list does not use it. `priced` is the shared core's damage, via [`spell::priced`].
+    let priced = pool
+        .iter()
+        .any(|sp| spell::priced(sp, &ch, &spell_target, &opts));
+    if !priced && values.spell_query.is_none() && !values.standard {
+        return Ok(
+            "No damaging spells in the spellbook. Pass --spell <index|name> or --standard.\n"
+                .to_owned(),
+        );
+    }
+    Ok(spell::text(&ch, &pool, &spell_target, &opts))
+}
+
+/// `src/cli.js:1517`: the theory caster the `spell`/`spells` branches build - Destruction 200 and mastered, a spell
+/// point pool (falling back to `floor(intelligence * 3)` when it has none), and the name the card prints.
+fn theory_caster(mut ch: Value) -> Value {
+    let mut skills = Arr(ch.get("skills").items().to_vec());
+    if let Value::Arr(items) = &mut skills {
+        while items.len() <= 22 {
+            items.push(Num(0.0));
+        }
+        items[22] = Num(200.0);
+    }
+    ch.set("skills", skills);
+    // `[...new Set([...(ch.masteredSkills ?? []), 22])]`: append if absent, same-value-zero, keeping the saved order.
+    let mut mastered = ch.get("masteredSkills").items().to_vec();
+    if !mastered.iter().any(|v| v.strict_eq(&Num(22.0))) {
+        mastered.push(Num(22.0));
+    }
+    ch.set("masteredSkills", Arr(mastered));
+    // `ch.maxMagicka || Math.floor((ch.stats.intelligence ?? 100) * 3)`: a falsy pool (0/NaN) takes the fallback.
+    if !ch.get("maxMagicka").truthy() {
+        ch.set(
+            "maxMagicka",
+            Num((ch.get("stats").get("intelligence").num_or(100.0) * 3.0).floor()),
+        );
+    }
+    ch.set("name", Str("Level 45 theory caster".to_owned()));
+    ch
 }
 
 /// `dfo-dps tradeoff` (`src/cli.js:2204-2252`): speed vs damage over the Breach gate and five Curbing pools, text or
