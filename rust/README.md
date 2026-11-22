@@ -23,13 +23,14 @@ tested: `tests/sidebar.rs` drives `tests/sidebar_oracle.mjs` over the public com
 what this repository cannot execute.
 
 ## R8: the CLI, the `build`, `saves`, `rank`, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`,
-`enchant-plan`/`gear-plan`, `tradeoff`, `spell` and `spells` slice
+`enchant-plan`/`gear-plan`, `tradeoff`, `spell`, `spells` and `theory` slice
 
 `dfo-cli` (`rust/dfo-cli`) is the R8 CLI slice: the JS `src/cli.js` `build` card, `saves` listing, `doctor` summary,
 `rank` path, `compare` table, Combat Probe `probe` page, `graph` page, `src/report.js` `report` page, the
 `src/firmament.js` `firmament` plans page, the `imprints` rankings page, the `enchant` weapon card, the
 `enchant-plan`/`gear-plan` per-piece plan (single and `--all`), the `tradeoff` speed-vs-damage card, the singular `spell`
-cards (rotation, `--list`, `--all-spells`) and the plural `spells` spell ceiling page, for the level-45 theory character
+cards (rotation, `--list`, `--all-spells`), the plural `spells` spell ceiling page and the level-45 `theory` ceiling
+card, for the level-45 theory character
 or for an imported save.
 It is a thin layer: the parser owns
 argument text, the output formats
@@ -240,9 +241,21 @@ codes; every number comes from `dfo_core`
   `dfo-cli/tests/cli_spells.rs` runs the whole plural `spells` command the same way over a synthetic `SPELLS.STD` and a
   synthetic save: the merged pool, the ranked page and `--json` list, the scenario flags, the default page name, the
   empty book in text and `--json`, the create-only writer, and the refusals.
+- **The `theory` ceiling card.** `dfo-cli theory [options] [--json]` (`src/cli.js:1806-2054`) is the level-45
+  long-blade ceiling card: the target/gear header, the five push stages, the `THEORY_CAPS` sheet, the attribute and
+  skill/gear curves, the three Firmament tables, the legal gear frontier, the long-blade table and the result card,
+  text or `--json`, all rendered by `src/theory.rs` (pure data in and strings out) from `dfo_core::theory`'s characters
+  and the shared `analyze`/`Profiles`/`THEORY_CAPS`. The command always reads the theory character (the JS branch sets
+  `values.theory = true` for `theory`) and prints the branch's `>38% damage` warning on stderr. Two documented
+  differences, both refusals rather than invented parity: a reference-foe target (`--target tough|soft|human`) crashes
+  the JS card on `r.health.toLocaleString()`, so this CLI exits 2 with one message before printing any card, and
+  `--gear-lines`/`--line-points` (obsolete in the JS, which only warns) are refused by the flag table.
+  `dfo-cli/tests/cli_theory.rs` pins the whole command byte for byte against the JS CLI (default, `--json`, a boss
+  target, the Firmament preset, explicit gear and damage, the `ARMOURED` spelling and the gate remap); `tests/theory.rs`
+  pins the stage overrides, the generated cap order and the reference-foe refusal without `node`.
   A missing `node` fails the tests rather than skipping them.
 
-The rest of `src/cli.js` (the other page commands, `theory`, `weapons`, `enchant-plan`, `loadout`, `real-dps`) is still
+The rest of `src/cli.js` (the other page commands, `weapons`, `loadout`, `real-dps`) is still
 unported. `src/graph.js` is ported (`src/graph.rs`) and
 wired into `probe`, `graph`, `report`, `firmament` and `imprints`; `src/report.js` is ported (`src/report.rs`) and
 wired into `report`; `src/firmament.js`'s page is ported (`dfo-cli/src/firmament.rs`) and wired into `firmament`;
@@ -250,8 +263,10 @@ wired into `report`; `src/firmament.js`'s page is ported (`dfo-cli/src/firmament
 `src/cli.js`'s `enchant` branch is rendered by `dfo-cli/src/enchant.rs` and wired into `enchant`; its `tradeoff` branch
 is rendered by `dfo-cli/src/tradeoff.rs` and wired into `tradeoff`; its singular `spell` branch is rendered by
 `dfo-cli/src/spell.rs` and wired into `spell` (the rotation card, `--list`, `--all-spells`, `--data`, the launcher lookup
-and save pool included), and its plural `spells` branch by `dfo-cli/src/spells_report.rs` and wired into `spells` (the
-stock-plus-custom merge, the page and the `--json` list included). `--json` with `spell --list` is refused as the JS
+and save pool included), its plural `spells` branch by `dfo-cli/src/spells_report.rs` and wired into `spells` (the
+stock-plus-custom merge, the page and the `--json` list included), and its `theory` branch by `dfo-cli/src/theory.rs`
+and wired into `theory` (the header, the push stages, the caps, both curves, the Firmament and frontier tables, the
+long-blade table, the result card and the `--json` document). `--json` with `spell --list` is refused as the JS
 does. Nested custom spell records in `--data`'s book are read by the same `read_spells_std`; nothing beyond the
 `SPELLS.STD` record shape is parsed.
 

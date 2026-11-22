@@ -1,10 +1,10 @@
 //! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves`, `build`, `objective`, `rank`, `compare`, `scale`,
 //! `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`, `enchant-plan`/`gear-plan`, `tradeoff`,
-//! `spell` and `spells` slice).
+//! `spell`, `spells` and `theory` slice).
 //!
 //! This is the JS `src/cli.js` `build` card, `objective` command, `rank` card, `compare` card, `scale` curve, `saves`
 //! listing, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`, `enchant-plan`/`gear-plan`,
-//! `tradeoff`, `spell` and `spells`,
+//! `tradeoff`, `spell`, `spells` and `theory`,
 //! and only that: [`main`] parses the flags those read, replays the JS validation (`numFlag`, the enum checks,
 //! `sampledOptions`) with the same messages, builds either the level-45 theory character or the one an imported save
 //! describes, the target and
@@ -82,6 +82,7 @@ mod report;
 mod saves;
 mod spell;
 mod spells_report;
+mod theory;
 mod tradeoff;
 
 use std::collections::HashMap;
@@ -109,7 +110,7 @@ use dfo_core::theory::theory_character;
 use dfo_core::value::{number_to_string, obj_table_get, string_to_number, Value, Value::*};
 
 const HELP: &str = "\
-dfo-cli - the saves, build, objective, rank, compare, doctor, probe, graph, report, firmament, imprints, enchant, enchant-plan, gear-plan, tradeoff, spell and spells slice of dfo-dps (Rust core)
+dfo-cli - the saves, build, objective, rank, compare, doctor, probe, graph, report, firmament, imprints, enchant, enchant-plan, gear-plan, tradeoff, spell, spells and theory slice of dfo-dps (Rust core)
 
 Usage:
   dfo-cli saves
@@ -135,6 +136,7 @@ Usage:
   dfo-cli spell [--list | --all-spells | --spell <index|name>] [--theory] [--save <slot|folder|path>] [--data <dir>] [--standard] [options] [--json]
   dfo-cli spells [--theory] [--save <slot|folder|path>] [--data <dir>] [options] [--json] [--out <file>]
   dfo-cli tradeoff [--theory] [--save <slot|folder|path>] [options] [--json]
+  dfo-cli theory [--theory] [options] [--json]
 
 `saves` lists the save folders under the DFO user-data folder (newest first). `doctor` prints the model pin, the
 save folders and the imported character's build/ruleset summary. `build` prices one build against one target: with
@@ -176,6 +178,9 @@ options, and `--all` prints both matrices. It writes `enchant-plan.html` (or `en
 document with `--json`; a group outside the four named ones is the JS stderr line and exit 2. `tradeoff` prices
 +5% attack speed against +5% weapon damage over the Breach gate and five Curbing pools, then the top weapons and the
 speed/damage crossover by boss health (`--target`/`--health`/`--armor` do not reach those fixed pools).
+`theory` prints the level-45 long-blade ceiling card: the header, the push stages, the cap sheet, both scaling curves,
+the Firmament and legal-frontier tables, the long-blade table and the result card, text or `--json`; it always reads
+the theory character and needs a boss/gate target (a reference foe is refused, where the JS card crashes).
 
 Flags:
   --save <SAVE4|folder|SaveData.txt>  the save to import (default: the newest under the user-data folder)
@@ -277,12 +282,17 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         return Ok(format!("{HELP}\n"));
     }
     // The JS validates the flags before it looks at the command, so a bad number wins over an unknown command.
-    let values = Values::new(&parsed)?;
+    let mut values = Values::new(&parsed)?;
     let command = parsed
         .positionals
         .first()
         .cloned()
         .unwrap_or_else(|| "build".into());
+    // `src/cli.js:921`: `if (cmd === 'theory' || cmd === 'weapons' || cmd === 'skills') values.theory = true`. Only
+    // `theory` is ported, and it always reads the theory character.
+    if command == "theory" {
+        values.theory = true;
+    }
     if command == "saves" {
         if let Some(extra) = parsed.positionals.get(1) {
             return Err(usage(format!("unexpected positional argument \"{extra}\"")));
@@ -406,6 +416,13 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         check_output_flags(&command, &parsed)?;
         return tradeoff_command(&values);
     }
+    if command == "theory" {
+        if let Some(extra) = parsed.positionals.get(1) {
+            return Err(usage(format!("unexpected positional argument \"{extra}\"")));
+        }
+        check_output_flags(&command, &parsed)?;
+        return theory_command(&values);
+    }
     if command == "scale" {
         if let Some(extra) = parsed.positionals.get(1) {
             return Err(usage(format!("unexpected positional argument \"{extra}\"")));
@@ -441,7 +458,7 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         ];
         return Err(if COMMANDS.contains(&command.as_str()) {
             usage(format!(
-                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank`, `compare`, `scale`, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`, `tradeoff`, `spell` and `spells`"
+                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank`, `compare`, `scale`, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`, `tradeoff`, `spell`, `spells` and `theory`"
             ))
         } else {
             usage(format!("unknown command \"{command}\"\n\n{HELP}"))
@@ -2957,6 +2974,75 @@ fn split_stat(text: &str) -> Option<(String, f64)> {
         return None;
     }
     Some((left.to_lowercase(), string_to_number(right)))
+}
+
+/// `theory [options]` (`src/cli.js:1806-2054`): the renderer is [`theory::render`]; this command resolves the theory
+/// character, its target and the base scenario exactly as the shared load does, and prints the JS `>38%` stderr warning.
+fn theory_command(values: &Values) -> Result<String, CliError> {
+    let book = saves::load_spellbook();
+    let ch = character(values, &book)?;
+    let target = target_of(
+        &ch,
+        values,
+        &values.traits,
+        values.nums.get("health").copied(),
+    )?;
+    let scenario = scenario_of(&ch, values, &values.traits, &target);
+    let blade = ch.get("weapon").get("templateIndex");
+    let material = ch.get("weapon").get("material");
+    let input = theory::Input {
+        level: values.num("level", THEORY_LEVEL),
+        race: values.race.clone().unwrap_or_else(|| "darkelf".into()),
+        blade: if blade.is_nullish() {
+            DEFAULT_BLADE
+        } else {
+            blade.to_number()
+        },
+        material: if material.is_nullish() {
+            9.0
+        } else {
+            material.to_number()
+        },
+        star_stats: values.star_stats.clone(),
+        star_skills: values.star_skills.clone(),
+        vampire: values.vampire,
+        gear: theory::GearFlags {
+            lb: values.nums.get("gear-lb").copied(),
+            cs: values.nums.get("gear-cs").copied(),
+            damage_pct: values.nums.get("damage-pct").copied(),
+            star_damage: values
+                .star_damage
+                .unwrap_or(if values.firmament { 30.0 } else { 0.0 }),
+        },
+        // `src/cli.js:1918`: the raw typed preset, remapped only for the exact `armoured` spelling.
+        target_name: if values.theory && values.target == "armoured" {
+            "gate".to_owned()
+        } else {
+            values.target.clone()
+        },
+        rri: values.rri,
+    };
+    let rendered = theory::render(&input, &scenario, &book).map_err(usage)?;
+    // `src/cli.js:1817-1819`: the hypothetical damage line's warning, on stderr before the card.
+    let damage = input
+        .gear
+        .damage_pct
+        .unwrap_or_else(|| rendered_damage(&rendered));
+    if damage > 38.0 {
+        eprintln!(
+            "WARNING: {}% damage is above every Legendary record's fixed line (the best record carries 38%); this is a hypothetical build.",
+            number_to_string(damage)
+        );
+    }
+    if values.json {
+        return Ok(format!("{}\n", json(&rendered.document)));
+    }
+    Ok(rendered.text)
+}
+
+/// The resolved damage line the card printed, for the `>38%` warning when `--damage-pct` was absent.
+fn rendered_damage(rendered: &theory::Rendered) -> f64 {
+    rendered.document.get("character").get("damage").to_number()
 }
 
 /// `dfo-dps compare` (`src/cli.js:2277-2304`): the same build before and after `--stat`/`--weapon`, as a four-column
