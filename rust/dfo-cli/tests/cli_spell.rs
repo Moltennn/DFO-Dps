@@ -1,15 +1,15 @@
-//! The R8 `spell --list` command, end to end against the real JS CLI.
+//! The R8 singular `spell` command, end to end against the real JS CLI.
 //!
-//! Every success case runs `bin/dfo-dps.js spell --list ...` and the Rust binary on the same arguments under one temp
+//! Every success case runs `bin/dfo-dps.js spell ...` and the Rust binary on the same arguments under one temp
 //! `DAGGER_USER_DATA` root, and compares stdout and the exit code byte for byte. The book comes from a synthetic
 //! `SPELLS.STD` written by the test (never the machine's ARENA2), either through an explicit `--data <dir>` or through
 //! the launcher's `config.json` -> `arena2Path` fallback, and the save pool comes from a synthetic save under
 //! `Saves/SAVE1/SaveData.txt` (stock indices plus one custom record), never a real save.
 //!
-//! `tests/spell.rs` pins the renderer over core rows; this file pins the command around it: the character, the theory
-//! caster tweak, the two spellbook sources, `resolveSpells`/`--standard`, the empty-book line, and the refusals
-//! (`--json` with `--list`, `--out`, and every unported `spell` mode: those must say they are unported, not imitate the
-//! JS card).
+//! `tests/spell.rs` pins the renderers over core rows; this file pins the command around them: the character and theory
+//! caster tweak, the two spellbook sources, `resolveSpells`/`--standard`, pool pricing and the JS sort, `--spell`
+//! selection, the rotation and `--all-spells` cards with their `--json` documents, the empty-book line, the JS crash on
+//! an unpriced `--standard` pool, and the refusals (`--json` with `--list`, `--out`, a spell flag on another command).
 //!
 //! A missing `node` panics rather than skips, because a skipped differential proves nothing.
 
@@ -571,6 +571,9 @@ fn a_save_spellbook_frontend_matches_the_js() {
 fn the_empty_book_line_matches_the_js() {
     let no_config = temp_root("empty-no-config");
     same(&["spell", "--list", "--theory"], &no_config);
+    // The singular modes share the same guard: the empty line, even with `--json` or `--all-spells`, before any card.
+    same(&["spell", "--theory", "--json"], &no_config);
+    same(&["spell", "--theory", "--all-spells", "--json"], &no_config);
     let missing = no_config.join("nowhere");
     same(
         &[
@@ -655,8 +658,8 @@ fn the_empty_book_line_matches_the_js() {
     }
 }
 
-/// Every refusal the JS would accept differently is a deliberate port refusal, so only its exit code and message are
-/// pinned; `--json` with `--list` and `--out` are the JS's own refusals, compared word for word.
+/// `--list` is the one `spell` mode without a `--json` form, and `--out` belongs to no `spell` mode: both are the JS's
+/// own refusals, compared word for word. A spell flag on another command stays refused by name.
 #[test]
 fn the_refusals_are_explicit() {
     let root = temp_root("refusals");
@@ -665,33 +668,8 @@ fn the_refusals_are_explicit() {
     // The JS refuses both of these itself (`checkOutputFlags`), with the `spell --list` name.
     same_usage(&["spell", "--list", "--theory", "--json"], &root);
     same_usage(&["spell", "--list", "--theory", "--out", "x.html"], &root);
-    // Every other `spell` mode is unported here: it must say so, never imitate the JS card.
-    for args in [
-        &["spell", "--theory", "--data", data][..],
-        &["spell", "--theory", "--data", data, "--all-spells"][..],
-        &["spell", "--theory", "--data", data, "--spell", "Bolt"][..],
-        &["spell", "--theory", "--data", data, "--json"][..],
-    ] {
-        let got = rust(args, &root);
-        assert_eq!(
-            got.status.code(),
-            Some(2),
-            "rust refuses {args:?}: {}",
-            String::from_utf8_lossy(&got.stderr)
-        );
-        let message = String::from_utf8_lossy(&got.stderr);
-        assert!(
-            message.contains("not ported yet") && message.contains("spell --list"),
-            "the refusal names the unported mode and the ported one: {message}"
-        );
-        assert!(got.stdout.is_empty(), "no card for {args:?}");
-        // The JS runs the mode; this is the documented divergence, not parity.
-        assert_eq!(
-            js(args, &root).status.code(),
-            Some(0),
-            "the JS accepts {args:?}"
-        );
-    }
+    // `--json` without `--list` is a supported mode now: the rotation card prints its document.
+    same(&["spell", "--theory", "--data", data, "--json"], &root);
     // `--list --json` names `spell --list` even though `spell` is a JSON command.
     let got = rust(&["spell", "--list", "--theory", "--json"], &root);
     assert!(String::from_utf8_lossy(&got.stderr).contains("\"spell --list\""));
@@ -702,21 +680,202 @@ fn the_refusals_are_explicit() {
     fs::remove_dir_all(&root).expect("cleanup");
 }
 
-/// `--help` names the ported mode and says the others are unported.
+/// The singular `spell` modes over an explicit book: the best record without a query, the rotation card, `--all-spells`
+/// (with its double output under `--json`), every `--spell` selection arm (index, name, substring, empty), and the JS
+/// crash when a `--standard` pool prices nothing.
 #[test]
-fn help_lists_the_spell_list_mode() {
+fn the_singular_modes_match_the_js() {
+    let root = temp_root("singular");
+    let arena = write_arena(&root);
+    let data = arena.to_str().unwrap();
+    for args in [
+        // No query: `priced[0]`.
+        &["spell", "--theory", "--data", data][..],
+        &["spell", "--theory", "--data", data, "--json"][..],
+        &[
+            "spell",
+            "--theory",
+            "--data",
+            data,
+            "--seconds",
+            "10",
+            "--mana-limit",
+        ][..],
+        &[
+            "spell",
+            "--theory",
+            "--data",
+            data,
+            "--cast-speed",
+            "20",
+            "--magicka",
+            "80",
+        ][..],
+        &[
+            "spell", "--theory", "--data", data, "--target", "boss", "--health", "5000",
+        ][..],
+        // `--all-spells`, text and `--json` (the JS keeps the table under `--json`).
+        &["spell", "--theory", "--data", data, "--all-spells"][..],
+        &[
+            "spell",
+            "--theory",
+            "--data",
+            data,
+            "--all-spells",
+            "--json",
+        ][..],
+        &[
+            "spell",
+            "--theory",
+            "--data",
+            data,
+            "--all-spells",
+            "--standard",
+        ][..],
+        // `--spell` selection: case-insensitive name, a substring, an index, an empty string (matches by substring) and
+        // the debug name the `priced` filter drops but the search pool keeps.
+        &["spell", "--theory", "--data", data, "--spell", "bolt"][..],
+        &["spell", "--theory", "--data", data, "--spell", "FAR"][..],
+        &["spell", "--theory", "--data", data, "--spell", "2"][..],
+        &["spell", "--theory", "--data", data, "--spell", ""][..],
+        &[
+            "spell",
+            "--theory",
+            "--data",
+            data,
+            "--spell",
+            "Lvl 1 Probe",
+        ][..],
+        &[
+            "spell", "--theory", "--data", data, "--spell", "Burn", "--json",
+        ][..],
+        // `--list` returns before `--all-spells`/`--spell`.
+        &[
+            "spell", "--list", "--theory", "--data", data, "--spell", "Burn",
+        ][..],
+        // A not-found query is the JS UsageError, exit 2.
+    ] {
+        same(args, &root);
+    }
+    same_usage(
+        &["spell", "--theory", "--data", data, "--spell", "Nope"],
+        &root,
+    );
+    // The differential is not vacuous: the card is the highest-DPS record, and the search pool reaches debug names.
+    let card = js(&["spell", "--theory", "--data", data], &root);
+    let text = String::from_utf8_lossy(&card.stdout).into_owned();
+    assert!(text.contains("|  Far Bolt (Destruction)"), "{text}");
+    fs::remove_dir_all(&root).expect("cleanup");
+}
+
+/// A `--standard` pool whose only records price nothing: the JS `const { sp } = chosen` destructures `undefined` and
+/// crashes with exit 1, so the port reproduces that instead of inventing a card. The debug-name filter is the reason:
+/// `Lvl 1 Probe` is the only `4,0` record in this book, and `--priced` drops it.
+#[test]
+fn an_empty_standard_pool_crashes_like_the_js() {
+    let root = temp_root("standard-crash");
+    let arena = root.join("ARENA2");
+    fs::create_dir_all(&arena).expect("arena dir");
+    fs::write(
+        arena.join("SPELLS.STD"),
+        spell_record(3, "Lvl 1 Probe", 4, 0, &[(4, 0, 0, 0, 1, 1, 3, 0, 0, 1)]),
+    )
+    .expect("debug-only book");
+    let args = [
+        "spell",
+        "--theory",
+        "--standard",
+        "--data",
+        arena.to_str().unwrap(),
+    ];
+    let want = js(&args, &root);
+    let got = rust(&args, &root);
+    assert_eq!(want.status.code(), Some(1), "the JS crash");
+    assert_eq!(got.status.code(), Some(1), "the same crash");
+    assert!(
+        String::from_utf8_lossy(&want.stderr).contains("Cannot destructure property 'sp'"),
+        "js: {}",
+        String::from_utf8_lossy(&want.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&got.stderr).contains("Cannot destructure property 'sp'"),
+        "rust: {}",
+        String::from_utf8_lossy(&got.stderr)
+    );
+    assert!(got.stdout.is_empty(), "no card");
+    // Without `--standard` the same book is the JS empty-book line, exit 0.
+    let args = ["spell", "--theory", "--data", arena.to_str().unwrap()];
+    let got = rust(&args, &root);
+    assert_eq!(got.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&got.stdout),
+        "No damaging spells in the spellbook. Pass --spell <index|name> or --standard.\n"
+    );
+    fs::remove_dir_all(&root).expect("cleanup");
+}
+
+/// A synthetic save's own spellbook through the singular modes: the custom record (no index), a stock index, the
+/// `--spell` search over the pool plus the standard records, and the launcher-fallback book.
+#[test]
+fn a_save_and_the_launcher_book_reach_the_singular_modes() {
+    let root = temp_root("save-singular");
+    let arena = write_arena(&root);
+    write_config(&root, &arena);
+    write_save(&root);
+    for args in [
+        &["spell", "--save", "SAVE1"][..],
+        &["spell", "--save", "SAVE1", "--all-spells"][..],
+        &["spell", "--save", "SAVE1", "--all-spells", "--json"][..],
+        &["spell", "--save", "SAVE1", "--spell", "Custom Zap"][..],
+        &[
+            "spell",
+            "--save",
+            "SAVE1",
+            "--spell",
+            "custom zap",
+            "--json",
+        ][..],
+        // `far` is in the standard book but not the save's own pool: the search pool is `pool + standardList`.
+        &["spell", "--save", "SAVE1", "--spell", "Far"][..],
+        // `--theory` replaces the save entirely, even with `--save` present.
+        &["spell", "--save", "SAVE1", "--theory", "--spell", "Bolt"][..],
+        &[
+            "spell",
+            "--save",
+            "SAVE1",
+            "--spell",
+            "Burn",
+            "--offline",
+            "--json",
+        ][..],
+    ] {
+        same(args, &root);
+    }
+    // A not-found query is the JS UsageError, exit 2.
+    same_usage(&["spell", "--save", "SAVE1", "--spell", "nope"], &root);
+    fs::remove_dir_all(&root).expect("cleanup");
+}
+
+/// `--help` names every ported `spell` mode and no longer calls one unported.
+#[test]
+fn help_lists_the_spell_modes() {
     let root = temp_root("help");
     let got = rust(&["--help"], &root);
     assert_eq!(got.status.code(), Some(0));
     let text = String::from_utf8_lossy(&got.stdout);
     for line in [
-        "dfo-cli spell --list",
+        "dfo-cli spell [--list | --all-spells | --spell <index|name>]",
         "--list",
+        "--all-spells",
+        "--spell <index|name>",
         "--standard",
         "--data <dir>",
-        "spell --all-spells",
     ] {
         assert!(text.contains(line), "help names {line}");
     }
+    assert!(
+        !text.contains("spell --list`,\n`spell --spell`"),
+        "the old unsupported list is gone"
+    );
     fs::remove_dir_all(&root).expect("cleanup");
 }

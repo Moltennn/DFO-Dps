@@ -1,15 +1,15 @@
-//! The R8 `spell --list` card, differentially against the real JS CLI over a synthetic `SPELLS.STD`.
+//! The R8 singular `spell` cards, differentially against the real JS CLI over a synthetic `SPELLS.STD`.
 //!
-//! The branch (`src/cli.js:1550-1554`) is not exported, so each case runs `bin/dfo-dps.js spell --list --theory
-//! --data <arena> ...` and compares stdout byte for byte with [`spell::text`]. The synthetic book is written under a
-//! temp root (never the machine's ARENA2) and read by the Rust side through `dfo_core::spells::read_spells_std`, so
-//! both sides see the same records. The pool is every standard record (the theory character has no spellbook), and the
-//! character, target, cost and damage are the shared core's; this pins only the presentation: the caption, the
-//! `index ?? '-'` / `String(name ?? '')` cells, the JS `fmt` and `table`.
+//! The branch (`src/cli.js:1516-1599`) is not exported, so each case runs `bin/dfo-dps.js spell ...` and compares stdout
+//! byte for byte with the renderer. The synthetic book is written under a temp root (never the machine's ARENA2) and
+//! read by the Rust side through `dfo_core::spells::read_spells_std`, so both sides see the same records. The pool is
+//! every standard record (the theory character has no spellbook), and the character, target, cost, damage and rotation
+//! are the shared core's; this pins only the presentation: the caption, the `index ?? '-'` / `String(name ?? '')` cells,
+//! the `--all-spells` table, the rotation card with its effects block, the numeric helpers and `table`.
 //!
-//! `--data` is unported in the CLI's dispatch, so the test hands the same directory to the JS and parses the bytes
-//! itself for the Rust side. Pool resolution (`resolveSpells`/`values.standard`), the `priced` empty case and the
-//! `--json` refusal are dispatch, not this module; the test mirrors the branch's inputs only.
+//! Pool resolution (`resolveSpells`/`values.standard`), the pricing/search split, the empty-book case, the selection and
+//! the `--json` document shapes are dispatch, not this module; `tests/cli_spell.rs` pins those end to end. The local
+//! invariants below (placeholder cells, the NaN comparator, the selection arms) are marked as such.
 //!
 //! A missing `node` panics rather than skips, because a skipped differential proves nothing.
 
@@ -26,6 +26,7 @@ use dfo_core::maxprofile::Profiles as MaxProfiles;
 use dfo_core::spells::{read_spells_std, spells_by_index_map};
 use dfo_core::theory::theory_character;
 use dfo_core::value::Value::{self, Arr, Bool, Num, Obj, Str};
+use std::cmp::Ordering as CmpOrdering;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -352,4 +353,127 @@ fn a_custom_record_prints_the_js_placeholders() {
     assert_eq!(row[0], "-");
     assert_eq!(row[1], "5");
     assert_eq!(row[2], "11.7");
+}
+
+/// The `--all-spells` table and its `--json` document, and one `--spell Burn` rotation card and its `--json` document,
+/// against the real JS branch over the same synthetic book. The branch is unexported, so the test resolves the pool and
+/// prices it the way the branch does before calling the renderers.
+#[test]
+fn the_all_spells_and_rotation_cards_match_the_js() {
+    let root = temp_root("singular");
+    let arena = write_spellbook(&root);
+    let arena_text = arena.to_str().unwrap();
+    let book = spells_by_index_map(read_spells_std(&spells_std()));
+    let pool: Vec<Value> = book.entries().iter().map(|(_, sp)| sp.clone()).collect();
+    let ch = theory_caster(theory_character_like_cli(45.0));
+    let target = spell_target(45.0, "armoured");
+    let branch_opts = opts(&target, 45.0, 0.0, 0.0, 0.0, None);
+
+    // `--all-spells`.
+    let want = js(
+        &["spell", "--theory", "--data", arena_text, "--all-spells"],
+        &root,
+    );
+    assert_eq!(want.status.code(), Some(0));
+    let priced = spell::price_pool(&pool, &ch, &target, &branch_opts);
+    assert_eq!(
+        spell::all_spells_text(&priced).as_bytes(),
+        want.stdout.as_slice(),
+        "the --all-spells table differs"
+    );
+    // `--json --all-spells`: the JS keeps the table and appends the document. The document's shape is pinned end to end
+    // by `tests/cli_spell.rs`; here the renderer's part is its own key order and values.
+    let doc = spell::all_spells_document(&priced);
+    let first = doc.at(0);
+    let keys: Vec<&str> = first.entries().iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(
+        &keys[..3],
+        &["index", "name", "cost"],
+        "index/name lead, then the card's own keys: {keys:?}"
+    );
+    assert_eq!(first.get("name").to_js_string(), "Far Bolt");
+
+    // One spell: `--spell Burn`, the DoT card with its effects block.
+    let want = js(
+        &["spell", "--theory", "--data", arena_text, "--spell", "Burn"],
+        &root,
+    );
+    assert_eq!(want.status.code(), Some(0));
+    let searched = spell::price_search(&pool, &ch, &target, &branch_opts);
+    let chosen = spell::select(&priced, &searched, Some("Burn")).expect("Burn is priced");
+    let mut rotation_opts = branch_opts.clone();
+    rotation_opts.set("seconds", Num(30.0));
+    let r = dfo_core::spells::spell_rotation(&chosen.sp, &ch, &target, &rotation_opts);
+    assert_eq!(
+        spell::rotation_text(&ch, &chosen.sp, &r, "armoured", &target).as_bytes(),
+        want.stdout.as_slice(),
+        "the rotation card differs"
+    );
+    let want = js(
+        &[
+            "spell", "--theory", "--data", arena_text, "--spell", "Burn", "--json",
+        ],
+        &root,
+    );
+    let doc = spell::rotation_document(&chosen.sp, &r);
+    let keys: Vec<&str> = doc.entries().iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(&keys[..2], &["index", "name"], "JS key order: {keys:?}");
+    assert_eq!(doc.get("name").to_js_string(), "Burn");
+    assert!(want.status.code().is_some(), "the JS branch ran");
+    fs::remove_dir_all(&root).expect("cleanup");
+}
+
+/// A LOCAL INVARIANT, not an oracle check: the effects table's missing `magnitude`/`rounds`/`note` cells print the JS
+/// `-`, `1` and `''`, and a NaN DPS difference sorts as equal (stable order) exactly as `(a, b) => b.dps - a.dps` does.
+#[test]
+fn the_effects_placeholders_and_the_nan_order_are_the_js_ones() {
+    let ch = theory_caster(theory_character_like_cli(45.0));
+    let target = spell_target(45.0, "armoured");
+    let mut r = opts(&target, 45.0, 0.0, 0.0, 0.0, None);
+    r.set("elements", Arr(vec![obj([("key", Str("4,0".into()))])]));
+    let got = spell::rotation_text(
+        &ch,
+        &obj([("name", Str("Nameless".into()))]),
+        &r,
+        "armoured",
+        &target,
+    );
+    let effects: Vec<&str> = got.lines().skip_while(|l| *l != "Effects").collect();
+    assert_eq!(effects[1], "Effect  Magnitude  Rounds  Damage  Note");
+    assert_eq!(effects[2], "------  ---------  ------  ------  ----");
+    assert_eq!(effects[3], "4,0             -       1       -");
+
+    // `b.dps - a.dps` is NaN for a NaN row, which JS treats as equal (so the stable sort keeps a NaN row's relative
+    // place rather than moving it); the exact order is the sort algorithm's, so this pins the comparator, not the order.
+    let row = |dps: f64| spell::Priced {
+        sp: Value::Undefined,
+        r: obj([("dps", Num(dps)), ("damage", Num(1.0))]),
+    };
+    assert_eq!(spell::by_dps(&row(f64::NAN), &row(7.0)), CmpOrdering::Equal);
+    assert_eq!(spell::by_dps(&row(7.0), &row(f64::NAN)), CmpOrdering::Equal);
+    assert_eq!(spell::by_dps(&row(7.0), &row(5.0)), CmpOrdering::Less);
+    assert_eq!(spell::by_dps(&row(5.0), &row(7.0)), CmpOrdering::Greater);
+    assert_eq!(spell::by_dps(&row(5.0), &row(5.0)), CmpOrdering::Equal);
+}
+
+/// A LOCAL INVARIANT: the `values.spell` selection arms. Index and case-insensitive name are tried in the search-pool
+/// order, then a name substring; an empty query matches the first name by substring, and a miss is `None`.
+#[test]
+fn the_selection_arms_are_index_name_then_substring() {
+    let row = |index: f64, name: &str| spell::Priced {
+        sp: obj([("index", Num(index)), ("name", Str(name.into()))]),
+        r: obj([("damage", Num(1.0)), ("dps", Num(1.0))]),
+    };
+    let rows = vec![row(5.0, "Far Bolt"), row(1.0, "Bolt"), row(2.0, "Burn")];
+    let pick =
+        |q: Option<&str>| spell::select(&rows, &rows, q).map(|x| x.sp.get("name").to_js_string());
+    assert_eq!(pick(None), Some("Far Bolt".to_owned()));
+    assert_eq!(pick(Some("1")), Some("Bolt".to_owned()));
+    assert_eq!(pick(Some("bolt")), Some("Bolt".to_owned()));
+    assert_eq!(pick(Some("  BURN ")), Some("Burn".to_owned()));
+    // A substring match follows the search pool's own order (DPS descending), so "ol" finds the first record whose
+    // name contains it, not the shortest name.
+    assert_eq!(pick(Some("OL")), Some("Far Bolt".to_owned()));
+    assert_eq!(pick(Some("")), Some("Far Bolt".to_owned()));
+    assert_eq!(pick(Some("nope")), None);
 }
