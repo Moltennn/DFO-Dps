@@ -405,16 +405,16 @@ fn unsupported_boundaries_are_explicit() {
         "--out",
         "x.html",
     ]);
-    // `scale` is ported now (`tests/cli_scale.rs`), `tradeoff` too (`tests/cli_tradeoff.rs`) and `theory` too
-    // (`tests/cli_theory.rs`); an unported command still names itself.
-    let got = rust(&["weapons"]);
+    // `scale` is ported now (`tests/cli_scale.rs`), `tradeoff` too (`tests/cli_tradeoff.rs`), `theory` too
+    // (`tests/cli_theory.rs`) and `weapons`/`skills` too (`tests/weapons.rs`); an unported command still names itself.
+    let got = rust(&["real-dps"]);
     assert_eq!(got.status.code(), Some(2));
     let text = String::from_utf8_lossy(&got.stderr);
     assert!(
-        text.contains("the \"weapons\" command is not ported yet"),
+        text.contains("the \"real-dps\" command is not ported yet"),
         "{text}"
     );
-    assert!(text.contains("`compare`"), "{text}");
+    assert!(text.contains("`weapons`"), "{text}");
     // Flags the ported commands do not price are refused by name, not silently ignored (JS accepts both and drops them).
     for args in [
         &["build", "--theory", "--stat", "strength=110"][..],

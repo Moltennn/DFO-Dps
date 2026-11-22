@@ -56,6 +56,13 @@
 //! .has(index))]` - every standard record in the book's own order, then the save's custom records - not the singular
 //! `pool`; an empty list is the JS `No standard damage spells found. Check --data / ARENA2.` line, exit 0, no page.
 //!
+//! `weapons` and its alias `skills` render the level-45 weapon ceiling page through [`weapons`] (`src/cli.js:1601-1804`):
+//! the melee and dual-pair rows, the relay/uncapped sections, and - unless `--categories` - one skill curve per weapon
+//! family plus the Critical Strike curve. `--categories` condenses the rows to one winner per type per slot. Every row is
+//! the shared `analyze`; the branch's `makeMax` never passes `--level`, so the characters stay level 45 and `--level` only
+//! moves the reference foe and the Breach. The page is create-only, as `report`'s is, and the JS prints
+//! `weapons page written:` only in text mode; `--json` prints `{ level, firmCharts, rows, cs }` in both modes.
+//!
 //! The JS `firmament` command also keeps a disk cache (`.cache/firmament-plans.json`, keyed by a source fingerprint) and
 //! its card starts `Firmament plans (N cached, M computed)`. This CLI writes no cache at all: a plan is a pure function of
 //! its build and purse, every run replans, and the card says `Firmament plans` with no counts, because reporting a cache
@@ -84,6 +91,7 @@ mod spell;
 mod spells_report;
 mod theory;
 mod tradeoff;
+mod weapons;
 
 use std::collections::HashMap;
 use std::process::ExitCode;
@@ -137,6 +145,8 @@ Usage:
   dfo-cli spells [--theory] [--save <slot|folder|path>] [--data <dir>] [options] [--json] [--out <file>]
   dfo-cli tradeoff [--theory] [--save <slot|folder|path>] [options] [--json]
   dfo-cli theory [--theory] [options] [--json]
+  dfo-cli weapons [--categories] [--firmament] [--vampire] [--race <name>] [--level <n>] [--json] [--out <file>]
+  dfo-cli skills  [same flags as weapons]
 
 `saves` lists the save folders under the DFO user-data folder (newest first). `doctor` prints the model pin, the
 save folders and the imported character's build/ruleset summary. `build` prices one build against one target: with
@@ -181,6 +191,12 @@ speed/damage crossover by boss health (`--target`/`--health`/`--armor` do not re
 `theory` prints the level-45 long-blade ceiling card: the header, the push stages, the cap sheet, both scaling curves,
 the Firmament and legal-frontier tables, the long-blade table and the result card, text or `--json`; it always reads
 the theory character and needs a boss/gate target (a reference foe is refused, where the JS card crashes).
+`weapons` (and its alias `skills`) prints the level-45 weapon ceiling page: every melee template and the dual pairs at
+their real Firmament trees, the per-hit-capped table, the relay/uncapped sections and, unless `--categories`, one
+skill-scaling curve per weapon family plus the Critical Strike curve. `--categories` keeps one winner per weapon type
+per hand slot. It writes `weapons.html` (`skills.html` for the alias, or `--out`, also create-only) and prints the JS
+`weapons page written:` line, or the `{ level, firmCharts, rows, cs }` document with `--json`. The characters are always
+level 45 (the JS `makeMax` never passes `--level`); `--level` moves the reference foe and the Breach only.
 
 Flags:
   --save <SAVE4|folder|SaveData.txt>  the save to import (default: the newest under the user-data folder)
@@ -224,9 +240,9 @@ Flags:
   --spell <index|name>                spell: the record to price (index, name, then name substring)
   --standard                          spell: use every standard record, not just the character's spellbook
   --old                               probe: read the newest capture in captures/old
-  --out <file>                        probe/graph/report/firmament/imprints/spells: the page (default probe.html /
-                                      graph.html / dfo-dps-report.html / firmament.html / imprints.html / spells.html;
-                                      must not exist yet)
+  --out <file>                        probe/graph/report/firmament/imprints/spells/weapons: the page (default probe.html /
+                                      graph.html / dfo-dps-report.html / firmament.html / imprints.html / spells.html /
+                                      weapons.html; must not exist yet)
   --series <spec,...>                 graph: stat:name, skill:id, gear:id or star:name (default stat:strength,stat:agility)
   --from <n> --to <n> --step <n>      graph: the channel range (default per series kind; step 10)
   --uncapped                          graph: plot uncapped DPS instead of the per-hit-capped line;
@@ -240,6 +256,7 @@ Flags:
   --sort <boss|uncapped|conditional>  imprints order (default boss; --uncapped wins, then --cap-aware)
   --cap-aware                         imprints: rank by boss DPS (the default order, named explicitly);
                                       enchant-plan: the cap-aware mode, named explicitly
+  --categories                        weapons/skills: one winner per weapon type per hand slot, sorted by DPS
   --shield <template|none|auto>       enchant-plan: the shield template (default auto)
   --soul-gem                          enchant-plan: add 5,000 enchantment points to every piece
   --group <undead|daedra|humanoid|animal>  enchant-plan target for Potent Vs (default daedra)
@@ -288,9 +305,9 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         .first()
         .cloned()
         .unwrap_or_else(|| "build".into());
-    // `src/cli.js:921`: `if (cmd === 'theory' || cmd === 'weapons' || cmd === 'skills') values.theory = true`. Only
-    // `theory` is ported, and it always reads the theory character.
-    if command == "theory" {
+    // `src/cli.js:921`: `if (cmd === 'theory' || cmd === 'weapons' || cmd === 'skills') values.theory = true`. The
+    // three commands read the level-45 theory character, so none of them imports a save.
+    if command == "theory" || command == "weapons" || command == "skills" {
         values.theory = true;
     }
     if command == "saves" {
@@ -423,6 +440,13 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         check_output_flags(&command, &parsed)?;
         return theory_command(&values);
     }
+    if command == "weapons" || command == "skills" {
+        if let Some(extra) = parsed.positionals.get(1) {
+            return Err(usage(format!("unexpected positional argument \"{extra}\"")));
+        }
+        check_output_flags(&command, &parsed)?;
+        return weapons_command(&command, &values, parsed.raw("out"));
+    }
     if command == "scale" {
         if let Some(extra) = parsed.positionals.get(1) {
             return Err(usage(format!("unexpected positional argument \"{extra}\"")));
@@ -458,7 +482,7 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         ];
         return Err(if COMMANDS.contains(&command.as_str()) {
             usage(format!(
-                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank`, `compare`, `scale`, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`, `tradeoff`, `spell`, `spells` and `theory`"
+                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank`, `compare`, `scale`, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`, `tradeoff`, `spell`, `spells`, `theory` and `weapons`/`skills`"
             ))
         } else {
             usage(format!("unknown command \"{command}\"\n\n{HELP}"))
@@ -594,6 +618,13 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
                 )));
             }
         }
+    }
+    // `--categories` is the weapons/skills page's condensed table; refused by name elsewhere, as the JS accepts and
+    // ignores it.
+    if command != "weapons" && command != "skills" && parsed.flag("categories") {
+        return Err(usage(
+            "--categories is not supported by this CLI slice (it needs the weapons/skills command, or is not ported yet)",
+        ));
     }
     // `--family`/`--sort`/`--cap-aware` are read by `imprints` and `--cap-aware` by `enchant-plan` too (the JS
     // validates `--sort` globally, which [`Values::new`] still does before this runs).
@@ -853,7 +884,7 @@ const SUPPORTED: &str = concat!(
     "star-damage potency pierce backstab players blow-x health-share self-health-share top damage-pct base-stats ",
     "no-effects save offline passive bare out objective trials seed max-seconds max-blows no-carry samples stat all ",
     "data old series from to step uncapped skill gear-skill build stars refresh family sort cap-aware ",
-    "shield soul-gem group repairs regen ",
+    "shield soul-gem group repairs regen categories ",
     "list all-spells standard spell mana-limit seconds cast-speed magicka",
 );
 
@@ -864,7 +895,7 @@ fn in_flags(list: &str, name: &str) -> bool {
 const BOOLEAN_FLAGS: &str = concat!(
     "theory json vampire firmament rhythm unaware first-blow behind pair dual spam no-crit-damage no-passive ",
     "no-rri help offline bare no-effects no-carry samples all old uncapped refresh cap-aware list all-spells standard ",
-    "mana-limit soul-gem",
+    "mana-limit soul-gem categories",
 );
 
 const MULTI: [&str; 3] = ["star-stat", "star-skill", "stat"];
@@ -1091,6 +1122,8 @@ struct Values {
     spell_query: Option<String>,
     /// `--mana-limit`: price the magicka pool instead of solving mana.
     mana_limit: bool,
+    /// `--categories`: the weapons/skills page shows one winner per type per slot.
+    categories: bool,
 }
 
 fn range_text(what: &str, min: f64, max: f64, exclusive_min: bool) -> String {
@@ -1420,6 +1453,7 @@ impl Values {
             standard: parsed.flag("standard"),
             spell_query: parsed.raw("spell").map(str::to_owned),
             mana_limit: parsed.flag("mana-limit"),
+            categories: parsed.flag("categories"),
         })
     }
 
@@ -3043,6 +3077,46 @@ fn theory_command(values: &Values) -> Result<String, CliError> {
 /// The resolved damage line the card printed, for the `>38%` warning when `--damage-pct` was absent.
 fn rendered_damage(rendered: &theory::Rendered) -> f64 {
     rendered.document.get("character").get("damage").to_number()
+}
+
+/// `dfo-dps weapons` / `dfo-dps skills` (`src/cli.js:1601-1804`): the weapon ceiling page from [`weapons::render`].
+///
+/// `--categories` condenses the rows to one winner per type per slot and drops the family/Critical Strike curves; the
+/// default shows every row and every curve. The page is create-only (the same deliberate deviation `probe`/`graph`/
+/// `report` pin), the default name is `weapons.html` for `weapons` and `skills.html` for the alias, and the JS renames
+/// only the untouched report default. text mode prints `weapons page written:`; either mode prints the `--json` document.
+fn weapons_command(
+    command: &str,
+    values: &Values,
+    out_flag: Option<&str>,
+) -> Result<String, CliError> {
+    let book = saves::load_spellbook();
+    let input = weapons::Input {
+        // `n(values.level, THEORY_LEVEL)`: the reference foe's and the Breach's level. The characters are level 45.
+        level: values.num("level", THEORY_LEVEL),
+        firmament: values.firmament,
+        vampire: values.vampire,
+        race: values.race.clone(),
+        categories: values.categories,
+    };
+    let rendered = weapons::render(&input, &book).map_err(usage)?;
+    // `path.resolve(values.out === 'dfo-dps-report.html' ? defaultOut : values.out)`.
+    let default_out = if command == "weapons" {
+        "weapons.html"
+    } else {
+        "skills.html"
+    };
+    let out = match out_flag {
+        None | Some("dfo-dps-report.html") => default_out.to_owned(),
+        Some(name) => name.to_owned(),
+    };
+    let out = probe::normalized(&out);
+    probe::write_page(&out, &rendered.page)?;
+    // `if (!values.json) console.log(...)` then the `if (values.json) console.log(...)` document.
+    if values.json {
+        return Ok(format!("{}\n", json(&rendered.document)));
+    }
+    Ok(format!("weapons page written: {}\n", out.display()))
 }
 
 /// `dfo-dps compare` (`src/cli.js:2277-2304`): the same build before and after `--stat`/`--weapon`, as a four-column
