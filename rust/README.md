@@ -23,22 +23,25 @@ tested: `tests/sidebar.rs` drives `tests/sidebar_oracle.mjs` over the public com
 what this repository cannot execute.
 
 ## R8: the CLI, the `build`, `saves`, `rank`, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`,
-`tradeoff`, `spell` and `spells` slice
+`enchant-plan`/`gear-plan`, `tradeoff`, `spell` and `spells` slice
 
 `dfo-cli` (`rust/dfo-cli`) is the R8 CLI slice: the JS `src/cli.js` `build` card, `saves` listing, `doctor` summary,
 `rank` path, `compare` table, Combat Probe `probe` page, `graph` page, `src/report.js` `report` page, the
-`src/firmament.js` `firmament` plans page, the `imprints` rankings page, the `enchant` weapon card, the `tradeoff`
-speed-vs-damage card, the singular `spell` cards (rotation, `--list`, `--all-spells`) and the plural `spells` spell
-ceiling page, for the level-45 theory character or for an imported save.
+`src/firmament.js` `firmament` plans page, the `imprints` rankings page, the `enchant` weapon card, the
+`enchant-plan`/`gear-plan` per-piece plan (single and `--all`), the `tradeoff` speed-vs-damage card, the singular `spell`
+cards (rotation, `--list`, `--all-spells`) and the plural `spells` spell ceiling page, for the level-45 theory character
+or for an imported save.
 It is a thin layer: the parser owns
 argument text, the output formats
 (`printBuild`'s card,
 `printRank`'s table, `--json`'s summary
 and `{ character, weapons, current }`, `doctor`'s plain lines, the two SVG pages, the report page, the firmament
-plans page, the imprint card, the enchant card, the spell cards, the spell ceiling page and the tradeoff card) and exit
+plans page, the imprint card, the enchant card, the enchant plan cards and pages, the spell cards, the spell ceiling
+page and the tradeoff card) and exit
 codes; every number comes from `dfo_core`
 (`theory_character`, `Profiles::legal_gear`, `reference_foe`/`boss_target`/`gate_target`/`encounter_target`,
 `analyze`/`marginals`/`rank_affixes`/`rank_weapons`, `current_weapon_row`, `imprints::rank_all`,
+`enchant_plan::plan_enchants`/`plan_matrix`,
 `save::character_from_save`,
 `save::live_stat`/`skill_value`/`skill_name`, `model_blow::weapon_of`). There is no second reading of a rule.
 
@@ -104,6 +107,22 @@ codes; every number comes from `dfo_core`
   written. `dfo-cli/tests/cli_enchant.rs` pins the whole command against the JS CLI (theory variants, text and `--json`,
   a save with no weapon, an armed save with and without a book, a nonzero Cast When Strikes price over a synthetic temp
   `SPELLS.STD`, and the flag refusals).
+- **The enchant plan.** `dfo-cli enchant-plan [--theory] [--weapon ...] [--shield <template|none|auto>] [--soul-gem]
+  [--group <undead|daedra|humanoid|animal>] [--repairs <n>] [--regen <n>] [--uncapped | --cap-aware | --all] [--json]
+  [--out <file>]`, with `gear-plan` as the same branch, plans the per-piece enchantment priority fill from
+  `dfo_core::enchant_plan::plan_enchants` (and `plan_matrix` for `--all`) and renders it through `src/enchant_plan.rs`
+  (pure data in and strings out, pinned by `tests/enchant_plan.rs`): the header, the separate weapon-imprint line, the
+  per-piece budget table, the one-piece/stacks/weapon-only explanations and the three rating tables (`enchant_plan::text`),
+  the same tables as markup (`page`), the JS `--json` object (`document`, the plan itself), and for `--all` the two
+  matrices' summary tables with the canonical melee layout (`all_text`, `all_page`, `all_document`). The targets are the
+  branch's own (`gate_target(45)` for the default cap-aware mode, `reference_foe(45, "tough")` for `--uncapped` with
+  `forceSkills`); `--uncapped`/`--cap-aware` pick one mode, `--all` both. It writes `enchant-plan.html` (or
+  `enchant-plans.html` for `--all`, or `--out`, through the same create-only writer) and prints the JS
+  `enchant plan written:`/`enchant plans page written:` line, or the `--json` document (page still written). An unknown
+  `--group` is the JS stderr line and exit 2; an unknown `--shield` is the global `validateFlags` refusal. No save is
+  read or written. `dfo-cli/tests/cli_enchant_plan.rs` pins the command against the JS CLI (text, `--json` and page for
+  both modes, a synthetic `SPELLS.STD`, the default output names, the alias parity, the refusals and the create-only
+  writer with a hard link and a symlink).
 - **The tradeoff card.** `dfo-cli tradeoff [--theory] [--save ...] [options] [--json]` (`src/cli.js:2204-2252`) prices
   `+5%` attack speed against `+5%` weapon damage over the Breach gate and five Curbing reference pools, then the top
   five weapons at the gate and at 1,000 HP, then the best weapon at twelve Curbing healths (the speed/damage crossover).

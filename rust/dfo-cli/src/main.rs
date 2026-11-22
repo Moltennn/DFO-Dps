@@ -1,8 +1,10 @@
 //! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves`, `build`, `objective`, `rank`, `compare`, `scale`,
-//! `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`, `tradeoff`, `spell` and `spells` slice).
+//! `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`, `enchant-plan`/`gear-plan`, `tradeoff`,
+//! `spell` and `spells` slice).
 //!
 //! This is the JS `src/cli.js` `build` card, `objective` command, `rank` card, `compare` card, `scale` curve, `saves`
-//! listing, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`, `tradeoff`, `spell` and `spells`,
+//! listing, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`, `enchant-plan`/`gear-plan`,
+//! `tradeoff`, `spell` and `spells`,
 //! and only that: [`main`] parses the flags those read, replays the JS validation (`numFlag`, the enum checks,
 //! `sampledOptions`) with the same messages, builds either the level-45 theory character or the one an imported save
 //! describes, the target and
@@ -70,6 +72,7 @@
 // The shared renderer is a whole port of `src/graph.js`: `probe` uses `lineChart`/`multiGraphPage`, `graph` uses
 // `lineChart`/`graphPage`, `firmament` and `imprints` use `multiGraphPage`, and `barChart` serves `imprints`.
 mod enchant;
+mod enchant_plan;
 mod firmament;
 #[allow(dead_code)]
 mod graph;
@@ -106,7 +109,7 @@ use dfo_core::theory::theory_character;
 use dfo_core::value::{number_to_string, obj_table_get, string_to_number, Value, Value::*};
 
 const HELP: &str = "\
-dfo-cli - the saves, build, objective, rank, compare, doctor, probe, graph, report, firmament, imprints, enchant, tradeoff, spell and spells slice of dfo-dps (Rust core)
+dfo-cli - the saves, build, objective, rank, compare, doctor, probe, graph, report, firmament, imprints, enchant, enchant-plan, gear-plan, tradeoff, spell and spells slice of dfo-dps (Rust core)
 
 Usage:
   dfo-cli saves
@@ -126,6 +129,8 @@ Usage:
   dfo-cli report [--theory] [--save <slot|folder|path>] [options] [--out <file>]
   dfo-cli firmament [--build <id,...>] [--stars <n>] [--refresh] [--json] [--out <file>]
   dfo-cli imprints [--family <key>] [--sort <boss|uncapped|conditional>] [--uncapped] [--cap-aware] [--vampire] [--firmament] [--json] [--out <file>]
+  dfo-cli enchant-plan [--theory] [--weapon <template[:material]>] [--shield <template|none|auto>] [--soul-gem] [--group <undead|daedra|humanoid|animal>] [--repairs <n>] [--regen <n>] [--uncapped | --cap-aware | --all] [--json] [--out <file>]
+  dfo-cli gear-plan [same flags as enchant-plan]
   dfo-cli enchant [--theory] [--save <slot|folder|path>] [options] [--json]
   dfo-cli spell [--list | --all-spells | --spell <index|name>] [--theory] [--save <slot|folder|path>] [--data <dir>] [--standard] [options] [--json]
   dfo-cli spells [--theory] [--save <slot|folder|path>] [--data <dir>] [options] [--json] [--out <file>]
@@ -163,7 +168,12 @@ cache is filled before the branch reads it), `--list` returns before `--all-spel
 its table even under `--json`. `spells` ranks every standard damage spell plus the save's custom records by 30-second
 window DPS, writes the `DFO spell ceiling` page (`spells.html`, or `--out`, also create-only) and prints the JS
 `spells page written:` line, or the ranked `--json` list; an empty pool prints the JS
-`No standard damage spells found. Check --data / ARENA2.` line and exits 0. `tradeoff` prices
+`No standard damage spells found. Check --data / ARENA2.` line and exits 0. `enchant-plan` (and its alias `gear-plan`)
+plans the per-piece enchantment priority fill against the level-45 Breach (or, with `--uncapped`, the no-cap tough
+reference foe): `--weapon` picks the template, `--shield`/`--soul-gem`/`--group`/`--repairs`/`--regen` are the branch's
+options, and `--all` prints both matrices. It writes `enchant-plan.html` (or `enchant-plans.html` for `--all`, or
+`--out`, also create-only) and prints the JS `enchant plan written:` / `enchant plans page written:` line, or the plan
+document with `--json`; a group outside the four named ones is the JS stderr line and exit 2. `tradeoff` prices
 +5% attack speed against +5% weapon damage over the Breach gate and five Curbing pools, then the top weapons and the
 speed/damage crossover by boss health (`--target`/`--health`/`--armor` do not reach those fixed pools).
 
@@ -199,7 +209,8 @@ Flags:
   --skill <id>                        scale: one raw skill id to curve to 200
   --gear-skill <id>                   scale: one gear skill affix to curve to current+100
   --from <n> --to <n> --step <n>      scale/graph: the channel range (scale default: current to cap; step 10)
-  --all                               scale: every relevant channel at once (text only)
+  --all                               scale: every relevant channel at once (text only);
+                                      enchant-plan: both the uncapped and the cap-aware matrices
   --data <dir>                        spell/spells: an ARENA2 directory holding SPELLS.STD (read only when the launcher
                                       has no usable config: the JS module cache is filled before the branch; see README)
   --data <capture.json>               probe: a capture file
@@ -222,7 +233,13 @@ Flags:
                                       every run either way
   --family <key>                      imprints: LongBlade, ShortBlade, Axe, BluntWeapon, Archery or HandToHand
   --sort <boss|uncapped|conditional>  imprints order (default boss; --uncapped wins, then --cap-aware)
-  --cap-aware                         imprints: rank by boss DPS (the default order, named explicitly)
+  --cap-aware                         imprints: rank by boss DPS (the default order, named explicitly);
+                                      enchant-plan: the cap-aware mode, named explicitly
+  --shield <template|none|auto>       enchant-plan: the shield template (default auto)
+  --soul-gem                          enchant-plan: add 5,000 enchantment points to every piece
+  --group <undead|daedra|humanoid|animal>  enchant-plan target for Potent Vs (default daedra)
+  --repairs <n>                       enchant-plan: Repairs Objects copies on the set (default 1; 0 = none)
+  --regen <n>                         enchant-plan: Regens Health copies (default 0; heal spells are stronger)
   --json
   -h, --help
 
@@ -361,6 +378,13 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         check_output_flags(&command, &parsed)?;
         return enchant_command(&values);
     }
+    if command == "enchant-plan" || command == "gear-plan" {
+        if let Some(extra) = parsed.positionals.get(1) {
+            return Err(usage(format!("unexpected positional argument \"{extra}\"")));
+        }
+        check_output_flags(&command, &parsed)?;
+        return enchant_plan_command(&values, parsed.raw("out"));
+    }
     if command == "spell" {
         if let Some(extra) = parsed.positionals.get(1) {
             return Err(usage(format!("unexpected positional argument \"{extra}\"")));
@@ -452,16 +476,25 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
         "imprints, probe, enchant-plan, gear-plan, loadout, real-dps, graph",
     );
     let listed = |list: &str| list.split(", ").any(|f| f.trim() == command);
-    // `--stat`/`--all` are priced by `compare` and `scale`; JS accepts and ignores them elsewhere, and this CLI refuses
-    // them by name, as it does `--out`, never silently.
+    // `--stat` is priced by `compare` and `scale`; `--all` by `compare`, `scale` and `enchant-plan`; JS accepts and
+    // ignores them elsewhere, and this CLI refuses them by name, as it does `--out`, never silently.
     if command != "compare" && command != "scale" {
-        for name in ["stat", "all"] {
-            if parsed.raw(name).is_some() || parsed.flag(name) {
-                return Err(usage(format!(
-                    "--{name} is not supported by this CLI slice (it needs a save, another command, or is not ported yet)"
-                )));
-            }
+        let name = "stat";
+        if parsed.raw(name).is_some() || parsed.flag(name) {
+            return Err(usage(format!(
+                "--{name} is not supported by this CLI slice (it needs a save, another command, or is not ported yet)"
+            )));
         }
+    }
+    if command != "compare"
+        && command != "scale"
+        && command != "enchant-plan"
+        && command != "gear-plan"
+        && (parsed.raw("all").is_some() || parsed.flag("all"))
+    {
+        return Err(usage(
+            "--all is not supported by this CLI slice (it needs a save, another command, or is not ported yet)",
+        ));
     }
     // `--skill`/`--gear-skill` are priced by `scale` alone.
     if command != "scale" {
@@ -517,6 +550,8 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
     }
     if command != "graph"
         && command != "imprints"
+        && command != "enchant-plan"
+        && command != "gear-plan"
         && (parsed.raw("uncapped").is_some() || parsed.flag("uncapped"))
     {
         return Err(usage(
@@ -543,13 +578,31 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
             }
         }
     }
-    // `--family`/`--sort`/`--cap-aware` are read by `imprints` alone (the JS validates `--sort` globally, which
-    // [`Values::new`] still does before this runs).
+    // `--family`/`--sort`/`--cap-aware` are read by `imprints` and `--cap-aware` by `enchant-plan` too (the JS
+    // validates `--sort` globally, which [`Values::new`] still does before this runs).
     if command != "imprints" {
-        for name in ["family", "sort", "cap-aware"] {
+        for name in ["family", "sort"] {
             if parsed.raw(name).is_some() || parsed.flag(name) {
                 return Err(usage(format!(
                     "--{name} is not supported by this CLI slice (it needs the imprints command, or is not ported yet)"
+                )));
+            }
+        }
+        if command != "enchant-plan"
+            && command != "gear-plan"
+            && (parsed.raw("cap-aware").is_some() || parsed.flag("cap-aware"))
+        {
+            return Err(usage(
+                "--cap-aware is not supported by this CLI slice (it needs the imprints command, or is not ported yet)",
+            ));
+        }
+    }
+    // `--shield`/`--soul-gem`/`--group`/`--repairs`/`--regen` are read by `enchant-plan` alone.
+    if command != "enchant-plan" && command != "gear-plan" {
+        for name in ["shield", "soul-gem", "group", "repairs", "regen"] {
+            if parsed.raw(name).is_some() || parsed.flag(name) {
+                return Err(usage(format!(
+                    "--{name} is not supported by this CLI slice (it needs the enchant-plan command, or is not ported yet)"
                 )));
             }
         }
@@ -783,6 +836,7 @@ const SUPPORTED: &str = concat!(
     "star-damage potency pierce backstab players blow-x health-share self-health-share top damage-pct base-stats ",
     "no-effects save offline passive bare out objective trials seed max-seconds max-blows no-carry samples stat all ",
     "data old series from to step uncapped skill gear-skill build stars refresh family sort cap-aware ",
+    "shield soul-gem group repairs regen ",
     "list all-spells standard spell mana-limit seconds cast-speed magicka",
 );
 
@@ -793,7 +847,7 @@ fn in_flags(list: &str, name: &str) -> bool {
 const BOOLEAN_FLAGS: &str = concat!(
     "theory json vampire firmament rhythm unaware first-blow behind pair dual spam no-crit-damage no-passive ",
     "no-rri help offline bare no-effects no-carry samples all old uncapped refresh cap-aware list all-spells standard ",
-    "mana-limit",
+    "mana-limit soul-gem",
 );
 
 const MULTI: [&str; 3] = ["star-stat", "star-skill", "stat"];
@@ -897,7 +951,7 @@ const fn range(min: f64, max: f64, int: bool, exclusive_min: bool) -> Range {
 const ANY: Range = range(f64::NEG_INFINITY, f64::INFINITY, false, false);
 
 /// Every numeric option `validateFlags` bounds, with its JS default.
-const NUMERIC_FLAGS: [(&str, f64, Range); 28] = [
+const NUMERIC_FLAGS: [(&str, f64, Range); 30] = [
     ("level", THEORY_LEVEL, range(1.0, LEVEL_CAP, true, false)),
     ("stacks", 5.0, range(0.0, 5.0, true, false)),
     ("players", 1.0, range(1.0, f64::INFINITY, true, false)),
@@ -917,6 +971,8 @@ const NUMERIC_FLAGS: [(&str, f64, Range); 28] = [
     ("self-health-share", 1.0, range(0.0, 1.0, false, false)),
     ("gear-lb", 0.0, range(0.0, f64::INFINITY, false, false)),
     ("gear-cs", 0.0, range(0.0, f64::INFINITY, false, false)),
+    ("repairs", 1.0, range(0.0, f64::INFINITY, true, false)),
+    ("regen", 0.0, range(0.0, f64::INFINITY, true, false)),
     ("damage-pct", 0.0, ANY),
     ("stars", 98.0, range(0.0, 98.0, true, false)),
     (
@@ -958,6 +1014,12 @@ struct Values {
     swing: String,
     traits: Vec<String>,
     weapon: Option<(f64, f64)>,
+    /// `--shield`: `none`, `auto` or an item template id, lower-cased (the `enchant-plan` option).
+    shield: String,
+    /// `--soul-gem`: 5,000 extra enchantment points on every piece.
+    soul_gem: bool,
+    /// `--group`: the Potent Vs group, lower-cased (`undead`/`daedra`/`humanoid`/`animal`).
+    group: String,
     race: Option<String>,
     blade: f64,
     star_damage: Option<f64>,
@@ -1230,6 +1292,24 @@ impl Values {
             Some(raw) => Some(weapon_flag(raw)?),
             None => None,
         };
+        // `validateFlags` (`src/cli.js:375-379`): `--shield` must be a template number, `none` or `auto`.
+        let shield = match parsed.raw("shield") {
+            Some(raw) => {
+                let shield = raw.to_lowercase();
+                if shield != "none"
+                    && shield != "auto"
+                    && (shield.is_empty()
+                        || dfo_core::enchants::item_enchantment_name(&Str(shield.clone()))
+                            .is_none())
+                {
+                    return Err(usage(format!(
+                        "--shield must be a template number, none or auto, got \"{raw}\""
+                    )));
+                }
+                shield
+            }
+            None => "auto".to_owned(),
+        };
         let core = parsed.raw("core").unwrap_or("overhaul").to_owned();
         if !matches!(core.to_lowercase().as_str(), "overhaul" | "classic") {
             return Err(usage(format!(
@@ -1284,6 +1364,12 @@ impl Values {
             swing,
             traits,
             weapon,
+            shield,
+            soul_gem: parsed.flag("soul-gem"),
+            group: parsed
+                .raw("group")
+                .map(|g| g.to_lowercase())
+                .unwrap_or_else(|| "daedra".to_owned()),
             race: parsed.raw("race").map(str::to_owned),
             blade,
             star_damage,
@@ -2321,6 +2407,103 @@ fn imprints_command(values: &Values, out_flag: Option<&str>) -> Result<String, C
 /// branch's `potency`/`pierce`, and uses `strikeEnchantments` with `{ level, potencyPct, pierce }` - no `standard`, so
 /// the JS default `standardSpells()` (the launcher's `SPELLS.STD`) prices the procs, exactly as [`saves::load_spellbook`]
 /// does here. A save with no weapon prints the JS line and exits 0.
+///
+/// `dfo-dps enchant-plan` / `dfo-dps gear-plan` (`src/cli.js:1084-1217`): the per-piece enchant priority plan, one
+/// weapon (text, `--json` or its page), or both modes' matrices with `--all` (text, `--json` or the plans page). The
+/// plan is `dfo_core::enchant_plan::plan_enchants`/`plan_matrix`; this function owns the branch's flag resolution, the
+/// mode select, the create-only page write and the two `... page written:` lines.
+///
+/// `--shield` and `--group` were already validated by [`Values::new`]; `--group` is refused here with the JS
+/// `console.error` line and exit 2, because the JS checks it inside the branch.
+fn enchant_plan_command(values: &Values, out_flag: Option<&str>) -> Result<String, CliError> {
+    const GROUPS: [&str; 4] = ["undead", "daedra", "humanoid", "animal"];
+    if !GROUPS.contains(&values.group.as_str()) {
+        return Err(usage(format!("unknown Potent Vs group: {}", values.group)));
+    }
+    let weapon = values.weapon.map_or(123.0, |(tpl, _)| tpl);
+    let repairs = 0.0f64.max(values.num("repairs", 1.0).trunc());
+    let regen = 0.0f64.max(values.num("regen", 0.0).trunc());
+    let book = saves::load_spellbook();
+    // `gateTarget(THEORY_LEVEL)` and `referenceFoe(THEORY_LEVEL, 'tough')`: the branch's own two targets.
+    let gate = gate_target(&Num(THEORY_LEVEL), &Obj(vec![]));
+    let uncapped_target = reference_foe(&Num(THEORY_LEVEL), &Str("tough".to_owned()));
+    let all_modes: [(&'static str, &'static str, bool, Value); 2] = [
+        ("uncapped", "Uncapped theory", true, uncapped_target),
+        ("cap", "Cap-aware", false, gate),
+    ];
+    let selected: Vec<(&'static str, &'static str, bool, Value)> = if values.uncapped {
+        vec![all_modes[0].clone()]
+    } else if values.cap_aware {
+        vec![all_modes[1].clone()]
+    } else if values.all {
+        all_modes.to_vec()
+    } else {
+        vec![all_modes[1].clone()]
+    };
+    if values.all {
+        let mut profiles = Profiles::new(&book);
+        let modes: Vec<enchant_plan::AllMode> = selected
+            .iter()
+            .map(|(key, label, force_skills, target)| enchant_plan::AllMode {
+                key,
+                label,
+                matrix: dfo_core::enchant_plan::plan_matrix_with(
+                    &obj([
+                        ("soulGem", Bool(values.soul_gem)),
+                        ("repairs", Num(repairs)),
+                        ("regen", Num(regen)),
+                        ("group", Str(values.group.clone())),
+                        ("forceSkills", Bool(*force_skills)),
+                        ("target", target.clone()),
+                    ]),
+                    &mut profiles,
+                )
+                .expect("planMatrix"),
+            })
+            .collect();
+        let out_path = probe::normalized(match out_flag {
+            None | Some("dfo-dps-report.html") => "enchant-plans.html",
+            Some(name) => name,
+        });
+        probe::write_page(&out_path, &enchant_plan::all_page(&modes, values.soul_gem))?;
+        if values.json {
+            return Ok(format!("{}\n", json(&enchant_plan::all_document(&modes))));
+        }
+        let mut printed = enchant_plan::all_text(&modes, values.soul_gem);
+        printed.push_str(&format!(
+            "enchant plans page written: {}\n",
+            out_path.display()
+        ));
+        return Ok(printed);
+    }
+    let (_, _, force_skills, target) = &selected[0];
+    let plan = dfo_core::enchant_plan::plan_enchants(
+        &obj([
+            ("weapon", Num(weapon)),
+            ("shield", Str(values.shield.clone())),
+            ("soulGem", Bool(values.soul_gem)),
+            ("group", Str(values.group.clone())),
+            ("repairs", Num(repairs)),
+            ("regen", Num(regen)),
+            ("forceSkills", Bool(*force_skills)),
+            ("target", target.clone()),
+        ]),
+        &book,
+    )
+    .expect("planEnchants");
+    let out_path = probe::normalized(match out_flag {
+        None | Some("dfo-dps-report.html") => "enchant-plan.html",
+        Some(name) => name,
+    });
+    probe::write_page(&out_path, &enchant_plan::page(&plan, &values.group))?;
+    if values.json {
+        return Ok(format!("{}\n", json(&enchant_plan::document(&plan))));
+    }
+    let mut printed = enchant_plan::text(&plan);
+    printed.push_str(&format!("enchant plan written: {}\n", out_path.display()));
+    Ok(printed)
+}
+
 fn enchant_command(values: &Values) -> Result<String, CliError> {
     let book = saves::load_spellbook();
     let ch = character(values, &book)?;
