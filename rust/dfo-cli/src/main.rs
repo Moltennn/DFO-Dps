@@ -1,6 +1,6 @@
 //! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves`, `build`, `objective`, `rank`, `compare`, `scale`,
 //! `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`, `enchant-plan`/`gear-plan`, `tradeoff`,
-//! `spell`, `spells` and `theory` slice).
+//! `spell`, `spells`, `theory`, `weapons`/`skills` and `loadout`/`real-dps` slice).
 //!
 //! This is the JS `src/cli.js` `build` card, `objective` command, `rank` card, `compare` card, `scale` curve, `saves`
 //! listing, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`, `enchant-plan`/`gear-plan`,
@@ -63,6 +63,15 @@
 //! moves the reference foe and the Breach. The page is create-only, as `report`'s is, and the JS prints
 //! `weapons page written:` only in text mode; `--json` prints `{ level, firmCharts, rows, cs }` in both modes.
 //!
+//! `loadout` and its alias `real-dps` are the whole `src/cli.js:961-1082` branch: with `--shortlist <K>` the sampled
+//! ranking card (or its `--json` document), otherwise the every-template report ([`loadout::report_text`], the
+//! `loadouts.html` page from [`loadout::report_page`] through the same create-only writer, or the row list with
+//! `--json`). `--uncapped`/`--cap-aware` pick the modes, `--encounter`/`--all-encounters` the cap-aware bodies. The rows
+//! are `dfo_core::real_build::real_weapon_loadouts`, the rankings `dfo_core::loadout_shortlist::shortlist_loadouts`, the
+//! imprint ratings `dfo_core::imprints::rank_all`, and the plan table `dfo_core::firmament::plan_build`/`plan_summary`;
+//! the module owns only the JS presentation. A shortlist validation failure (`RangeError`-shape) is exit 2, as
+//! `isUsageFailure` decides it for the JS.
+//!
 //! The JS `firmament` command also keeps a disk cache (`.cache/firmament-plans.json`, keyed by a source fingerprint) and
 //! its card starts `Firmament plans (N cached, M computed)`. This CLI writes no cache at all: a plan is a pure function of
 //! its build and purse, every run replans, and the card says `Firmament plans` with no counts, because reporting a cache
@@ -84,6 +93,7 @@ mod firmament;
 #[allow(dead_code)]
 mod graph;
 mod imprints;
+mod loadout;
 mod probe;
 mod report;
 mod saves;
@@ -118,7 +128,7 @@ use dfo_core::theory::theory_character;
 use dfo_core::value::{number_to_string, obj_table_get, string_to_number, Value, Value::*};
 
 const HELP: &str = "\
-dfo-cli - the saves, build, objective, rank, compare, doctor, probe, graph, report, firmament, imprints, enchant, enchant-plan, gear-plan, tradeoff, spell, spells and theory slice of dfo-dps (Rust core)
+dfo-cli - the saves, build, objective, rank, compare, doctor, probe, graph, report, firmament, imprints, enchant, enchant-plan, gear-plan, tradeoff, spell, spells, theory, weapons/skills and loadout/real-dps slice of dfo-dps (Rust core)
 
 Usage:
   dfo-cli saves
@@ -147,6 +157,8 @@ Usage:
   dfo-cli theory [--theory] [options] [--json]
   dfo-cli weapons [--categories] [--firmament] [--vampire] [--race <name>] [--level <n>] [--json] [--out <file>]
   dfo-cli skills  [same flags as weapons]
+  dfo-cli loadout [--uncapped | --cap-aware] [--encounter <id>] [--all-encounters] [--shortlist <K>] [--json] [--out <file>]
+  dfo-cli real-dps [same flags as loadout]
 
 `saves` lists the save folders under the DFO user-data folder (newest first). `doctor` prints the model pin, the
 save folders and the imported character's build/ruleset summary. `build` prices one build against one target: with
@@ -240,9 +252,9 @@ Flags:
   --spell <index|name>                spell: the record to price (index, name, then name substring)
   --standard                          spell: use every standard record, not just the character's spellbook
   --old                               probe: read the newest capture in captures/old
-  --out <file>                        probe/graph/report/firmament/imprints/spells/weapons: the page (default probe.html /
+  --out <file>                        probe/graph/report/firmament/imprints/spells/weapons/loadout: the page (default probe.html /
                                       graph.html / dfo-dps-report.html / firmament.html / imprints.html / spells.html /
-                                      weapons.html; must not exist yet)
+                                      weapons.html / loadouts.html; must not exist yet)
   --series <spec,...>                 graph: stat:name, skill:id, gear:id or star:name (default stat:strength,stat:agility)
   --from <n> --to <n> --step <n>      graph: the channel range (default per series kind; step 10)
   --uncapped                          graph: plot uncapped DPS instead of the per-hit-capped line;
@@ -255,7 +267,12 @@ Flags:
   --family <key>                      imprints: LongBlade, ShortBlade, Axe, BluntWeapon, Archery or HandToHand
   --sort <boss|uncapped|conditional>  imprints order (default boss; --uncapped wins, then --cap-aware)
   --cap-aware                         imprints: rank by boss DPS (the default order, named explicitly);
-                                      enchant-plan: the cap-aware mode, named explicitly
+                                      enchant-plan: the cap-aware mode, named explicitly;
+                                      loadout: price only the cap-aware modes
+  --encounter <id>                    loadout: the content whose cap-aware rows are priced (default breach)
+  --all-encounters                    loadout: one cap-aware section per content, in breach/skyketch/abyss order
+  --shortlist <K>                     loadout: sample the top K eligible loadouts per target instead of the report
+                                      (must be a positive integer; 0 keeps the report)
   --categories                        weapons/skills: one winner per weapon type per hand slot, sorted by DPS
   --shield <template|none|auto>       enchant-plan: the shield template (default auto)
   --soul-gem                          enchant-plan: add 5,000 enchantment points to every piece
@@ -265,8 +282,8 @@ Flags:
   --json
   -h, --help
 
-Unsupported here (another command, or a flag this slice does not read): --encounter, --shortlist and the other
-commands' flags.";
+Every JS `COMMANDS` entry is handled. A flag a command does not read is refused by name instead of being accepted and
+ignored, as the JS `parseArgs`/`validateFlags` do.";
 
 fn main() -> ExitCode {
     match run(std::env::args().skip(1).collect()) {
@@ -454,39 +471,17 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         check_output_flags(&command, &parsed)?;
         return scale_command(&values);
     }
+    if command == "loadout" || command == "real-dps" {
+        if let Some(extra) = parsed.positionals.get(1) {
+            return Err(usage(format!("unexpected positional argument \"{extra}\"")));
+        }
+        check_output_flags(&command, &parsed)?;
+        return loadout_command(&values, parsed.raw("out"));
+    }
     if command != "rank" {
-        const COMMANDS: [&str; 23] = [
-            "build",
-            "objective",
-            "rank",
-            "weapons",
-            "report",
-            "compare",
-            "scale",
-            "tradeoff",
-            "theory",
-            "spell",
-            "spells",
-            "enchant",
-            "firmament",
-            "imprints",
-            "probe",
-            "enchant-plan",
-            "gear-plan",
-            "loadout",
-            "real-dps",
-            "skills",
-            "graph",
-            "saves",
-            "doctor",
-        ];
-        return Err(if COMMANDS.contains(&command.as_str()) {
-            usage(format!(
-                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank`, `compare`, `scale`, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`, `tradeoff`, `spell`, `spells`, `theory` and `weapons`/`skills`"
-            ))
-        } else {
-            usage(format!("unknown command \"{command}\"\n\n{HELP}"))
-        });
+        // Every name in the JS `COMMANDS` list is now handled above (`loadout`/`real-dps` last), so anything left is a
+        // name the JS does not know either: `unknown command "<cmd>"` and the help text, exit 2.
+        return Err(usage(format!("unknown command \"{command}\"\n\n{HELP}")));
     }
     if let Some(extra) = parsed.positionals.get(1) {
         if extra != "weapons" {
@@ -593,6 +588,8 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
         && command != "imprints"
         && command != "enchant-plan"
         && command != "gear-plan"
+        && command != "loadout"
+        && command != "real-dps"
         && (parsed.raw("uncapped").is_some() || parsed.flag("uncapped"))
     {
         return Err(usage(
@@ -626,8 +623,19 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
             "--categories is not supported by this CLI slice (it needs the weapons/skills command, or is not ported yet)",
         ));
     }
-    // `--family`/`--sort`/`--cap-aware` are read by `imprints` and `--cap-aware` by `enchant-plan` too (the JS
-    // validates `--sort` globally, which [`Values::new`] still does before this runs).
+    // `--encounter`/`--all-encounters`/`--shortlist` are the loadout report's content and sample selectors; the JS
+    // accepts and ignores them elsewhere, this CLI names them.
+    if command != "loadout" && command != "real-dps" {
+        for name in ["encounter", "all-encounters", "shortlist"] {
+            if parsed.raw(name).is_some() || parsed.flag(name) {
+                return Err(usage(format!(
+                    "--{name} is not supported by this CLI slice (it needs the loadout command, or is not ported yet)"
+                )));
+            }
+        }
+    }
+    // `--family`/`--sort`/`--cap-aware` are read by `imprints` and `--cap-aware` by `enchant-plan` and `loadout` too
+    // (the JS validates `--sort` globally, which [`Values::new`] still does before this runs).
     if command != "imprints" {
         for name in ["family", "sort"] {
             if parsed.raw(name).is_some() || parsed.flag(name) {
@@ -638,6 +646,8 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
         }
         if command != "enchant-plan"
             && command != "gear-plan"
+            && command != "loadout"
+            && command != "real-dps"
             && (parsed.raw("cap-aware").is_some() || parsed.flag("cap-aware"))
         {
             return Err(usage(
@@ -885,7 +895,8 @@ const SUPPORTED: &str = concat!(
     "no-effects save offline passive bare out objective trials seed max-seconds max-blows no-carry samples stat all ",
     "data old series from to step uncapped skill gear-skill build stars refresh family sort cap-aware ",
     "shield soul-gem group repairs regen categories ",
-    "list all-spells standard spell mana-limit seconds cast-speed magicka",
+    "list all-spells standard spell mana-limit seconds cast-speed magicka ",
+    "encounter all-encounters shortlist",
 );
 
 fn in_flags(list: &str, name: &str) -> bool {
@@ -895,7 +906,7 @@ fn in_flags(list: &str, name: &str) -> bool {
 const BOOLEAN_FLAGS: &str = concat!(
     "theory json vampire firmament rhythm unaware first-blow behind pair dual spam no-crit-damage no-passive ",
     "no-rri help offline bare no-effects no-carry samples all old uncapped refresh cap-aware list all-spells standard ",
-    "mana-limit soul-gem categories",
+    "mana-limit soul-gem categories all-encounters",
 );
 
 const MULTI: [&str; 3] = ["star-stat", "star-skill", "stat"];
@@ -1083,6 +1094,12 @@ struct Values {
     passive: Option<String>,
     /// `--objective`: the id exactly as typed (`printObjective` validates it against the list).
     objective: Option<String>,
+    /// `--encounter`: the loadout content id, lower-cased (`validateFlags` bounds it).
+    encounter: String,
+    /// `--all-encounters`: one cap-aware section per content, in `ENCOUNTER_IDS` order.
+    all_encounters: bool,
+    /// `--shortlist`: raw text, so `Number()` and `.trim()` keep the JS's `0`/empty/`junk` distinction.
+    shortlist: String,
     /// `--seed`, `--max-seconds`, `--max-blows`: raw strings, validated by [`sampled_options`] only when an
     /// objective is priced (the JS validates them inside `printObjective`, not in `validateFlags`).
     seed: Option<String>,
@@ -1338,6 +1355,15 @@ impl Values {
                 )));
             }
         }
+        // `validateFlags` (`src/cli.js:382-384`): every command's `--encounter`, checked before the branch runs.
+        if let Some(encounter) = parsed.raw("encounter") {
+            if !ENCOUNTER_IDS.contains(&encounter.to_lowercase().as_str()) {
+                return Err(usage(format!(
+                    "--encounter must be one of {}, got \"{encounter}\"",
+                    ENCOUNTER_IDS.join(", ")
+                )));
+            }
+        }
         let weapon = match parsed.raw("weapon") {
             Some(raw) => Some(weapon_flag(raw)?),
             None => None,
@@ -1432,6 +1458,9 @@ impl Values {
             bare: parsed.flag("bare"),
             passive,
             objective: parsed.raw("objective").map(str::to_owned),
+            encounter: parsed.raw("encounter").unwrap_or("breach").to_lowercase(),
+            all_encounters: parsed.flag("all-encounters"),
+            shortlist: parsed.raw("shortlist").unwrap_or("0").to_owned(),
             seed: parsed.raw("seed").map(str::to_owned),
             max_seconds: parsed.raw("max-seconds").map(str::to_owned),
             max_blows: parsed.raw("max-blows").map(str::to_owned),
@@ -3085,6 +3114,215 @@ fn rendered_damage(rendered: &theory::Rendered) -> f64 {
 /// default shows every row and every curve. The page is create-only (the same deliberate deviation `probe`/`graph`/
 /// `report` pin), the default name is `weapons.html` for `weapons` and `skills.html` for the alias, and the JS renames
 /// only the untouched report default. text mode prints `weapons page written:`; either mode prints the `--json` document.
+/// `dfo-dps loadout` / `dfo-dps real-dps` (`src/cli.js:961-1082`): the shortlist card or the full real-loadout report.
+///
+/// `--shortlist K` reranks the top K eligible deterministic loadouts per target through
+/// [`dfo_core::loadout_shortlist`]; without it the command prices every weapon template and hold configuration
+/// (`realWeaponLoadouts`) and prints the two terminal cards plus, always, the create-only `loadouts.html` page (or
+/// `--out`, with `loadout page written:` in text mode only). `--json` prints the ranking list or the row list with no
+/// `enchPlan`. `--uncapped`/`--cap-aware` pick the modes; `--encounter`/`--all-encounters` pick the cap-aware bodies.
+///
+/// A shortlist validation failure is a usage error (exit 2), as `isUsageFailure` decides for the JS `RangeError`s.
+fn loadout_command(values: &Values, out_flag: Option<&str>) -> Result<String, CliError> {
+    // `src/cli.js:962`: `values.uncapped ? ['uncapped'] : values['cap-aware'] ? ['cap'] : ['uncapped', 'cap']`.
+    let modes: Vec<&str> = if values.uncapped {
+        vec!["uncapped"]
+    } else if values.cap_aware {
+        vec!["cap"]
+    } else {
+        vec!["uncapped", "cap"]
+    };
+    // `:963`: every id, or the one requested (already lower-cased and validated).
+    let requested: Vec<String> = if values.all_encounters {
+        ENCOUNTER_IDS.iter().map(|id| (*id).to_owned()).collect()
+    } else {
+        vec![values.encounter.clone()]
+    };
+    // `:969-981`: `Number(values.shortlist)`, and the branch runs when it is non-zero OR the raw text is empty.
+    let k = string_to_number(values.shortlist.trim());
+    if k != 0.0 || values.shortlist.trim().is_empty() {
+        if !safe_integer(k) || k < 1.0 {
+            return Err(usage(
+                "--shortlist must be a positive integer (0 disables it)",
+            ));
+        }
+        if values.no_carry {
+            return Err(usage(
+                "--no-carry does not apply to --shortlist: shortlist sampling always uses carry",
+            ));
+        }
+        return loadout_shortlist(values, &modes, &requested, k);
+    }
+    // `:982-1081`: the full report.
+    let book = saves::load_spellbook();
+    let uncapped_rows = if modes.contains(&"uncapped") {
+        dfo_core::real_build::real_weapon_loadouts(
+            &["uncapped".to_owned()],
+            values.vampire,
+            "breach",
+            &book,
+        )
+        .map_err(usage)?
+    } else {
+        Vec::new()
+    };
+    let mut cap_rows: Vec<(&str, Vec<Value>)> = Vec::new();
+    if modes.contains(&"cap") {
+        for id in &requested {
+            let rows = dfo_core::real_build::real_weapon_loadouts(
+                &["cap".to_owned()],
+                values.vampire,
+                id,
+                &book,
+            )
+            .map_err(usage)?;
+            let id = ENCOUNTER_IDS
+                .iter()
+                .find(|e| *e == id)
+                .copied()
+                .unwrap_or("breach");
+            cap_rows.push((id, rows));
+        }
+    }
+    // `:1005`: `rankAll({ sort: 'uncapped' })`, the first three rows per family.
+    let mut profiles = Profiles::new(&book);
+    let ranked =
+        dfo_core::imprints::rank_all(&obj([("sort", Str("uncapped".to_owned()))]), &mut profiles)
+            .map_err(usage)?;
+    let imprint_rows: Vec<Value> = ranked
+        .items()
+        .iter()
+        .flat_map(|f| {
+            f.get("rows")
+                .items()
+                .iter()
+                .take(3)
+                .map(|r| {
+                    obj([
+                        ("family", f.get("name").clone()),
+                        ("power", r.get("power").get("name").clone()),
+                        ("weapon", r.get("weapon").clone()),
+                        ("carriedBoss", r.get("baseDps").clone()),
+                        ("carriedUncapped", r.get("uncappedDps").clone()),
+                    ])
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    // `:1006-1011`: every build's plan summary row.
+    let plans: Vec<Value> = build_ids()
+        .iter()
+        .filter_map(build_by_id)
+        .map(|build| plan_build(build, &obj([])))
+        .collect();
+    let plan_table = loadout::plan_rows(&plans);
+    // `path.resolve(values.out === 'dfo-dps-report.html' ? 'loadouts.html' : values.out)`.
+    let out = match out_flag {
+        None | Some("dfo-dps-report.html") => "loadouts.html".to_owned(),
+        Some(name) => name.to_owned(),
+    };
+    let out = probe::normalized(&out);
+    let page = loadout::report_page(&uncapped_rows, &cap_rows, &imprint_rows, plan_table.items());
+    probe::write_page(&out, &page)?;
+    let mut all_rows: Vec<Value> = uncapped_rows.clone();
+    for (_, rows) in &cap_rows {
+        all_rows.extend(rows.iter().cloned());
+    }
+    if values.json {
+        return Ok(format!("{}\n", json(&loadout::report_document(&all_rows))));
+    }
+    Ok(format!(
+        "{}loadout page written: {}\n",
+        loadout::report_text(&uncapped_rows, &cap_rows),
+        out.display()
+    ))
+}
+
+/// `printLoadoutShortlist` (`src/cli.js:636-669`): one `shortlistLoadouts` per mode (and per encounter for a cap mode),
+/// in the JS order, then the card or its document.
+fn loadout_shortlist(
+    values: &Values,
+    modes: &[&str],
+    requested: &[String],
+    k: f64,
+) -> Result<String, CliError> {
+    // `src/cli.js:637-639`: one `--objective` needs one shortlist mode.
+    if values.objective.is_some() && modes.len() > 1 {
+        return Err(usage(
+            "--objective requires one shortlist mode: --uncapped for stochastic-ttk or kill-probability; --cap-aware for stochastic-relay",
+        ));
+    }
+    let sampling = sampled_options(values)?;
+    let book = saves::load_spellbook();
+    let health = values.nums.get("health").copied().map(Num).unwrap_or(Null);
+    let mut rankings: Vec<Value> = Vec::new();
+    for mode in modes {
+        let encounters: Vec<Option<&str>> = if *mode == "cap" {
+            requested.iter().map(|e| Some(e.as_str())).collect()
+        } else {
+            vec![None]
+        };
+        for encounter in encounters {
+            let opts = obj([
+                ("k", Num(k)),
+                ("mode", Str((*mode).to_owned())),
+                (
+                    "encounter",
+                    encounter.map_or(Undefined, |e| Str(e.to_owned())),
+                ),
+                ("vampire", Bool(values.vampire)),
+                (
+                    "objective",
+                    values
+                        .objective
+                        .as_deref()
+                        .map_or(Undefined, |o| Str(o.to_owned())),
+                ),
+                ("trials", Num(sampling.trials)),
+                ("seed", Num(sampling.seed)),
+                ("maxSeconds", Num(sampling.max_seconds)),
+                ("maxBlows", Num(sampling.max_blows)),
+                ("health", health.clone()),
+            ]);
+            rankings.push(
+                dfo_core::loadout_shortlist::shortlist_loadouts(
+                    &dfo_core::loadout_shortlist::ShortlistOpts::from_value(&opts),
+                    &book,
+                )
+                .map_err(shortlist_error)?,
+            );
+        }
+    }
+    if values.json {
+        return Ok(format!(
+            "{}\n",
+            json(&loadout::shortlist_document(&rankings, values.samples))
+        ));
+    }
+    Ok(loadout::shortlist_text(
+        &rankings,
+        sampling.trials,
+        sampling.max_seconds,
+    ))
+}
+
+/// The shortlist guards as `isUsageFailure` reads them (`src/usageError.js`): a `RangeError` is bad input (exit 2), and
+/// the mode/objective guard is named there too; every other message keeps its crash exit 1.
+fn shortlist_error(message: String) -> CliError {
+    let usage_failure = message.starts_with("(uncapped|cap) shortlist: choose ")
+        || message.starts_with("uncapped shortlist: choose ")
+        || message.starts_with("cap shortlist: choose ")
+        || message.starts_with("--shortlist")
+        || message.starts_with("--trials")
+        || message.starts_with("--health")
+        || message.starts_with("unknown shortlist mode");
+    CliError {
+        message,
+        code: if usage_failure { 2 } else { 1 },
+    }
+}
+
+/// `dfo-dps weapons` / `dfo-dps skills` (`src/cli.js:1638-1803`): the weapon ceiling page.
 fn weapons_command(
     command: &str,
     values: &Values,

@@ -23,14 +23,15 @@ tested: `tests/sidebar.rs` drives `tests/sidebar_oracle.mjs` over the public com
 what this repository cannot execute.
 
 ## R8: the CLI, the `build`, `saves`, `rank`, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`,
-`enchant-plan`/`gear-plan`, `tradeoff`, `spell`, `spells`, `theory` and `weapons`/`skills` slice
+`enchant-plan`/`gear-plan`, `tradeoff`, `spell`, `spells`, `theory`, `weapons`/`skills` and `loadout`/`real-dps` slice
 
 `dfo-cli` (`rust/dfo-cli`) is the R8 CLI slice: the JS `src/cli.js` `build` card, `saves` listing, `doctor` summary,
 `rank` path, `compare` table, Combat Probe `probe` page, `graph` page, `src/report.js` `report` page, the
 `src/firmament.js` `firmament` plans page, the `imprints` rankings page, the `enchant` weapon card, the
 `enchant-plan`/`gear-plan` per-piece plan (single and `--all`), the `tradeoff` speed-vs-damage card, the singular `spell`
-cards (rotation, `--list`, `--all-spells`), the plural `spells` spell ceiling page, the level-45 `theory` ceiling card
-and the `weapons`/`skills` weapon ceiling page, for the level-45 theory character
+cards (rotation, `--list`, `--all-spells`), the plural `spells` spell ceiling page, the level-45 `theory` ceiling card,
+the `weapons`/`skills` weapon ceiling page and the `loadout`/`real-dps` real-loadout report and shortlist, for the
+level-45 theory character
 or for an imported save.
 It is a thin layer: the parser owns
 argument text, the output formats
@@ -38,11 +39,12 @@ argument text, the output formats
 `printRank`'s table, `--json`'s summary
 and `{ character, weapons, current }`, `doctor`'s plain lines, the two SVG pages, the report page, the firmament
 plans page, the imprint card, the enchant card, the enchant plan cards and pages, the spell cards, the spell ceiling
-page and the tradeoff card) and exit
+page, the tradeoff card, the shortlist card and the real-loadout cards/page) and exit
 codes; every number comes from `dfo_core`
 (`theory_character`, `Profiles::legal_gear`, `reference_foe`/`boss_target`/`gate_target`/`encounter_target`,
 `analyze`/`marginals`/`rank_affixes`/`rank_weapons`, `current_weapon_row`, `imprints::rank_all`,
 `enchant_plan::plan_enchants`/`plan_matrix`,
+`real_build::real_weapon_loadouts`, `loadout_shortlist::shortlist_loadouts`, `firmament::plan_build`/`plan_summary`,
 `save::character_from_save`,
 `save::live_stat`/`skill_value`/`skill_name`, `model_blow::weapon_of`). There is no second reading of a rule.
 
@@ -59,7 +61,9 @@ codes; every number comes from `dfo_core`
   the JS does), `dfo-cli graph` (`src/cli.js:2057-2127`, one SVG line per `--series` over `--from`..`--to`), `dfo-cli report`
   (`src/cli.js:2263-2275`, the single-file `buildReport` page), `dfo-cli spells` (`src/cli.js:1480-1514`, the spell
   ceiling page), `dfo-cli spell` (`src/cli.js:1516-1599`, the rotation card, the resolved spellbook table and the
-  `--all-spells` price table), plus every documented validation message of
+  `--all-spells` price table), `dfo-cli weapons`/`skills` (`src/cli.js:1601-1804`, the weapon ceiling page) and
+  `dfo-cli loadout`/`real-dps` (`src/cli.js:961-1082`, the every-template report with its page, or the `--shortlist`
+  sampled ranking card), plus every documented validation message of
   `validateFlags`, the `starOptions`/`--weapon` checks, and
   `--offline`/`--passive`/`--bare`/`--no-effects`/`--base-stats` on the imported character. `--json`/`--out` are
   refused per command as `checkOutputFlags` does (`doctor` and `saves` support neither; `report` writes a file but has no
@@ -190,10 +194,9 @@ codes; every number comes from `dfo_core`
   `table` measures widths in UTF-16 code units, as JS `length`/`padStart` do. `grouped_number` is fixed to en-US
   grouping: the JS `toLocaleString()` follows the host locale, so a non-en-US host would format its own way - a
   documented, deliberate limitation (no locale dependency is added).
-- **What does not run, explicitly.** Every command outside the slice and every flag outside it
-  (`--encounter`, `--shortlist`, `--objective`, ...) fails with exit 2 instead of being accepted and ignored; an
-  unknown command or option also exits 2, and extra positionals are refused (the JS ignores them). `--help` lists the
-  slice and the unsupported set.
+- **What does not run, explicitly.** Every flag a command does not read (`--encounter` outside `loadout`, `--shortlist`
+  outside `loadout`, `--objective`, ...) fails with exit 2 instead of being accepted and ignored; an unknown command or
+  option also exits 2, and extra positionals are refused (the JS ignores them). `--help` lists every command and flag.
 - **The JSON parser.** Discovery parses a user-supplied document, so the slice uses `serde_json` (`preserve_order` for
   object keys and `float_roundtrip` for decimal rounding). It is the parser the workbench import
   already uses; the writer is still `JSON.stringify(v, null, 2)` in this file. Two documented edges: a number too large
@@ -269,10 +272,27 @@ codes; every number comes from `dfo_core`
   is create-only (an existing file is refused and left untouched, where the JS truncates). No save is read.
   `dfo-cli/tests/weapons.rs` pins the whole command byte for byte against the JS CLI: both variants, both aliases,
   `--firmament`/`--vampire`/`--race`/`--level`, text and `--json`, both default page names, and the create-only refusal.
+- **The `loadout`/`real-dps` report and shortlist.** `dfo-cli loadout [--uncapped | --cap-aware] [--encounter <id>]
+  [--all-encounters] [--shortlist <K>] [--vampire] [sampling flags] [--json] [--out <file>]`, with `real-dps` as the
+  same branch (`src/cli.js:961-1082`). Without `--shortlist` it prices every weapon template and hold configuration with
+  `dfo_core::real_build::real_weapon_loadouts`, prints the two terminal cards ([`loadout::report_text`]), writes
+  `loadouts.html` (or `--out`, through the same create-only writer) from [`loadout::report_page`], and prints the JS
+  `loadout page written:` line in text mode or the row list (no `enchPlan`) with `--json`. The page's Shared enchant plan,
+  Imprint ratings and Firmament plans tables come from the 1H row's own `enchPlan`, `dfo_core::imprints::rank_all({ sort:
+  'uncapped' })` (first three rows per family), and `plan_build`/`plan_summary` per build. With `--shortlist <K>` it
+  reranks the top K eligible loadouts through `dfo_core::loadout_shortlist::shortlist_loadouts`, prints the card
+  ([`loadout::shortlist_text`]) or its `--json` document (with `detail` pruned unless `--samples`); a `RangeError`-shape
+  guard (trial, seed, health, `K`) is exit 2, as `isUsageFailure` decides it for the JS. `--uncapped`/`--cap-aware` pick
+  the modes, `--encounter`/`--all-encounters` the cap-aware bodies. The rows, rankings, ratings and plan table are the
+  core's own (pinned by `dfo-core/tests/real_build.rs`); this module owns only the JS presentation, and
+  `dfo-cli/tests/loadout.rs` pins the shortlist card and document.
+  `dfo-cli/tests/cli_loadout.rs` pins the whole command byte for byte against the JS CLI (both aliases, both the card and
+  the report, text and `--json`, `--samples`, every mode and content, the validations, the deliberate refusals and the
+  create-only writer), over a temp `DAGGER_USER_DATA` root with no save and no `SPELLS.STD`.
 
-The rest of `src/cli.js` (the other page commands, `loadout`, `real-dps`) is still
-unported. `src/graph.js` is ported (`src/graph.rs`) and
-wired into `probe`, `graph`, `report`, `firmament`, `imprints` and `weapons`/`skills`; `src/report.js` is ported
+Every command in the JS `COMMANDS` list is now ported. `src/graph.js` is ported (`src/graph.rs`) and
+wired into `probe`, `graph`, `report`, `firmament`, `imprints`, `weapons`/`skills` and `loadout`/`real-dps`;
+`src/report.js` is ported
 (`src/report.rs`) and wired into `report`; `src/firmament.js`'s page is ported (`dfo-cli/src/firmament.rs`) and wired
 into `firmament`;
 `src/imprints.js`'s rows are `dfo_core::imprints`, rendered by `dfo-cli/src/imprints.rs` and wired into `imprints`;
@@ -282,9 +302,11 @@ is rendered by `dfo-cli/src/tradeoff.rs` and wired into `tradeoff`; its singular
 and save pool included), its plural `spells` branch by `dfo-cli/src/spells_report.rs` and wired into `spells` (the
 stock-plus-custom merge, the page and the `--json` list included), its `theory` branch by `dfo-cli/src/theory.rs`
 and wired into `theory` (the header, the push stages, the caps, both curves, the Firmament and frontier tables, the
-long-blade table, the result card and the `--json` document), and its `weapons`/`skills` branch by
+long-blade table, the result card and the `--json` document), its `weapons`/`skills` branch by
 `dfo-cli/src/weapons.rs` and wired into `weapons` and `skills` (the melee and dual rows, the category selection, the
-family and Critical Strike curves, the relay sections, the page and the `--json` document). `--json` with `spell --list`
+family and Critical Strike curves, the relay sections, the page and the `--json` document), and its `loadout`/`real-dps`
+branch by `dfo-cli/src/loadout.rs`: the shortlist card and the default report page (`report_text`/`report_page`), their
+`--json` documents and the row list, with the mode/content resolution in this file. `--json` with `spell --list`
 is refused as the JS does. Nested custom spell records in `--data`'s book are read by the same `read_spells_std`; nothing
 beyond the `SPELLS.STD` record shape is parsed.
 
@@ -324,8 +346,8 @@ mutable JS `Map` remainders; the relay loop owns its own per-fight carry state.
 Claim, attack and ward traces retain the JS wire-rounded amounts and event order.
 
 `encounters`, `purse`, and `objectives` cover the three encounters and seven
-ranking objectives. `loadoutShortlist` still needs the `realBuild`/`imprints`
-planners and is not ported. `tools/rust-relay-vectors.mjs` compares complete
+ranking objectives. `loadoutShortlist` is ported in R5d stage 4 (`loadout_shortlist`; the
+`realBuild`/`imprints` planners it needs are `real_build`/`imprints`). `tools/rust-relay-vectors.mjs` compares complete
 results to JS, including 216 ten-seed configurations and scripted spell draws.
 
 ## R5d: The Firmament sky, its law and the tree planner (stage 1 of 5)
