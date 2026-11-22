@@ -1,8 +1,8 @@
 //! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves`, `build`, `objective`, `rank`, `compare`, `scale`,
-//! `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`, `tradeoff` and `spell` slice).
+//! `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`, `tradeoff`, `spell` and `spells` slice).
 //!
 //! This is the JS `src/cli.js` `build` card, `objective` command, `rank` card, `compare` card, `scale` curve, `saves`
-//! listing, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`, `tradeoff` and `spell`,
+//! listing, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`, `tradeoff`, `spell` and `spells`,
 //! and only that: [`main`] parses the flags those read, replays the JS validation (`numFlag`, the enum checks,
 //! `sampledOptions`) with the same messages, builds either the level-45 theory character or the one an imported save
 //! describes, the target and
@@ -48,6 +48,12 @@
 //! output (table, then the `--json` document), because that branch prints through `console.log`. A `--standard` run whose
 //! pool prices nothing reproduces the JS destructuring crash (exit 1) rather than inventing a card.
 //!
+//! `spells` is the plural branch (`src/cli.js:1480-1514`): every standard damage spell priced by `spellRotation` over the
+//! requested window, ranked by window DPS, rendered by [`spells_report`] as the `DFO spell ceiling` page (two bar charts
+//! and the top-20 table) or its `--json` list. Its pool is the JS merge `[...standard.values(), ...known.filter(!standard
+//! .has(index))]` - every standard record in the book's own order, then the save's custom records - not the singular
+//! `pool`; an empty list is the JS `No standard damage spells found. Check --data / ARENA2.` line, exit 0, no page.
+//!
 //! The JS `firmament` command also keeps a disk cache (`.cache/firmament-plans.json`, keyed by a source fingerprint) and
 //! its card starts `Firmament plans (N cached, M computed)`. This CLI writes no cache at all: a plan is a pure function of
 //! its build and purse, every run replans, and the card says `Firmament plans` with no counts, because reporting a cache
@@ -72,6 +78,7 @@ mod probe;
 mod report;
 mod saves;
 mod spell;
+mod spells_report;
 mod tradeoff;
 
 use std::collections::HashMap;
@@ -99,7 +106,7 @@ use dfo_core::theory::theory_character;
 use dfo_core::value::{number_to_string, obj_table_get, string_to_number, Value, Value::*};
 
 const HELP: &str = "\
-dfo-cli - the saves, build, objective, rank, compare, doctor, probe, graph, report, firmament, imprints, enchant, tradeoff and spell slice of dfo-dps (Rust core)
+dfo-cli - the saves, build, objective, rank, compare, doctor, probe, graph, report, firmament, imprints, enchant, tradeoff, spell and spells slice of dfo-dps (Rust core)
 
 Usage:
   dfo-cli saves
@@ -121,6 +128,7 @@ Usage:
   dfo-cli imprints [--family <key>] [--sort <boss|uncapped|conditional>] [--uncapped] [--cap-aware] [--vampire] [--firmament] [--json] [--out <file>]
   dfo-cli enchant [--theory] [--save <slot|folder|path>] [options] [--json]
   dfo-cli spell [--list | --all-spells | --spell <index|name>] [--theory] [--save <slot|folder|path>] [--data <dir>] [--standard] [options] [--json]
+  dfo-cli spells [--theory] [--save <slot|folder|path>] [--data <dir>] [options] [--json] [--out <file>]
   dfo-cli tradeoff [--theory] [--save <slot|folder|path>] [options] [--json]
 
 `saves` lists the save folders under the DFO user-data folder (newest first). `doctor` prints the model pin, the
@@ -152,7 +160,10 @@ one-spell rotation card, the resolved spellbook table (`--list`) or the priced t
 (index, then case-insensitive name, then a name substring), `--data <dir>` names an ARENA2 directory, and the theory
 character gets the branch's caster tweak. As in the JS, a resolvable launcher config wins over `--data` (the module book
 cache is filled before the branch reads it), `--list` returns before `--all-spells`/`--spell`, and `--all-spells` prints
-its table even under `--json`. `tradeoff` prices
+its table even under `--json`. `spells` ranks every standard damage spell plus the save's custom records by 30-second
+window DPS, writes the `DFO spell ceiling` page (`spells.html`, or `--out`, also create-only) and prints the JS
+`spells page written:` line, or the ranked `--json` list; an empty pool prints the JS
+`No standard damage spells found. Check --data / ARENA2.` line and exits 0. `tradeoff` prices
 +5% attack speed against +5% weapon damage over the Breach gate and five Curbing pools, then the top weapons and the
 speed/damage crossover by boss health (`--target`/`--health`/`--armor` do not reach those fixed pools).
 
@@ -175,7 +186,7 @@ Flags:
   --no-rri --no-crit-damage --no-passive --pair --dual --spam --potency <pct> --pierce <n>
   --cast-speed <pct> --magicka <n>     spell: cast rate / magicka-pool override
   --mana-limit                         spell: price the magicka pool (default: mana is solved)
-  --seconds <n>                        spell: fight length for sustain (default 30)
+  --seconds <n>                        spell/spells: fight length for sustain (default 30)
   --no-effects                        drop active effects
   --base-stats <n>                    set all eight base attributes to n
   --objective <id>                    snapshot, fight, relay, relay-ceiling, stochastic-ttk, kill-probability,
@@ -189,16 +200,17 @@ Flags:
   --gear-skill <id>                   scale: one gear skill affix to curve to current+100
   --from <n> --to <n> --step <n>      scale/graph: the channel range (scale default: current to cap; step 10)
   --all                               scale: every relevant channel at once (text only)
-  --data <dir>                        spell: an ARENA2 directory holding SPELLS.STD (read only when the launcher has no
-                                      usable config: the JS module cache is filled before the branch; see README)
+  --data <dir>                        spell/spells: an ARENA2 directory holding SPELLS.STD (read only when the launcher
+                                      has no usable config: the JS module cache is filled before the branch; see README)
   --data <capture.json>               probe: a capture file
   --list                              spell: the resolved spellbook table
   --all-spells                        spell: price every damaging spell (table, and the --json document)
   --spell <index|name>                spell: the record to price (index, name, then name substring)
   --standard                          spell: use every standard record, not just the character's spellbook
   --old                               probe: read the newest capture in captures/old
-  --out <file>                        probe/graph/report/firmament/imprints: the page (default probe.html / graph.html /
-                                      dfo-dps-report.html / firmament.html / imprints.html; must not exist yet)
+  --out <file>                        probe/graph/report/firmament/imprints/spells: the page (default probe.html /
+                                      graph.html / dfo-dps-report.html / firmament.html / imprints.html / spells.html;
+                                      must not exist yet)
   --series <spec,...>                 graph: stat:name, skill:id, gear:id or star:name (default stat:strength,stat:agility)
   --from <n> --to <n> --step <n>      graph: the channel range (default per series kind; step 10)
   --uncapped                          graph: plot uncapped DPS instead of the per-hit-capped line;
@@ -356,6 +368,13 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         check_output_flags(&command, &parsed)?;
         return spell_command(&values);
     }
+    if command == "spells" {
+        if let Some(extra) = parsed.positionals.get(1) {
+            return Err(usage(format!("unexpected positional argument \"{extra}\"")));
+        }
+        check_output_flags(&command, &parsed)?;
+        return spells_command(&values, parsed.raw("out"));
+    }
     if command == "tradeoff" {
         if let Some(extra) = parsed.positionals.get(1) {
             return Err(usage(format!("unexpected positional argument \"{extra}\"")));
@@ -398,7 +417,7 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         ];
         return Err(if COMMANDS.contains(&command.as_str()) {
             usage(format!(
-                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank`, `compare`, `scale`, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`, `tradeoff` and `spell`"
+                "the \"{command}\" command is not ported yet; this slice supports `saves`, `build`, `objective`, `rank`, `compare`, `scale`, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`, `tradeoff`, `spell` and `spells`"
             ))
         } else {
             usage(format!("unknown command \"{command}\"\n\n{HELP}"))
@@ -454,8 +473,12 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
             }
         }
     }
-    // `--data` is the probe's capture file and the spell command's ARENA2 directory; `--old` is the probe's alone.
-    if command != "probe" && command != "spell" && parsed.raw("data").is_some() {
+    // `--data` is the probe's capture file and the spell commands' ARENA2 directory; `--old` is the probe's alone.
+    if command != "probe"
+        && command != "spell"
+        && command != "spells"
+        && parsed.raw("data").is_some()
+    {
         return Err(usage(
             "--data is not supported by this CLI slice (it needs the probe or spell, or is not ported yet)",
         ));
@@ -465,8 +488,9 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
             "--old is not supported by this CLI slice (it needs the probe, or is not ported yet)",
         ));
     }
-    // The spell flags are read by `spell` alone; the JS accepts and ignores them elsewhere, this CLI names them.
-    if command != "spell" {
+    // The spell flags are read by `spell` and `spells` (which the JS ignores `--list`/`--all-spells`/`--standard`/
+    // `--spell` for); the JS accepts and ignores them elsewhere, this CLI names them.
+    if command != "spell" && command != "spells" {
         for name in [
             "list",
             "all-spells",
@@ -2391,7 +2415,6 @@ fn spell_command(values: &Values) -> Result<String, CliError> {
     let ch = character(values, &book)?;
     // `src/cli.js:1517`: the theory caster tweak, inside the branch (so a save is untouched).
     let ch = if values.theory { theory_caster(ch) } else { ch };
-    let level = values.num("level", ch.get("level").to_number());
     // `standardSpells(values.data ?? undefined)`: the module cache is already warm from the pre-branch analysis, so a
     // resolvable launcher config wins over `--data` (see [`saves::standard_spells`]).
     let data_book = saves::standard_spells(values.data.as_deref());
@@ -2430,45 +2453,7 @@ fn spell_command(values: &Values) -> Result<String, CliError> {
     };
     // `spellTarget = values.target === 'armoured' ? gateTarget(level, { traits }) : target` (`:1527`): the RAW flag,
     // and `traits` is the array itself, even empty, so no relay traits are substituted (`?? ` only replaces nullish).
-    let spell_target = if values.target == "armoured" {
-        let mut opts = Obj(vec![]);
-        opts.set(
-            "traits",
-            Arr(values.traits.iter().map(|t| Str(t.clone())).collect()),
-        );
-        gate_target(&Num(level), &opts)
-    } else {
-        target_of(
-            &ch,
-            values,
-            &values.traits,
-            values.nums.get("health").copied(),
-        )?
-    };
-    // The branch's `opts` (`:1528-1538`), in the JS key order.
-    let mut opts = obj([
-        ("level", Num(level)),
-        ("online", Bool(!ch.get("online").strict_eq(&Bool(false)))),
-        ("potencyPct", Num(values.num("potency", 0.0))),
-        ("pierce", Num(values.num("pierce", 0.0))),
-        ("castSpeedPct", Num(values.num("cast-speed", 0.0))),
-        ("manaSolved", Bool(!values.mana_limit)),
-        (
-            "health",
-            Num(if spell_target.get("isBoss").truthy() {
-                spell_target.get("maxHealth").to_number()
-            } else {
-                0.0
-            }),
-        ),
-        (
-            "traits",
-            Arr(spell_target.get("bossTraits").items().to_vec()),
-        ),
-    ]);
-    if let Some(magicka) = values.nums.get("magicka") {
-        opts.set("magicka", Num(*magicka));
-    }
+    let (spell_target, opts) = spell_target_and_opts(values, &ch)?;
     let priced = spell::price_pool(&pool, &ch, &spell_target, &opts);
     let search_priced = spell::price_search(&search_pool, &ch, &spell_target, &opts);
     // `if (!priced.length && values.spell == null && !values.standard)` (`:1546-1549`): the `--spell` and `--standard`
@@ -2518,6 +2503,98 @@ fn spell_command(values: &Values) -> Result<String, CliError> {
         &values.target,
         &spell_target,
     ))
+}
+
+/// The `spell`/`spells` branches' shared `spellTarget` and `opts` (`src/cli.js:1486-1491` and `:1527-1538`): the RAW
+/// `--target armoured` is the Breach gate (not the reference foe `target_of` prices), `traits` is the array itself even
+/// when empty, and the branch's `opts` carries the resolved level. The singular and plural branches build the same two
+/// records, field for field, so they share one reader.
+fn spell_target_and_opts(values: &Values, ch: &Value) -> Result<(Value, Value), CliError> {
+    let level = values.num("level", ch.get("level").to_number());
+    let spell_target = if values.target == "armoured" {
+        let mut opts = Obj(vec![]);
+        opts.set(
+            "traits",
+            Arr(values.traits.iter().map(|t| Str(t.clone())).collect()),
+        );
+        gate_target(&Num(level), &opts)
+    } else {
+        target_of(
+            ch,
+            values,
+            &values.traits,
+            values.nums.get("health").copied(),
+        )?
+    };
+    // The branch's `opts` (`:1528-1538`), in the JS key order.
+    let mut opts = obj([
+        ("level", Num(level)),
+        ("online", Bool(!ch.get("online").strict_eq(&Bool(false)))),
+        ("potencyPct", Num(values.num("potency", 0.0))),
+        ("pierce", Num(values.num("pierce", 0.0))),
+        ("castSpeedPct", Num(values.num("cast-speed", 0.0))),
+        ("manaSolved", Bool(!values.mana_limit)),
+        (
+            "health",
+            Num(if spell_target.get("isBoss").truthy() {
+                spell_target.get("maxHealth").to_number()
+            } else {
+                0.0
+            }),
+        ),
+        (
+            "traits",
+            Arr(spell_target.get("bossTraits").items().to_vec()),
+        ),
+    ]);
+    if let Some(magicka) = values.nums.get("magicka") {
+        opts.set("magicka", Num(*magicka));
+    }
+    Ok((spell_target, opts))
+}
+
+/// `dfo-dps spells` (`src/cli.js:1480-1514`): every standard damage spell as the `DFO spell ceiling` page, or its
+/// `--json` list. The renderer is [`spells_report`]; this owns the branch's pool merge, empty-list line, page name and
+/// the create-only write.
+///
+/// The pool is `[...standard.values(), ...known.filter((sp) => !standard.has(sp.index))]`: the standard book's own
+/// order, then the save's custom records (its stock indices resolve to the same book records and are dropped). Unlike
+/// the singular command, `--list`/`--all-spells`/`--spell` do not apply: their flags stay accepted (the shared allowlist)
+/// and are ignored exactly as the JS ignores them here.
+fn spells_command(values: &Values, out_flag: Option<&str>) -> Result<String, CliError> {
+    let book = saves::load_spellbook();
+    let ch = character(values, &book)?;
+    // `src/cli.js:1481`: the theory caster tweak, the same one the singular branch applies.
+    let ch = if values.theory { theory_caster(ch) } else { ch };
+    // `standardSpells(values.data ?? undefined)`: a resolvable launcher config wins over `--data`, as on `spell`.
+    let data_book = saves::standard_spells(values.data.as_deref());
+    let known: Vec<Value> = resolve_spells(ch.get("spells"), &data_book)
+        .into_iter()
+        .cloned()
+        .collect();
+    let pool = spells_report::pool(&data_book, &known);
+    let (spell_target, opts) = spell_target_and_opts(values, &ch)?;
+    let seconds = values.num("seconds", 30.0);
+    let potency = values.num("potency", 0.0);
+    let pierce = values.num("pierce", 0.0);
+    let list = spells_report::ranked(&pool, &ch, &spell_target, &opts, seconds);
+    // `if (!list.length) { console.log('No standard damage spells found. Check --data / ARENA2.'); return; }`: before
+    // any page is built, exit 0. The line is a plain `console.log`, so it prints under `--json` too, and no page exists.
+    if list.is_empty() {
+        return Ok("No standard damage spells found. Check --data / ARENA2.\n".to_owned());
+    }
+    // `path.resolve(values.out === 'dfo-dps-report.html' ? 'spells.html' : values.out)` (`:1509`).
+    let out = match out_flag {
+        None | Some("dfo-dps-report.html") => "spells.html".to_owned(),
+        Some(name) => name.to_owned(),
+    };
+    let out = probe::normalized(&out);
+    let html = spells_report::page(&ch, &list, &spell_target, seconds, potency, pierce);
+    probe::write_page(&out, &html)?;
+    if values.json {
+        return Ok(format!("{}\n", json(&spells_report::document(&list))));
+    }
+    Ok(format!("spells page written: {}\n", out.display()))
 }
 
 /// `src/cli.js:1517`: the theory caster the `spell`/`spells` branches build - Destruction 200 and mastered, a spell

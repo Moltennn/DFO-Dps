@@ -23,18 +23,20 @@ tested: `tests/sidebar.rs` drives `tests/sidebar_oracle.mjs` over the public com
 what this repository cannot execute.
 
 ## R8: the CLI, the `build`, `saves`, `rank`, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`,
-`tradeoff` and `spell --list` slice
+`tradeoff`, `spell` and `spells` slice
 
 `dfo-cli` (`rust/dfo-cli`) is the R8 CLI slice: the JS `src/cli.js` `build` card, `saves` listing, `doctor` summary,
 `rank` path, `compare` table, Combat Probe `probe` page, `graph` page, `src/report.js` `report` page, the
 `src/firmament.js` `firmament` plans page, the `imprints` rankings page, the `enchant` weapon card, the `tradeoff`
-speed-vs-damage card and the `spell --list` spellbook table, for the level-45 theory character or for an imported save.
+speed-vs-damage card, the singular `spell` cards (rotation, `--list`, `--all-spells`) and the plural `spells` spell
+ceiling page, for the level-45 theory character or for an imported save.
 It is a thin layer: the parser owns
 argument text, the output formats
 (`printBuild`'s card,
 `printRank`'s table, `--json`'s summary
 and `{ character, weapons, current }`, `doctor`'s plain lines, the two SVG pages, the report page, the firmament
-plans page, the imprint card, the enchant card and the tradeoff card) and exit codes; every number comes from `dfo_core`
+plans page, the imprint card, the enchant card, the spell cards, the spell ceiling page and the tradeoff card) and exit
+codes; every number comes from `dfo_core`
 (`theory_character`, `Profiles::legal_gear`, `reference_foe`/`boss_target`/`gate_target`/`encounter_target`,
 `analyze`/`marginals`/`rank_affixes`/`rank_weapons`, `current_weapon_row`, `imprints::rank_all`,
 `save::character_from_save`,
@@ -51,8 +53,9 @@ plans page, the imprint card, the enchant card and the tradeoff card) and exit c
   `dfo-cli scale` (`src/cli.js:2128-2203`: one channel's `scaleRange` curve over a JSON copy of the character through
   `analyze`, text `printScale` or the `--json` rows, or `--all`'s current-to-cap summary; `--all --json` is refused as
   the JS does), `dfo-cli graph` (`src/cli.js:2057-2127`, one SVG line per `--series` over `--from`..`--to`), `dfo-cli report`
-  (`src/cli.js:2263-2275`, the single-file `buildReport` page), `dfo-cli spell --list` (`src/cli.js:1550-1554`, the
-  resolved spellbook table), plus every documented validation message of
+  (`src/cli.js:2263-2275`, the single-file `buildReport` page), `dfo-cli spells` (`src/cli.js:1480-1514`, the spell
+  ceiling page), `dfo-cli spell` (`src/cli.js:1516-1599`, the rotation card, the resolved spellbook table and the
+  `--all-spells` price table), plus every documented validation message of
   `validateFlags`, the `starOptions`/`--weapon` checks, and
   `--offline`/`--passive`/`--bare`/`--no-effects`/`--base-stats` on the imported character. `--json`/`--out` are
   refused per command as `checkOutputFlags` does (`doctor` and `saves` support neither; `report` writes a file but has no
@@ -112,37 +115,57 @@ plans page, the imprint card, the enchant card and the tradeoff card) and exit c
   still rides the scenario. `dfo-cli/tests/cli_tradeoff.rs` pins the whole command against the JS CLI (theory text and
   `--json`, that override assertion, the shared scenario flags, an offline save, a live save with and without a
   synthetic `SPELLS.STD`, and the refusals).
-- **The `spell --list` card.** `dfo-cli spell --list [--theory] [--save ...] [--data <dir>] [--standard] [options]`
-  (`src/cli.js:1550-1554`) prints the resolved spellbook table (`src/spell.rs` `spell::text`, pure data in and strings
-  out, pinned by `tests/spell.rs`): the JS `characterLabel`, `cost` from `dfo_core::spells::spell_cost` and `damage`
-  from `analyze_spell`, with the JS `fmt`/`table`. The book is `standardSpells(values.data ?? undefined)` as the JS
-  module cache exposes it at that point in the run, and `saves::standard_spells` reproduces that: `loadCharacter`'s
-  `legalGear` and the pre-branch `analyze` call `standardSpells()` with no argument, so a resolvable launcher
-  `config.json` -> `arena2Path` book - even one whose `SPELLS.STD` is missing - wins and `--data` is ignored; only when
-  `arena2Dir()` is falsy does `--data` (or the empty book) decide. That is the JS behaviour, not a port choice: it is
-  pinned in both arms by `tests/cli_spell.rs`. `resolveSpells(ch.spells, standard)` then takes the save's stock indices
-  and custom records, and `pool = --standard ? every standard record : (known.length ? known : standard records)` as the
-  JS does. `--theory` gets the branch's caster tweak (Destruction 200 and mastered, a pool, the name) inside the command,
-  so a save is untouched. The empty pool prints the JS `No damaging spells in the spellbook. Pass --spell <index|name> or
+- **The singular `spell` cards.** `dfo-cli spell [--list | --all-spells | --spell <index|name>] [--theory]
+  [--save ...] [--data <dir>] [--standard] [options] [--json]` (`src/cli.js:1516-1599`) prints one spell's rotation
+  card, the resolved spellbook table (`--list`) or the priced table (`--all-spells`), text or `--json`, all rendered by
+  `src/spell.rs` (pure data in and strings out, pinned by `tests/spell.rs`): the JS `characterLabel`, `cost` from
+  `dfo_core::spells::spell_cost` and `damage` from `analyze_spell`, with the JS `fmt`/`fmt2`/`table`. The book is
+  `standardSpells(values.data ?? undefined)` as the JS module cache exposes it at that point in the run, and
+  `saves::standard_spells` reproduces that: `loadCharacter`'s `legalGear` and the pre-branch `analyze` call
+  `standardSpells()` with no argument, so a resolvable launcher `config.json` -> `arena2Path` book - even one whose
+  `SPELLS.STD` is missing - wins and `--data` is ignored; only when `arena2Dir()` is falsy does `--data` (or the empty
+  book) decide. That is the JS behaviour, not a port choice: it is pinned in both arms by `tests/cli_spell.rs`.
+  `resolveSpells(ch.spells, standard)` then takes the save's stock indices and custom records, and
+  `pool = --standard ? every standard record : (known.length ? known : standard records)` as the JS does. `--theory`
+  gets the branch's caster tweak (Destruction 200 and mastered, a pool, the name) inside the command, so a save is
+  untouched. The empty pool prints the JS `No damaging spells in the spellbook. Pass --spell <index|name> or
   --standard.` line and exits 0 (the `priced` gate is `analyze_spell`'s damage and the debug-name filter, via
-  `spell::priced`). Only this mode is ported: `--all-spells`, `--spell <index|name>` and the single-spell rotation card
-  are refused with `not ported yet; this slice supports \`spell --list\` only`, and `--json` with `--list` is refused by
-  `checkOutputFlags` as `"spell --list"`. No save is written.
+  `spell::price_pool`). The branches keep the JS ordinals: `--list` returns before `--all-spells`/`--spell`,
+  `--all-spells` prints its table even under `--json` (that branch uses `console.log`, not `textOut`), and a `--standard`
+  run with no priced record reproduces the JS destructuring crash (exit 1, message line only). `--json` with `--list` is
+  refused by `checkOutputFlags` as `"spell --list"`. No save is written.
   `dfo-cli/tests/cli_spell.rs` pins the whole command against the JS CLI over synthetic stock data: explicit `--data`
-  and the launcher fallback, the cache precedence with two identically indexed books, `--standard`,
-  targets/level/potency/pierce/cast-speed/magicka/mana-limit/traits, the theory caster, a synthetic save whose `spells`
-  mix stock indices and a custom record, the empty book (no config, a missing `--data`, a short `SPELLS.STD`, a
-  debug-name-only book), and the refusals.
+  and the launcher fallback, the cache precedence with two identically indexed books, `--standard`, the rotation card
+  and `--all-spells`, targets/level/potency/pierce/cast-speed/magicka/mana-limit/traits, `--spell` selection, the theory
+  caster, a synthetic save whose `spells` mix stock indices and a custom record, the empty book (no config, a missing
+  `--data`, a short `SPELLS.STD`, a debug-name-only book), and the refusals.
+- **The plural `spells` page.** `dfo-cli spells [--theory] [--save ...] [--data <dir>] [options] [--json] [--out
+  <file>]` (`src/cli.js:1480-1514`) prices every standard damage spell plus the save's custom records with
+  `dfo_core::spells::spell_rotation` at the requested window, ranks them by window DPS, and writes the `DFO spell
+  ceiling` page (`spells.html`, or `--out`, through the same create-only writer) from `src/spells_report.rs` (pure data
+  in and HTML/JSON out, pinned by `tests/spells_report.rs`): two bar charts, the top-20 table and the subtitle
+  (`src/cli.js:1497-1507`). The pool is the branch's own merge `[...standard.values(), ...known.filter((sp) =>
+  !standard.has(sp.index))]` (`:1485`) - the book's order first, then only the save's custom records - not the singular
+  `pool`; the `damage > 0` and debug-name filters are the branch's, and the empty list is the JS `No standard damage
+  spells found. Check --data / ARENA2.` line (exit 0, no page, printed under `--json` too). `--list`/`--all-spells`/
+  `--standard`/`--spell` are accepted and ignored exactly as this branch ignores them. The command prints the JS
+  `spells page written:` line in text mode, or the ranked `--json` list (page still written). The theory caster tweak,
+  the spellbook source/cache precedence and the `spellTarget`/`opts` records are shared with the singular command
+  (`spell_target_and_opts`), not re-derived. No save is written.
+  `dfo-cli/tests/cli_spells.rs` pins the command against the JS CLI over a synthetic `SPELLS.STD` and a synthetic save:
+  the merged stock-plus-custom pool, the ranked text page and `--json` list across targets/levels/potency/pierce/
+  cast-speed/mana-limit/seconds, the default page name, the empty book in text and `--json`, the create-only writer's
+  refusal, and the refusals.
 - **The launcher spellbook.** `saves::launcher_path` reads `config.json`'s `arena2Path` and `saves::launcher_book`
   opens `SPELLS.STD` read-only, handing the bytes to `dfo_core::spells::read_spells_std`/`spells_by_index_map`
   (`src/save.js:28-40`, `src/spells.js:72-93`); `saves::load_spellbook` is its `None`-to-empty-book form.
-  `saves::standard_spells` also reproduces the JS module cache's precedence for `spell --list` (`--data` only when the
+  `saves::standard_spells` also reproduces the JS module cache's precedence for `spell`/`spells` (`--data` only when the
   launcher has no usable config), and `saves::load_spellbook_from` is the same bounded read over an explicit directory.
-  `build`, `rank`, `enchant`, `tradeoff` and `spell` use that book (or the cached one) for Cast When Strikes and spell
-  prices, so a save's spells price as the JS does. A missing/malformed config, a falsy `arena2Path` and a missing or
-  unreadable file each give the empty book, exactly the JS `try`/`catch` fallback; a truthy non-string `arena2Path` gives
-  the empty book but still fills the cache, as the JS `path.join` throw does. The read is bounded at 8 MiB (a port
-  guard, not a JS behaviour). The core never reads a config or an ambient book.
+  `build`, `rank`, `enchant`, `tradeoff`, `spell` and `spells` use that book (or the cached one) for Cast When Strikes
+  and spell prices, so a save's spells price as the JS does. A missing/malformed config, a falsy `arena2Path` and a
+  missing or unreadable file each give the empty book, exactly the JS `try`/`catch` fallback; a truthy non-string
+  `arena2Path` gives the empty book but still fills the cache, as the JS `path.join` throw does. The read is bounded at
+  8 MiB (a port guard, not a JS behaviour). The core never reads a config or an ambient book.
 - **Formatting.** The CLI's `fmt`/`fmt2`/`pc` reproduce JS `toFixed`/`String` (a rounded `-0` prints unsigned), and
   `table` measures widths in UTF-16 code units, as JS `length`/`padStart` do. `grouped_number` is fixed to en-US
   grouping: the JS `toLocaleString()` follows the host locale, so a non-en-US host would format its own way - a
@@ -191,22 +214,27 @@ plans page, the imprint card, the enchant card and the tradeoff card) and exit c
   `--json`, a direct check that `--target`/`--health`/`--armor` leave the pools byte-identical while `--blow-x` moves
   the gate cap, the shared scenario flags, an offline save, a live save with and without a synthetic `SPELLS.STD`, and
   the `--out`/`--target`/`--core`/`--sort`/`--swing`/`--traits`/extra-positional refusals.
-  `dfo-cli/tests/cli_spell.rs` runs the whole `spell --list` command against the JS over a synthetic `SPELLS.STD` and a
+  `dfo-cli/tests/cli_spell.rs` runs the whole `spell` command against the JS over a synthetic `SPELLS.STD` and a
   synthetic save: explicit `--data` and the launcher fallback, `--standard`, the scenario flags, the theory caster, the
-  save's stock-plus-custom pool, the empty book, and the `--json`/`--out`/unported-mode refusals.
+  save's stock-plus-custom pool, `--spell` selection, the rotation and `--all-spells` cards and documents, the empty
+  book, the JS crash on an unpriced `--standard` pool, and the `--json`/`--out`/flag refusals.
+  `dfo-cli/tests/cli_spells.rs` runs the whole plural `spells` command the same way over a synthetic `SPELLS.STD` and a
+  synthetic save: the merged pool, the ranked page and `--json` list, the scenario flags, the default page name, the
+  empty book in text and `--json`, the create-only writer, and the refusals.
   A missing `node` fails the tests rather than skipping them.
 
-The rest of `src/cli.js` (the other page commands, `theory`, the other `spell` modes, `weapons`,
-`enchant-plan`, `loadout`, `real-dps`) is still unported. `src/graph.js` is ported (`src/graph.rs`) and
+The rest of `src/cli.js` (the other page commands, `theory`, `weapons`, `enchant-plan`, `loadout`, `real-dps`) is still
+unported. `src/graph.js` is ported (`src/graph.rs`) and
 wired into `probe`, `graph`, `report`, `firmament` and `imprints`; `src/report.js` is ported (`src/report.rs`) and
 wired into `report`; `src/firmament.js`'s page is ported (`dfo-cli/src/firmament.rs`) and wired into `firmament`;
 `src/imprints.js`'s rows are `dfo_core::imprints`, rendered by `dfo-cli/src/imprints.rs` and wired into `imprints`;
 `src/cli.js`'s `enchant` branch is rendered by `dfo-cli/src/enchant.rs` and wired into `enchant`; its `tradeoff` branch
-is rendered by `dfo-cli/src/tradeoff.rs` and wired into `tradeoff`; its `spell --list` branch is rendered by
-`dfo-cli/src/spell.rs` and wired into `spell` (`--data`, the launcher lookup and save pool included). Of `spell`, only
-`--list` is ported: `--all-spells`, `--spell <index|name>` and the rotation card are refused by name, and `--json` with
-`--list` is refused as the JS does. Nested custom spell records in `--data`'s book are read by the same
-`read_spells_std`; nothing beyond the `SPELLS.STD` record shape is parsed.
+is rendered by `dfo-cli/src/tradeoff.rs` and wired into `tradeoff`; its singular `spell` branch is rendered by
+`dfo-cli/src/spell.rs` and wired into `spell` (the rotation card, `--list`, `--all-spells`, `--data`, the launcher lookup
+and save pool included), and its plural `spells` branch by `dfo-cli/src/spells_report.rs` and wired into `spells` (the
+stock-plus-custom merge, the page and the `--json` list included). `--json` with `spell --list` is refused as the JS
+does. Nested custom spell records in `--data`'s book are read by the same `read_spells_std`; nothing beyond the
+`SPELLS.STD` record shape is parsed.
 
 ## R5c: theory builds, legal budgets, and imprint rankings
 
