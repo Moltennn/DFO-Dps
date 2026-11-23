@@ -10,6 +10,11 @@
  *   systems/martialPowers.js  (martial passives)
  *   systems/weaponMastery.js  (online skill past 100)
  *   systems/loot/lootRarity.js (affixes)
+ *
+ * `gameBuild` (scenario option, default '14512') selects the shipped build a card is priced under. '14512' is
+ * the vendored cut above. '14631' is a drift finding (CHANGELOG-MECHANICS.md, GEAR-14631 / BRAND-14631): the
+ * weapon gear is a flat add on the roll, not a mastery percent, and the brand loot power adds flat elemental
+ * damage. '14631' is opt-in and changes no default output.
  * See NOTICE for the source and its MIT / Daggerfall Unity attribution.
  */
 import {
@@ -52,6 +57,13 @@ const floor = Math.floor;
 const fround = Math.fround;
 const mean = (a) => a.reduce((s, x) => s + x, 0) / a.length;
 const num = (v, d = 0) => (Number.isFinite(v) ? v : d);
+
+/** The shipped builds a card can be priced under. '14512' is the vendored cut (a3eb1605); '14631' is the drift
+ *  finding in CHANGELOG-MECHANICS.md (GEAR-14631, BRAND-14631). Opt-in, default '14512'; anything that is not
+ *  exactly '14631' prices as the cut. */
+export const GAME_BUILDS = Object.freeze(['14512', '14631']);
+const DEFAULT_GAME_BUILD = '14512';
+const buildOf = (opts) => (opts?.gameBuild === '14631' ? '14631' : DEFAULT_GAME_BUILD);
 
 /** Unity's Mathf.Round: half to even (pcaao.js unityRound). */
 export function unityRound(x) {
@@ -610,7 +622,10 @@ export function martialBlowPct(ch, target, opts = {}) {
   }
 }
 
-/** systems/weaponMastery.js weaponPastPct (online only). */
+/** systems/weaponMastery.js weaponPastPct (online only).
+ *  '14512': climb (Axe x2 below / Blunt x2 at-or-above the half line) + min(320, gear x 0.44).
+ *  '14631': the climb only - Axe/Blunt share the sword's single climb, and the gear is no percent at all
+ *  (see `gearBlowAdd`). Drift finding GEAR-14631 in CHANGELOG-MECHANICS.md. */
 export function masteryPct(ch, w, target, opts = {}) {
   if (!ch.online || !w) return 0;
   const id = w.skillId;
@@ -618,15 +633,44 @@ export function masteryPct(ch, w, target, opts = {}) {
   const climb = Math.max(0, effectiveSkill(masterCappedSkill(ch, id, raw)) - 100);
   let pct = 0;
   if (climb > 0) {
+    // 0.1.14631's `_()` puts Axe and Blunt in the sword's arm: one climb term, no half line (drift finding
+    // GEAR-14631; see CHANGELOG-MECHANICS.md and test/build14631.test.js for the shipped-build evidence).
     if (id === SKILLS.LongBlade || id === SKILLS.Archery) pct += climb * 1;
+    else if (buildOf(opts) === '14631' && (id === SKILLS.Axe || id === SKILLS.BluntWeapon)) pct += climb * 1;
     else if (id === SKILLS.Axe) pct += num(opts.healthShare, 1) < 0.5 ? climb * 2 : 0;
     else if (id === SKILLS.BluntWeapon) pct += num(opts.healthShare, 1) >= 0.5 ? climb * 2 : 0;
   }
-  if (id !== SKILLS.HandToHand && !ch._mentor) {
+  if (buildOf(opts) === '14512' && id !== SKILLS.HandToHand && !ch._mentor) {
     const gear = skillModOf(ch, id);
     if (gear > 0) pct += Math.min(320, gear * 0.44);
   }
   return pct;
+}
+
+/**
+ * 0.1.14631 (drift finding GEAR-14631): the weapon gear is a FLAT add on the damage roll, not a mastery percent.
+ * One blow adds an integer uniform on [floor(s/10), floor(s/5)], s = the attacker's gear points for the weapon's
+ * skill (skillModOf). The card enumerates every integer in that range, so its mean and its full support are exact.
+ * The guards are the target's (`!isPlayer && !warded`) and the attacker's (online, not a peer, not a mentor, not
+ * the beast, a real weapon skill that is not Hand-to-Hand). `characterFromSave` carries no `isPlayer`: the imported
+ * build is the player, so the flag is assumed true. The shipped-build evidence (the gear roll and the flat add
+ * `e+a`) is cited in test/build14631.test.js and CHANGELOG-MECHANICS.md, pinned by vendor/dist-pins/.
+ * The add enters the ROLL inside the weapon damage formula, before the strength, material and enemy-type terms
+ * and before the mastery blow percent, the crit, the condition and the defence - so a crit multiplies it and the
+ * gear does not scale. `ASSUMPTION:` the carried-chain ratio `e/(1+e+a)` a later blow of a chain reads is not
+ * traced; this model never applies a chain ratio, so only the flat add is used. `duelGearAdd` (a peer's copy) and
+ * the `sigilDueling()` gate are unmodelled: this model has no duel state.
+ */
+export function gearBlowAdd(ch, w, target, opts = {}) {
+  if (buildOf(opts) !== '14631' || !ch || !w) return null;
+  const id = w.skillId;
+  if (!ch.online || ch.peer || ch._mentor || ch.isInBeastForm) return null;
+  if (id === SKILLS.HandToHand || !Number.isInteger(id)) return null;
+  // The target guard: a foe that is not a player and not warded (the vendored ward gate is reused, `opts`).
+  if (!target || target.isPlayer || target.warded === true) return null;
+  const s = skillModOf(ch, id);
+  if (!(s > 0)) return null;
+  return { lo: floor(s / 10), hi: floor(s / 5) };
 }
 
 function applyPct(damage, pct) {
@@ -800,6 +844,7 @@ export function weaponBlow(ch, w, damage, target, opts = {}) {
  *   sanctified :316-318  foeGroup(target) === power.group
  *   flow       :319-321  pct x flow stacks (scenario `flowStacks`, default the power's `max`: the steady state)
  *   venom      :322-324  floor(flat x (foe under half its health ? 2 : 1) x elementShare(target, 'poison'))
+ *   brand (14631): floor(flat x elementShare(target, power.element)) - the same flat accumulator, after venom
  *   moon       :325-327  night (scenario `night`; the oracle's sky clock is a stub) - pct, + beast on an animal
  *   rage       :328-330  the WIELDER's health share below `below`%
  *   execute    :331-333  the FOE's health share below `below`%
@@ -820,6 +865,11 @@ export function lootPowerTerms(powers, target, opts = {}) {
       case 'sanctified': if (all || (p.group != null && foeGroup(target) === p.group)) pct += num(p.pct, 0); break;
       case 'flow': pct += num(p.pct, 0) * num(opts.flowStacks, num(p.max, 1)); break;
       case 'venom': flat += floor(num(p.flat, 0) * (all || foeShare < 0.5 ? 2 : 1) * elementShare(target, 'poison')); break;
+      // 0.1.14631 (drift finding BRAND-14631): flat on the power's own element, no doubling. Only the loot POWER
+      // is modelled; the Gilded item that carries it is not. The shipped-build evidence is in test/build14631.test.js.
+      case 'brand':
+        if (buildOf(opts) === '14631') flat += floor(num(p.flat, 0) * elementShare(target, p.element));
+        break;
       case 'moon': if (all || opts.night) pct += num(p.pct, 0) + (all || foeGroup(target) === 'animal' ? num(p.beast, 0) : 0); break;
       case 'rage': if (all || selfShare < num(p.below, 0) / 100) pct += num(p.pct, 0); break;
       case 'execute': if (all || foeShare < num(p.below, 0) / 100) pct += num(p.pct, 0); break;
@@ -963,6 +1013,15 @@ export function damageModel(ch, w, target, swingKey, core, opts = {}) {
   const str = stat(ch, 'strength', opts);
   const matReq = num(opts.matReqMulti, 1);
   const dmgMods = swing.damage + prof.damage + race.damage;
+  // 0.1.14631: the gear's flat add enters the weapon ROLL inside the damage formula, before Strength and the
+  // material (drift finding GEAR-14631; the shipped-build evidence is in test/build14631.test.js). The game folds
+  // the weapon's own damage modifier over the gear-added roll, then adds its damage modifier, then Strength/material,
+  // the enemy-type term, the blow modifiers and the crit - so all of those see the add and no percent scales it.
+  // The add is a uniform INTEGER, so the card enumerates every (roll, add) pair: the joint support then carries the
+  // widened band, and a cap, a fight tier, a bow pull or the off hand's share reads the true distribution.
+  const gear = gearBlowAdd(ch, w, target, opts);
+  const rollOf = (r, add) => (w.damagePct ? trunc((r + add) * (1 + w.damagePct / 100)) : r + add) + w.bonusDamage;
+  const adds = gear ? Array.from({ length: gear.hi - gear.lo + 1 }, (_, i) => gear.lo + i) : [0];
   let rolls;
   let strMod;
   let matMod = 0;
@@ -975,13 +1034,8 @@ export function damageModel(ch, w, target, swingKey, core, opts = {}) {
     for (let r = lo; r <= hi; r++) rolls.push(wrapsPct ? trunc(r * (1 + wrapsPct / 100)) : r);
     strMod = core === 'overhaul' ? pcaaoDamageModifier(str) : classicStrength(str, opts);
   } else {
-    const lo = w.min;
-    const hi = w.max;
     rolls = [];
-    for (let r = lo; r <= hi; r++) {
-      const rolled = w.damagePct ? trunc(r * (1 + w.damagePct / 100)) : r;
-      rolls.push(rolled + w.bonusDamage);
-    }
+    for (const a of adds) for (let r = w.min; r <= w.max; r++) rolls.push(rollOf(r, a));
     matMod = WEAPON_MATERIAL_MODIFIER[w.material] ?? 0;
     strMod = core === 'overhaul' ? pcaaoDamageModifier(str) * (w.twoHanded ? 2 : 1) : classicStrength(str, opts);
   }
@@ -1045,6 +1099,9 @@ export function damageModel(ch, w, target, swingKey, core, opts = {}) {
       },
       matReq,
       mastery: masteryPct(ch, w, target, opts), martial: martialBlowPct(ch, target, opts), slayer: w?.slayer ?? 0,
+      // 0.1.14631 only: the add's integer range (the enumerated mean is `mean`). Absent on '14512', so its parts
+      // object is byte-identical to before the option existed.
+      ...(gear ? { gearAdd: { lo: gear.lo, hi: gear.hi, mean: (gear.lo + gear.hi) / 2 } } : {}),
     },
     crit,
   };

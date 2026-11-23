@@ -6,6 +6,61 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage JS-1: the 0.1.14631 weapon-gear law and `brand`, opt-in (2026-11-23)
+
+**Source.** These facts are readable only in the shipped 0.1.14631 build, so they are cited `dist:` (the weaker
+class, pinned by `vendor/dist-pins/0.1.14631.json`) and are a **drift finding**, not the vendored cut: `AGENTS.md`
+rule 1 makes them valid for local-invariant tests only and they never close an assumption. Three laws:
+
+- **GEAR-14631** (`dist:weaponMastery-AR4ipaqT.js:9f201d8ae37fa0b8:835@0.1.14631` `g()`/`:1384` `b()` and
+  `dist:spellcast-EF3EGbYP.js:03aaae5902c8daf4:229764@0.1.14631` `Sy()`). The weapon gear is a **flat add on the
+  damage roll**, not a mastery percent: one blow adds an integer uniform on `[floor(s/10), floor(s/5)]`, `s` =
+  `skillModOf(attacker, weaponSkill)`. `masteryPct` keeps only the past-100 climb (no `min(320, gear x 0.44)`), the
+  axe/blunt half-line branch is gone (all four families take one climb term), and nothing is capped at 320. The
+  guard is the **target** (`!isPlayer && !warded`), with the attacker online and not on fists/`_mentor`/beast. The
+  `duelGearAdd` peer copy is unmodelled.
+- **BRAND-14631** (`dist:lootPowers-Dm823tWJ.js:f7eb7a0c6af4da01:3482@0.1.14631`). `case\`brand\`` adds
+  `floor(flat x elementShare(target, power.element))` to the flat accumulator, after venom, no doubling. Only the
+  loot power is modelled; the Gilded item `retributions-call` itself is not. This is a **future-facing** path: the
+  vendored cut has no `brand` kind at all, so it is reachable only through a hand-built power record, and only
+  under `gameBuild: '14631'` (the `'14512'` switch's default arm adds nothing). No existing build carries a brand
+  power, so `'14512'` output cannot move.
+- **D4 defender set** (ids/values in `dist:lootRarity-B3D_-YTh.js:153d9b8d3930c25d:14456@0.1.14631`,
+  application in `dist:sigilSetPowers-CI5Iqvjk.js:282964303089c9c3:7021@0.1.14631`). **Not modelled** - known
+  unmodelled 14631 drift: +20 magic/fire/shock resist; +5 magic damage and +3 magicka a hit; +5% max HP healed,
+  +5 fire damage and +20% max health. All three laws are opt-in behind `gameBuild: '14631'` (CLI `--game-build`);
+  the default `'14512'` is byte-identical to before.
+
+**Placement.** The flat add enters the ROLL inside the weapon damage formula (`Ob`: `wy(r, Sy(min + floor(rand x
+(max+1-min)), ...)) + n`), so it sits before Strength, the material, the enemy-type term, the blow modifiers
+(mastery/loot/martial/Firmament) and the crit - a critical multiplies it and no percent scales it. Because the add
+is a uniform INTEGER, the card enumerates every `(roll, add)` pair: `plainRolls`/`critRolls` carry the whole joint
+support, so a per-hit cap, a fight tier, a bow pull and the off hand's share each see the true distribution (a
+mean-add card read `cappedPerSwing` up to 6.7% high, narrowed the tier's support and lost the bow/off-hand band).
+`ASSUMPTION:` the carried-chain ratio `e/(1+e+a)` a later blow of a chain reads is not traced; this model applies no
+chain ratio, so only the flat add is used, and `duelGearAdd` is unmodelled. `Sy` has the only call site (`Ob`), so
+the add is per blow; each dual-wield hand is its own card and so gets its own add.
+
+**Red → green.** `node --test test/build14631.test.js` first failed 11 of 15 with `buildOf` stubbed to `'14512'`
+(the changelog's red check), and passes 15/15 with the switch live. The mean-add card this replaces fails the
+cases that need the joint support: its fight-tier support came out as a narrow band where exhaustive enumeration
+gives the full add range, it lost the widened band on the bow and off-hand cards, and on a 115 hit-cap fixture
+inside the spread it read `cappedPerSwing` high (109.22 against the enumerated 102.32). The card now enumerates
+every integer add, so `plainRolls`/`critRolls` carry the whole distribution and a cap, a tier, a pull or the off
+hand's share each see it; the carry and carried passes are untouched (the remainder rides the pre-percentage
+channels, not the roll). The pin check in the same file refuses a `dist:` citation whose chunk is not in
+`vendor/dist-pins/0.1.14631.json`. `test/cliUsage.test.js` pins that no `--game-build` and an explicit `14512`
+print identical JSON, that `14631` moves it, that `14513` exits 2, that `report` threads it into the page, and
+that every command which does not read the flag rejects it.
+
+**Outputs moved: none by default.** On the 100-roll longsword fixture (gear 250 / 700): `14512` 210 / 408,
+`14631` mean 137.5 (125-150) / 205 (170-240). The level-45 theory blade (legal gear 250/370/25%): the card's
+`mastery` is 150% on `14512` and 40% on `14631`; the blow's mean moves 111 -> 127.5 and capped DPS 788.2 -> 817.9.
+`14512` output is unchanged; its `damage.parts` carries no `gearAdd` key at all.
+
+**Known unmodelled 14631 drift.** `defender` sigil set (D4, above); the `brand` Gilded item; `duelGearAdd`;
+`deepWaterRuntime`'s `gp`/`gf` serialisation; the carried-chain ratio reader.
+
 ## Stage 3.8: sampled loadout shortlist (2026-11-19)
 
 **Source.** `src/realBuild.js` supplies the deterministic candidates, enchant

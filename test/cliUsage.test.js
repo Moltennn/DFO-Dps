@@ -52,6 +52,51 @@ test('an unknown core exits 2', () => {
   usageError(['build', '--theory', '--core', 'clasic'], /unknown core "clasic"/);
 });
 
+test('--game-build validates and selects the shipped build', () => {
+  usageError(['build', '--theory', '--game-build', '14513'], /--game-build must be one of 14512, 14631/);
+  // The default and an explicit 14512 are the same card; 14631 is the opt-in drift finding.
+  const plain = cli('build', '--theory', '--json');
+  const cut = cli('build', '--theory', '--game-build', '14512', '--json');
+  const drift = cli('build', '--theory', '--game-build', '14631', '--json');
+  assert.equal(plain.status, 0, plain.stderr);
+  assert.equal(cut.status, 0, cut.stderr);
+  assert.equal(drift.status, 0, drift.stderr);
+  assert.equal(plain.stdout, cut.stdout, 'no --game-build is 14512');
+  assert.notEqual(plain.stdout, drift.stdout, '14631 moves the card');
+  assert.ok(JSON.parse(plain.stdout).result.terms.gearAdd === undefined);
+  assert.ok(JSON.parse(drift.stdout).result.terms.gearAdd.lo > 0);
+});
+
+test('--game-build is rejected by every command that does not read it', () => {
+  for (const cmd of ['weapons', 'skills', 'imprints', 'loadout', 'real-dps', 'firmament', 'probe', 'saves', 'doctor', 'enchant-plan', 'gear-plan', 'spells', 'spell']) {
+    const result = cli(cmd, '--theory', '--game-build', '14631');
+    assert.equal(result.status, 2, `${cmd}: ${result.stderr}`);
+    assert.match(result.stderr, new RegExp(`--game-build is not read by ${cmd}`));
+  }
+  // and the commands that do read it accept it
+  for (const cmd of ['build', 'rank']) {
+    const result = cli(cmd, '--theory', '--game-build', '14631');
+    assert.equal(result.status, 0, `${cmd}: ${result.stderr}`);
+  }
+});
+
+test('report threads --game-build into the page', () => {
+  const out = tmpOut();
+  const cut = tmpOut();
+  const drift = tmpOut();
+  const a = cli('report', '--theory', '--out', cut);
+  const b = cli('report', '--theory', '--out', drift, '--game-build', '14631');
+  assert.equal(a.status, 0, a.stderr);
+  assert.equal(b.status, 0, b.stderr);
+  const page = (f) => fs.readFileSync(f, 'utf8');
+  assert.notEqual(page(cut), page(drift), 'the report page moves under 14631');
+  assert.match(page(drift), /Gear add \(flat\)/, 'the page carries the gear add');
+  // the default is the cut
+  const plain = cli('report', '--theory', '--out', out);
+  assert.equal(plain.status, 0, plain.stderr);
+  assert.equal(page(out), page(cut), 'no --game-build is 14512');
+});
+
 test('--trials above 1,000,000 exits 2 in objective and loadout --shortlist', () => {
   usageError(['objective', '--theory', '--target', 'soft', '--objective', 'stochastic-ttk', '--trials', '1000001'], /at most 1,000,000 trials/);
   usageError(['loadout', '--theory', '--shortlist', '1', '--trials', '1000001'], /at most 1,000,000 trials/);
