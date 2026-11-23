@@ -25,8 +25,9 @@
  *       word  a bare ASCII word (`ok`, `err`, `null`, a reason such as `accepted-clipped`).
  *   - Each kind is documented where its generator is written below.
  */
-import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { spawn } from 'node:child_process';
+import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
+import { availableParallelism, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -94,7 +95,9 @@ import { genForgeGearFamilies } from './rust-forge-gear-vectors.mjs';
 export { encodeValue };
 
 const here = dirname(fileURLToPath(import.meta.url));
-const outDir = join(here, '..', 'rust', 'tests', 'vectors');
+// DFO_VECTORS_DIR is for test/rustVectorsDriver.test.js: it proves one family's bytes against the real file, but must
+// never write into the tree the gate owns.
+const outDir = process.env.DFO_VECTORS_DIR ?? join(here, '..', 'rust', 'tests', 'vectors');
 const modelSource = readFileSync(join(here, '..', 'src', 'model.js'), 'utf8');
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -154,6 +157,12 @@ function makeLcg(seed) {
   };
 }
 
+// Streaming outputs share one flush: a line per add would be one appendFileSync per line (a ~2 MB/s write per line on
+// the big files); 8 MB chunks keep the same bytes in the same order.
+const FLUSH_BYTES = 8 << 20;
+const openOutputs = new Set();
+process.on('exit', () => { for (const o of openOutputs) o.flush(); });
+
 class Out {
   constructor(module, note, streaming = false) {
     this.module = module;
@@ -162,17 +171,26 @@ class Out {
     this.path = join(outDir, `${module}.txt`);
     if (streaming) {
       mkdirSync(outDir, { recursive: true });
-      writeFileSync(this.path, `${this.header().join('\n')}\n`);
+      this.fd = openSync(this.path, 'w');
+      this.buf = `${this.header().join('\n')}\n`;
       this.count = 0;
+      openOutputs.add(this);
     }
   }
   add(...tokens) {
     const line = tokens.join(' ');
     if (this.count === undefined) this.lines.push(line);
     else {
-      appendFileSync(this.path, `${line}\n`);
+      this.buf += `${line}\n`;
       this.count++;
+      if (this.buf.length >= FLUSH_BYTES) this.flush();
     }
+  }
+  /** Hand the buffered bytes to the kernel; on exit too, so a crash leaves every line it had. */
+  flush() {
+    if (!this.fd || !this.buf) return;
+    writeSync(this.fd, this.buf); // a regular file in blocking mode takes the whole buffer
+    this.buf = '';
   }
   header() {
     return [
@@ -182,14 +200,17 @@ class Out {
     ];
   }
   write() {
-    if (this.count !== undefined) return this.count;
+    if (this.count !== undefined) {
+      this.flush();
+      closeSync(this.fd);
+      openOutputs.delete(this);
+      return this.count;
+    }
     mkdirSync(outDir, { recursive: true });
     writeFileSync(this.path, `${[...this.header(), ...this.lines].join('\n')}\n`);
     return this.lines.length;
   }
 }
-
-const counts = {};
 
 // ---------------------------------------------------------------------------------------------------------------
 // round
@@ -3038,27 +3059,94 @@ function genLootFamily() {
   return out.write();
 }
 
-counts.value = genValueFamily();
-counts.save = genSaveFamily();
-counts.gear = genGearFamily();
-counts.sockets = genSocketsFamily();
-counts.loot = genLootFamily();
-Object.assign(counts, genBlowFamilies(Out, makeLcg));
-Object.assign(counts, genSpellFamilies(Out, makeLcg));
-Object.assign(counts, genAnalysisFamilies(Out, makeLcg));
-Object.assign(counts, genFightFamilies(Out, makeLcg));
-Object.assign(counts, genPlanningFamilies(Out, makeLcg));
+// One group per generator family, in the file order the tree has always had. A group owns only its own files and its
+// own seeded LCG, so groups are independent: each can be the whole run of a child process and the bytes do not change.
+const GROUPS = [
+  ['value', () => genValueFamily()],
+  ['save', () => genSaveFamily()],
+  ['gear', () => genGearFamily()],
+  ['sockets', () => genSocketsFamily()],
+  ['loot', () => genLootFamily()],
+  ['blow', () => genBlowFamilies(Out, makeLcg)],
+  ['spells', () => genSpellFamilies(Out, makeLcg)],
+  ['analysis', () => genAnalysisFamilies(Out, makeLcg)],
+  ['fight', () => genFightFamilies(Out, makeLcg)],
+  ['planning', () => genPlanningFamilies(Out, makeLcg)],
+  ['maketarget', () => genMaketarget()],
+  ['firmament', () => genFirmamentFamilies(Out, makeLcg)],
+  ['planner', () => genPlannerFamilies(Out)],
+  ['forge', () => genForgeFamilies(Out)],
+  ['forge_gear', () => genForgeGearFamilies(Out)],
+  ['round', () => genRound()],
+  ['rng', () => genRng()],
+  ['damage', () => genDamage()],
+  ['allowance', () => genAllowance()],
+  ['relay_claim', () => genRelay()],
+  ['swing', () => genSwing()],
+  ['target', () => genTarget()],
+];
 
-counts.maketarget = await genMaketarget();
-Object.assign(counts, genFirmamentFamilies(Out, makeLcg));
-Object.assign(counts, genPlannerFamilies(Out));
-Object.assign(counts, genForgeFamilies(Out));
-Object.assign(counts, genForgeGearFamilies(Out));
-counts.round = genRound();
-counts.rng = genRng();
-counts.damage = genDamage();
-counts.allowance = genAllowance();
-counts.relay_claim = genRelay();
-counts.swing = genSwing();
-counts.target = genTarget();
-for (const [k, v] of Object.entries(counts)) console.log(`${k}: ${v} lines -> ${join('rust', 'tests', 'vectors', `${k}.txt`)}`);
+/**
+ * argv:
+ *   (none)             every family, in parallel child processes (--jobs N, default min(4, cores/2))
+ *   --only=a,b         only those families; --jobs decides serial (1) or the pool
+ *   --jobs=N           how many families run at once
+ *   families: value save gear sockets loot blow spells analysis fight planning maketarget firmament planner forge
+ *             forge_gear round rng damage allowance relay_claim swing target
+ */
+const argOf = (name) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
+const only = [...new Set(argOf('only')?.split(',').filter(Boolean) ?? [])];
+const jobs = Number(argOf('jobs') ?? Math.max(1, Math.min(4, Math.floor(availableParallelism() / 2))));
+if (!Number.isInteger(jobs) || jobs < 1) throw new Error(`--jobs: want a positive integer, got ${argOf('jobs')}`);
+if (only.length) {
+  const unknown = only.filter((n) => !GROUPS.some(([g]) => g === n));
+  if (unknown.length) throw new Error(`--only: unknown families ${unknown.join(',')} (known: ${GROUPS.map(([g]) => g).join(',')})`);
+}
+
+/** Run the named groups in this process, in GROUPS order (their LCGs are seeded per group, so the order cannot matter). */
+async function runGroups(names) {
+  const counts = {};
+  let ran = 0;
+  for (const [name, gen] of GROUPS) {
+    if (!names.includes(name)) continue;
+    const r = await gen();
+    ran++;
+    // A streaming family returns its own { module: lines }; the rest return one line count named after the family.
+    if (typeof r === 'number') counts[name] = r;
+    else Object.assign(counts, r);
+  }
+  // An empty run must fail: it would leave the tree's vectors untouched and a green gate would prove nothing.
+  if (!ran) throw new Error('rust-vectors: no family ran (nothing was written)');
+  for (const [k, v] of Object.entries(counts)) console.log(`${k}: ${v} lines -> ${join(outDir, `${k}.txt`)}`);
+}
+
+/** Measured seconds per group on this tree (only the order matters, and it is stable: fight and planning share the
+ *  long simulation, the rest are seconds). Longest first, so the pool's tail is a short group, not a 60 s one. */
+const GROUP_SECONDS = { fight: 66, planning: 66, planner: 59, blow: 25, analysis: 25, firmament: 8, maketarget: 6, spells: 6, forge: 2 };
+
+/** One child per group at a time, `size` of them; a group's files are written by exactly one process. */
+async function runPool(names, size) {
+  const queue = [...names].sort((a, b) => (GROUP_SECONDS[b] ?? 0) - (GROUP_SECONDS[a] ?? 0));
+  const kids = [];
+  const runOne = async (name) => {
+    const r = await new Promise((res) => {
+      const c = spawn(process.execPath, [fileURLToPath(import.meta.url), `--only=${name}`, '--jobs=1'], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let out = '';
+      c.stdout.on('data', (d) => { out += d; });
+      c.stderr.on('data', (d) => { out += d; });
+      c.on('close', (status) => res({ name, status, out }));
+      c.on('error', () => res({ name, status: 127, out }));
+    });
+    kids.push(r);
+    process.stdout.write(r.out);
+  };
+  await Promise.all(Array.from({ length: Math.min(size, names.length) }, async () => {
+    while (queue.length) await runOne(queue.shift());
+  }));
+  const bad = kids.filter((r) => r.status !== 0);
+  if (bad.length) throw new Error(`rust-vectors: group(s) failed: ${bad.map((r) => `${r.name} exit ${r.status}`).join(', ')}`);
+}
+
+const names = only.length ? only : GROUPS.map(([name]) => name);
+if (jobs <= 1 || names.length <= 1) await runGroups(names);
+else await runPool(names, jobs);

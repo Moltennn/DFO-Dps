@@ -658,6 +658,7 @@ order (JS `draws()` is an object, so integer-like names such as `"10"` would sor
 
 ```
 node tools/rust-vectors.mjs        # from the repository root: writes rust/tests/vectors/*.txt
+                                    # (--only=round,rng limits families; --jobs=N sets how many run at once, default min(4, cores/2))
 node tools/rust-data.mjs --check   # from the repository root: rust/dfo-core/src/generated is up to date
 cd rust && cargo test
 cd rust && cargo test -p dfo-cli    # the CLI differential; it spawns `node bin/dfo-dps.js` (needs the JS tree)
@@ -675,7 +676,9 @@ committed (`rust/.gitignore`): run the generator first on a fresh checkout.
 (`round`, `rng`, `damage`, `allowance`, `relay_claim`, and from R2 `swing`). Format: one case per line, `kind token...`,
 f64 as 16 hex digits of IEEE bits, integers decimal, `=>` between inputs and outputs; documented in
 the generator's header. Output is deterministic (fixed local PRNG, no `Math.random`, no clock;
-a second run is byte-identical). `applyPct`, `carriedPct`, `carriedFirmament` are not exported by
+a second run is byte-identical, with any `--jobs`). Families are independent (each seeds its own
+LCG and writes only its own files), so the default run is one child process per family.
+`applyPct`, `carriedPct`, `carriedFirmament` are not exported by
 `src/model.js`, so the generator cuts their exact source text out of the file and evaluates it
 (it fails loudly if the text moves).
 
