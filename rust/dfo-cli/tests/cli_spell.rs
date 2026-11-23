@@ -676,7 +676,9 @@ fn the_refusals_are_explicit() {
     // A flag outside the spell command stays refused by name.
     let got = rust(&["build", "--theory", "--list"], &root);
     assert_eq!(got.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&got.stderr).contains("is not supported by this CLI slice"));
+    assert!(String::from_utf8_lossy(&got.stderr).contains(
+        "--list is not read by build; spell and spells read it (spells ignores --list, --all-spells, --standard and --spell)"
+    ));
     fs::remove_dir_all(&root).expect("cleanup");
 }
 

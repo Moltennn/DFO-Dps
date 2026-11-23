@@ -645,17 +645,32 @@ fn graph_refusals_match_the_js_where_they_can() {
 #[test]
 fn graph_flags_are_refused_elsewhere() {
     let root = temp_root("boundary");
-    for args in [
-        &["build", "--theory", "--series", "stat:speed"][..],
-        &["rank", "--theory", "--uncapped"][..],
-        &["build", "--theory", "--from", "10"][..],
-        &["build", "--theory", "--to", "10"][..],
-        &["build", "--theory", "--step", "10"][..],
+    for (args, refusal) in [
+        (
+            &["build", "--theory", "--series", "stat:speed"][..],
+            "--series is not read by build; only graph reads it",
+        ),
+        (
+            &["rank", "--theory", "--uncapped"][..],
+            "--uncapped is not read by rank; graph, imprints, enchant-plan, gear-plan, loadout and real-dps read it",
+        ),
+        (
+            &["build", "--theory", "--from", "10"][..],
+            "--from is not read by build; graph and scale read it",
+        ),
+        (
+            &["build", "--theory", "--to", "10"][..],
+            "--to is not read by build; graph and scale read it",
+        ),
+        (
+            &["build", "--theory", "--step", "10"][..],
+            "--step is not read by build; graph and scale read it",
+        ),
     ] {
         let got = rust(args, &root);
         assert_eq!(got.status.code(), Some(2), "rust {args:?}");
         assert!(
-            String::from_utf8_lossy(&got.stderr).contains("is not supported by this CLI slice"),
+            String::from_utf8_lossy(&got.stderr).contains(refusal),
             "rust {args:?}: {}",
             String::from_utf8_lossy(&got.stderr)
         );

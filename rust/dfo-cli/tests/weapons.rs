@@ -274,14 +274,20 @@ fn the_refusals_are_explicit() {
     let page = root.join("never.html");
     let out = page.to_str().unwrap();
     // `--categories` is the weapons/skills page's; outside those it is refused by name (the JS accepts and ignores it).
-    for args in [
-        &["report", "--theory", "--categories", "--out", out][..],
-        &["build", "--theory", "--categories"][..],
+    for (args, refusal) in [
+        (
+            &["report", "--theory", "--categories", "--out", out][..],
+            "--categories is not read by report; weapons and skills read it",
+        ),
+        (
+            &["build", "--theory", "--categories"][..],
+            "--categories is not read by build; weapons and skills read it",
+        ),
     ] {
         let got = rust(args, &root);
         assert_eq!(got.status.code(), Some(2), "rust {args:?}");
         assert!(
-            String::from_utf8_lossy(&got.stderr).contains("is not supported by this CLI slice"),
+            String::from_utf8_lossy(&got.stderr).contains(refusal),
             "rust {args:?}: {}",
             String::from_utf8_lossy(&got.stderr)
         );

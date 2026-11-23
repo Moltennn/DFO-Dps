@@ -595,14 +595,20 @@ fn the_refusals_are_explicit() {
         &page,
     );
     // A flag outside the command stays refused by name.
-    for args in [
-        &["build", "--theory", "--list"][..],
-        &["spells", "--theory", "--family", "bow", "--out", out][..],
+    for (args, refusal) in [
+        (
+            &["build", "--theory", "--list"][..],
+            "--list is not read by build; spell and spells read it (spells ignores --list, --all-spells, --standard and --spell)",
+        ),
+        (
+            &["spells", "--theory", "--family", "bow", "--out", out][..],
+            "--family is not read by spells; imprints reads it",
+        ),
     ] {
         let got = rust(args, &root);
         assert_eq!(got.status.code(), Some(2), "rust {args:?}");
         assert!(
-            String::from_utf8_lossy(&got.stderr).contains("is not supported by this CLI slice"),
+            String::from_utf8_lossy(&got.stderr).contains(refusal),
             "rust {args:?}: {}",
             String::from_utf8_lossy(&got.stderr)
         );

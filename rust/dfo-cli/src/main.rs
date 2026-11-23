@@ -518,7 +518,7 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
         let name = "stat";
         if parsed.raw(name).is_some() || parsed.flag(name) {
             return Err(usage(format!(
-                "--{name} is not supported by this CLI slice (it needs a save, another command, or is not ported yet)"
+                "--{name} is not read by {command}; compare and scale read it"
             )));
         }
     }
@@ -528,16 +528,16 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
         && command != "gear-plan"
         && (parsed.raw("all").is_some() || parsed.flag("all"))
     {
-        return Err(usage(
-            "--all is not supported by this CLI slice (it needs a save, another command, or is not ported yet)",
-        ));
+        return Err(usage(format!(
+            "--all is not read by {command}; compare, scale, enchant-plan and gear-plan read it"
+        )));
     }
     // `--skill`/`--gear-skill` are priced by `scale` alone.
     if command != "scale" {
         for name in ["skill", "gear-skill"] {
             if parsed.raw(name).is_some() || parsed.flag(name) {
                 return Err(usage(format!(
-                    "--{name} is not supported by this CLI slice (it needs the scale command, or is not ported yet)"
+                    "--{name} is not read by {command}; only scale reads it"
                 )));
             }
         }
@@ -548,14 +548,14 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
         && command != "spells"
         && parsed.raw("data").is_some()
     {
-        return Err(usage(
-            "--data is not supported by this CLI slice (it needs the probe or spell, or is not ported yet)",
-        ));
+        return Err(usage(format!(
+            "--data is not read by {command}; probe, spell and spells read it"
+        )));
     }
     if command != "probe" && parsed.flag("old") {
-        return Err(usage(
-            "--old is not supported by this CLI slice (it needs the probe, or is not ported yet)",
-        ));
+        return Err(usage(format!(
+            "--old is not read by {command}; only probe reads it"
+        )));
     }
     // The spell flags are read by `spell` and `spells` (which the JS ignores `--list`/`--all-spells`/`--standard`/
     // `--spell` for); the JS accepts and ignores them elsewhere, this CLI names them.
@@ -572,7 +572,7 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
         ] {
             if parsed.raw(name).is_some() || parsed.flag(name) {
                 return Err(usage(format!(
-                    "--{name} is not supported by this CLI slice (it needs the spell command, or is not ported yet)"
+                    "--{name} is not read by {command}; spell and spells read it (spells ignores --list, --all-spells, --standard and --spell)"
                 )));
             }
         }
@@ -580,9 +580,9 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
     // `--series` is priced by `graph` alone, and `--uncapped` by `graph` and `imprints`; JS accepts and ignores them
     // elsewhere, and this CLI refuses them by name.
     if command != "graph" && (parsed.raw("series").is_some() || parsed.flag("series")) {
-        return Err(usage(
-            "--series is not supported by this CLI slice (it needs the graph, or is not ported yet)",
-        ));
+        return Err(usage(format!(
+            "--series is not read by {command}; only graph reads it"
+        )));
     }
     if command != "graph"
         && command != "imprints"
@@ -592,16 +592,16 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
         && command != "real-dps"
         && (parsed.raw("uncapped").is_some() || parsed.flag("uncapped"))
     {
-        return Err(usage(
-            "--uncapped is not supported by this CLI slice (it needs the graph or imprints, or is not ported yet)",
-        ));
+        return Err(usage(format!(
+            "--uncapped is not read by {command}; graph, imprints, enchant-plan, gear-plan, loadout and real-dps read it"
+        )));
     }
     // `--from`/`--to`/`--step` are shared by `graph` and `scale`.
     if command != "graph" && command != "scale" {
         for name in ["from", "to", "step"] {
             if parsed.raw(name).is_some() || parsed.flag(name) {
                 return Err(usage(format!(
-                    "--{name} is not supported by this CLI slice (it needs the graph or scale, or is not ported yet)"
+                    "--{name} is not read by {command}; graph and scale read it"
                 )));
             }
         }
@@ -611,7 +611,7 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
         for name in ["build", "stars", "refresh"] {
             if parsed.raw(name).is_some() || parsed.flag(name) {
                 return Err(usage(format!(
-                    "--{name} is not supported by this CLI slice (it needs the firmament command, or is not ported yet)"
+                    "--{name} is not read by {command}; only firmament reads it"
                 )));
             }
         }
@@ -619,9 +619,9 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
     // `--categories` is the weapons/skills page's condensed table; refused by name elsewhere, as the JS accepts and
     // ignores it.
     if command != "weapons" && command != "skills" && parsed.flag("categories") {
-        return Err(usage(
-            "--categories is not supported by this CLI slice (it needs the weapons/skills command, or is not ported yet)",
-        ));
+        return Err(usage(format!(
+            "--categories is not read by {command}; weapons and skills read it"
+        )));
     }
     // `--encounter`/`--all-encounters`/`--shortlist` are the loadout report's content and sample selectors; the JS
     // accepts and ignores them elsewhere, this CLI names them.
@@ -629,7 +629,7 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
         for name in ["encounter", "all-encounters", "shortlist"] {
             if parsed.raw(name).is_some() || parsed.flag(name) {
                 return Err(usage(format!(
-                    "--{name} is not supported by this CLI slice (it needs the loadout command, or is not ported yet)"
+                    "--{name} is not read by {command}; loadout and real-dps read it"
                 )));
             }
         }
@@ -640,7 +640,7 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
         for name in ["family", "sort"] {
             if parsed.raw(name).is_some() || parsed.flag(name) {
                 return Err(usage(format!(
-                    "--{name} is not supported by this CLI slice (it needs the imprints command, or is not ported yet)"
+                    "--{name} is not read by {command}; imprints reads it"
                 )));
             }
         }
@@ -650,9 +650,9 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
             && command != "real-dps"
             && (parsed.raw("cap-aware").is_some() || parsed.flag("cap-aware"))
         {
-            return Err(usage(
-                "--cap-aware is not supported by this CLI slice (it needs the imprints command, or is not ported yet)",
-            ));
+            return Err(usage(format!(
+                "--cap-aware is not read by {command}; imprints, enchant-plan, gear-plan, loadout and real-dps read it"
+            )));
         }
     }
     // `--shield`/`--soul-gem`/`--group`/`--repairs`/`--regen` are read by `enchant-plan` alone.
@@ -660,7 +660,7 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
         for name in ["shield", "soul-gem", "group", "repairs", "regen"] {
             if parsed.raw(name).is_some() || parsed.flag(name) {
                 return Err(usage(format!(
-                    "--{name} is not supported by this CLI slice (it needs the enchant-plan command, or is not ported yet)"
+                    "--{name} is not read by {command}; enchant-plan and gear-plan read it"
                 )));
             }
         }
@@ -951,7 +951,7 @@ fn parse(args: &[String]) -> Result<Parsed, CliError> {
         }
         if !in_flags(SUPPORTED, name) {
             return Err(usage(format!(
-                "--{name} is not supported by this CLI slice (it needs a save, another command, or is not ported yet)"
+                "--{name} is not read by this CLI (JS theory only prints an obsolete note for it; use --gear-lb/--gear-cs)"
             )));
         }
         if in_flags(BOOLEAN_FLAGS, name) {

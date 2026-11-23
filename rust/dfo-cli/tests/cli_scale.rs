@@ -189,7 +189,6 @@ fn scale_theory_curves_match_the_js() {
     same(&["scale", "--theory", "--stat", "Strength"], &root);
 
     // One attribute: the default range is current (100) to 100, so one row.
-    same(&["scale", "--theory", "--stat", "strength"], &root);
     for stat in [
         "strength",
         "intelligence",
@@ -588,15 +587,24 @@ fn scale_over_sparse_skills_and_missing_mods_matches_the_js() {
 fn scale_flags_are_refused_elsewhere() {
     let root = temp_root("boundary");
     // `--skill`/`--gear-skill` are priced by `scale` alone; the other ported commands refuse them by name.
-    for args in [
-        &["build", "--theory", "--skill", "29"][..],
-        &["rank", "--theory", "--gear-skill", "29"][..],
-        &["graph", "--theory", "--skill", "29"][..],
+    for (args, refusal) in [
+        (
+            &["build", "--theory", "--skill", "29"][..],
+            "--skill is not read by build; only scale reads it",
+        ),
+        (
+            &["rank", "--theory", "--gear-skill", "29"][..],
+            "--gear-skill is not read by rank; only scale reads it",
+        ),
+        (
+            &["graph", "--theory", "--skill", "29"][..],
+            "--skill is not read by graph; only scale reads it",
+        ),
     ] {
         let got = rust(args, &root);
         assert_eq!(got.status.code(), Some(2), "rust {args:?}");
         assert!(
-            String::from_utf8_lossy(&got.stderr).contains("is not supported by this CLI slice"),
+            String::from_utf8_lossy(&got.stderr).contains(refusal),
             "rust {args:?}: {}",
             String::from_utf8_lossy(&got.stderr)
         );
@@ -605,23 +613,35 @@ fn scale_flags_are_refused_elsewhere() {
         assert_eq!(want.status.code(), Some(0), "js accepts {args:?}");
     }
     // `--from`/`--to`/`--step` now belong to graph and scale; `compare` still refuses them.
-    for args in [
-        &[
-            "compare",
-            "--theory",
-            "--stat",
-            "strength=110",
-            "--from",
-            "1",
-        ][..],
-        &["build", "--theory", "--from", "1"][..],
-        &["build", "--theory", "--to", "1"][..],
-        &["build", "--theory", "--step", "1"][..],
+    for (args, refusal) in [
+        (
+            &[
+                "compare",
+                "--theory",
+                "--stat",
+                "strength=110",
+                "--from",
+                "1",
+            ][..],
+            "--from is not read by compare; graph and scale read it",
+        ),
+        (
+            &["build", "--theory", "--from", "1"][..],
+            "--from is not read by build; graph and scale read it",
+        ),
+        (
+            &["build", "--theory", "--to", "1"][..],
+            "--to is not read by build; graph and scale read it",
+        ),
+        (
+            &["build", "--theory", "--step", "1"][..],
+            "--step is not read by build; graph and scale read it",
+        ),
     ] {
         let got = rust(args, &root);
         assert_eq!(got.status.code(), Some(2), "rust {args:?}");
         assert!(
-            String::from_utf8_lossy(&got.stderr).contains("is not supported by this CLI slice"),
+            String::from_utf8_lossy(&got.stderr).contains(refusal),
             "rust {args:?}: {}",
             String::from_utf8_lossy(&got.stderr)
         );

@@ -293,15 +293,24 @@ fn imprints_refusals_match_the_js() {
     same_usage(&["imprints", "--sort", "nope", "--out", out], &root, &page);
     same_usage(&["build", "--sort", "nope"], &root, &page);
     // `--family`/`--sort`/`--cap-aware` are refused by name outside `imprints`; the JS accepts and ignores each.
-    for args in [
-        &["report", "--theory", "--family", "bow", "--out", out][..],
-        &["build", "--theory", "--sort", "uncapped"][..],
-        &["graph", "--theory", "--cap-aware"][..],
+    for (args, refusal) in [
+        (
+            &["report", "--theory", "--family", "bow", "--out", out][..],
+            "--family is not read by report; imprints reads it",
+        ),
+        (
+            &["build", "--theory", "--sort", "uncapped"][..],
+            "--sort is not read by build; imprints reads it",
+        ),
+        (
+            &["graph", "--theory", "--cap-aware"][..],
+            "--cap-aware is not read by graph; imprints, enchant-plan, gear-plan, loadout and real-dps read it",
+        ),
     ] {
         let got = rust(args, &root);
         assert_eq!(got.status.code(), Some(2), "rust {args:?}");
         assert!(
-            String::from_utf8_lossy(&got.stderr).contains("is not supported by this CLI slice"),
+            String::from_utf8_lossy(&got.stderr).contains(refusal),
             "rust {args:?}: {}",
             String::from_utf8_lossy(&got.stderr)
         );
@@ -317,7 +326,8 @@ fn imprints_refusals_match_the_js() {
     // `--series` stays graph-only, and it is not read by `imprints`.
     let got = rust(&["imprints", "--series", "stat:speed", "--out", out], &root);
     assert_eq!(got.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&got.stderr).contains("is not supported by this CLI slice"));
+    assert!(String::from_utf8_lossy(&got.stderr)
+        .contains("--series is not read by imprints; only graph reads it"));
     assert!(!page.exists(), "no page with --series");
     // Extra positionals: the JS ignores them, this slice refuses them on purpose.
     let got = rust(&["imprints", "extra", "--out", out], &root);

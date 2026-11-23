@@ -379,7 +379,8 @@ fn the_flag_refusals_match_the_js() {
     let data = rust(&["enchant", "--theory", "--data", "/x"], &root);
     assert_eq!(data.status.code(), Some(2), "rust --data is refused");
     assert!(
-        String::from_utf8_lossy(&data.stderr).contains("is not supported by this CLI slice"),
+        String::from_utf8_lossy(&data.stderr)
+            .contains("--data is not read by enchant; probe, spell and spells read it"),
         "{}",
         String::from_utf8_lossy(&data.stderr)
     );

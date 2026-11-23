@@ -403,7 +403,8 @@ fn firmament_refusals_match_the_js_where_they_can() {
     );
     assert_eq!(got.status.code(), Some(2));
     assert!(
-        String::from_utf8_lossy(&got.stderr).contains("is not supported by this CLI slice"),
+        String::from_utf8_lossy(&got.stderr)
+            .contains("--build is not read by report; only firmament reads it"),
         "rust: {}",
         String::from_utf8_lossy(&got.stderr)
     );

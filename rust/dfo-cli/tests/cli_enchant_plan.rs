@@ -457,17 +457,32 @@ fn enchant_plan_refusals_match_the_js() {
         assert!(!page.exists(), "no page for {args:?}");
     }
     // The branch's own flags are refused by name outside it; the JS accepts and ignores them.
-    for args in [
-        &["imprints", "--shield", "none", "--out", &out][..],
-        &["build", "--theory", "--soul-gem"][..],
-        &["imprints", "--group", "daedra", "--out", &out][..],
-        &["build", "--theory", "--repairs", "2"][..],
-        &["build", "--theory", "--regen", "2"][..],
+    for (args, refusal) in [
+        (
+            &["imprints", "--shield", "none", "--out", &out][..],
+            "--shield is not read by imprints; enchant-plan and gear-plan read it",
+        ),
+        (
+            &["build", "--theory", "--soul-gem"][..],
+            "--soul-gem is not read by build; enchant-plan and gear-plan read it",
+        ),
+        (
+            &["imprints", "--group", "daedra", "--out", &out][..],
+            "--group is not read by imprints; enchant-plan and gear-plan read it",
+        ),
+        (
+            &["build", "--theory", "--repairs", "2"][..],
+            "--repairs is not read by build; enchant-plan and gear-plan read it",
+        ),
+        (
+            &["build", "--theory", "--regen", "2"][..],
+            "--regen is not read by build; enchant-plan and gear-plan read it",
+        ),
     ] {
         let got = rust(args, &root);
         assert_eq!(got.status.code(), Some(2), "rust {args:?}");
         assert!(
-            String::from_utf8_lossy(&got.stderr).contains("is not supported by this CLI slice"),
+            String::from_utf8_lossy(&got.stderr).contains(refusal),
             "rust {args:?}: {}",
             String::from_utf8_lossy(&got.stderr)
         );

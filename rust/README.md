@@ -48,6 +48,58 @@ codes; every number comes from `dfo_core`
 `save::character_from_save`,
 `save::live_stat`/`skill_value`/`skill_name`, `model_blow::weapon_of`). There is no second reading of a rule.
 
+### Known differences from the JS CLI and model (as of the 23 Nov audit)
+
+The JS CLI is the reference. Each item is either a deliberate refusal or a documented edge; the details are in the
+bullets below and in the per-command notes.
+
+- **Reports are create-only.** Every page command (`probe`, `graph`, `report`, `firmament`, `imprints`,
+  `enchant-plan`/`gear-plan`, `spells`, `weapons`/`skills`, `loadout`/`real-dps`) uses `O_CREAT|O_EXCL`: an existing file
+  is refused with exit 2 and left untouched. The JS `writeFileSync` truncates it.
+- **Extra positionals and unread flags are refused by name (exit 2).** The JS ignores them.
+- **`--data` is read only by `probe`, `spell` and `spells`.** Any other command refuses it by name; the JS ignores it there.
+- **No Firmament disk cache.** The JS writes `.cache/firmament-plans.json` and prints `Firmament plans (N cached, M
+  computed)`. This CLI prints the bare `Firmament plans` line; `--refresh` changes nothing.
+- **Parser wording and `1e400`.** The save and config parser is `serde_json`, so a malformed document's message is not
+  V8's. A number past f64 (`1e400`) is a parse error where `JSON.parse` gives `Infinity`. Exit codes match (see
+  "The JSON parser" below).
+- **Number grouping is en-US, pinned.** `grouped_number` always groups with commas; the JS `toLocaleString()` follows the
+  host locale.
+- **Probe page escaping.** The page escapes capture-derived text that the JS inserts raw. A safe capture's page is
+  byte-identical.
+- **`theory` on a reference foe exits 2.** `theory --target tough|soft|human` crashes the JS card on
+  `r.health.toLocaleString()`; this CLI prints one message and exits 2 before any card.
+- **Custom nested spell records in a save are not ported.** Only the save's flat `spells` entries are read; a nested
+  custom record inside a save is not.
+- **Read-only saves.** There is no game-save writer. `import` is read-only and keeps no copy of the save bytes after
+  the character is built.
+- **The model is the 14512 snapshot.** It is the vendored upstream `vendor/upstream/a3eb1605`. The live game is build
+  0.1.14631, which changed:
+  - the weapon gear law: a flat add with uniform range `[floor(g/10), floor(g/5)]`, replacing `min(320, gear*0.44)%`;
+  - the axe/blunt half line, which is removed;
+  - a brand loot power and a defender sigil set, which are added.
+  The JS has an opt-in `--game-build 14631` on branch `model-14631` (not merged to `main`). The Rust port does not
+  model build 14631.
+
+### Verification status
+
+Figures as reported at the 23 Nov audit. The docs edit that adds this section ran no tests.
+
+- **Rust tests:** 333.
+- **Real-save and capture diff:** 259 cases, 0 numeric differences from the JS.
+- **Mutation backlog:**
+  - `allowance`: 1 survivor, proven.
+  - `gear`: 40 survivors, proven.
+  - `target`: in progress.
+  - Open: `mint`, `relay_claim`, `vendored`, `rng`, `round`, `damage`, `swing`, `boot`.
+- **Not verified:**
+  - the paperdoll `(100-av)/5` term;
+  - `renownBonus`;
+  - the respec preview;
+  - Firmament allocations in real saves;
+  - Windows and macOS paths;
+  - the live-client Stage 3.9.
+
 - **What runs.** `dfo-cli saves` (the `src/cli.js:934-939` table, newest first, `No saves found.` when empty),
   `dfo-cli doctor` (`src/cli.js:941-959`: the `SOURCE` pin, the save slots, then the imported character's label,
   ruleset, level/reflexes/mastery, weapon, live stats and weapon/crit skill; a missing or unreadable save is one

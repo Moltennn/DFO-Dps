@@ -415,15 +415,24 @@ fn unsupported_boundaries_are_explicit() {
     let text = String::from_utf8_lossy(&got.stderr);
     assert!(text.contains("unknown command \"buidl\""), "{text}");
     // Flags the ported commands do not price are refused by name, not silently ignored (JS accepts both and drops them).
-    for args in [
-        &["build", "--theory", "--stat", "strength=110"][..],
-        &["rank", "--theory", "--all"][..],
-        &["build", "--theory", "--all"][..],
+    for (args, refusal) in [
+        (
+            &["build", "--theory", "--stat", "strength=110"][..],
+            "--stat is not read by build; compare and scale read it",
+        ),
+        (
+            &["rank", "--theory", "--all"][..],
+            "--all is not read by rank; compare, scale, enchant-plan and gear-plan read it",
+        ),
+        (
+            &["build", "--theory", "--all"][..],
+            "--all is not read by build; compare, scale, enchant-plan and gear-plan read it",
+        ),
     ] {
         let got = rust(args);
         assert_eq!(got.status.code(), Some(2), "rust {args:?}");
         assert!(
-            String::from_utf8_lossy(&got.stderr).contains("is not supported by this CLI slice"),
+            String::from_utf8_lossy(&got.stderr).contains(refusal),
             "rust {args:?}: {}",
             String::from_utf8_lossy(&got.stderr)
         );
