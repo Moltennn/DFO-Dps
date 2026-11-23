@@ -18,15 +18,17 @@
  *                  the cache key is content-only and portable between copies of one revision (worktree, `git archive`);
  *                  a vectors directory that is a symlink into another tree is reused but never regenerated through
  *   --test-jobs N  rust: test binaries run in parallel, default up to 4; use 1 on memory-constrained hosts
+ *   --record-timings  rust: write each test binary's measured seconds to tools/gate-timings.json, which orders
+ *                  later queues longest-first (never required: without it the build order is kept)
  *   --keep-going   do not stop at the first failing step
  *   --no-game      js only: run with a HOME that has no launcher config, i.e. as a machine without the game's
  *                  SPELLS.STD (tests that need it are reported as skipped; see test/harness/spellbook.mjs)
  *   --lines N      how many lines of a failure to show (default 25)
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { availableParallelism, tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { vectorPlan } from './vector-cache.mjs';
@@ -150,6 +152,15 @@ function stepVectors() {
   return ok;
 }
 
+/** Measured seconds per test binary from an earlier `--record-timings` run; missing entries keep the build order. */
+function recordedTimings() {
+  try {
+    return JSON.parse(readFileSync(join(root, 'tools', 'gate-timings.json'), 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
 /** cargo test, with the test binaries run as separate processes in parallel (cargo runs them one after another). */
 async function stepCargoTestParallel() {
   const t0 = Date.now();
@@ -160,18 +171,28 @@ async function stepCargoTestParallel() {
     if (!line.startsWith('{')) continue;
     let m;
     try { m = JSON.parse(line); } catch { continue; }
-    if (m.reason === 'compiler-artifact' && m.profile?.test && m.executable) exes.push({ exe: m.executable, name: m.target?.name ?? m.executable });
+    // Keyed by test file: five names exist in both crates (`enchant_plan`, `theory`, ...), so a bare target name
+    // would let one binary's timing overwrite the other's and order the queue by the wrong number.
+    if (m.reason === 'compiler-artifact' && m.profile?.test && m.executable) {
+      const src = m.target?.src_path;
+      const name = src ? relative(rustDir, src).split('\\').join('/') : m.target?.name ?? m.executable;
+      exes.push({ exe: m.executable, name });
+    }
     if (m.reason === 'compiler-message' && m.message?.level === 'error') diagnostics.push(m.message.rendered.split('\n')[0]);
   }
   if (build.status !== 0 || exes.length === 0) {
     return report('cargo test', false, 'build failed', [...diagnostics.slice(0, 6), first(build.out.replace(/^\{.*$/gm, ''), 12)].join('\n'));
   }
   const jobs = Math.max(1, Number(opt('test-jobs', Math.min(4, availableParallelism()))));
-  const queue = [...exes];
+  const timings = recordedTimings();
+  // Longest first: the tail of a parallel run is whatever started last, so a former long binary that starts last
+  // can leave every worker idle at the end. Equal or unknown entries keep the build order (sort is stable).
+  const queue = [...exes].sort((a, b) => (timings[b.name] ?? 0) - (timings[a.name] ?? 0));
   const outputs = [];
   await Promise.all(Array.from({ length: jobs }, async () => {
     while (queue.length) {
       const e = queue.shift();
+      const started = Date.now();
       const r = await new Promise((res) => {
         const c = spawn(e.exe, ['-q'], { cwd: join(rustDir, 'dfo-core'), stdio: ['ignore', 'pipe', 'pipe'] });
         let out = '';
@@ -180,9 +201,16 @@ async function stepCargoTestParallel() {
         c.on('close', (status) => res({ name: e.name, status, out }));
         c.on('error', () => res({ name: e.name, status: 127, out }));
       });
-      outputs.push(r);
+      outputs.push({ ...r, secs: (Date.now() - started) / 1000 });
     }
   }));
+  const slowest = [...outputs].sort((a, b) => b.secs - a.secs);
+  if (flag('record-timings')) {
+    const map = { ...recordedTimings() };
+    for (const o of outputs) map[o.name] = Number(o.secs.toFixed(1));
+    const sorted = Object.fromEntries(Object.entries(map).sort(([a], [b]) => a.localeCompare(b)));
+    writeFileSync(join(root, 'tools', 'gate-timings.json'), `${JSON.stringify(sorted, null, 2)}\n`);
+  }
   let passed = 0;
   let failed = 0;
   const details = [];
@@ -193,6 +221,7 @@ async function stepCargoTestParallel() {
     if (o.status !== 0 || s.failed > 0) details.push(`[${o.name}] ${[...s.panics.slice(0, 3), s.panics.length ? '' : first(o.out, 6)].filter(Boolean).join(' | ')}`);
   }
   const ok = details.length === 0;
+  console.log(`       slowest: ${slowest.slice(0, 8).map((o) => `${o.name} ${o.secs.toFixed(1)}s`).join(', ')}`);
   return report('cargo test', ok, `${passed} passed, ${failed} failed in ${outputs.length} suites, ${jobs} parallel (${((Date.now() - t0) / 1000).toFixed(1)}s)`, details.slice(0, 8).join('\n'));
 }
 

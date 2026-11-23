@@ -3,6 +3,7 @@
 mod common;
 
 use dfo_core::loadout_shortlist::{shortlist_loadouts_with, ShortlistOpts};
+use dfo_core::maxprofile::Profiles;
 use dfo_core::real_build::{
     apply_tree, is_sampled_loadout, real_build_stages_with, real_weapon_loadouts_with, StageOpts,
 };
@@ -96,12 +97,27 @@ fn stage_value(st: &dfo_core::real_build::Stages) -> Value {
     ])
 }
 
-#[test]
-fn real_build() {
+/// Every family the file may carry; a new one must be added here and to a test, so it cannot pass unread.
+const KNOWN: &[&str] = &[
+    "stage",
+    "loadouts",
+    "sampled",
+    "apply",
+    "shortlist",
+    "shortlist-err",
+];
+
+/// Stream `real_build` for `kinds` only. The fixture `book` row must still come first, and every caller asserts the
+/// floors of its own families: one file, several `#[test]`s, which libtest runs in parallel.
+fn replay(
+    kinds: &[&str],
+    floors: &[(&str, usize)],
+    check: impl Fn(&str, &mut dyn FnMut() -> Value, &mut Profiles<'_>) -> Value,
+) {
     let defs = Default::default();
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     let mut book = None;
-    let mut profiles: Option<dfo_core::maxprofile::Profiles<'_>> = None;
+    let mut profiles: Option<Profiles<'_>> = None;
     for mut row in common::stream("real_build") {
         let kind = row.kind.clone();
         if kind == "book" {
@@ -109,67 +125,21 @@ fn real_build() {
             assert!(!v.items().is_empty());
             let b = book.replace(spells_by_index_map(v.items().iter().cloned()));
             assert!(b.is_none());
-            profiles = book.as_ref().map(dfo_core::maxprofile::Profiles::new);
+            profiles = book.as_ref().map(Profiles::new);
             row.done();
+            continue;
+        }
+        assert!(
+            KNOWN.contains(&kind.as_str()),
+            "unexpected real_build kind {kind}"
+        );
+        if !kinds.contains(&kind.as_str()) {
             continue;
         }
         let profiles = profiles
             .as_mut()
             .expect("real_build: the fixture spellbook row must come first");
-        let got = match kind.as_str() {
-            "stage" => {
-                let o = row.value(&defs);
-                let opts = StageOpts::from_value(&o);
-                let st = real_build_stages_with(
-                    o.get("template"),
-                    &obj([("key", o.get("family").clone())]),
-                    &opts,
-                    profiles,
-                )
-                .expect("realBuildStages");
-                stage_value(&st)
-            }
-            "loadouts" => {
-                let o = row.value(&defs);
-                let opt = StageOpts::from_value(&o);
-                let rows = real_weapon_loadouts_with(
-                    std::slice::from_ref(&opt.mode),
-                    opt.vampire,
-                    &opt.encounter,
-                    profiles,
-                )
-                .expect("realWeaponLoadouts");
-                Arr(rows)
-            }
-            "sampled" => {
-                let r = row.value(&defs);
-                Bool(is_sampled_loadout(&r))
-            }
-            "apply" => {
-                let o = row.value(&defs);
-                let template = o.get("template").to_number();
-                let family = o.get("family").to_js_string();
-                let ch = profiles
-                    .max_character(&Num(template), &obj([]))
-                    .expect("maxCharacter");
-                let applied = apply_tree(&ch, &family);
-                strip_character(&applied)
-            }
-            "shortlist" => {
-                let o = row.value(&defs);
-                let opts = ShortlistOpts::from_value(&o);
-                shortlist_loadouts_with(&opts, profiles).expect("shortlistLoadouts")
-            }
-            "shortlist-err" => {
-                let o = row.value(&defs);
-                let opts = ShortlistOpts::from_value(&o);
-                match shortlist_loadouts_with(&opts, profiles) {
-                    Ok(_) => Value::Null,
-                    Err(message) => s(&message),
-                }
-            }
-            other => panic!("unexpected real_build kind {other}"),
-        };
+        let got = check(&kind, &mut || row.value(&defs), profiles);
         row.expect("=>");
         let want = row.word();
         let text = dfo_core::value::write(&got);
@@ -190,17 +160,92 @@ fn real_build() {
         *counts.entry(kind).or_insert(0) += 1;
     }
     assert!(book.is_some(), "real_build: the spellbook row is missing");
-    for (kind, floor) in [
-        ("stage", 24),
-        ("loadouts", 4),
-        ("sampled", 120),
-        ("apply", 12),
-        ("shortlist", 7),
-        ("shortlist-err", 17),
-    ] {
-        let n = counts.get(kind).copied().unwrap_or(0);
-        assert!(n >= floor, "real_build/{kind}: {n} cases, floor {floor}");
+    for (kind, floor) in floors {
+        let n = counts.get(*kind).copied().unwrap_or(0);
+        assert!(n >= *floor, "real_build/{kind}: {n} cases, floor {floor}");
     }
-    let _ = counts;
-    let _ = s;
+}
+
+#[test]
+fn stages_loadouts_sampled_apply() {
+    replay(
+        &["stage", "loadouts", "sampled", "apply"],
+        &[
+            ("stage", 24),
+            ("loadouts", 4),
+            ("sampled", 120),
+            ("apply", 12),
+        ],
+        |kind, v, profiles| match kind {
+            "stage" => {
+                let o = v();
+                let opts = StageOpts::from_value(&o);
+                let st = real_build_stages_with(
+                    o.get("template"),
+                    &obj([("key", o.get("family").clone())]),
+                    &opts,
+                    profiles,
+                )
+                .expect("realBuildStages");
+                stage_value(&st)
+            }
+            "loadouts" => {
+                let o = v();
+                let opt = StageOpts::from_value(&o);
+                let rows = real_weapon_loadouts_with(
+                    std::slice::from_ref(&opt.mode),
+                    opt.vampire,
+                    &opt.encounter,
+                    profiles,
+                )
+                .expect("realWeaponLoadouts");
+                Arr(rows)
+            }
+            "sampled" => Bool(is_sampled_loadout(&v())),
+            "apply" => {
+                let o = v();
+                let template = o.get("template").to_number();
+                let family = o.get("family").to_js_string();
+                let ch = profiles
+                    .max_character(&Num(template), &obj([]))
+                    .expect("maxCharacter");
+                let applied = apply_tree(&ch, &family);
+                strip_character(&applied)
+            }
+            other => panic!("unexpected real_build kind {other}"),
+        },
+    );
+}
+
+#[test]
+fn shortlist() {
+    replay(
+        &["shortlist"],
+        &[("shortlist", 7)],
+        |kind, v, profiles| match kind {
+            "shortlist" => {
+                let opts = ShortlistOpts::from_value(&v());
+                shortlist_loadouts_with(&opts, profiles).expect("shortlistLoadouts")
+            }
+            other => panic!("unexpected real_build kind {other}"),
+        },
+    );
+}
+
+#[test]
+fn shortlist_err() {
+    replay(
+        &["shortlist-err"],
+        &[("shortlist-err", 17)],
+        |kind, v, profiles| match kind {
+            "shortlist-err" => {
+                let opts = ShortlistOpts::from_value(&v());
+                match shortlist_loadouts_with(&opts, profiles) {
+                    Ok(_) => Value::Null,
+                    Err(message) => s(&message),
+                }
+            }
+            other => panic!("unexpected real_build kind {other}"),
+        },
+    );
 }

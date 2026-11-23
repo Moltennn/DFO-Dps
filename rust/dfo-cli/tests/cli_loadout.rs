@@ -338,20 +338,68 @@ fn shortlist_json_matches_the_js() {
 }
 
 #[test]
-fn default_report_text_and_page_match_the_js() {
-    let root = temp_root("report-text");
+fn report_text_default() {
+    let root = temp_root("report-text-default");
     let page = root.join("loadouts.html");
-    let out = page.to_str().unwrap();
-    same_page(&["loadout", "--out", out], &root, &page);
-    same_page(&["real-dps", "--out", out], &root, &page);
-    same_page(&["loadout", "--uncapped", "--out", out], &root, &page);
-    // `--all-encounters` with the uncapped mode only: the cap bodies are not priced, so they do not reach the page.
+    same_page(&["loadout", "--out", page.to_str().unwrap()], &root, &page);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn report_text_alias() {
+    let root = temp_root("report-text-alias");
+    let page = root.join("loadouts.html");
+    same_page(&["real-dps", "--out", page.to_str().unwrap()], &root, &page);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn report_text_uncapped() {
+    let root = temp_root("report-text-uncapped");
+    let page = root.join("loadouts.html");
     same_page(
-        &["loadout", "--uncapped", "--all-encounters", "--out", out],
+        &["loadout", "--uncapped", "--out", page.to_str().unwrap()],
         &root,
         &page,
     );
-    same_page(&["loadout", "--cap-aware", "--out", out], &root, &page);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn report_text_uncapped_all_encounters() {
+    let root = temp_root("report-text-uncapped-all");
+    let page = root.join("loadouts.html");
+    // `--all-encounters` with the uncapped mode only: the cap bodies are not priced, so they do not reach the page.
+    same_page(
+        &[
+            "loadout",
+            "--uncapped",
+            "--all-encounters",
+            "--out",
+            page.to_str().unwrap(),
+        ],
+        &root,
+        &page,
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn report_text_cap_aware() {
+    let root = temp_root("report-text-capped");
+    let page = root.join("loadouts.html");
+    same_page(
+        &["loadout", "--cap-aware", "--out", page.to_str().unwrap()],
+        &root,
+        &page,
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn report_text_cap_aware_encounter() {
+    let root = temp_root("report-text-capped-abyss");
+    let page = root.join("loadouts.html");
     same_page(
         &[
             "loadout",
@@ -359,31 +407,78 @@ fn default_report_text_and_page_match_the_js() {
             "--encounter",
             "abyss",
             "--out",
-            out,
+            page.to_str().unwrap(),
         ],
         &root,
         &page,
     );
-    same_page(
-        &["loadout", "--cap-aware", "--all-encounters", "--out", out],
-        &root,
-        &page,
-    );
-    same_page(&["loadout", "--vampire", "--out", out], &root, &page);
     let _ = fs::remove_dir_all(&root);
 }
 
 #[test]
-fn default_report_json_and_page_match_the_js() {
-    let root = temp_root("report-json");
+fn report_text_cap_aware_all_encounters() {
+    let root = temp_root("report-text-capped-all");
     let page = root.join("loadouts.html");
-    let out = page.to_str().unwrap();
-    same_json_page(&["loadout", "--json", "--out", out], &root, &page);
-    same_json_page(
-        &["real-dps", "--uncapped", "--json", "--out", out],
+    same_page(
+        &[
+            "loadout",
+            "--cap-aware",
+            "--all-encounters",
+            "--out",
+            page.to_str().unwrap(),
+        ],
         &root,
         &page,
     );
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn report_text_vampire() {
+    let root = temp_root("report-text-vampire");
+    let page = root.join("loadouts.html");
+    same_page(
+        &["loadout", "--vampire", "--out", page.to_str().unwrap()],
+        &root,
+        &page,
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn report_json_default() {
+    let root = temp_root("report-json-default");
+    let page = root.join("loadouts.html");
+    same_json_page(
+        &["loadout", "--json", "--out", page.to_str().unwrap()],
+        &root,
+        &page,
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn report_json_uncapped() {
+    let root = temp_root("report-json-uncapped");
+    let page = root.join("loadouts.html");
+    same_json_page(
+        &[
+            "real-dps",
+            "--uncapped",
+            "--json",
+            "--out",
+            page.to_str().unwrap(),
+        ],
+        &root,
+        &page,
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn report_json_cap_aware_all_encounters() {
+    let root = temp_root("report-json-capped-all");
+    let page = root.join("loadouts.html");
     same_json_page(
         &[
             "loadout",
@@ -391,7 +486,7 @@ fn default_report_json_and_page_match_the_js() {
             "--all-encounters",
             "--json",
             "--out",
-            out,
+            page.to_str().unwrap(),
         ],
         &root,
         &page,

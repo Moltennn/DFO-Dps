@@ -175,18 +175,42 @@ fn opt(v: &Value, i: usize) -> Option<f64> {
     (!v.at(i).is_nullish()).then(|| v.at(i).to_number())
 }
 
+/// Every family the file may carry; a new one must be added here and to a test below, so it cannot pass unread.
+const KINDS: &[&str] = &[
+    "build",
+    "full",
+    "fight",
+    "carry",
+    "sample_fight",
+    "sample_carry",
+    "trace",
+    "sample_raw",
+    "merge_raw",
+    "tolerance",
+    "bad_hand",
+    "bad_kind",
+];
+
+/// The per-build families. `write()` emits the raw and error rows at the end, read by
+/// [`blow_outcomes_raw_and_errors_match_js`], so the two tests split one stream without redoing a build's work.
 #[test]
 fn blow_outcomes_match_js() {
     let defs = common::Defs::new();
-    let cases = common::stream("blow_outcomes");
     let mut seen = BTreeMap::new();
     let mut ch = Undefined;
     let mut args = Undefined;
     let mut full = None;
     let mut fight = None;
     let mut carry = None;
-    for mut c in cases {
+    for mut c in common::stream("blow_outcomes") {
         let kind = c.kind.clone();
+        assert!(KINDS.contains(&kind.as_str()), "unknown family {kind}");
+        if !matches!(
+            kind.as_str(),
+            "build" | "full" | "fight" | "carry" | "sample_fight" | "sample_carry" | "trace"
+        ) {
+            continue;
+        }
         match kind.as_str() {
             "build" => {
                 ch = c.value(&defs);
@@ -208,33 +232,10 @@ fn blow_outcomes_match_js() {
                 check(&mut c, &head(t));
                 check(&mut c, &atoms(t));
             }
-            "sample_fight" | "sample_carry" | "sample_raw" => {
-                let raw;
+            "sample_fight" | "sample_carry" => {
                 let t = match kind.as_str() {
                     "sample_fight" => fight.as_ref().unwrap(),
-                    "sample_carry" => carry.as_ref().unwrap(),
-                    _ => {
-                        raw = Tier {
-                            kind: TierKind::Fight,
-                            hand: Hand::Main,
-                            cap: 0.0,
-                            directions: vec![],
-                            total: 6.0,
-                            meta: Null,
-                            merged_from: None,
-                            carry_resolve: None,
-                            outcomes: c
-                                .value(&defs)
-                                .items()
-                                .iter()
-                                .map(|p| Atom {
-                                    p: p.to_number(),
-                                    ..Default::default()
-                                })
-                                .collect(),
-                        };
-                        &raw
-                    }
+                    _ => carry.as_ref().unwrap(),
                 };
                 let exp = c.value(&defs);
                 assert_eq!(
@@ -266,31 +267,7 @@ fn blow_outcomes_match_js() {
                     );
                 }
             }
-            "merge_raw" => {
-                let raw = c.value(&defs);
-                let mut t = full.as_ref().unwrap().clone();
-                t.kind = TierKind::Full;
-                t.outcomes = raw.items().iter().map(row).collect();
-                t.directions = vec![Str("StrikeLeft".into())];
-                check(&mut c, &atoms(&merge_to_fight_tier(&t)));
-                check(&mut c, &atoms(&merge_to_carry_tier(&t).unwrap()));
-            }
-            "tolerance" => check(&mut c, &Num(TOLERANCE)),
-            "bad_hand" => {
-                let hand = c.value(&defs);
-                let mut args = Value::Obj(vec![]);
-                args.set("hand", hand);
-                check(
-                    &mut c,
-                    &error(blow_outcomes(&Undefined, &args).unwrap_err()),
-                );
-            }
-            "bad_kind" => {
-                let t = blow_outcomes(&Undefined, &Undefined).unwrap();
-                check(&mut c, &error(create_blow_sampler(&t).unwrap_err()));
-                check(&mut c, &error(merge_to_carry_tier(&t).unwrap_err()));
-            }
-            _ => c.fail("unknown family"),
+            _ => unreachable!(),
         }
         c.done();
         *seen.entry(kind).or_insert(0) += 1;
@@ -302,9 +279,104 @@ fn blow_outcomes_match_js() {
         "sample_fight",
         "sample_carry",
         "trace",
-        "merge_raw",
-        "sample_raw",
     ] {
+        assert!(
+            seen.get(k).copied().unwrap_or(0) >= 2000,
+            "short {k} family"
+        );
+    }
+}
+
+/// `sample_raw`, `merge_raw` and the refusal rows: no per-build tier is checked here, so the build rows are only
+/// parsed for `merge_raw`'s template (the last one, as the single test used to take it).
+#[test]
+fn blow_outcomes_raw_and_errors_match_js() {
+    let defs = common::Defs::new();
+    let mut seen = BTreeMap::new();
+    let mut last_build: Option<(Value, Value)> = None;
+    let mut template: Option<Tier> = None;
+    let mut merges = 0;
+    for mut c in common::stream("blow_outcomes") {
+        let kind = c.kind.clone();
+        assert!(KINDS.contains(&kind.as_str()), "unknown family {kind}");
+        match kind.as_str() {
+            "build" => {
+                assert_eq!(
+                    merges, 0,
+                    "build row after merge_raw: its template would be wrong"
+                );
+                last_build = Some((c.value(&defs), c.value(&defs)));
+                c.done();
+            }
+            "sample_raw" => {
+                let raw = Tier {
+                    kind: TierKind::Fight,
+                    hand: Hand::Main,
+                    cap: 0.0,
+                    directions: vec![],
+                    total: 6.0,
+                    meta: Null,
+                    merged_from: None,
+                    carry_resolve: None,
+                    outcomes: c
+                        .value(&defs)
+                        .items()
+                        .iter()
+                        .map(|p| Atom {
+                            p: p.to_number(),
+                            ..Default::default()
+                        })
+                        .collect(),
+                };
+                let exp = c.value(&defs);
+                assert_eq!(
+                    write(&exp),
+                    write(&sampler(&raw, &exp)),
+                    "{}:{} {kind}",
+                    c.file,
+                    c.line
+                );
+                c.done();
+            }
+            "merge_raw" => {
+                merges += 1;
+                let raw = c.value(&defs);
+                let (ch, args) = last_build.as_ref().expect("merge_raw: build row");
+                let mut t = template
+                    .get_or_insert_with(|| blow_outcomes(ch, args).unwrap())
+                    .clone();
+                t.kind = TierKind::Full;
+                t.directions = vec![Str("StrikeLeft".into())];
+                t.outcomes = raw.items().iter().map(row).collect();
+                check(&mut c, &atoms(&merge_to_fight_tier(&t)));
+                check(&mut c, &atoms(&merge_to_carry_tier(&t).unwrap()));
+                c.done();
+            }
+            "tolerance" => {
+                check(&mut c, &Num(TOLERANCE));
+                c.done();
+            }
+            "bad_hand" => {
+                let hand = c.value(&defs);
+                let mut args = Value::Obj(vec![]);
+                args.set("hand", hand);
+                check(
+                    &mut c,
+                    &error(blow_outcomes(&Undefined, &args).unwrap_err()),
+                );
+                c.done();
+            }
+            "bad_kind" => {
+                let t = blow_outcomes(&Undefined, &Undefined).unwrap();
+                check(&mut c, &error(create_blow_sampler(&t).unwrap_err()));
+                check(&mut c, &error(merge_to_carry_tier(&t).unwrap_err()));
+                c.done();
+            }
+            _ => continue,
+        }
+        *seen.entry(kind).or_insert(0) += 1;
+    }
+    for k in ["sample_raw", "merge_raw"] {
         assert!(
             seen.get(k).copied().unwrap_or(0) >= 2000,
             "short {k} family"

@@ -1,7 +1,7 @@
 mod common;
 use dfo_core::{
     analyze as a,
-    spells::spells_by_index_map,
+    spells::{spells_by_index_map, Spellbook},
     value::{write, Value},
 };
 use std::collections::BTreeMap;
@@ -45,16 +45,33 @@ fn difference(expected: &Value, got: &Value, path: &str) -> Option<String> {
     }
 }
 
-#[test]
-fn differential() {
+/// Every family the file carries; a new one must be added here and to a test below, so it cannot pass unread.
+const KINDS: &[&str] = &[
+    "ref",
+    "boss",
+    "gate",
+    "relay",
+    "ranks",
+    "probe",
+    "refusal",
+    "body_level",
+    "boss_defaults",
+];
+
+/// Stream `analysis` for `families` only. Each test must see the fixture `book` row first and asserts the floors of its
+/// own families: one file, several `#[test]`s, which libtest runs in parallel.
+fn replay(
+    families: &[&str],
+    floors: &[(&str, usize)],
+    check: impl Fn(&str, &mut common::Case, &common::Defs, &Spellbook) -> Value,
+) {
     let defs = Default::default();
     let mut book = None;
     let mut counts = BTreeMap::new();
     for mut c in common::stream("analysis") {
         let kind = c.kind.clone();
-        let mut v = || c.value(&defs);
         if kind == "book" {
-            let records = v();
+            let records = c.value(&defs);
             assert!(records.items().len() > 3);
             assert!(book
                 .replace(spells_by_index_map(records.items().iter().cloned()))
@@ -62,59 +79,17 @@ fn differential() {
             c.done();
             continue;
         }
+        assert!(
+            KINDS.contains(&kind.as_str()),
+            "unexpected case family {kind}"
+        );
+        if !families.contains(&kind.as_str()) {
+            continue;
+        }
         let book = book
             .as_ref()
             .expect("stock and explicit probe spellbook before analysis cases");
-        let got = match kind.as_str() {
-            "body_level" => Num(a::GATE_BODY_LEVEL),
-            "boss_defaults" => a::boss_target(&v()).unwrap_or_else(|e| c.fail(&e)),
-            "refusal" => {
-                let opts = v();
-                let msg = a::boss_target(&opts).expect_err("bossTarget must refuse invalid body");
-                if msg.contains("cannot be set beside it") {
-                    Str(msg)
-                } else {
-                    Null
-                }
-            }
-            "ref" | "boss" | "gate" | "relay" => {
-                let (level, opts, ch, mut extra, actual_target, overlays) =
-                    (v(), v(), v(), v(), v(), v());
-                let target = match kind.as_str() {
-                    "ref" => a::reference_foe(&level, &opts),
-                    "boss" => a::boss_target(&opts).unwrap_or_else(|e| c.fail(&e)),
-                    "gate" => a::gate_target(&level, &opts),
-                    _ => opts,
-                };
-                let actual_target = if matches!(actual_target, Null) {
-                    let mut t = target.clone();
-                    for (k, v) in overlays.entries() {
-                        t.set(k, v.clone());
-                    }
-                    t
-                } else {
-                    actual_target
-                };
-                extra.set("target", actual_target);
-                Arr(vec![target, a::analyze(&ch, &extra, book).to_value()])
-            }
-            "ranks" => {
-                let (ch, scenario, opts, edit) = (v(), v(), v(), v());
-                let base = a::analyze(&ch, &scenario, book);
-                Arr(vec![
-                    a::marginals(&ch, &base, &scenario, book),
-                    a::rank_affixes(&ch, &base, &scenario, book),
-                    a::rank_weapons(&ch, &scenario, &opts, book),
-                    a::current_weapon_row(&ch, &scenario, book),
-                    a::analyze_with(&ch, &scenario, &edit, book).to_value(),
-                ])
-            }
-            "probe" => {
-                let (ch, args) = (v(), v());
-                a::analyze(&ch, &args, book).to_value()
-            }
-            _ => c.fail("unexpected case family"),
-        };
+        let got = check(&kind, &mut c, &defs, book);
         c.expect("=>");
         let expected_text = c.word();
         let got_text = write(&got);
@@ -129,22 +104,102 @@ fn differential() {
         *counts.entry(kind).or_insert(0) += 1;
     }
     assert!(book.is_some());
-    for (family, floor) in [
-        ("ref", 2000),
-        ("boss", 2000),
-        ("gate", 2000),
-        ("relay", 2000),
-        ("ranks", 28),
-        ("probe", 200),
-        ("refusal", 4),
-        ("body_level", 1),
-        ("boss_defaults", 4),
-    ] {
+    for (family, floor) in floors {
         assert!(
-            counts.get(family).copied().unwrap_or(0) >= floor,
+            counts.get(*family).copied().unwrap_or(0) >= *floor,
             "missing vectors: {family}"
         );
     }
+}
+
+#[test]
+fn targets() {
+    replay(
+        &["ref", "boss", "gate", "relay"],
+        &[
+            ("ref", 2000),
+            ("boss", 2000),
+            ("gate", 2000),
+            ("relay", 2000),
+        ],
+        |kind, c, defs, book| {
+            let mut v = || c.value(defs);
+            let (level, opts, ch, mut extra, actual_target, overlays) =
+                (v(), v(), v(), v(), v(), v());
+            let target = match kind {
+                "ref" => a::reference_foe(&level, &opts),
+                "boss" => a::boss_target(&opts).unwrap_or_else(|e| c.fail(&e)),
+                "gate" => a::gate_target(&level, &opts),
+                _ => opts,
+            };
+            let actual_target = if matches!(actual_target, Null) {
+                let mut t = target.clone();
+                for (k, v) in overlays.entries() {
+                    t.set(k, v.clone());
+                }
+                t
+            } else {
+                actual_target
+            };
+            extra.set("target", actual_target);
+            Arr(vec![target, a::analyze(&ch, &extra, book).to_value()])
+        },
+    );
+}
+
+#[test]
+fn bosses_and_refusals() {
+    replay(
+        &["body_level", "boss_defaults", "refusal"],
+        &[("refusal", 4), ("body_level", 1), ("boss_defaults", 4)],
+        |kind, c, defs, _| {
+            let mut v = || c.value(defs);
+            match kind {
+                "body_level" => Num(a::GATE_BODY_LEVEL),
+                "boss_defaults" => a::boss_target(&v()).unwrap_or_else(|e| c.fail(&e)),
+                "refusal" => {
+                    let opts = v();
+                    let msg =
+                        a::boss_target(&opts).expect_err("bossTarget must refuse invalid body");
+                    if msg.contains("cannot be set beside it") {
+                        Str(msg)
+                    } else {
+                        Null
+                    }
+                }
+                other => panic!("unexpected case family {other}"),
+            }
+        },
+    );
+}
+
+#[test]
+fn ranks_and_probes() {
+    replay(
+        &["ranks", "probe"],
+        &[("ranks", 28), ("probe", 200)],
+        |kind, c, defs, book| {
+            let mut v = || c.value(defs);
+            match kind {
+                "ranks" => {
+                    let (ch, scenario, opts, edit) = (v(), v(), v(), v());
+                    let base = a::analyze(&ch, &scenario, book);
+                    Arr(vec![
+                        a::marginals(&ch, &base, &scenario, book),
+                        a::rank_affixes(&ch, &base, &scenario, book),
+                        a::rank_weapons(&ch, &scenario, &opts, book),
+                        a::current_weapon_row(&ch, &scenario, book),
+                        a::analyze_with(&ch, &scenario, &edit, book).to_value(),
+                    ])
+                }
+                "probe" => {
+                    let (ch, args) = (v(), v());
+                    a::analyze(&ch, &args, book).to_value()
+                }
+                other => panic!("unexpected case family {other}"),
+            }
+        },
+    );
 }
 
 #[test]
