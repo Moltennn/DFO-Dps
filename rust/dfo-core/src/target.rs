@@ -309,6 +309,8 @@ pub fn live_stat(live: &Live, name: Stat) -> f64 {
         match a {
             Effect::StatMods { stat_mods, .. } => m += stat_mods[i],
             Effect::RacialOverride { stat_mods, .. } => {
+                // mutation: equivalent - `>= 0.0` adds the same branch's value for the only input the two tests disagree
+                // on: an exact 0, which adding to `m` leaves unchanged (save.js:175 `if (v > 0) mod += v`).
                 if stat_mods[i] > 0.0 {
                     m += stat_mods[i];
                 }
@@ -354,6 +356,8 @@ pub fn enemy_type_group(target: Option<&Target>) -> f64 {
     if target.is_some_and(|t| t.is_player) {
         return ENEMY_GROUPS.humanoid;
     }
+    // mutation: equivalent - the `-2` mutant also misses `ENEMY_GROUP_BY_CAREER` (its keys start at 0), so
+    // `enemy_entity_group` answers `ENEMY_GROUPS.none` for either default.
     enemy_entity_group(target.and_then(|t| t.career_index).unwrap_or(-1.0))
 }
 
@@ -389,6 +393,8 @@ pub fn enemy_type_bonus_range(attacker: Option<&Attacker>, target: Option<&Targe
     };
     let willpower = match attacker {
         Some(a) => live_stat(&a.live, Stat::Willpower),
+        // mutation: equivalent - the JS `attacker ?? { stats: { willpower: 50 } }` defaults a missing attacker to 50,
+        // and 51 changes only `will = trunc((willpower - 50) / 5)`, from 0 to 0 (trunc(1/5) is 0).
         None => 50.0,
     };
     let will = trunc((willpower - 50.0) / 5.0);
@@ -435,6 +441,8 @@ pub fn enemy_type_bonus_value(
 pub fn enemy_type_bonus_values(attacker: Option<&Attacker>, target: Option<&Target>) -> Vec<f64> {
     let r = enemy_type_bonus_range(attacker, target);
     if r.decoded == 1.0 {
+        // mutation: equivalent - `enemy_type_bonus_range`'s bonus is the integer `10 + will - half`, so `bonus > 1` and
+        // `bonus > 0` differ only at exactly 1; there `(0..1)` collects `[0]`, the same one-element list as the fallback.
         if r.bonus > 0.0 {
             (0..r.bonus as i64).map(|i| i as f64).collect()
         } else {
@@ -485,6 +493,8 @@ pub fn skeletal_silver_damage(
         return damage;
     }
     if is_skeletal_target(Some(t)) {
+        // mutation: equivalent - only bit 0x10 of the flags is read, and both the 0 default and its 1 mutant have that
+        // bit clear, so `to_int32(flags) & 0x10 == 0` takes the halving arm for either.
         let flags = w.flags.or(w.item_flags).unwrap_or(0.0);
         let mut d = if (to_int32(flags) & 0x10) == 0 {
             trunc(damage / 2.0)
@@ -581,6 +591,9 @@ pub fn monster_hide_damage(
             1.0
         }
     } else {
+        // mutation: equivalent - the five arms above name every field of `ENEMY_GROUPS` (generated/enemy_groups.rs:
+        // none, undead, daedra, humanoid, animals), and `enemy_entity_group` answers one of those five, so this last
+        // arm is unreachable and its 1 -> 2 changes nothing.
         1.0
     };
     r(mult)
@@ -623,7 +636,11 @@ pub fn armour_material_id(item: Option<&Item>) -> f64 {
     if !is_shield_template(it.template_index) {
         return trunc(item_armor_value(Some(it)) / 2.0);
     }
+    // mutation: equivalent - `m` is read only by the equality ladder below, whose every arm (0, 256, 259, 512..=521)
+    // compares unequal to both 0 and 1, so both defaults take the `default` arm and return 1.0.
     let m = it.material.unwrap_or(0.0);
+    // mutation: equivalent - the 1 default falls through the whole equality ladder just as 0 does (no arm tests 1), so
+    // the `m == 0.0` mutation only chooses a differently-spelled `else` that also returns 1.0.
     if m == 0.0 {
         1.0
     } else if m == 256.0 || m == 259.0 {
@@ -671,6 +688,9 @@ pub fn armour_condition_multiplier(item: Option<&Item>, sharp_edge: bool) -> f64
         fround(1.2)
     } else if pct >= 6.0 {
         fround(1.35)
+    // mutation: equivalent - `condition_percentage` (itemTemplates.js:277-278) truncates to an integer, so after the
+    // `>= 6.0` arm above the only values left are 0..=5; `<= 6.0` selects that same arm, since a pct of 6 was already
+    // taken.
     } else if pct <= 5.0 {
         fround(1.5)
     } else {
@@ -839,6 +859,10 @@ pub fn shield_beats_under_armour(
             armour_condition_multiplier(Some(under), sharp_edge),
             nat,
         ),
+        // mutation: equivalent - in this bare-skin arm `shield_left` is `100 * (min(base*cond, cap) - nat)` with the
+        // cap at most 0.81 (generated/pcaao.rs AVERAGE_SHIELD_ROWS: every cap is 0.35..=0.81 <= 1), so its argument
+        // never exceeds the `100 * (1 - nat)` here. The mutant computes the same expression at `2 - nat`, whose float32
+        // value is >= the `1 - nat` one (`fround` is monotone; past 2^24 the two coincide), so a true `<=` stays true.
         None => unity_round(fround(100.0 * fround(1.0 - nat))),
     };
     shield_left <= under_left
@@ -892,6 +916,9 @@ pub fn target_part_outcomes(
     };
     let strong = shield_parts_of(shield.template_index).contains(&part);
     let chance = shield_block_chance(t, strong, Some(shield));
+    // mutation: equivalent - `js_clamp` folds a chance above 100 to p == 1 and the `101` mutant leaves p in (1, 1.01];
+    // the `p >= 1.0` arm below returns the shield's row for both, and p is read again only in the two-outcome arm, which
+    // needs p < 1. So the only difference is p itself, and that arm is never reached.
     let p = js_clamp(chance, 0.0, 100.0) / 100.0;
     if p <= 0.0 || !shield_beats_under_armour(Some(t), part, Some(natural), sharp_edge) {
         return whole(under);
@@ -1023,6 +1050,9 @@ pub fn body_part_weights(core: Core) -> Vec<f64> {
 fn part_weights(parts: &[f64]) -> Vec<f64> {
     let mut counts = [0.0; 7];
     for part in parts {
+        // mutation: equivalent - the generated tables PCAAO_BODY_PARTS and STRUCK_BODY_PARTS (generated/data.rs)
+        // contain only 0.0..=6.0, so `is_integer && in 0..7` is true for every element and the `||` mutant never fires.
+        // The assert is debug-only and the indexing below is what the tables guarantee.
         debug_assert!(is_integer(*part) && (0.0..7.0).contains(part));
         counts[*part as usize] += 1.0;
     }

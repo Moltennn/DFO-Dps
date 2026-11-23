@@ -1039,6 +1039,84 @@ function genTarget() {
     if (R.chance(0.45)) equipArmour(t, randPieces(), { armorValues: R.chance(0.5) });
     addT(t);
   }
+  // Crafted boundaries the random sweep reaches only by luck. Every target is built by makeTarget/equipArmour and every
+  // case goes through the real function, so the expected tokens are the JS's own. They are added after the random
+  // targets, so every id and draw above stays put.
+  // A shield whose nominal-100 average reduction exactly ties the piece under it: `shieldBeatsUnderArmour` uses `<=`.
+  // The shield (pct 34) and under (pct 0, Daedric) give 81/81, and at a natural resistance of 1.5 they give -69/-69,
+  // where the under piece's nominal 101 row is -70: that keeps the 838 (under `100` -> 101) mutant visible.
+  const tieTarget = makeTarget({ careerIndex: 15, level: 1 });
+  equipArmour(tieTarget, [
+    armourPiece(109, { material: 0, condition: 0.35 }),
+    armourPiece(102, { material: 517, condition: 0 }),
+  ], { armorValues: false });
+  addT(tieTarget);
+  // A shield at the worn edge: its average row's cap (0.81) is the reduction at a natural resistance above 1, where
+  // the bare-skin branch's nominal 100 and 101 differ (the `100.0` in shieldBeatsUnderArmour).
+  const wornShield = makeTarget({ careerIndex: 15, level: 1 });
+  equipArmour(wornShield, [armourPiece(109, { material: 0, condition: 0.05 })], { armorValues: false });
+  addT(wornShield);
+  // The `830` edge: the shield's nominal 100 is one under its 101 while the under piece's nominal 100 is one over, so
+  // the `<=` holds at 100 and fails at 101 (the shield at pct 69 is multiplier 1, the under at 10% is 1.35).
+  const shieldEdge = makeTarget({ careerIndex: 15, level: 1 });
+  equipArmour(shieldEdge, [
+    armourPiece(109, { material: 0, condition: 0.7 }),
+    armourPiece(102, { material: 519, condition: 0.1 }),
+  ], { armorValues: false });
+  addT(shieldEdge);
+  // A target whose block chance rounds to exactly 100, so the block outcome's p is exactly 1 (one outcome, `p >= 1`).
+  const fullBlock = makeTarget({
+    careerIndex: 15, level: 1,
+    stats: { strength: 85, intelligence: 50, willpower: 85, agility: 85, endurance: 85, personality: 50, speed: 85, luck: 85 },
+  });
+  equipArmour(fullBlock, [armourPiece(112, { material: 521, condition: 1 })], { armorValues: false });
+  addT(fullBlock);
+  // A target just under that edge: the block chance is 99, so `p >= 1.0` and a `>= 1.0 -> > 1.0` or `1.0 -> 2`
+  // mutant all fall to the two-outcome arm.
+  const edgeBlock = makeTarget({
+    careerIndex: 15, level: 1,
+    stats: { strength: 84, intelligence: 50, willpower: 84, agility: 84, endurance: 84, personality: 50, speed: 84, luck: 84 },
+  });
+  equipArmour(edgeBlock, [armourPiece(112, { material: 521, condition: 1 })], { armorValues: false });
+  addT(edgeBlock);
+  // A racialOverride mod below 1: it is added only while strictly above 0.
+  const halfRacial = makeTarget({
+    careerIndex: 15, level: 1,
+    activeEffects: [{ kind: 'racialOverride', ended: false, statMods: { agility: 0.5 } }],
+  });
+  addT(halfRacial);
+  // A racialOverride mod of exactly 0: the strict `> 0` and an `>= 0` arm are the same because adding 0 is no change.
+  const zeroRacial = makeTarget({
+    careerIndex: 15, level: 1,
+    activeEffects: [{ kind: 'racialOverride', ended: false, statMods: { agility: 0 } }],
+  });
+  addT(zeroRacial);
+  // A NEGATIVE racialOverride mod: the JS adds it only while strictly above 0, so a `>` and a `>=` test differ.
+  const negativeRacial = makeTarget({
+    careerIndex: 15, level: 1,
+    activeEffects: [{ kind: 'racialOverride', ended: false, statMods: { agility: -3 } }],
+  });
+  addT(negativeRacial);
+  // The left hand wearing an Armor-group piece that is not a shield: it never blocks (`&&`, not `||`).
+  const armouredLeft = makeTarget({
+    careerIndex: 15, level: 1,
+    equip: { slots: { 21: { group: 'Armor', templateIndex: 102, material: 0, maxCondition: 100, currentCondition: 100 } } },
+  });
+  addT(armouredLeft);
+  // The left hand wearing a Weapon-group shield template: it never blocks either.
+  const weaponLeft = makeTarget({
+    careerIndex: 15, level: 1,
+    equip: { slots: { 21: { group: 'Weapons', templateIndex: 109, material: 0, maxCondition: 100, currentCondition: 100 } } },
+  });
+  addT(weaponLeft);
+  // `enemyTypeBonusRange` with no attacker is Willpower 50. With the crafted attacker at Willpower 55 (will 1) a
+  // target at level 20 makes the range exactly 1 (`10 + 1 - 10`), where `bonus > 0` and `bonus > 1` differ at roll 1;
+  // the Willpower-0 attacker (will -10) at level 20 makes it exactly 0, where the `>=` arm of `bonus > 0` would
+  // evaluate `floor(roll * 0)` and a NaN roll would leak out instead of the 0 the guard returns.
+  const oneBonus = makeTarget({ careerIndex: 15, level: 20 });
+  addT(oneBonus);
+  const zeroBonus = makeTarget({ careerIndex: 15, level: 20 });
+  addT(zeroBonus);
   const attackers = [];
   const aids = new Map();
   for (let i = 0; i < 60; i++) {
@@ -1051,6 +1129,16 @@ function genTarget() {
     };
     aids.set(a, attackers.length);
     attackers.push(a);
+  }
+  // Crafted attackers: an undead (group 0) BONUS bit (0x01) with Willpower 55 makes `enemyTypeBonusRange`'s bonus
+  // exactly 1 at target level 20 (`10 + trunc((55 - 50) / 5) - 10`), so `bonus > 0` and its `>=` mutant differ only at
+  // a roll of 1, and a Willpower of 0 makes the range exactly 0, where `>=` would evaluate `floor(roll * 0)`.
+  const craftedAttackers = [];
+  for (const [will, tgt] of [[55, oneBonus], [0, zeroBonus]]) {
+    const a = { stats: { willpower: will, strength: 50, intelligence: 50, agility: 50, endurance: 50, personality: 50, speed: 50, luck: 50 }, attackModifierFlags: 0x01 };
+    aids.set(a, attackers.length);
+    attackers.push(a);
+    craftedAttackers.push([a, tgt]);
   }
 
   const TREF = (t) => (t === null || t === undefined ? '-' : String(ids.get(t)));
@@ -1319,6 +1407,99 @@ function genTarget() {
     const cond = R.pick([NaN, -1, 0, 0.3, 0.5, 0.999, 1, 2, Infinity, -Infinity, 1e-9, 0.7]);
     const it = armourPiece(tmpl, { material: mat, condition: cond });
     out.add('armour_piece', O(it.maxCondition), F(cond), '=>', F(it.currentCondition));
+  }
+  // armourPiece's condition branch is `pct <= 5` on the *truncated* percentage: a piece minted at 6% is the first that
+  // takes the 1.35 arm and 5% the 1.5 arm, both exact integer percentages.
+  for (const [tmpl, mat, cond] of [[102, 0, 0.05], [102, 0, 0.06], [109, 0, 0.05], [109, 256, 0.06]]) {
+    const it = armourPiece(tmpl, { material: mat, condition: cond });
+    out.add('armour_condition', ...ITEMOPT(it), '0', '=>', F(armourConditionMultiplier(it, { sharpEdge: false })));
+  }
+  // `armourMaterialId`'s "nothing is 1" arm: a shield whose material is a non-ladder value, and a non-shield whose
+  // material value halves to 0 in `itemArmorValue`, both answer 1 as the `unwrap_or(0.0)` default does.
+  for (const [tmpl, mat] of [[109, 1], [109, undefined], [102, 1], [102, undefined]]) {
+    const it = { ...armourPiece(tmpl, { material: 0, condition: 1 }), material: mat };
+    out.add('armour_material_id', ...ITEMOPT(it), '=>', F(armourMaterialId(it)));
+  }
+  // `armour_piece_current` mirrors target.js:492 (`Math.max(0, Math.min(max, Math.round(max * clamp(condition, 0, 1))))`):
+  // no maximum (a null `maxCondition` is `?? 0`) or a non-positive one with a positive share stays 0, and a fractional
+  // maximum rounds the share before the clamp. The JS here is that cited line, since JS has no standalone helper.
+  const jsCurrent = (max, cond) => Math.max(0, Math.min(max ?? 0, Math.round((max ?? 0) * Math.min(1, Math.max(0, cond)))));
+  for (const [max, cond] of [[null, 1], [0, 1], [-5, 1], [1.4, 1.1], [null, 0.5]]) {
+    out.add('armour_piece', O(max), F(cond), '=>', F(jsCurrent(max, cond)));
+  }
+  // `shieldBeatsUnderArmour`: the exact nominal-100 tie (the `<=` arm, which a `<` mutant breaks); a natural
+  // resistance of 1.5 makes the under piece's nominal 101 row one lower, and -1 makes the shield's 101 row one higher
+  // than the under piece's 100 row, so both `100.0` mutants and the `<=` mutant change an answer.
+  for (const [t, parts] of [[tieTarget, [3, 4, 0]], [wornShield, [0, 3]], [shieldEdge, [3, 4]]]) {
+    for (const part of parts) for (const nat of [0, 0.5, 1.5, -1]) {
+      out.add('shield_beats', TREF(t), F(part), F(nat), '0', '=>', B(shieldBeatsUnderArmour(t, part, nat, { sharpEdge: false })));
+    }
+  }
+  // The bare-skin branch at a natural resistance large enough that 101 x (1 - nat) and 100 x (1 - nat) no longer
+  // round together: the shield's own nominal 100 equals the 100 arm and is above the 101 arm (kills its `100 -> 101`).
+  for (const nat of [1e20, -1e20]) {
+    out.add('shield_beats', TREF(wornShield), F(0), F(nat), '0', '=>', B(shieldBeatsUnderArmour(wornShield, 0, nat, { sharpEdge: false })));
+  }
+  // The nominal-100 average reductions themselves, so both sides of the tie are pinned.
+  for (const [tmpl, mat, cond] of [[109, 0, 0.35], [102, 517, 0], [109, 0, 0.7], [102, 519, 0.1]]) {
+    const it = armourPiece(tmpl, { material: mat, condition: cond });
+    for (const d of [100, 101]) {
+      out.add('shield_reduction', ...ITEMOPT(it), F(d), F(0), '0', '0', '0', '=>', F(shieldReduction(it, d, { natural: 0, sharpEdge: false })));
+      out.add('armour_reduction', ...ITEMOPT(it), F(d), F(0), '0', '0', '0', '=>', F(armourReduction(it, d, { natural: 0, sharpEdge: false })));
+    }
+  }
+  // The full block: p is exactly 1, so `p >= 1.0` returns one outcome whose damage is the shield's row (a `>` mutant
+  // returns two outcomes and a `2` mutant never matches).
+  const blockShield = armourPiece(112, { material: 521, condition: 1 });
+  for (const part of [0, 2, 4]) {
+    out.add('shield_block', TREF(fullBlock), B(true), ...ITEMOPT(blockShield), '=>', F(shieldBlockChance(fullBlock, true, blockShield)));
+    out.add('part_outcomes', TREF(fullBlock), F(100), F(part), ...WOPT(null), '0', '=>', ...(() => {
+      const o = targetPartOutcomes(fullBlock, 100, part, { weapon: null, sharpEdge: false });
+      return [I(o.length), ...o.flatMap((x) => [F(x.p), F(x.damage)])];
+    })());
+    out.add('part_damage', TREF(fullBlock), F(100), F(part), ...WOPT(null), '0', '=>', F(targetPartDamage(fullBlock, 100, part, { weapon: null, sharpEdge: false })));
+  }
+  // The left-hand guard: an Armor-group non-shield and a Weapon-group shield both answer null.
+  for (const sh of [armouredLeft, weaponLeft]) {
+    out.add('left_hand', TREF(sh), '=>', ...ITEMOPT(leftHandShield(sh)));
+  }
+  // `liveStat`'s racialOverride arm adds a mod only while strictly above 0: the 0.5 is added, the 0 and -3 are not
+  // (a `> 0.0` relaxed to `> 1.0` drops the 0.5).
+  for (const t of [halfRacial, zeroRacial, negativeRacial]) {
+    for (const stat of ['agility', 'strength']) {
+      out.add('live_stat', 't', String(ids.get(t)), stat, '=>', F(liveStat(t, stat)));
+    }
+  }
+  // `enemyTypeBonusRange` with no attacker is Willpower 50. A target at level 18 makes the range exactly 1 (`10 - 9`),
+  // where `bonus > 0` and `bonus > 1` differ at roll 1; a target at level 30 makes it exactly 0 with a non-zero roll,
+  // where the `>=` arm of `bonus > 0` would evaluate `floor(roll * 0)` and a NaN roll would leak out instead of the 0.
+  for (const [roll, t] of [[0, oneBonus], [0.5, oneBonus], [0.9999999999999999, oneBonus], [1, oneBonus], [NaN, zeroBonus], [1, zeroBonus], [0.5, zeroBonus]]) {
+    out.add('bonus_value', AREF(null), TREF(t), F(roll), '=>', F(enemyTypeBonusValue(null, t, roll)));
+  }
+  // The crafted attacker's own arm: the undead bonus bit decodes 1, so the same rolls take the bonus path.
+  for (const [a, t] of craftedAttackers) {
+    const r = enemyTypeBonusRange(a, t);
+    out.add('bonus_range', AREF(a), TREF(t), '=>', F(r.group), F(r.decoded), F(r.bonus), F(r.penalty), F(r.will), F(r.targetLevel));
+    for (const roll of [0, 0.5, 0.9999999999999999, 1, NaN]) {
+      out.add('bonus_value', AREF(a), TREF(t), F(roll), '=>', F(enemyTypeBonusValue(a, t, roll)));
+    }
+    const vals = enemyTypeBonusValues(a, t);
+    out.add('bonus_values', AREF(a), TREF(t), '=>', I(vals.length), ...vals.map((x) => F(x)));
+  }
+  for (const t of [oneBonus, zeroBonus, tieTarget, null]) {
+    out.add('bonus_range', '-', TREF(t), '=>', ...(() => {
+      const r = enemyTypeBonusRange(null, t);
+      return [F(r.group), F(r.decoded), F(r.bonus), F(r.penalty), F(r.will), F(r.targetLevel)];
+    })());
+  }
+  // A non-player target with no careerIndex reaches `enemy_entity_group(-1)` (`unwrap_or(-1.0)`).
+  for (const t of [null, ...zoo.filter((x) => x.careerIndex === undefined).slice(0, 1)]) {
+    out.add('enemy_type_group', TREF(t), '=>', F(enemyTypeGroup(t)));
+  }
+  // `skeletalSilverDamage`'s missing-flags default: a Skeletal Warrior whose weapon has neither `flags` nor
+  // `item.flags` reads 0, whose 0x10 bit is clear (`unwrap_or(0.0)`).
+  for (const w of [{ skillId: 1, material: 2 }, { skillId: 1, material: 2, item: {} }]) {
+    out.add('skeletal_damage', F(11), TREF(tieTarget), ...WOPT(w), '=>', F(skeletalSilverDamage(11, tieTarget, w)));
   }
   for (const core of ['overhaul', 'struck', 'undef']) {
     const w = core === 'undef' ? bodyPartWeights() : bodyPartWeights(core);
