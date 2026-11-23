@@ -32,14 +32,14 @@ import { chartTotals, probeConstants, summarizeProbe } from './probe.js';
 import { ENCHANTMENT_TYPES, billCapacityNote, enchantDps, procsBeforeBreak, strikeEnchantments } from './enchants.js';
 import { perfectSockets } from './sockets.js';
 import {
-  DEFAULT_BLADE, GEAR_MASTERY_POINTS, LONG_BLADES,
-  THEORY_CAPS, THEORY_LEVEL, THEORY_RACES, theoryBlade, theoryCharacter, theoryFists,
+  DEFAULT_BLADE, GEAR_MASTERY_POINTS, gearMasteryPoints, LONG_BLADES,
+  THEORY_LEVEL, THEORY_RACES, theoryBlade, theoryCaps, theoryCharacter, theoryFists,
 } from './theory.js';
 import { LEVEL_CAP } from '../vendor/upstream/a3eb1605/src/systems/levelCap.js';
 import { legalFrontier, legalGear } from './maxprofile.js';
 import { AFFIX_DAMAGE_TOP, maxPointTotal, maxSingleSkill } from './gearProfile.js';
 import {
-  analyze, bossTarget, currentWeaponRow, gateTarget, marginals, rankAffixes, rankWeapons, referenceFoe,
+  analyze, bossTarget, currentWeaponRow, gateTarget, GAME_BUILDS, marginals, rankAffixes, rankWeapons, referenceFoe,
   syntheticWeapon, weaponOf,
 } from './model.js';
 import {
@@ -98,6 +98,7 @@ Common options:
   --blow-x <n>                        gate relayBlowX (Elite/Vestiges cap multiplier; default 1)
   --categories                        condense the weapons page to the best of each type, sorted by DPS
   --build <id,...>                    firmament build(s): longblade, shortblade, axe, blunt, bow, fists, destruction, tank
+  --game-build <14512|14631>          shipped build a card is priced under (default: 14512)
   --stars <n>                         firmament stars to spend (default 98)
   --refresh                           recompute firmament plans instead of using the cache
   --all                               enchant-plan: both matrices (--uncapped or --cap-aware picks one instead)
@@ -200,6 +201,7 @@ const optsSpec = {
   'blow-x': { type: 'string', default: '1' },
   categories: { type: 'boolean', default: false },
   build: { type: 'string' },
+  'game-build': { type: 'string' },
   stars: { type: 'string' },
   refresh: { type: 'boolean', default: false },
   family: { type: 'string' },
@@ -378,6 +380,9 @@ function validateFlags(values) {
       throw new UsageError(`--shield must be a template number, none or auto, got "${values.shield}"`);
     }
   }
+  if (values['game-build'] != null && !GAME_BUILDS.includes(String(values['game-build']))) {
+    throw new UsageError(`--game-build must be one of ${GAME_BUILDS.join(', ')}, got "${values['game-build']}"`);
+  }
   if (values.weapon != null) weaponFlag(values.weapon);
   if (values.encounter != null && !ENCOUNTER_IDS.includes(String(values.encounter).toLowerCase())) {
     throw new UsageError(`--encounter must be one of ${ENCOUNTER_IDS.join(', ')}, got "${values.encounter}"`);
@@ -536,6 +541,9 @@ function scenarioOf(ch, values, traits, target) {
   return {
     target,
     core,
+    // The shipped build a card is priced under (CHANGELOG-MECHANICS.md GEAR-14631 / BRAND-14631). '14512' is the
+    // vendored cut and the default; '14631' opts into the drift finding and changes no default output.
+    gameBuild: String(values['game-build'] ?? '14512'),
     rri: !values['no-rri'],
     // `--traits` overrides; with none the target's own traits (a relay boss's) apply.
     traits: traits.length ? traits : null,
@@ -783,6 +791,7 @@ function printBuild(ch, r, targetPreset, values) {
     ['proficiency', `${p.prof >= 0 ? '+' : ''}${p.prof}`],
     ['race', `${p.racial >= 0 ? '+' : ''}${p.racial}`],
     ['mastery / gear', `${fmt(p.mastery)}%`],
+    ...(p.gearAdd ? [['gear add (flat)', `${fmt(p.gearAdd.mean)}`, `integer uniform ${p.gearAdd.lo}..${p.gearAdd.hi} on the roll, enumerated per blow; the mean is the reported figure (0.1.14631 only)`]] : []),
     ['martial', `${fmt(p.martial)}%`],
     ['slayer', `${fmt(p.slayer)}%`],
     ['hit terms', `base ${r.hit.terms.base}, armor ${r.hit.terms.armour}, other ${r.hit.terms.other}`],
@@ -881,12 +890,17 @@ const COMMANDS = [
 // Which commands read --out and --json, from each branch below.
 const FILE_COMMANDS = ['report', 'spells', 'weapons', 'skills', 'firmament', 'imprints', 'probe', 'enchant-plan', 'gear-plan', 'loadout', 'real-dps', 'graph'];
 const JSON_COMMANDS = ['build', 'objective', 'rank', 'scale', 'tradeoff', 'theory', 'spell', 'spells', 'enchant', 'weapons', 'skills', 'firmament', 'imprints', 'probe', 'enchant-plan', 'gear-plan', 'loadout', 'real-dps', 'graph'];
+/** The commands whose card goes through `scenarioOf` (the one place `--game-build` enters a formula). */
+const GAME_BUILD_COMMANDS = ['build', 'objective', 'rank', 'report', 'compare', 'scale', 'tradeoff', 'theory', 'graph', 'enchant'];
 
 /** Reject flags the command would ignore instead of accepting them silently. */
 function checkOutputFlags(cmd, argv, values) {
   const given = (name) => argv.includes(`--${name}`) || argv.some((a) => a.startsWith(`--${name}=`));
   if (given('out') && !FILE_COMMANDS.includes(cmd)) {
     throw new UsageError(`--out is only for commands that write a file (${FILE_COMMANDS.join(', ')}), not "${cmd}"`);
+  }
+  if (given('game-build') && !GAME_BUILD_COMMANDS.includes(cmd)) {
+    throw new UsageError(`--game-build is not read by ${cmd} (it prices a weapon card: ${GAME_BUILD_COMMANDS.join(', ')})`);
   }
   if (!values.json) return;
   const unsupported = cmd === 'spell' && values.list ? 'spell --list'
@@ -1900,7 +1914,9 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     addSkill('Raw Critical Strike', 'raw', 34, [100, 125, 150, 175, 200]);
     addSkill('Raw Backstabbing (behind)', 'raw', 19, [100, 125, 150, 175, 200], { backstabUptime: 1 });
     addSkill('Gear Long Blade (legal to 535)', 'gear', 29, [0, 200, 400, 535]);
-    addSkill('Gear Long Blade (formula cap, hypothetical)', 'gear', 29, [GEAR_MASTERY_POINTS]);
+    // `14512`'s formula cap is the 320% row's hypothetical; `14631` has no such cap, so the row is skipped.
+    const formulaCap = gearMasteryPoints(values['game-build']);
+    if (formulaCap != null) addSkill('Gear Long Blade (formula cap, hypothetical)', 'gear', 29, [formulaCap]);
     addSkill('Gear Critical Strike (legal to 535)', 'gear', 34, [0, 200, 400, 535]);
 
     const bladeRows = LONG_BLADES.map((idx) => {
@@ -1944,7 +1960,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     console.log('\nPush stages');
     console.log(table(stages.map((s) => [s.label, s.raw, `${s.gearLB}+${s.gearCS}`, `${s.damage}%`, fmt(s.dps), fmt(s.cappedDps), fmt(s.behind), fmt(s.perSwing), fmt2(s.aps), s.ttk ? `${fmt(s.ttk)} s` : '-']), ['Stage', 'Raw skill', 'Gear', 'Damage', 'DPS', 'Capped', 'Behind', 'Per swing', 'APS', 'TTK'], ['left', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right']));
     console.log('\nCaps (push in this order)');
-    console.log(table(THEORY_CAPS.map((c) => [c.channel, c.cap, c.formula, c.note]), ['Channel', 'Cap', 'Formula', 'What it means']));
+    console.log(table(theoryCaps(values['game-build']).map((c) => [c.channel, c.cap, c.formula, c.note]), ['Channel', 'Cap', 'Formula', 'What it means']));
 
     console.log('\nAttribute scaling (everything else at the ceiling)');
     console.log(table(statScaled.map((x) => [x.stat, fmt(x.d50), fmt(x.d75), fmt(x.d100), fmt(x.capped100), `${x.delta >= 0 ? '+' : ''}${fmt(x.delta)}`, `${x.last10 >= 0 ? '+' : ''}${fmt(x.last10)}`]), ['Attribute', 'DPS 50', 'DPS 75', 'DPS 100', 'Capped 100', '50 -> 100', '90 -> 100'], ['left', 'right', 'right', 'right', 'right', 'right', 'right']));
@@ -1952,7 +1968,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
 
     console.log('\nSkill and gear scaling');
     console.log(table(skillRows.map((x) => [x.label, x.value, fmt(x.dps), fmt(x.cappedDps), fmt(x.behind), fmt(x.perSwing), x.ttk ? `${fmt(x.ttk)} s` : '-']), ['Channel', 'Value', 'DPS', 'Capped', 'Behind', 'Per swing', 'TTK'], ['left', 'right', 'right', 'right', 'right', 'right', 'right']));
-    console.log(`The "formula cap" row is hypothetical: the legal single-skill maximum is 535 points (the weapon record + 17 Exalted slots); the 320% mastery cap would need ${GEAR_MASTERY_POINTS} points.`);
+    console.log(`The "formula cap" row is hypothetical: the legal single-skill maximum is 535 points (the weapon record + 17 Exalted slots); ${values['game-build'] === '14631' ? '0.1.14631 drops the 320% cap (the gear is flat, no percent)' : `the 320% mastery cap would need ${GEAR_MASTERY_POINTS} points`}.`);
 
     // Firmament: the star tree's channels, 0..+15. The tree's stat gain also lifts the live
     // ceiling; its skill gain sits on top of effectiveSkill(raw).
@@ -1979,7 +1995,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     console.log('Speed is clamped to 98/100 by the swing law, so Speed past 100 does nothing for cadence. Luck\'s critical divisor steps at 125, so +15 Luck from 100 is dead for critical chance. Strength is the one that keeps paying: it adds damage and RRI swing speed.');
     console.log('\nFirmament skills (the +15 sits on top of effectiveSkill(raw); the sheet prints raw + mods)');
     console.log(table(skillFirmRows.map((x) => [x.name, ...x.cells.map((c) => fmt(c.r.dps)), ...x.cells.map((c) => fmt(c.r.cappedDps)), x.cells[x.cells.length - 1].sheet, x.cells[x.cells.length - 1].formula]), ['Skill', '+0 DPS', '+5 DPS', '+10 DPS', '+15 DPS', '+0 cap', '+5 cap', '+10 cap', '+15 cap', 'Sheet +15', 'Formula +15'], ['left', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right']));
-    console.log('The sheet showing 215 is raw 200 + 15; the formula reads 155 (effectiveSkill(200)=140 + 15). Gear skill adds on top of both, and for Long Blade it converts at 0.44% per point, capped at +320%.');
+    console.log(`The sheet showing 215 is raw 200 + 15; the formula reads 155 (effectiveSkill(200)=140 + 15). Gear skill adds on top of both, and for Long Blade it converts at 0.44% per point${values['game-build'] === '14631' ? ', and on 0.1.14631 that percent is gone: the gear is a flat add on the roll, no cap' : ', capped at +320%'}.`);
 
     const firmDmgValues = [0, 10, 20, 30];
     const firmDmgCells = firmDmgValues.map((v) => run(make({ ...firmBase, starDamage: v })));
@@ -2044,7 +2060,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
         },
         result: { dps: r.dps, dpsMin: r.dpsMin, dpsMax: r.dpsMax, cappedDps: r.cappedDps, cappedDpsMin: r.cappedDpsMin, cappedDpsMax: r.cappedDpsMax, perSwing: r.perSwing, aps: r.cadence.aps, ttk: r.ttk, cap: r.cap, capLoss: r.capLoss, hit: r.hit.hit, critChance: r.hit.crit.chance, critMult: r.hit.crit.damageMult, damage: { min: r.damage.min, max: r.damage.max, critMin: r.damage.critMin, critMax: r.damage.critMax }, terms: p },
         stages: stages.map(({ ch: _c, r: _r, ...rest }) => rest),
-        caps: THEORY_CAPS,
+        caps: theoryCaps(values['game-build']),
         stats: statScaled,
         skills: skillRows,
         splits: frontierRows.map(({ ch: _c, r: _r, ...rest }) => rest),
@@ -2267,6 +2283,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       unaware: scenario.unaware, firstBlow: scenario.firstBlow, healthShare: scenario.healthShare, attackerHealthShare: scenario.attackerHealthShare,
       backstabUptime: scenario.backstabUptime, players: n(values.players, 1), blowX: n(values['blow-x'], 1),
       rri: !values['no-rri'], pair: values.pair, bowSpam: values.spam, potencyPct: n(values.potency, 0), pierce: n(values.pierce, 0), weapon: scenario.weapon,
+      gameBuild: scenario.gameBuild,
     });
     const out = path.resolve(values.out);
     writePage(out, html);

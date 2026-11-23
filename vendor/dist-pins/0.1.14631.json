@@ -1,0 +1,146 @@
+{
+  "kind": "dist-chunk-pin",
+  "note": "A shipped build's dist/ chunks are minified to one line each, so a fact read there is cited `dist:<chunk>:<sha256-16>:<char-offset>@<version>`, never a line number (rule 1). A `dist:` citation is valid only where this file lists the chunk name, sha256 and version. Review by hand; no tooling check exists yet.",
+  "version": "0.1.14631",
+  "recordedAt": "2026-11-17T12:16:38.769Z",
+  "source": "store",
+  "recordedBy": "drift triage, 2026-11-22 (offline read; hashes verified byte for byte against history/v0.1.14631/index.json)",
+  "build": "0.1.14631",
+  "distRoot": "resources/app.asar -> dist/",
+  "pinnedChunks": [
+    {
+      "chunk": "weaponMastery-AR4ipaqT.js",
+      "path": "assets/weaponMastery-AR4ipaqT.js",
+      "sha256": "9f201d8ae37fa0b87cd006bc2f72be2ebb130f57a9341a3d0895405962b96890",
+      "bytes": 2020,
+      "lines": 1,
+      "pinnedFor": [
+        "the whole weapon-mastery law of 0.1.14631: gear roll g/seam b/blow x, climb _/v, pace S, registrations"
+      ]
+    },
+    {
+      "chunk": "powerBlows-BrqM6P9T.js",
+      "path": "assets/powerBlows-BrqM6P9T.js",
+      "sha256": "c3bcbe309ade967b8b8eecbd543f3fc7f0446acb1f6946484104e5fe0b0309b1",
+      "bytes": 860,
+      "lines": 1,
+      "pinnedFor": [
+        "the per-power tables, and the exported constant d (0.01) that d*100 turns into 1"
+      ]
+    },
+    {
+      "chunk": "flatAnimation-CntUIlFk.js",
+      "path": "assets/flatAnimation-CntUIlFk.js",
+      "sha256": "60d4458b7d4596854dd04349192424279940781a0bc67de8e04825bf8a9d22bf",
+      "bytes": 47614,
+      "lines": 1,
+      "pinnedFor": [
+        "the climb reader nn and the 0.01 constant (qe) powerBlows re-exports as t"
+      ]
+    },
+    {
+      "chunk": "lootPowers-Dm823tWJ.js",
+      "path": "assets/lootPowers-Dm823tWJ.js",
+      "sha256": "f7eb7a0c6af4da01d7ca2bb4e850d191f0b391a074e6d926b210df21fabbee27",
+      "bytes": 12633,
+      "lines": 1,
+      "pinnedFor": [
+        "the loot-power switch incl. the new case`brand`, and the elementShare helper E it multiplies"
+      ]
+    },
+    {
+      "chunk": "sigil-C5cIXO9T.js",
+      "path": "assets/sigil-C5cIXO9T.js",
+      "sha256": "39b18db5a9869c310a4cfe2d29794c1fad831b5a7b4b744d02925db6ea639e76",
+      "bytes": 4038,
+      "lines": 1,
+      "pinnedFor": [
+        "SIGIL_SET_IDS with the 15th id `defender`; the band/stage tables and the sigil damage hook"
+      ]
+    },
+    {
+      "chunk": "lootRarity-B3D_-YTh.js",
+      "path": "assets/lootRarity-B3D_-YTh.js",
+      "sha256": "153d9b8d3930c25d15f613d946c5434ffc8a932982109c844b861f88f0b49134",
+      "bytes": 90336,
+      "lines": 1,
+      "pinnedFor": [
+        "the defender set record (tiers, values, texts) that the set-power code reads"
+      ]
+    },
+    {
+      "chunk": "sigilSetPowers-CI5Iqvjk.js",
+      "path": "assets/sigilSetPowers-CI5Iqvjk.js",
+      "sha256": "282964303089c9c35fe661ca2f039c7da4356e78bf0eb029fc19034529e54e7d",
+      "bytes": 22992,
+      "lines": 1,
+      "pinnedFor": [
+        "how the defender tiers are applied (resist magic/fire/shock, healthPct, mana, heal)"
+      ]
+    },
+    {
+      "chunk": "gilded-Y3NI2aeu.js",
+      "path": "assets/gilded-Y3NI2aeu.js",
+      "sha256": "929d29ab11db75975a4e76c9cc4069b425caf1f99a5d2c76f2e4f5b392e144c9",
+      "bytes": 40636,
+      "lines": 1,
+      "pinnedFor": [
+        "the new Gilded record retributions-call and its brand power record"
+      ]
+    },
+    {
+      "chunk": "spellcast-EF3EGbYP.js",
+      "path": "assets/spellcast-EF3EGbYP.js",
+      "sha256": "03aaae5902c8daf43abc3f929ca16e36fd1a107b6c8b46ecda97b28e59652267",
+      "bytes": 252289,
+      "lines": 1,
+      "pinnedFor": [
+        "the blow formula Ob and the roll seam Sy that the gear value feeds (flat add, not a percent)"
+      ]
+    }
+  ],
+  "laws": [
+    {
+      "law": "weapon-mastery climb (per blow, MY blow at a foe)",
+      "chunk": "weaponMastery-AR4ipaqT.js",
+      "anchor": "function _(",
+      "offset": 1070
+    },
+    {
+      "law": "weapon-gear roll g() -> [floor(s/10), floor(s/5)]",
+      "chunk": "weaponMastery-AR4ipaqT.js",
+      "anchor": "function g(",
+      "offset": 835
+    },
+    {
+      "law": "weapon-gear seam b() and blow x()",
+      "chunk": "weaponMastery-AR4ipaqT.js",
+      "anchor": "function b(",
+      "offset": 1384
+    },
+    {
+      "law": "gear value applied to a blow as a FLAT add (Sy returns e+a, not a ratio)",
+      "chunk": "spellcast-EF3EGbYP.js",
+      "anchor": "function Sy(",
+      "offset": 229764
+    },
+    {
+      "law": "brand loot power",
+      "chunk": "lootPowers-Dm823tWJ.js",
+      "anchor": "case`brand`",
+      "offset": 3482
+    },
+    {
+      "law": "defender set record",
+      "chunk": "lootRarity-B3D_-YTh.js",
+      "anchor": "defender:Object.freeze",
+      "offset": 14456
+    },
+    {
+      "law": "defender set powers applied",
+      "chunk": "sigilSetPowers-CI5Iqvjk.js",
+      "anchor": "let S=t.get(`defender`)",
+      "offset": 7021
+    }
+  ]
+}

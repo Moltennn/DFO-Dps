@@ -27,6 +27,7 @@ function breakdown(r) {
     ['Proficiency', `${p.prof >= 0 ? '+' : ''}${p.prof}`, 'career Expertise'],
     ['Race', `${p.racial >= 0 ? '+' : ''}${p.racial}`, 'racial weapon bonus'],
     ['Mastery / gear', `${n1(p.mastery)}%`, 'online skill past 100 and gear skill'],
+    ...(p.gearAdd ? [['Gear add (flat)', `${n1(p.gearAdd.mean)}`, `integer uniform ${p.gearAdd.lo}..${p.gearAdd.hi} on the roll, enumerated per blow (0.1.14631 only)`]] : []),
     ['Martial passive', `${n1(p.martial)}%`, 'path passive'],
     ['Slayer affix', `${n1(p.slayer)}%`, ''],
     ['Critical Strike', `${pct(r.hit.crit.chance)} chance, x${n2(r.hit.crit.damageMult)}`, `${r.core === 'overhaul' ? 'damage multiplier' : 'hit chance only'}`],
@@ -142,12 +143,12 @@ function capTable(ch, scenario) {
 export function buildReport(ch, {
   target, core = 'overhaul', traits = [], health = 0, swing = 'StrikeLeft',
   passiveOn = true, stacks = 5, rhythm = false, unaware = false, firstBlow = false,
-  healthShare = 1, attackerHealthShare = 1, backstabUptime = 0, players = 1, blowX = 1, rri = true, pair = false, bowSpam = false, potencyPct = 0, pierce = 0, weapon = null,
+  healthShare = 1, attackerHealthShare = 1, backstabUptime = 0, players = 1, blowX = 1, rri = true, pair = false, bowSpam = false, potencyPct = 0, pierce = 0, weapon = null, gameBuild = '14512',
 } = {}) {
   const baseCh = weapon?.item ? { ...ch, weapon: weapon.item } : ch;
   // No override means the target's own traits (a relay boss's), the same rule analyze() uses.
   const traitList = traits ?? target?.bossTraits ?? [];
-  const scenario = { target, core, traits: traitList, health, swing, passiveOn, stacks, rhythm, unaware, firstBlow, healthShare, attackerHealthShare, backstabUptime, rri, pair, bowSpam, potencyPct, pierce };
+  const scenario = { target, core, traits: traitList, health, swing, passiveOn, stacks, rhythm, unaware, firstBlow, healthShare, attackerHealthShare, backstabUptime, rri, pair, bowSpam, potencyPct, pierce, gameBuild };
   const r = analyze(baseCh, scenario);
   const w = r.weapon;
   const rs = marginals(baseCh, r, scenario);

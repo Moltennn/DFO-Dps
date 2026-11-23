@@ -72,6 +72,16 @@ can still be pinned for an experiment. `--behind` is 100% back-facing uptime;
 share for Axe/Blunt mastery and venom/execute; `--self-health-share` is the
 wielder's share for Berserker/Orc Rage.
 
+`--game-build <14512|14631>` selects the shipped build a weapon card is priced
+under (default `14512`, the vendored cut). It is read by `build`, `objective`,
+`rank`, `report`, `compare`, `scale`, `tradeoff`, `theory`, `graph` and
+`enchant`; every other command rejects it rather than ignoring it. `14631` is
+the drift finding in CHANGELOG-MECHANICS.md: the weapon gear becomes a flat add
+on the roll instead of a mastery percent, Axe/Blunt lose their half-line branch,
+and the `brand` loot power adds flat elemental damage. `--build` is a different
+flag (the firmament build id); there is no output change without
+`--game-build 14631`.
+
 ## 3. Build, rank, report, compare
 
 ```bash
