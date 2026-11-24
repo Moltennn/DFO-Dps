@@ -1,28 +1,39 @@
-//! The JS side of the CLI differential tests, and the dry run of the JS-oracle cache.
+//! The JS side of the CLI differential tests, and the JS-oracle output cache (design: `oracle-cache/DESIGN.md`).
 //!
 //! Every CLI test spawns `node bin/dfo-dps.js` the same way: one locale, one `HOME`, and `DAGGER_USER_DATA` when the
 //! case reads or writes a user-data tree. Those spawns live here, once, so a test file keeps only its own `same*()`
 //! assertions and the arguments it runs.
 //!
-//! With `DFO_ORACLE_STATS` set, each JS spawn also computes the design's cache key and appends
-//! `key argv-summary cacheable` or `key argv-summary uncacheable:<reason>` to that file. It reads and writes no entry and
-//! changes no output: the dry run proves the key is stable and the reasons are honest. With the variable unset nothing is
-//! computed beyond the spawn itself.
+//! `DFO_ORACLE=use` reads and writes the cache, `fresh` skips reads and writes it, and `off` (the default) is the plain
+//! spawn. With `DFO_ORACLE_STATS` set, every call appends one line there (see [`oracle_summary`] for the summary the
+//! gate prints). A hit is re-run live when the first 8 bytes of `sha256(salt || key)` fall under `DFO_ORACLE_SPOT`;
+//! a mismatch panics with a diff and deletes the entry, so the cache can never hide JS drift. The Rust binary always
+//! runs live; only the JS answer is cached.
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::io::Write;
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, ExitStatus, Output, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// The repository root: this crate lives at `<repo>/rust/dfo-cli`.
 pub fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
+}
+
+/// The tree the JS code is read from: the repository, or `DFO_ORACLE_JS_ROOT` (a test-only override so a test can
+/// copy `bin/`, `src/`, `vendor/` and `package.json` and flip bytes without touching the checkout).
+fn js_tree() -> PathBuf {
+    std::env::var_os("DFO_ORACLE_JS_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(repo_root)
 }
 
 /// A fresh, uniquely labelled temp root (`<temp>/dfo-cli-<label>-<pid>-<n>`), with an empty `Saves` folder. A theory
@@ -116,25 +127,29 @@ pub fn js_at(
     env: &[(&str, &OsStr)],
     stdin: Option<&[u8]>,
 ) -> Output {
-    let mut command = Command::new("node");
-    command
-        .arg(repo_root().join("bin").join("dfo-dps.js"))
-        .args(args)
-        .current_dir(cwd);
-    apply_env(&mut command, env);
-    log_call(cwd, root, args, env, stdin);
-    finish(command, stdin)
+    let live = || {
+        let mut command = Command::new("node");
+        command
+            .arg(js_tree().join("bin").join("dfo-dps.js"))
+            .args(args)
+            .current_dir(cwd);
+        apply_env(&mut command, env);
+        finish(command, stdin)
+    };
+    run_js(cwd, root, args, env, stdin, &live)
 }
 
 /// A batch oracle: `node <args...>` with the call list on stdin (the `-e` program text is part of `args`). Its only
 /// fixture input is the code tree itself, so there is no fixture root to hash.
 pub fn js_batch(args: &[&str], stdin: &[u8]) -> Output {
     let cwd = repo_root();
-    let mut command = Command::new("node");
-    command.args(args).current_dir(&cwd);
-    apply_env(&mut command, &[]);
-    log_call(&cwd, None, args, &[], Some(stdin));
-    finish(command, Some(stdin))
+    let live = || {
+        let mut command = Command::new("node");
+        command.args(args).current_dir(&cwd);
+        apply_env(&mut command, &[]);
+        finish(command, Some(stdin))
+    };
+    run_js(&cwd, None, args, &[], Some(stdin), &live)
 }
 
 /// The Rust CLI at the repository root with a fixture root as `DAGGER_USER_DATA`.
@@ -243,26 +258,616 @@ const ENV_DENY_PREFIX: [&str; 3] = ["CARGO_", "RUST_", "DFO_ORACLE"];
 /// A fixture file whose mtime is fresher than this window was written during the run, so its key cannot be reused.
 const PINNED_MTIME: Duration = Duration::from_secs(300);
 
-fn log_call(
-    cwd: &Path,
-    root: Option<&Path>,
-    args: &[&str],
-    env: &[(&str, &OsStr)],
-    stdin: Option<&[u8]>,
-) {
-    let Some(stats) = std::env::var_os("DFO_ORACLE_STATS") else {
+// ---------------------------------------------------------------------------------------------------------------------
+// The cache: `DFO_ORACLE=use|fresh|off`, one entry per key, atomic tmp+rename, corrupt entries fail open.
+
+/// What the environment asks of the cache. `off` (the default) is the plain spawn; `fresh` skips reads and writes an
+/// entry; `use` reads and writes one.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CacheMode {
+    Off,
+    Use,
+    Fresh,
+}
+
+fn cache_mode() -> CacheMode {
+    match std::env::var("DFO_ORACLE").ok().as_deref() {
+        Some("use") => CacheMode::Use,
+        Some("fresh") => CacheMode::Fresh,
+        _ => CacheMode::Off,
+    }
+}
+
+/// `<checkout>/.cache/oracle`, never shared between worktrees unless `DFO_ORACLE_DIR` says so (`.cache/` is gitignored).
+fn oracle_dir() -> PathBuf {
+    std::env::var_os("DFO_ORACLE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repo_root().join(".cache").join("oracle"))
+}
+
+/// The fraction of hits re-run against real JS (`DFO_ORACLE_SPOT`, default 5 %).
+fn spot_fraction() -> f64 {
+    std::env::var("DFO_ORACLE_SPOT")
+        .ok()
+        .and_then(|text| text.parse::<f64>().ok())
+        .filter(|fraction| fraction.is_finite())
+        .unwrap_or(0.05)
+        .clamp(0.0, 1.0)
+}
+
+/// `first8bytes(sha256(salt || key)) < fraction`: the design's spot-check selector. A fraction of 1.0 selects every hit
+/// (`u64::MAX as f64` is below 1.0, so the explicit check keeps the top end exact).
+fn spot_selected(key: &str) -> bool {
+    let mut hashed = std::env::var("DFO_ORACLE_SALT")
+        .unwrap_or_default()
+        .into_bytes();
+    hashed.extend_from_slice(key.as_bytes());
+    let first = u64::from_be_bytes(sha256(&hashed)[..8].try_into().expect("8 bytes"));
+    spot_fraction() >= 1.0 || (first as f64) < spot_fraction() * (u64::MAX as f64)
+}
+
+/// One line per call, appended to `DFO_ORACLE_STATS`; [`oracle_summary`] turns the file into the gate's line.
+fn stats(line: &str) {
+    let Some(path) = std::env::var_os("DFO_ORACLE_STATS") else {
         return;
     };
-    let (key, summary, verdict) = compute(cwd, root, args, env, stdin);
     static FILE_LOCK: Mutex<()> = Mutex::new(());
     let _guard = FILE_LOCK.lock();
     if let Ok(mut out) = fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(PathBuf::from(stats))
+        .open(PathBuf::from(path))
     {
-        let _ = writeln!(out, "{key} {summary} {verdict}");
+        // One `write_all` per line: O_APPEND keeps concurrent test binaries' lines whole.
+        let _ = out.write_all(format!("{line}\n").as_bytes());
     }
+}
+
+/// The stats file as the gate prints it: `N hit, N miss, N uncacheable, N corrupt; spot K checked, N mismatch; est.
+/// saved S s`. A spot-checked hit is re-run live, so it saves nothing: `saved` counts only the hits that were replayed.
+pub fn oracle_summary(path: &Path) -> Option<String> {
+    let text = fs::read_to_string(path).ok()?;
+    let (mut hit, mut miss, mut uncacheable, mut corrupt, mut spot, mut mismatch) =
+        (0, 0, 0, 0, 0, 0);
+    let mut saved = 0.0;
+    for line in text.lines() {
+        if let Some(secs) = line.strip_prefix("hit ") {
+            hit += 1;
+            saved += secs.parse::<f64>().unwrap_or(0.0);
+        } else if let Some(rest) = line.strip_prefix("spot ok ") {
+            // `spot ok <stored_secs> <live_secs>`: the hit above saved nothing.
+            saved -= rest
+                .split_whitespace()
+                .next()
+                .and_then(|secs| secs.parse::<f64>().ok())
+                .unwrap_or(0.0);
+        } else if line.starts_with("miss ") {
+            miss += 1;
+        } else if line.starts_with("uncacheable ") {
+            uncacheable += 1;
+        } else if line == "corrupt" {
+            corrupt += 1;
+        } else if line.starts_with("spot ") {
+            spot += 1;
+            if line == "spot mismatch" {
+                mismatch += 1;
+            }
+        }
+    }
+    Some(format!(
+        "{hit} hit, {miss} miss, {uncacheable} uncacheable, {corrupt} corrupt; spot {spot} checked, {mismatch} mismatch; est. saved {:.1} s",
+        saved.max(0.0)
+    ))
+}
+
+/// The literal root and its canonical form, longest first, plus `HOME`: the design's stable-path forms.
+fn stable_forms(root: Option<&Path>) -> Vec<(String, String)> {
+    let mut forms = vec![(
+        home_root().to_string_lossy().into_owned(),
+        "@HOME@".to_owned(),
+    )];
+    if let Some(root) = root {
+        forms.push((root.to_string_lossy().into_owned(), "@ROOT@".to_owned()));
+        if let Ok(real) = fs::canonicalize(root) {
+            forms.push((real.to_string_lossy().into_owned(), "@ROOTREAL@".to_owned()));
+        }
+    }
+    forms.sort_by_key(|(form, _)| std::cmp::Reverse(form.len()));
+    forms
+}
+
+const PLACEHOLDERS: [&str; 3] = ["@ROOTREAL@", "@ROOT@", "@HOME@"];
+
+/// Replace the current run's paths with placeholders. A placeholder already in the bytes makes the entry ambiguous.
+fn stabilise(bytes: &[u8], forms: &[(String, String)]) -> Result<Vec<u8>, String> {
+    let text =
+        String::from_utf8(bytes.to_vec()).map_err(|_| "non-UTF-8 oracle output".to_owned())?;
+    if PLACEHOLDERS
+        .iter()
+        .any(|placeholder| text.contains(placeholder))
+    {
+        return Err("placeholder collision".to_owned());
+    }
+    let mut out = text;
+    for (form, placeholder) in forms {
+        out = out.replace(form, placeholder);
+    }
+    Ok(out.into_bytes())
+}
+
+/// The placeholders back to this run's paths, on replay.
+fn instantiate(bytes: &[u8], forms: &[(String, String)]) -> Vec<u8> {
+    let mut text = String::from_utf8_lossy(bytes).into_owned();
+    let mut pairs: Vec<(&String, &String)> = forms.iter().map(|(form, ph)| (ph, form)).collect();
+    pairs.sort_by_key(|(placeholder, _)| std::cmp::Reverse(placeholder.len()));
+    for (placeholder, form) in pairs {
+        text = text.replace(placeholder, form);
+    }
+    text.into_bytes()
+}
+
+/// Every file under the root and its content hash, for the before/after diff that finds the written files.
+fn snapshot(root: &Path) -> BTreeMap<String, [u8; 32]> {
+    fn walk(root: &Path, dir: &Path, out: &mut BTreeMap<String, [u8; 32]>) {
+        let Ok(listing) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in listing.flatten() {
+            let path = entry.path();
+            let Ok(meta) = fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if meta.is_dir() {
+                walk(root, &path, out);
+            } else if meta.is_file() {
+                if let (Ok(rel), Ok(bytes)) = (path.strip_prefix(root), fs::read(&path)) {
+                    out.insert(rel.to_string_lossy().replace('\\', "/"), sha256(&bytes));
+                }
+            }
+        }
+    }
+    let mut out = BTreeMap::new();
+    walk(root, root, &mut out);
+    out
+}
+
+/// One stored file: its path relative to the root, length, content hash (the header's `files`) and its body.
+struct FileMeta {
+    rel: String,
+    len: u64,
+    sha256: String,
+    body: Vec<u8>,
+}
+
+/// A decoded entry: the header fields the tests need and the raw (placeholdered) output.
+struct Entry {
+    exit: i32,
+    js_secs: f64,
+    files: Vec<FileMeta>,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+const ENTRY_MAGIC: &[u8; 4] = b"OCv1";
+const ENTRY_LIMIT: usize = 16 * 1024 * 1024;
+
+/// Write one entry: `magic | u32-LE header length | header JSON | payload`, to a unique tmp name then rename. A rename
+/// in the same directory is atomic, so concurrent writers leave one valid entry, never half of each.
+fn write_entry(dir: &Path, key: &str, header: &serde_json::Value, payload: &[u8]) {
+    if fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    let header = serde_json::to_vec(header).expect("the entry header serialises");
+    let mut bytes = Vec::with_capacity(8 + header.len() + payload.len());
+    bytes.extend_from_slice(ENTRY_MAGIC);
+    bytes.extend_from_slice(&(header.len() as u32).to_be_bytes());
+    bytes.extend_from_slice(&header);
+    bytes.extend_from_slice(payload);
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let nonce = format!(
+        "{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    );
+    let tmp = dir.join(format!(".{key}.{nonce}.tmp"));
+    if fs::write(&tmp, &bytes).is_err() || fs::rename(&tmp, dir.join(key)).is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+}
+
+/// Read and validate one entry. A key mismatch, a short read, a bad length or checksum is `None`; the caller deletes
+/// the file and runs live, so a corrupt entry never panics.
+fn read_entry(dir: &Path, key: &str, root: Option<&Path>) -> Option<Entry> {
+    let bytes = fs::read(dir.join(key)).ok()?;
+    if bytes.len() < 8 || &bytes[..4] != ENTRY_MAGIC {
+        return None;
+    }
+    let len = u32::from_be_bytes(bytes[4..8].try_into().ok()?) as usize;
+    if bytes.len() < 8 + len {
+        return None;
+    }
+    let header: serde_json::Value = serde_json::from_slice(&bytes[8..8 + len]).ok()?;
+    let payload = &bytes[8 + len..];
+    if header.get("key").and_then(|v| v.as_str()) != Some(key) {
+        return None;
+    }
+    let number = |name: &str| header.get(name).and_then(|v| v.as_u64());
+    let (stdout_len, stderr_len) = (number("stdout_len")?, number("stderr_len")?);
+    if header.get("payload_sha256").and_then(|v| v.as_str()) != Some(&sha256_hex(payload)) {
+        return None;
+    }
+    let mut files = Vec::new();
+    let mut at = (stdout_len + stderr_len) as usize;
+    for file in header.get("files")?.as_array()? {
+        let len = file.get("len")?.as_u64()?;
+        let rel = file.get("rel")?.as_str()?.to_owned();
+        let body = payload.get(at..at + len as usize)?.to_vec();
+        if file.get("sha256")?.as_str()? != sha256_hex(&body) {
+            return None;
+        }
+        files.push(FileMeta {
+            rel,
+            len,
+            sha256: sha256_hex(&body),
+            body,
+        });
+        at += len as usize;
+    }
+    if payload.len()
+        != (stdout_len + stderr_len) as usize + files.iter().map(|f| f.len as usize).sum::<usize>()
+    {
+        return None;
+    }
+    // A stored file outside the fixture root cannot be replayed inside it.
+    if files.iter().any(|file| {
+        root.is_none()
+            || file.rel.is_empty()
+            || Path::new(&file.rel).is_absolute()
+            || file.rel.split('/').any(|part| part == "..")
+    }) {
+        return None;
+    }
+    Some(Entry {
+        exit: header.get("exit")?.as_i64()? as i32,
+        js_secs: header.get("js_secs")?.as_f64()?,
+        files,
+        stdout: payload[..stdout_len as usize].to_vec(),
+        stderr: payload[stdout_len as usize..(stdout_len + stderr_len) as usize].to_vec(),
+    })
+}
+
+/// Write the entry's output and files back into the fixture root, exactly as the JS wrote them.
+fn replay(entry: &Entry, root: Option<&Path>, forms: &[(String, String)]) -> Option<Output> {
+    if !entry.files.is_empty() {
+        let root = root?;
+        for file in &entry.files {
+            let path = root.join(&file.rel);
+            if path
+                .parent()
+                .is_some_and(|dir| fs::create_dir_all(dir).is_err())
+                || fs::write(&path, instantiate(&file.body, forms)).is_err()
+            {
+                return None;
+            }
+        }
+    }
+    Some(Output {
+        status: ExitStatus::from_raw(entry.exit),
+        stdout: instantiate(&entry.stdout, forms),
+        stderr: instantiate(&entry.stderr, forms),
+    })
+}
+
+/// A readable diff: which of stdout/stderr/exit moved, and the first differing byte.
+fn spot_diff(cached: &[u8], live: &[u8]) -> String {
+    let at = cached
+        .iter()
+        .zip(live)
+        .position(|(a, b)| a != b)
+        .unwrap_or(cached.len().min(live.len()));
+    let from = at.saturating_sub(80);
+    format!(
+        "byte {at} (lens {} vs {}):\n  cached: {:?}\n  live:   {:?}",
+        cached.len(),
+        live.len(),
+        String::from_utf8_lossy(&cached[from..(at + 160).min(cached.len())]),
+        String::from_utf8_lossy(&live[from..(at + 160).min(live.len())]),
+    )
+}
+
+/// One JS spawn, cached or live. `live` builds and runs the command; it runs twice on a re-checked hit.
+fn run_js(
+    cwd: &Path,
+    root: Option<&Path>,
+    args: &[&str],
+    env: &[(&str, &OsStr)],
+    stdin: Option<&[u8]>,
+    live: &dyn Fn() -> Output,
+) -> Output {
+    let mode = cache_mode();
+    if mode == CacheMode::Off {
+        // The S2 dry run: the key and its verdict only, no entry read or written.
+        if std::env::var_os("DFO_ORACLE_STATS").is_some() {
+            let (key, summary, verdict) = compute(cwd, root, args, env, stdin);
+            stats(&format!("{key} {summary} {verdict}"));
+        }
+        return live();
+    }
+    let (key, summary, verdict) = compute(cwd, root, args, env, stdin);
+    if let Some(reason) = verdict.strip_prefix("uncacheable:") {
+        let timed = Instant::now();
+        let out = live();
+        stats(&format!(
+            "uncacheable {reason} ({:.3}s)",
+            timed.elapsed().as_secs_f64()
+        ));
+        return out;
+    }
+    let forms = stable_forms(root);
+    let dir = oracle_dir().join("v1");
+    if mode == CacheMode::Use {
+        match read_entry(&dir, &key, root) {
+            Some(entry) => {
+                // What the replayed files held before this request: the spot re-run starts from the same state.
+                let prior: Vec<(PathBuf, Option<Vec<u8>>)> = root.map_or_else(Vec::new, |root| {
+                    entry
+                        .files
+                        .iter()
+                        .map(|file| {
+                            let path = root.join(&file.rel);
+                            let body = fs::read(&path).ok();
+                            (path, body)
+                        })
+                        .collect()
+                });
+                match replay(&entry, root, &forms) {
+                    Some(output) => {
+                        stats(&format!("hit {:.3}", entry.js_secs));
+                        if !spot_selected(&key) {
+                            return output;
+                        }
+                        // Restore the pre-request state, so the live run writes its files from the same start and a
+                        // replayed page can never stand in for a live run that stopped writing one.
+                        for (path, body) in &prior {
+                            match body {
+                                Some(body) => {
+                                    let _ = fs::write(path, body);
+                                }
+                                None => {
+                                    let _ = fs::remove_file(path);
+                                }
+                            }
+                        }
+                        let before = root.map(snapshot);
+                        let timed = Instant::now();
+                        let got = live();
+                        let secs = timed.elapsed().as_secs_f64();
+                        let written = written_files(root, before);
+                        if let Some(diff) = spot_compare(&entry, &got, &written, &forms, args) {
+                            let _ = fs::remove_file(dir.join(&key));
+                            stats("spot mismatch");
+                            panic!(
+                                "oracle spot mismatch for {summary} (entry deleted; JS drifted from the cached answer)\n{diff}"
+                            );
+                        }
+                        stats(&format!("spot ok {:.3} {secs:.3}", entry.js_secs));
+                        return output;
+                    }
+                    None => {
+                        // Replay failed on this filesystem: treat it like a corrupt entry and run live.
+                        let _ = fs::remove_file(dir.join(&key));
+                        stats("corrupt");
+                    }
+                }
+            }
+            None if dir.join(&key).exists() => {
+                let _ = fs::remove_file(dir.join(&key));
+                stats("corrupt");
+            }
+            None => {}
+        }
+    }
+    let before = root.map(snapshot);
+    let timed = Instant::now();
+    let out = live();
+    let secs = timed.elapsed().as_secs_f64();
+    if out.status.signal().is_some() {
+        stats("uncacheable signal exit");
+        return out;
+    }
+    let written = written_files(root, before);
+    if let Some(outside) = outside_root_write(args, cwd, root) {
+        stats(&format!("uncacheable outside-root write: {outside}"));
+        return out;
+    }
+    if let Some(path) = stderr_path_outside_root(&out.stderr, root) {
+        stats(&format!("uncacheable stderr path outside the root: {path}"));
+        return out;
+    }
+    match store_entry(&dir, &key, args, &out, secs, &written, &forms) {
+        StoreResult::Stored => stats(&format!("miss {secs:.3}")),
+        // The call ran live either way; it is counted once, by its reason.
+        StoreResult::Skipped(reason) => stats(&format!("uncacheable {reason}")),
+    }
+    out
+}
+
+enum StoreResult {
+    Stored,
+    Skipped(String),
+}
+
+/// The argv as the header stores it: the current run's paths replaced by their placeholders.
+fn canonical_argv(args: &[&str], forms: &[(String, String)]) -> Vec<String> {
+    let mut out: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
+    for (form, placeholder) in forms {
+        for arg in &mut out {
+            *arg = arg.replace(form, placeholder);
+        }
+    }
+    out
+}
+
+/// Store one live answer: the output, the exit code and every file written under the root, stabilised.
+fn store_entry(
+    dir: &Path,
+    key: &str,
+    args: &[&str],
+    out: &Output,
+    secs: f64,
+    written: &[(String, Vec<u8>)],
+    forms: &[(String, String)],
+) -> StoreResult {
+    let stdout = match stabilise(&out.stdout, forms) {
+        Ok(bytes) => bytes,
+        Err(reason) => return StoreResult::Skipped(reason),
+    };
+    let stderr = match stabilise(&out.stderr, forms) {
+        Ok(bytes) => bytes,
+        Err(reason) => return StoreResult::Skipped(reason),
+    };
+    let mut payload = stdout.clone();
+    payload.extend_from_slice(&stderr);
+    let mut files = Vec::new();
+    for (rel, body) in written {
+        let stable = match stabilise(body, forms) {
+            Ok(bytes) => bytes,
+            Err(reason) => return StoreResult::Skipped(reason),
+        };
+        files.push(FileMeta {
+            rel: rel.clone(),
+            len: stable.len() as u64,
+            sha256: sha256_hex(&stable),
+            body: stable.clone(),
+        });
+        payload.extend_from_slice(&stable);
+    }
+    if payload.len() + 4096 > ENTRY_LIMIT {
+        return StoreResult::Skipped("oversize entry".to_owned());
+    }
+    let header = serde_json::json!({
+        "key": key,
+        "argv": canonical_argv(args, forms),
+        "code": code_fingerprint().unwrap_or_default(),
+        "node": node_fingerprint().unwrap_or_default(),
+        "exit": out.status.into_raw(),
+        "js_secs": secs,
+        "files": files.iter().map(|file| serde_json::json!({
+            "rel": file.rel, "len": file.len, "sha256": file.sha256,
+        })).collect::<Vec<_>>(),
+        "stdout_len": stdout.len(),
+        "stderr_len": stderr.len(),
+        "payload_sha256": sha256_hex(&payload),
+    });
+    write_entry(dir, key, &header, &payload);
+    StoreResult::Stored
+}
+
+/// The files a live run created or changed under the root (a content difference; deletions are not replayed).
+fn written_files(
+    root: Option<&Path>,
+    before: Option<BTreeMap<String, [u8; 32]>>,
+) -> Vec<(String, Vec<u8>)> {
+    let (Some(root), Some(before)) = (root, before) else {
+        return Vec::new();
+    };
+    snapshot(root)
+        .into_iter()
+        .filter(|(rel, sha)| before.get(rel) != Some(sha))
+        .filter_map(|(rel, _)| Some((rel.clone(), fs::read(root.join(&rel)).ok()?)))
+        .collect()
+}
+
+/// A `--out` path outside the fixture root is a write the cache cannot see or replay.
+fn outside_root_write(args: &[&str], cwd: &Path, root: Option<&Path>) -> Option<String> {
+    let mut out: Option<&str> = None;
+    for (i, arg) in args.iter().enumerate() {
+        if let Some(value) = arg.strip_prefix("--out=") {
+            out = Some(value);
+        } else if *arg == "--out" {
+            out = args.get(i + 1).copied();
+        }
+    }
+    let out = out?;
+    let joined = if Path::new(out).is_absolute() {
+        PathBuf::from(out)
+    } else {
+        cwd.join(out)
+    };
+    let inside = root.is_some_and(|root| joined.starts_with(root) || same_dir(&joined, root));
+    (!inside).then(|| out.to_owned())
+}
+
+/// Every absolute path in stderr has to be under the root, or the stored stderr names a file the cache does not cover.
+/// The placeholders come out first, so a stabilised stderr keeps its own path.
+fn stderr_path_outside_root(stderr: &[u8], root: Option<&Path>) -> Option<String> {
+    let root = root?;
+    let text = String::from_utf8_lossy(stderr);
+    for token in text.split(|c: char| c.is_whitespace() || ":\"'`(),".contains(c)) {
+        let token = token.trim_end_matches(['.', ';']);
+        if !token.starts_with('/') || PLACEHOLDERS.iter().any(|p| token.contains(p)) {
+            continue;
+        }
+        if !Path::new(token).starts_with(root) {
+            return Some(token.to_owned());
+        }
+    }
+    None
+}
+
+/// Compare a spot re-run against the stored entry: stdout, stderr, exit code, and the set and bytes of written files.
+fn spot_compare(
+    entry: &Entry,
+    got: &Output,
+    written: &[(String, Vec<u8>)],
+    forms: &[(String, String)],
+    args: &[&str],
+) -> Option<String> {
+    let (Ok(stdout), Ok(stderr)) = (stabilise(&got.stdout, forms), stabilise(&got.stderr, forms))
+    else {
+        return Some(format!("live output is not stabilisable for {args:?}"));
+    };
+    let mut diffs = Vec::new();
+    if entry.exit != got.status.into_raw() {
+        diffs.push(format!("exit {} vs {}", entry.exit, got.status.into_raw()));
+    }
+    if entry.stdout != stdout {
+        diffs.push(format!("stdout {}", spot_diff(&entry.stdout, &stdout)));
+    }
+    if entry.stderr != stderr {
+        diffs.push(format!("stderr {}", spot_diff(&entry.stderr, &stderr)));
+    }
+    let want = entry
+        .files
+        .iter()
+        .map(|file| (file.rel.clone(), file.sha256.clone(), file.len))
+        .collect::<Vec<_>>();
+    let live = written
+        .iter()
+        .map(|(rel, body)| match stabilise(body, forms) {
+            Ok(bytes) => Ok((rel.clone(), sha256_hex(&bytes), bytes.len() as u64)),
+            Err(reason) => Err(format!("live file {rel} is not stabilisable: {reason}")),
+        })
+        .collect::<Result<Vec<_>, _>>();
+    match live {
+        Ok(live) if want != live => diffs.push(format!("files cached {want:?}\n  live {live:?}")),
+        Ok(_) => {}
+        Err(reason) => diffs.push(reason),
+    }
+    (!diffs.is_empty()).then(|| format!("{args:?}: {}", diffs.join("\n")))
+}
+
+/// One call's key and verdict (`cacheable` or `uncacheable:<reason>`), for `tests/oracle_key.rs`. It is the same key the
+/// cache uses as the entry name, so two calls whose keys differ can never share an entry.
+pub fn oracle_key(
+    cwd: &Path,
+    root: Option<&Path>,
+    args: &[&str],
+    env: &[(&str, &OsStr)],
+    stdin: Option<&[u8]>,
+) -> (String, String) {
+    let (key, _, verdict) = compute(cwd, root, args, env, stdin);
+    (key, verdict)
 }
 
 /// One call's key, a short argv summary for the log, and `cacheable` or `uncacheable:<reason>`.
@@ -640,30 +1245,34 @@ fn launcher_scan(
     }
 }
 
-/// The design's `code` field: `bin/`, `src/`, `vendor/` and `package.json`, hashed once per process.
+/// The design's `code` field: `bin/`, `src/`, `vendor/` and `package.json` under [`js_root`], hashed once per process.
+/// `DFO_ORACLE_JS_ROOT` (the key test only) bypasses the cache, because the test flips files in one process.
 fn code_fingerprint() -> Result<String, String> {
     static CODE: OnceLock<Result<String, String>> = OnceLock::new();
-    CODE.get_or_init(|| {
-        let base = repo_root();
-        let mut entries: Vec<(String, [u8; 32])> = Vec::new();
-        for top in ["bin", "src", "vendor"] {
-            walk_code(&base, &base.join(top), &mut entries)?;
-        }
-        let package = base.join("package.json");
-        entries.push((
-            "package.json".to_owned(),
-            sha256(&fs::read(&package).map_err(|e| format!("code unreadable: package.json: {e}"))?),
-        ));
-        entries.sort();
-        let mut bytes = Vec::new();
-        for (rel, sha) in entries {
-            bytes.extend_from_slice(rel.as_bytes());
-            bytes.push(0);
-            bytes.extend_from_slice(&sha);
-        }
-        Ok(sha256_hex(&bytes))
-    })
-    .clone()
+    if std::env::var_os("DFO_ORACLE_JS_ROOT").is_some() {
+        return code_fingerprint_at(&js_tree());
+    }
+    CODE.get_or_init(|| code_fingerprint_at(&js_tree())).clone()
+}
+
+fn code_fingerprint_at(base: &Path) -> Result<String, String> {
+    let mut entries: Vec<(String, [u8; 32])> = Vec::new();
+    for top in ["bin", "src", "vendor"] {
+        walk_code(base, &base.join(top), &mut entries)?;
+    }
+    let package = base.join("package.json");
+    entries.push((
+        "package.json".to_owned(),
+        sha256(&fs::read(&package).map_err(|e| format!("code unreadable: package.json: {e}"))?),
+    ));
+    entries.sort();
+    let mut bytes = Vec::new();
+    for (rel, sha) in entries {
+        bytes.extend_from_slice(rel.as_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(&sha);
+    }
+    Ok(sha256_hex(&bytes))
 }
 
 fn walk_code(base: &Path, dir: &Path, entries: &mut Vec<(String, [u8; 32])>) -> Result<(), String> {

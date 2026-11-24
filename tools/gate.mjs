@@ -16,8 +16,16 @@
  *
  *   --fresh        rust: regenerate the golden vectors even when their inputs are unchanged (cached by input hash)
  *                  the cache key is content-only and portable between copies of one revision (worktree, `git archive`);
- *                  a vectors directory that is a symlink into another tree is reused but never regenerated through
+ *                  a vectors directory that is a symlink into another tree is reused but never regenerated through it
+ *                  also sets DFO_ORACLE=fresh (skip JS-oracle cache reads, still write entries)
  *   --test-jobs N  rust: test binaries run in parallel, default up to 4; use 1 on memory-constrained hosts
+ *   --no-oracle    rust: DFO_ORACLE=off (no JS-oracle cache; every JS call runs live)
+ *   --spot F       rust: fraction of cache hits re-run against real JS and compared (default 0.05; 0.25 before a push, 1.0 nightly;
+ *                  a mismatch fails the gate and deletes the entry). Ignored with --no-oracle
+ *   --tests a,b    rust: run only these test targets (e.g. `--tests rank,doctor`); the build still compiles all
+ *   --oracle-dir D rust: the JS-oracle cache directory (default `<checkout>/.cache/oracle`, gitignored; worktrees do
+ *                  not share it unless D points to a shared path)
+ *   --keep-oracle-stats  rust: keep the per-call stats file the line above is summed from (deleted by default)
  *   --record-timings  rust: write each test binary's measured seconds to tools/gate-timings.json, which orders
  *                  later queues longest-first (never required: without it the build order is kept)
  *   --keep-going   do not stop at the first failing step
@@ -26,10 +34,11 @@
  *   --lines N      how many lines of a failure to show (default 25)
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { availableParallelism, tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 
 import { vectorPlan } from './vector-cache.mjs';
 
@@ -161,8 +170,45 @@ function recordedTimings() {
   }
 }
 
+// ---- JS-oracle cache ----------------------------------------------------------------------------------------------
+/** The cache settings the rust gate hands to every test binary (see rust/dfo-cli/tests/common/oracle.rs). `--no-oracle`
+ *  runs every JS call live; otherwise `--fresh` writes entries without reading, and the default reuses them at
+ *  `--spot` (default 0.05, the push gate 0.25, 1.0 re-runs every hit). */
+function oraclePlan() {
+  const off = flag('no-oracle');
+  const dir = opt('oracle-dir', join(root, '.cache', 'oracle'));
+  const stats = join(dir, `stats-${process.pid}.txt`);
+  rmSync(stats, { force: true });
+  mkdirSync(dir, { recursive: true });
+  // `off` is set explicitly, so an inherited DFO_ORACLE=use cannot turn the cache back on.
+  const env = off ? { DFO_ORACLE: 'off' } : { DFO_ORACLE: flag('fresh') ? 'fresh' : 'use', DFO_ORACLE_DIR: dir,
+    DFO_ORACLE_SPOT: opt('spot', '0.05'), DFO_ORACLE_STATS: stats, DFO_ORACLE_SALT: randomUUID() };
+  return { off, dir, stats, env };
+}
+
+/** Read the stats file the test binaries wrote: `hit/miss/uncacheable/corrupt/spot` lines, one per JS call. */
+function oracleSummary(path) {
+  let text = '';
+  try { text = readFileSync(path, 'utf8'); } catch { return null; }
+  let hit = 0, miss = 0, uncacheable = 0, corrupt = 0, spot = 0, mismatch = 0, saved = 0;
+  for (const line of text.split('\n')) {
+    if (line.startsWith('hit ')) { hit++; saved += Number(line.slice(4)) || 0; }
+    else if (line.startsWith('miss ')) miss++;
+    else if (line.startsWith('uncacheable ')) uncacheable++;
+    else if (line === 'corrupt') corrupt++;
+    else if (line.startsWith('spot ')) {
+      spot++;
+      if (line === 'spot mismatch') mismatch++;
+      // `spot ok <stored_secs> <live_secs>`: the hit above saved nothing.
+      const stored = line.startsWith('spot ok ') ? Number(line.split(' ')[2]) : 0;
+      if (Number.isFinite(stored)) saved -= stored;
+    }
+  }
+  return { hit, miss, uncacheable, corrupt, spot, mismatch, saved: Math.max(saved, 0) };
+}
+
 /** cargo test, with the test binaries run as separate processes in parallel (cargo runs them one after another). */
-async function stepCargoTestParallel() {
+async function stepCargoTestParallel(oracleEnv = {}) {
   const t0 = Date.now();
   const build = run('cargo', ['test', '--no-run', '--message-format=json'], { cwd: rustDir });
   const exes = [];
@@ -184,6 +230,13 @@ async function stepCargoTestParallel() {
     return report('cargo test', false, 'build failed', [...diagnostics.slice(0, 6), first(build.out.replace(/^\{.*$/gm, ''), 12)].join('\n'));
   }
   const jobs = Math.max(1, Number(opt('test-jobs', Math.min(4, availableParallelism()))));
+  // `--tests` narrows the run to named targets (a cold/warm proof without the whole suite); the build still
+  // compiles every test binary, so this only changes what runs.
+  const only = opt('tests', undefined)?.split(',').filter(Boolean);
+  if (only && only.length) {
+    exes.splice(0, exes.length, ...exes.filter((e) => only.some((name) => e.name.endsWith(`/tests/${name}.rs`))));
+  }
+  if (exes.length === 0) return report('cargo test', false, 'no test target matched --tests');
   const timings = recordedTimings();
   // Longest first: the tail of a parallel run is whatever started last, so a former long binary that starts last
   // can leave every worker idle at the end. Equal or unknown entries keep the build order (sort is stable).
@@ -194,7 +247,8 @@ async function stepCargoTestParallel() {
       const e = queue.shift();
       const started = Date.now();
       const r = await new Promise((res) => {
-        const c = spawn(e.exe, ['-q'], { cwd: join(rustDir, 'dfo-core'), stdio: ['ignore', 'pipe', 'pipe'] });
+        const c = spawn(e.exe, ['-q'], { cwd: join(rustDir, 'dfo-core'), stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env, ...oracleEnv } });
         let out = '';
         c.stdout.on('data', (d) => { out += d; });
         c.stderr.on('data', (d) => { out += d; });
@@ -247,7 +301,17 @@ async function gateRust() {
   if (!stop()) stepVectors();
   if (!stop()) stepCargo('cargo fmt --check', ['fmt', '--check']);
   if (!stop()) stepCargo('cargo clippy', ['clippy', '--all-targets', '--', '-D', 'warnings']);
-  if (!stop()) await stepCargoTestParallel();
+  const oracle = oraclePlan();
+  if (!stop()) await stepCargoTestParallel(oracle.env);
+  // The line comes after the cargo test step even when it did not run, so a floor of `0` is visible too.
+  const s = oracleSummary(oracle.stats);
+  if (s) {
+    console.log(`       oracle: ${s.hit} hit, ${s.miss} miss, ${s.uncacheable} uncacheable, ${s.corrupt} corrupt; ` +
+      `spot ${s.spot} checked, ${s.mismatch} mismatch; est. saved ${s.saved.toFixed(1)} s`);
+    if (s.mismatch > 0) report('oracle spot', false, `${s.mismatch} spot mismatch(es); the cache cannot hide JS drift`);
+  }
+  if (flag('keep-oracle-stats')) console.log(`       oracle stats: ${oracle.stats}`);
+  else rmSync(oracle.stats, { force: true });
 }
 
 function gateMutate() {
