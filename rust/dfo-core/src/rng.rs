@@ -95,14 +95,22 @@ pub fn initial_state(seed: i64, name: &[u16]) -> [u32; 4] {
     let lo = (seed % 4294967296) as u32;
     let hi = seed.div_euclid(4294967296) as u32;
     let mut s = lo ^ (imul(hi as i32, 0x27d4eb2f) as u32) ^ fnv1a(name);
-    let mut state = [
+    let state = [
         splitmix32(&mut s),
         splitmix32(&mut s),
         splitmix32(&mut s),
         splitmix32(&mut s),
     ];
+    avoid_zero_state(state)
+}
+
+/// The all-zero state is the generator's one fixed point (`src/rng.js:66`): it becomes `[1, 0, 0, 0]`. Split
+/// out so the arm is pinned by a test: no reachable `(seed, name)` produces the all-zero state (each of the
+/// four SplitMix32 outputs is 0 only when its box reads 0, and the box advances by a nonzero step each call,
+/// so at most one word is 0), and a vector cannot exercise it.
+fn avoid_zero_state(state: [u32; 4]) -> [u32; 4] {
     if state == [0, 0, 0, 0] {
-        state[0] = 1; // the all-zero state is the generator's one fixed point (:66)
+        return [1, 0, 0, 0];
     }
     state
 }
@@ -369,5 +377,14 @@ mod tests {
         let a = initial_state(-1, &u("x"));
         let mut s = 0xffffffffu32 ^ (imul(-1, 0x27d4eb2f) as u32) ^ fnv1a(&u("x"));
         assert_eq!(a[0], splitmix32(&mut s));
+    }
+
+    #[test]
+    fn all_zero_state_is_the_fixed_point() {
+        // Local invariant, cited from `src/rng.js:66`: the generator's one fixed point becomes [1, 0, 0, 0].
+        assert_eq!(avoid_zero_state([0, 0, 0, 0]), [1, 0, 0, 0]);
+        assert_eq!(avoid_zero_state([0, 0, 0, 1]), [0, 0, 0, 1]);
+        assert_eq!(avoid_zero_state([1, 0, 0, 0]), [1, 0, 0, 0]);
+        assert_eq!(avoid_zero_state([1, 2, 3, 4]), [1, 2, 3, 4]);
     }
 }

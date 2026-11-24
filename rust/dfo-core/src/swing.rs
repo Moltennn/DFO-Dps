@@ -47,6 +47,10 @@ pub fn swing_frame_seconds(speed: Option<f64>, heft: Option<f64>, handling: Opti
 /// The weight is at least 0 (a non-finite weight reads as 0); the strength is clamped to 0..100
 /// (a non-finite strength, or `undefined`, reads as 50).
 pub fn swing_heft(weight_kg: Option<f64>, strength: Option<f64>) -> f64 {
+    // mutation: equivalent, both `0.0` on this line. A `1.0` clamp or a `1.0` default answers the same
+    // 1.0: only a weight below 1 sees the floor, and the largest load either can then make is
+    // `1 * (150 - 0) / 100 = 1.5`, below `SWING_HEFT_FREE_KG` (2.5, src/data.js:167), so the excess
+    // still clamps to 0 (`src/model.js:388-393`, `Math.max(0, ...)`).
     let w = js_max(0.0, num(weight_kg, 0.0));
     let str_ = js_clamp(num(strength, 50.0), 0.0, 100.0);
     let load = (w * (150.0 - str_)) / 100.0;

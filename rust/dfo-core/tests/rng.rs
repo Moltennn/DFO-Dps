@@ -116,6 +116,21 @@ fn rng_matches_js_vectors() {
                 c.check_eq("state words", exp, snap.state);
                 c.check_eq("draws", draws, snap.draws);
             }
+            "restore_draws" => {
+                let seed = c.f64();
+                let name = c.name();
+                let draws = c.u64();
+                let ok = c.word() == "ok";
+                let mut r = rng_for(&c, seed);
+                let s = r.stream(&name).unwrap();
+                let mut snap = s.snapshot();
+                snap.draws = draws;
+                c.check_eq(
+                    &format!("restore with draws={draws}"),
+                    ok,
+                    s.restore(&snap).is_ok(),
+                );
+            }
             "trace" => {
                 let seed = c.f64();
                 let mut r = rng_for(&c, seed);
@@ -197,6 +212,7 @@ fn rng_matches_js_vectors() {
         ("ints", 40),
         ("int_bad", 8),
         ("state", 20),
+        ("restore_draws", 12),
         ("trace", 100),
     ] {
         let n = seen.get(kind).copied().unwrap_or(0);

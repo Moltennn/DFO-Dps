@@ -70,6 +70,8 @@ pub fn condition_multiplier(w: Option<&Wear>, sharp_edge: bool) -> f64 {
         if pct >= 92.0 {
             return 1.1;
         }
+        // mutation: equivalent - both `76 -> 77` and `>= -> >` only move inputs into the next arm, which
+        // returns the same 1.0 (the JS has the same redundant `>= 76` then `>= 61` pair, src/model.js:697-698).
         if pct >= 76.0 {
             return 1.0;
         }

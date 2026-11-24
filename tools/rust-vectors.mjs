@@ -313,7 +313,7 @@ function genRound() {
 // rng
 // ---------------------------------------------------------------------------------------------------------------
 function genRng() {
-  const out = new Out('rng', 'kinds: init seed name s0 s1 s2 s3 | seed_check seed ok|err | name_check name ok|err | seq seed name count u32... | floats seed name count f64... | ints seed name n count int... | int_bad n | state seed name k s0 s1 s2 s3 draws | trace seed op... (ops: n<name>=u32, f<name>=f64, i<name>:<n>=int, S, R<slot>, D=<name>:<draws>,... or D=-)');
+  const out = new Out('rng', 'kinds: init seed name s0 s1 s2 s3 | seed_check seed ok|err | name_check name ok|err | seq seed name count u32... | floats seed name count f64... | ints seed name n count int... | int_bad n | state seed name k s0 s1 s2 s3 draws | restore_draws seed name draws ok|err | trace seed op... (ops: n<name>=u32, f<name>=f64, i<name>:<n>=int, S, R<slot>, D=<name>:<draws>,... or D=-)');
   const R = makeLcg(0x2002);
   const MAXS = 2 ** 53 - 1;
   const seeds = [0, -0, 1, -1, 2, 42, 12345, -12345, 4294967295, 4294967296, 4294967297, -4294967295, -4294967296, -4294967297,
@@ -425,6 +425,18 @@ function genRng() {
     }
     toks.push(`D=${(() => { const d = rng.snapshot().streams.map((s) => `${nh(s.name)}:${s.draws}`); return d.length ? d.join(',') : '-'; })()}`);
     out.add('trace', F(seed), ...toks);
+  }
+
+  // restore boundaries: `draws` must be a safe integer >= 0 (`src/rng.js:119-121`, `Number.isSafeInteger`), so
+  // 2^53 - 1 is legal and 2^53 is not. No draw count in the traces above reaches either edge.
+  const MAX_DRAWS = 2 ** 53 - 1;
+  for (const [seed, name] of [[0, 'blow'], [-7, 'echo'], [2 ** 52, '🎲']]) {
+    for (const draws of [0, 1, MAX_DRAWS, MAX_DRAWS + 1]) {
+      const s = createRng(seed).stream(name);
+      let ok = true;
+      try { s.restore({ ...s.snapshot(), draws }); } catch { ok = false; }
+      out.add('restore_draws', F(seed), N(name), I(draws), ok ? 'ok' : 'err');
+    }
   }
   return out.write();
 }

@@ -105,3 +105,35 @@ impl Boot {
         Boot::with_mods(code & 1 != 0, code & 2 != 0, code & 4 != 0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn module_is_enabled_and_switch() {
+        // Local invariant, cited from `vendor/upstream/a3eb1605/src/systems/roleplayRealismItems/rriItems.js:42`:
+        // `rriModule = (key) => rriEnabled() && modSetting(RRI_VENDOR, key) === true`, i.e. AND, not OR.
+        let rri = |enabled| RriSwitches {
+            enabled,
+            new_weapons: false,
+            new_armor: false,
+            realistic_enemy_equipment: false,
+        };
+        assert!(!rri(false).module(false));
+        assert!(!rri(false).module(true));
+        assert!(!rri(true).module(false));
+        assert!(rri(true).module(true));
+    }
+
+    #[test]
+    fn unknown_vendor_is_off() {
+        // Local invariant, cited from `src/target.js:626`: `shippedOn` reads `MOD_SETTINGS[vendor]`, so a vendor the
+        // table does not name is off (`?.` yields undefined). The three real keys are on (generated table).
+        assert!(!shipped_on("not-a-vendor"));
+        assert!(!shipped_on(""));
+        assert!(shipped_on("pcaao"));
+        assert!(shipped_on("meanerMonsters"));
+        assert!(shipped_on("daggerfall-enemy-expansion"));
+    }
+}

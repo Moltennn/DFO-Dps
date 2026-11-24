@@ -61,6 +61,8 @@ pub fn js_max(a: f64, b: f64) -> f64 {
     if a == 0.0 && b == 0.0 {
         return if a.is_sign_negative() { b } else { a };
     }
+    // mutation: equivalent - the NaN and both-zero cases returned above, so `>` and `>=` differ only
+    // at `a == b`; both arms then answer that same double (ECMAScript `Math.max`, 21.3.2.24).
     if a > b {
         a
     } else {
@@ -76,6 +78,8 @@ pub fn js_min(a: f64, b: f64) -> f64 {
     if a == 0.0 && b == 0.0 {
         return if a.is_sign_negative() { a } else { b };
     }
+    // mutation: equivalent - the NaN and both-zero cases returned above, so `<` and `<=` differ only
+    // at `a == b`; both arms then answer that same double (ECMAScript `Math.min`, 21.3.2.25).
     if a < b {
         a
     } else {
@@ -142,9 +146,8 @@ pub fn is_safe_integer(x: f64) -> bool {
 /// (ECMAScript 21.3.2.28). Not [`f64::round`], which rounds ties away from zero. Used by `src/target.js`
 /// (`armourPiece`, the Math.round of the condition) and moved here (R3b) so every module shares one copy.
 pub fn math_round(x: f64) -> f64 {
-    if x == 0.0 {
-        return x;
-    }
+    // math_round(-0) and math_round(0) must keep the input (sign included); the last arm does that on its
+    // own (`floor` of an integer is itself and the remainder is 0 < 0.5), so no zero guard is needed.
     if (-0.5..0.0).contains(&x) {
         return -0.0;
     }
