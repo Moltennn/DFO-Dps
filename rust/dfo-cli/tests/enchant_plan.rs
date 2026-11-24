@@ -12,6 +12,10 @@
 //! The `--all` matrix page, the `--json` document and the CLI flags are `main.rs`'s, not this port's. A missing `node`
 //! panics rather than skips, because a skipped differential proves nothing.
 
+mod common;
+
+use common::{js_page as js, temp_root};
+
 // The renderer test pins the text card over a real plan; the page/`--all` renderers are pinned end-to-end against
 // the JS by `tests/cli_enchant_plan.rs`, so the test crate does not call them.
 #[path = "../src/enchant_plan.rs"]
@@ -22,20 +26,12 @@ mod enchant_plan;
 mod graph;
 
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::Path;
 
 use dfo_core::analyze::{gate_target, reference_foe};
 use dfo_core::enchant_plan::plan_enchants;
 use dfo_core::spells::{read_spells_std, spells_by_index_map, Spellbook};
 use dfo_core::value::Value::{self, Bool, Num, Obj, Str};
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-}
 
 fn obj<const N: usize>(pairs: [(&str, Value); N]) -> Value {
     let mut out = Obj(vec![]);
@@ -44,33 +40,6 @@ fn obj<const N: usize>(pairs: [(&str, Value); N]) -> Value {
     }
     out
 }
-
-fn temp_root(label: &str) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let n = NEXT.fetch_add(1, Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!(
-        "dfo-cli-enchant-plan-{label}-{}-{n}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(root.join("Saves")).expect("temp fixture root");
-    root
-}
-
-fn js(args: &[&str], out: &Path, root: &Path) -> Output {
-    Command::new("node")
-        .env("LC_ALL", "en_US.UTF-8")
-        .env("LANG", "en_US.UTF-8")
-        .env("DAGGER_USER_DATA", root)
-        .arg(repo_root().join("bin").join("dfo-dps.js"))
-        .args(args)
-        .arg("--out")
-        .arg(out)
-        .current_dir(repo_root())
-        .output()
-        .expect("the JS CLI runs (this repository's Node project)")
-}
-
 /// One 89-byte `SPELLS.STD` record (field for field as `src/spells.js:24-50` reads it).
 type SpellEffect = (i8, i8, u8, u8, u8, u8, u8, u8, u8, u8);
 

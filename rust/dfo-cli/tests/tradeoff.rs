@@ -17,13 +17,14 @@
 //!
 //! A missing `node` panics rather than skips, because a skipped differential proves nothing.
 
+mod common;
+
+use common::{js, temp_root};
+
 #[path = "../src/tradeoff.rs"]
 mod tradeoff;
 
 use std::fs;
-use std::path::PathBuf;
-use std::process::{Command, Output};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use dfo_core::analyze::gate_target;
 use dfo_core::maxprofile::Profiles as MaxProfiles;
@@ -31,12 +32,6 @@ use dfo_core::spells::Spellbook;
 use dfo_core::theory::theory_character;
 use dfo_core::value::Value::{self, Bool, Null, Num, Obj, Str};
 use serde_json::Value as JsonValue;
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-}
 
 fn obj<const N: usize>(pairs: [(&str, Value); N]) -> Value {
     let mut out = Obj(vec![]);
@@ -142,30 +137,9 @@ fn base_scenario(level: f64, players: f64, blow_x: f64, core: &str) -> Value {
         ("pierce", Num(0.0)),
     ])
 }
-
-/// A fresh temp root per call, so the two cases never share one: `--theory` reads no save and writes nothing.
-fn temp_root() -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let n = NEXT.fetch_add(1, Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!("dfo-cli-tradeoff-{}-{n}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).expect("temp fixture root");
-    root
-}
-
-fn js(args: &[&str], root: &std::path::Path) -> Output {
-    Command::new("node")
-        .arg(repo_root().join("bin").join("dfo-dps.js"))
-        .args(args)
-        .current_dir(repo_root())
-        .env("DAGGER_USER_DATA", root)
-        .output()
-        .expect("the JS CLI runs (this repository's Node project)")
-}
-
 /// Run one case's JS side and return its stdout, asserting it succeeded.
 fn want(case: &Case, json: bool) -> Vec<u8> {
-    let root = temp_root();
+    let root = temp_root("tradeoff");
     let args: Vec<&str> = case
         .args
         .iter()

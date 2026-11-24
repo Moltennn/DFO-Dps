@@ -16,56 +16,12 @@
 //! The spellbook tests set `DAGGER_USER_DATA` to their own temp root, so neither CLI can read the player's launcher
 //! config or game files.
 
+mod common;
+
+use common::{js as js_env, js_pinned as js, rust as rust_env, rust_pinned as rust, temp_root};
+
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-use std::sync::atomic::{AtomicU64, Ordering};
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-}
-
-fn js(args: &[&str]) -> Output {
-    Command::new("node")
-        .env("LC_ALL", "en_US.UTF-8")
-        .env("LANG", "en_US.UTF-8")
-        .arg("bin/dfo-dps.js")
-        .args(args)
-        .current_dir(repo_root())
-        .output()
-        .expect("the JS CLI runs (this repository's Node project)")
-}
-
-fn rust(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_dfo-cli"))
-        .args(args)
-        .current_dir(repo_root())
-        .output()
-        .expect("the Rust CLI binary runs")
-}
-
-fn js_env(args: &[&str], root: &Path) -> Output {
-    Command::new("node")
-        .env("LC_ALL", "en_US.UTF-8")
-        .env("LANG", "en_US.UTF-8")
-        .arg("bin/dfo-dps.js")
-        .args(args)
-        .current_dir(repo_root())
-        .env("DAGGER_USER_DATA", root)
-        .output()
-        .expect("the JS CLI runs (this repository's Node project)")
-}
-
-fn rust_env(args: &[&str], root: &Path) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_dfo-cli"))
-        .args(args)
-        .current_dir(repo_root())
-        .env("DAGGER_USER_DATA", root)
-        .output()
-        .expect("the Rust CLI binary runs")
-}
 
 /// A success case: both exit 0 and stdout matches byte for byte.
 fn same(args: &[&str]) {
@@ -111,18 +67,6 @@ fn same_env(args: &[&str], root: &Path) {
         "stdout differs for {args:?}"
     );
 }
-
-/// A fresh temp root; the caller's fixture lives under `<root>/Saves`.
-fn temp_root(label: &str) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let n = NEXT.fetch_add(1, Ordering::Relaxed);
-    let root =
-        std::env::temp_dir().join(format!("dfo-cli-build-{label}-{}-{n}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(root.join("Saves")).expect("temp fixture root");
-    root
-}
-
 /// The offline save shape (`items[].equipSlot`): a main hand and an off hand, so the summary's `weapon` and the
 /// `current`-free `topWeapons` both have something real to price.
 fn offline_save(level: u32) -> String {

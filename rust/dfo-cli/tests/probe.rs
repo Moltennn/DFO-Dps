@@ -14,43 +14,13 @@
 //!
 //! A missing `node` panics rather than skips: a skipped differential proves nothing.
 
+mod common;
+
+use common::{js_at, js_cwd as js, rust_at, rust_cwd as rust, temp_root as temp_dir};
+
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-use std::sync::atomic::{AtomicU64, Ordering};
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-}
-
-fn temp_dir(label: &str) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let n = NEXT.fetch_add(1, Ordering::Relaxed);
-    let dir =
-        std::env::temp_dir().join(format!("dfo-cli-probe-{label}-{}-{n}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).expect("temp dir");
-    dir
-}
-
-fn js(args: &[&str], cwd: &Path) -> Output {
-    Command::new("node")
-        .arg(repo_root().join("bin").join("dfo-dps.js"))
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .expect("the JS CLI runs (this repository's Node project)")
-}
-
-fn rust(args: &[&str], cwd: &Path) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_dfo-cli"))
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .expect("the Rust CLI binary runs")
-}
 
 /// The page the JS and the Rust CLI both write: `probe.html` unless `--out` names another file.
 fn page(cwd: &Path, name: &str) -> Vec<u8> {
@@ -293,23 +263,12 @@ fn probe_discovers_the_newest_capture_like_the_js() {
     fs::write(live.join("old").join("c.json"), &archived).expect("archived capture");
 
     let with_home = |args: &[&str]| {
-        let run = |program: &str, extra: &[&str]| {
-            let mut command = Command::new(program);
-            if program == "node" {
-                command.arg(repo_root().join("bin").join("dfo-dps.js"));
-            }
-            command
-                .args(extra)
-                .current_dir(&live)
-                .env("HOME", &root)
-                .output()
-                .expect("the CLI runs")
-        };
-        let want = run("node", args);
+        let home: [(&str, &OsStr); 1] = [("HOME", root.as_os_str())];
+        let want = js_at(&live, args, Some(&root), &home, None);
         assert_eq!(want.status.code(), Some(0), "js {args:?}");
         let want_page = page(&live, "probe.html");
         fs::remove_file(live.join("probe.html")).expect("cleanup the JS page");
-        let got = run(env!("CARGO_BIN_EXE_dfo-cli"), args);
+        let got = rust_at(&live, args, &home);
         assert_eq!(
             got.status.code(),
             Some(0),
@@ -336,19 +295,9 @@ fn probe_discovers_the_newest_capture_like_the_js() {
     // The no-capture message and its exit code, in an empty home. No page is written.
     let empty = temp_dir("empty-home");
     let no_capture = |args: &[&str]| {
-        let want = Command::new("node")
-            .arg(repo_root().join("bin").join("dfo-dps.js"))
-            .args(args)
-            .current_dir(&empty)
-            .env("HOME", &empty)
-            .output()
-            .expect("the JS CLI runs");
-        let got = Command::new(env!("CARGO_BIN_EXE_dfo-cli"))
-            .args(args)
-            .current_dir(&empty)
-            .env("HOME", &empty)
-            .output()
-            .expect("the Rust CLI runs");
+        let home: [(&str, &OsStr); 1] = [("HOME", empty.as_os_str())];
+        let want = js_at(&empty, args, Some(&empty), &home, None);
+        let got = rust_at(&empty, args, &home);
         assert_eq!(want.status.code(), Some(2), "js {args:?}");
         assert_eq!(got.status.code(), Some(2), "rust {args:?}");
         assert_eq!(

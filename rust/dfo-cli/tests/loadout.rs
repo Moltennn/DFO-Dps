@@ -10,6 +10,10 @@
 //! `DAGGER_USER_DATA` root has no launcher `config.json`, and the Rust side uses `Spellbook::default()`. A missing
 //! `node` panics rather than skips, because a skipped differential proves nothing.
 
+mod common;
+
+use common::temp_root;
+
 #[path = "../src/graph.rs"]
 #[allow(dead_code)]
 mod graph;
@@ -17,43 +21,17 @@ mod graph;
 #[allow(dead_code)]
 mod loadout;
 
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::Path;
+use std::process::Output;
 
 use dfo_core::loadout_shortlist::{shortlist_loadouts, ShortlistOpts};
 use dfo_core::spells::Spellbook;
 use dfo_core::value::Value::{self, Arr, Bool, Num, Obj, Str, Undefined};
 
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-}
-
-fn temp_root(label: &str) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let n = NEXT.fetch_add(1, Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!(
-        "dfo-cli-loadout-{label}-{}-{n}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(root.join("Saves")).expect("temp fixture root");
-    root
-}
-
 fn js(args: &[&str], root: &Path) -> Output {
-    Command::new("node")
-        .env("LC_ALL", "en_US.UTF-8")
-        .env("LANG", "en_US.UTF-8")
-        .env("DAGGER_USER_DATA", root)
-        .arg(repo_root().join("bin").join("dfo-dps.js"))
-        .arg("loadout")
-        .args(args)
-        .current_dir(repo_root())
-        .output()
-        .expect("the JS CLI runs (this repository's Node project)")
+    let mut argv = vec!["loadout"];
+    argv.extend_from_slice(args);
+    common::js(&argv, root)
 }
 
 /// One case: the CLI flags, and the modes/encounters the branch resolves from them (`src/cli.js:962-963`).

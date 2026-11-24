@@ -11,50 +11,12 @@
 //! Strikes price is proven on both sides (an empty book prices 0). A missing `node` panics rather than skips, because a
 //! skipped differential proves nothing.
 
+mod common;
+
+use common::{js, rust, temp_root};
+
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-use std::sync::atomic::{AtomicU64, Ordering};
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-}
-
-fn js(args: &[&str], root: &Path) -> Output {
-    Command::new("node")
-        .env("LC_ALL", "en_US.UTF-8")
-        .env("LANG", "en_US.UTF-8")
-        .arg(repo_root().join("bin").join("dfo-dps.js"))
-        .args(args)
-        .current_dir(repo_root())
-        .env("DAGGER_USER_DATA", root)
-        .output()
-        .expect("the JS CLI runs (this repository's Node project)")
-}
-
-fn rust(args: &[&str], root: &Path) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_dfo-cli"))
-        .args(args)
-        .current_dir(repo_root())
-        .env("DAGGER_USER_DATA", root)
-        .output()
-        .expect("the Rust CLI binary runs")
-}
-
-/// A fresh temp root with an empty `Saves` folder and no launcher config: the empty spellbook fallback.
-fn temp_root(label: &str) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let n = NEXT.fetch_add(1, Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!(
-        "dfo-cli-enchant-{label}-{}-{n}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(root.join("Saves")).expect("temp fixture root");
-    root
-}
+use std::path::Path;
 
 fn same(args: &[&str], root: &Path) {
     let want = js(args, root);

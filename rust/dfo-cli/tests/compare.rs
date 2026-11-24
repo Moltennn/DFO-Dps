@@ -10,58 +10,12 @@
 //! LIMITATION: `compare` prints text only, so the only output is the card; `--json` and `--out` are refused on both
 //! sides and `unsupported_boundaries` pins that.
 
+mod common;
+
+use common::{js as js_env, rust as rust_env, rust_pinned, temp_root};
+
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-use std::sync::atomic::{AtomicU64, Ordering};
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-}
-
-fn rust(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_dfo-cli"))
-        .args(args)
-        .current_dir(repo_root())
-        .output()
-        .expect("the Rust CLI binary runs")
-}
-
-fn js_env(args: &[&str], root: &Path) -> Output {
-    Command::new("node")
-        .env("LC_ALL", "en_US.UTF-8")
-        .env("LANG", "en_US.UTF-8")
-        .arg("bin/dfo-dps.js")
-        .args(args)
-        .current_dir(repo_root())
-        .env("DAGGER_USER_DATA", root)
-        .output()
-        .expect("the JS CLI runs (this repository's Node project)")
-}
-
-fn rust_env(args: &[&str], root: &Path) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_dfo-cli"))
-        .args(args)
-        .current_dir(repo_root())
-        .env("DAGGER_USER_DATA", root)
-        .output()
-        .expect("the Rust CLI binary runs")
-}
-
-/// A fresh empty user-data root (no config, no save, so both CLIs take the empty spellbook).
-fn empty_root(label: &str) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let n = NEXT.fetch_add(1, Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!(
-        "dfo-cli-compare-{label}-{}-{n}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(root.join("Saves")).expect("temp root");
-    root
-}
 
 /// The offline save shape (`items[].equipSlot`): a main hand and an off hand.
 fn offline_save() -> String {
@@ -94,7 +48,7 @@ fn offline_save() -> String {
 
 /// A `DAGGER_USER_DATA` root with one imported save (`SAVE1`).
 fn save_root(label: &str) -> PathBuf {
-    let root = empty_root(label);
+    let root = temp_root(label);
     let dir = root.join("Saves").join("SAVE1");
     fs::create_dir_all(&dir).expect("fixture save folder");
     fs::write(dir.join("SaveData.txt"), offline_save()).expect("fixture save");
@@ -102,7 +56,7 @@ fn save_root(label: &str) -> PathBuf {
 }
 
 fn same(args: &[&str]) {
-    same_in(&empty_root("same"), args);
+    same_in(&temp_root("same"), args);
 }
 
 fn same_in(root: &Path, args: &[&str]) {
@@ -130,7 +84,7 @@ fn same_in(root: &Path, args: &[&str]) {
 
 /// A refusal this port reproduces word for word: same exit code and same stderr line.
 fn same_usage(args: &[&str]) {
-    let root = empty_root("usage");
+    let root = temp_root("usage");
     let want = js_env(args, &root);
     let got = rust_env(args, &root);
     assert_eq!(
@@ -368,13 +322,13 @@ fn compare_usage_matches_the_js_cli() {
         "x.html",
     ]);
     // The JS branch ignores positionals after the command; this CLI refuses it on purpose, as `build` and `rank` do.
-    let got = rust(&["compare", "--theory", "--stat", "strength=110", "extra"]);
+    let got = rust_pinned(&["compare", "--theory", "--stat", "strength=110", "extra"]);
     assert_eq!(got.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&got.stderr).contains("unexpected positional argument"));
     assert_eq!(
         js_env(
             &["compare", "--theory", "--stat", "strength=110", "extra"],
-            &empty_root("extra")
+            &temp_root("extra")
         )
         .status
         .code(),
@@ -407,10 +361,10 @@ fn unsupported_boundaries_are_explicit() {
     ]);
     // `scale`, `tradeoff`, `theory`, `weapons`/`skills` and `loadout`/`real-dps` are ported now; an unknown command
     // is the JS's own `unknown command` message and exit 2, so the JS and this CLI agree on the whole list.
-    let got = rust(&["real-dps", "--help"]);
+    let got = rust_pinned(&["real-dps", "--help"]);
     assert_eq!(got.status.code(), Some(0), "real-dps is a ported command");
     assert!(String::from_utf8_lossy(&got.stdout).contains("real-dps"));
-    let got = rust(&["buidl"]);
+    let got = rust_pinned(&["buidl"]);
     assert_eq!(got.status.code(), Some(2));
     let text = String::from_utf8_lossy(&got.stderr);
     assert!(text.contains("unknown command \"buidl\""), "{text}");
@@ -429,7 +383,7 @@ fn unsupported_boundaries_are_explicit() {
             "--all is not read by build; compare, scale, enchant-plan and gear-plan read it",
         ),
     ] {
-        let got = rust(args);
+        let got = rust_pinned(args);
         assert_eq!(got.status.code(), Some(2), "rust {args:?}");
         assert!(
             String::from_utf8_lossy(&got.stderr).contains(refusal),

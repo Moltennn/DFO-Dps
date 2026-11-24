@@ -10,6 +10,10 @@
 //! including the `--json` document and the create-only writer. A missing `node` panics rather than skips: a skipped
 //! differential proves nothing.
 
+mod common;
+
+use common::{js_page as js, temp_root};
+
 #[path = "../src/graph.rs"]
 #[allow(dead_code)]
 mod graph;
@@ -17,20 +21,11 @@ mod graph;
 mod imprints;
 
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use dfo_core::imprints::rank_all;
 use dfo_core::maxprofile::Profiles;
 use dfo_core::spells::Spellbook;
 use dfo_core::value::Value::{self, Bool, Obj, Str};
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-}
 
 /// One case: the flags the JS CLI receives, plus the already-resolved options the JS branch reads.
 struct Case {
@@ -74,33 +69,6 @@ fn cases() -> Vec<Case> {
         },
     ]
 }
-
-fn temp_root(label: &str) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let n = NEXT.fetch_add(1, Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!(
-        "dfo-cli-imprints-{label}-{}-{n}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(root.join("Saves")).expect("temp fixture root");
-    root
-}
-
-fn js(args: &[&str], out: &Path, root: &Path) -> Output {
-    Command::new("node")
-        .env("LC_ALL", "en_US.UTF-8")
-        .env("LANG", "en_US.UTF-8")
-        .env("DAGGER_USER_DATA", root)
-        .arg(repo_root().join("bin").join("dfo-dps.js"))
-        .args(args)
-        .arg("--out")
-        .arg(out)
-        .current_dir(repo_root())
-        .output()
-        .expect("the JS CLI runs (this repository's Node project)")
-}
-
 /// The JS branch's `rankAll({ firmament, vampire, sort })` options.
 fn options(firmament: bool, sort: &str) -> Value {
     let mut out = Obj(vec![]);

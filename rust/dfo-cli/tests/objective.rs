@@ -11,51 +11,12 @@
 //!
 //! A missing `node` panics rather than skips, because a skipped differential proves nothing.
 
+mod common;
+
+use common::{js as js_env, rust as rust_env, temp_root};
+
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-}
-
-fn js_env(args: &[&str], root: &Path) -> Output {
-    Command::new("node")
-        .env("LC_ALL", "en_US.UTF-8")
-        .env("LANG", "en_US.UTF-8")
-        .arg("bin/dfo-dps.js")
-        .args(args)
-        .current_dir(repo_root())
-        .env("DAGGER_USER_DATA", root)
-        .output()
-        .expect("the JS CLI runs (this repository's Node project)")
-}
-
-fn rust_env(args: &[&str], root: &Path) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_dfo-cli"))
-        .args(args)
-        .current_dir(repo_root())
-        .env("DAGGER_USER_DATA", root)
-        .output()
-        .expect("the Rust CLI binary runs")
-}
-
-/// A fresh empty user-data root (no config, no save, so both CLIs take the empty spellbook). Each call is unique, so
-/// tests running in parallel cannot share one root (and cannot remove each other's).
-fn empty_root(label: &str) -> PathBuf {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let n = NEXT.fetch_add(1, Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!(
-        "dfo-cli-objective-{label}-{}-{n}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(root.join("Saves")).expect("temp root");
-    root
-}
 
 /// The offline save shape (`items[].equipSlot`), as `tests/build.rs` writes it: a main hand and an off hand.
 fn offline_save() -> String {
@@ -88,7 +49,7 @@ fn offline_save() -> String {
 
 /// A `DAGGER_USER_DATA` root with one imported save (`SAVE1`), so the objective command prices a real character.
 fn save_root(label: &str) -> PathBuf {
-    let root = empty_root(label);
+    let root = temp_root(label);
     let dir = root.join("Saves").join("SAVE1");
     fs::create_dir_all(&dir).expect("fixture save folder");
     fs::write(dir.join("SaveData.txt"), offline_save()).expect("fixture save");
@@ -96,7 +57,7 @@ fn save_root(label: &str) -> PathBuf {
 }
 
 fn same(args: &[&str]) {
-    same_in(&empty_root("same"), args);
+    same_in(&temp_root("same"), args);
 }
 
 fn same_in(root: &Path, args: &[&str]) {
@@ -124,7 +85,7 @@ fn same_in(root: &Path, args: &[&str]) {
 
 /// Both refuse the same way: same exit code and same stderr line.
 fn same_usage(args: &[&str]) {
-    let root = empty_root("usage");
+    let root = temp_root("usage");
     let want = js_env(args, &root);
     let got = rust_env(args, &root);
     assert_eq!(
@@ -146,7 +107,7 @@ fn same_usage(args: &[&str]) {
 /// A sample the engine refuses for a reason `isUsageFailure` does not name: both crash with exit 1. V8 prints the
 /// stack; the Rust front end prints the message line only, so the message is compared as a substring, not the frames.
 fn same_crash(args: &[&str]) {
-    let root = empty_root("crash");
+    let root = temp_root("crash");
     let want = js_env(args, &root);
     let got = rust_env(args, &root);
     let js_err = String::from_utf8_lossy(&want.stderr);

@@ -9,22 +9,15 @@
 //! `src/graph.rs` is not wired into `main.rs` by this slice (the `graph` command owns that), so this test includes it
 //! by path and exercises its public API directly.
 
+mod common;
+
+use common::js_batch;
+
 #[path = "../src/graph.rs"]
 mod graph;
 
-use std::io::Write;
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
-
 use graph::{BarChart, BarSeries, LineChart, Point, Section, Series, Tick};
 use serde_json::{json, Value};
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-}
-
 const ORACLE: &str = r#"
 import { readFileSync } from 'node:fs';
 import { lineChart, graphPage, multiGraphPage, barChart } from './src/graph.js';
@@ -267,24 +260,8 @@ fn cases() -> Vec<Case> {
 
 fn oracle() -> Vec<String> {
     let calls: Vec<Value> = cases().iter().map(|c| c.call.clone()).collect();
-    let mut child = Command::new("node")
-        .arg("--input-type=module")
-        .arg("-e")
-        .arg(ORACLE)
-        .current_dir(repo_root())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("node runs (this repository's Node project)");
     let input = serde_json::to_vec(&calls).expect("the call list serialises");
-    child
-        .stdin
-        .as_mut()
-        .expect("piped stdin")
-        .write_all(&input)
-        .expect("the call list is written");
-    let out = child.wait_with_output().expect("node finishes");
+    let out = js_batch(&["--input-type=module", "-e", ORACLE], &input);
     assert_eq!(
         out.status.code(),
         Some(0),

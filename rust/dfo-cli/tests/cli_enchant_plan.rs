@@ -14,58 +14,12 @@
 //! launcher's `config.json` under the temp root, so the strike procs and the imprint line price a real book. A missing
 //! `node` panics rather than skips, because a skipped differential proves nothing.
 
+mod common;
+
+use common::{js_root as js, rust_root as rust, take_page, temp_root};
+
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-use std::sync::atomic::{AtomicU64, Ordering};
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-}
-
-fn temp_root(label: &str) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let n = NEXT.fetch_add(1, Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!(
-        "dfo-cli-cli-enchant-plan-{label}-{}-{n}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(root.join("Saves")).expect("temp fixture root");
-    root
-}
-
-fn run(program: &str, args: &[&str], root: &Path) -> Output {
-    let mut command = Command::new(program);
-    if program == "node" {
-        command.arg(repo_root().join("bin").join("dfo-dps.js"));
-    }
-    command
-        .args(args)
-        .current_dir(root)
-        .env("LC_ALL", "en_US.UTF-8")
-        .env("LANG", "en_US.UTF-8")
-        .env("DAGGER_USER_DATA", root)
-        .output()
-        .expect("the CLI runs")
-}
-
-fn js(args: &[&str], root: &Path) -> Output {
-    run("node", args, root)
-}
-
-fn rust(args: &[&str], root: &Path) -> Output {
-    run(env!("CARGO_BIN_EXE_dfo-cli"), args, root)
-}
-
-/// The page's bytes after a run, then the file is removed so the next CLI can write the same path.
-fn take_page(path: &Path) -> Vec<u8> {
-    let bytes = fs::read(path).expect("the CLI wrote its page");
-    fs::remove_file(path).expect("cleanup the page");
-    bytes
-}
+use std::path::Path;
 
 fn page_diff(args: &[&str], got: &[u8], want: &[u8]) {
     if got == want {

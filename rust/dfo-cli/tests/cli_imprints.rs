@@ -11,56 +11,12 @@
 //!
 //! A missing `node` panics rather than skips: a skipped differential proves nothing.
 
+mod common;
+
+use common::{js, js_root, rust, rust_root, take_page, temp_root};
+
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-use std::sync::atomic::{AtomicU64, Ordering};
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-}
-
-fn temp_root(label: &str) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let n = NEXT.fetch_add(1, Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!(
-        "dfo-cli-imprints-{label}-{}-{n}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(root.join("Saves")).expect("temp fixture root");
-    root
-}
-
-fn js(args: &[&str], root: &Path) -> Output {
-    Command::new("node")
-        .env("LC_ALL", "en_US.UTF-8")
-        .env("LANG", "en_US.UTF-8")
-        .arg(repo_root().join("bin").join("dfo-dps.js"))
-        .args(args)
-        .current_dir(root)
-        .env("DAGGER_USER_DATA", root)
-        .output()
-        .expect("the JS CLI runs (this repository's Node project)")
-}
-
-fn rust(args: &[&str], root: &Path) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_dfo-cli"))
-        .args(args)
-        .current_dir(root)
-        .env("DAGGER_USER_DATA", root)
-        .output()
-        .expect("the Rust CLI binary runs")
-}
-
-/// The page's bytes after a run, then the file is removed so the next CLI can write the same path.
-fn take_page(path: &Path) -> Vec<u8> {
-    let bytes = fs::read(path).expect("the CLI wrote its imprints page");
-    fs::remove_file(path).expect("cleanup the page");
-    bytes
-}
+use std::path::Path;
 
 fn page_diff(args: &[&str], got: &[u8], want: &[u8]) {
     if got != want {
@@ -236,24 +192,12 @@ fn imprints_json_matches_the_js() {
 #[test]
 fn imprints_default_output_name_matches_the_js() {
     let root = temp_root("default-name");
-    let run = |program: &str, args: &[&str]| {
-        let mut command = Command::new(program);
-        if program == "node" {
-            command.arg(repo_root().join("bin").join("dfo-dps.js"));
-        }
-        command
-            .args(args)
-            .current_dir(&root)
-            .env("DAGGER_USER_DATA", &root)
-            .output()
-            .expect("the CLI runs")
-    };
     for args in [
         // The JS `--out` default is the report name, which imprints renames to `imprints.html`.
         &["imprints"][..],
         &["imprints", "--out", "dfo-dps-report.html"][..],
     ] {
-        let want = run("node", args);
+        let want = js_root(args, &root);
         assert_eq!(
             want.status.code(),
             Some(0),
@@ -261,7 +205,7 @@ fn imprints_default_output_name_matches_the_js() {
             String::from_utf8_lossy(&want.stderr)
         );
         let want_page = take_page(&root.join("imprints.html"));
-        let got = run(env!("CARGO_BIN_EXE_dfo-cli"), args);
+        let got = rust_root(args, &root);
         assert_eq!(
             got.status.code(),
             Some(0),

@@ -13,13 +13,15 @@
 //!
 //! A missing `node` panics rather than skips, because a skipped differential proves nothing.
 
+mod common;
+
+use common::{js, temp_root};
+
 #[path = "../src/spell.rs"]
 mod spell;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use dfo_core::analyze::{gate_target, reference_foe};
 use dfo_core::maxprofile::Profiles as MaxProfiles;
@@ -28,12 +30,6 @@ use dfo_core::theory::theory_character;
 use dfo_core::value::Value::{self, Arr, Bool, Num, Obj, Str};
 use std::cmp::Ordering as CmpOrdering;
 
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-}
-
 fn obj<const N: usize>(pairs: [(&str, Value); N]) -> Value {
     let mut out = Obj(vec![]);
     for (key, value) in pairs {
@@ -41,29 +37,6 @@ fn obj<const N: usize>(pairs: [(&str, Value); N]) -> Value {
     }
     out
 }
-
-fn temp_root(label: &str) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let n = NEXT.fetch_add(1, Ordering::Relaxed);
-    let root =
-        std::env::temp_dir().join(format!("dfo-cli-spell-{label}-{}-{n}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).expect("temp fixture root");
-    root
-}
-
-fn js(args: &[&str], root: &Path) -> Output {
-    Command::new("node")
-        .env("LC_ALL", "en_US.UTF-8")
-        .env("LANG", "en_US.UTF-8")
-        .arg(repo_root().join("bin").join("dfo-dps.js"))
-        .args(args)
-        .current_dir(repo_root())
-        .env("DAGGER_USER_DATA", root)
-        .output()
-        .expect("the JS CLI runs (this repository's Node project)")
-}
-
 /// One effect as the record layout stores it: `(type, subType, durationBase, durationMod, durationPerLevel,
 /// magnitudeBaseLow, magnitudeBaseHigh, magnitudeLevelBase, magnitudeLevelHigh, magnitudePerLevel)`.
 type SpellEffect = (i8, i8, u8, u8, u8, u8, u8, u8, u8, u8);

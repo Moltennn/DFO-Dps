@@ -12,12 +12,14 @@
 //!
 //! A missing `node` panics rather than skips, because a skipped differential proves nothing.
 
+mod common;
+
+use common::{js_root as js, temp_root};
+
 #[path = "../src/enchant.rs"]
 mod enchant;
 
 use std::fs;
-use std::path::PathBuf;
-use std::process::{Command, Output};
 
 use dfo_core::analyze::{analyze, boss_target, gate_target, reference_foe};
 use dfo_core::enchants::strike_enchantments;
@@ -26,12 +28,6 @@ use dfo_core::spells::Spellbook;
 use dfo_core::theory::theory_character;
 use dfo_core::value::Value::{self, Arr, Bool, Null, Num, Obj, Str};
 use serde_json::{Map, Value as JsonValue};
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-}
 
 fn obj<const N: usize>(pairs: [(&str, Value); N]) -> Value {
     let mut out = Obj(vec![]);
@@ -116,25 +112,6 @@ fn card(ch: &Value, target: &Value, potency: f64) -> (Value, Value) {
     let analyzed = analyze(ch, &sc, &book).to_value();
     (strike, analyzed)
 }
-
-fn js(args: &[&str], root: &std::path::Path) -> Output {
-    Command::new("node")
-        .arg(repo_root().join("bin").join("dfo-dps.js"))
-        .args(args)
-        .current_dir(root)
-        .env("DAGGER_USER_DATA", root)
-        .output()
-        .expect("the JS CLI runs (this repository's Node project)")
-}
-
-/// A fresh temp root with no `Saves` folder: `--theory` reads none, and nothing is written.
-fn temp_root(label: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("dfo-cli-enchant-{label}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).expect("temp fixture root");
-    root
-}
-
 fn same(args: &[&str], label: &str) {
     let root = temp_root(label);
     let want = js(args, &root);

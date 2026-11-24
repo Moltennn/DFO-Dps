@@ -10,26 +10,19 @@
 //!
 //! A missing `node` panics rather than skips, because a skipped differential proves nothing.
 
+mod common;
+
+use common::js_batch;
+
 #[path = "../src/firmament.rs"]
 mod firmament;
 #[path = "../src/graph.rs"]
 #[allow(dead_code)]
 mod graph;
 
-use std::io::Write;
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
-
 use dfo_core::firmament::{build_by_id, builds, plan_build, plan_from_tree};
 use dfo_core::value::Value::{self, Num, Obj, Str};
 use serde_json::{json, Map, Value as JsonValue};
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-}
-
 const ORACLE: &str = r#"
 import { readFileSync } from 'node:fs';
 import { firmamentSvg, firmamentSection } from './src/firmament.js';
@@ -143,24 +136,8 @@ fn cases() -> Vec<Case> {
 }
 
 fn oracle(calls: &[JsonValue]) -> Vec<JsonValue> {
-    let mut child = Command::new("node")
-        .arg("--input-type=module")
-        .arg("-e")
-        .arg(ORACLE)
-        .current_dir(repo_root())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("node runs (this repository's Node project)");
     let input = serde_json::to_vec(calls).expect("the call list serialises");
-    child
-        .stdin
-        .as_mut()
-        .expect("piped stdin")
-        .write_all(&input)
-        .expect("the call list is written");
-    let out = child.wait_with_output().expect("node finishes");
+    let out = js_batch(&["--input-type=module", "-e", ORACLE], &input);
     assert_eq!(
         out.status.code(),
         Some(0),

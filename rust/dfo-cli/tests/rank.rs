@@ -8,43 +8,9 @@
 //! differential proves nothing). Every case here passes `--theory`, so no save is read; `tests/saves.rs` covers the
 //! save-backed card over temp fixtures.
 
-use std::path::PathBuf;
-use std::process::{Command, Output};
+mod common;
 
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-}
-
-fn js(args: &[&str]) -> Output {
-    Command::new("node")
-        .env("LC_ALL", "en_US.UTF-8")
-        .env("LANG", "en_US.UTF-8")
-        .arg("bin/dfo-dps.js")
-        .args(args)
-        .current_dir(repo_root())
-        .output()
-        .expect("the JS CLI runs (this repository's Node project)")
-}
-
-fn rust(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_dfo-cli"))
-        .args(args)
-        .current_dir(repo_root())
-        .output()
-        .expect("the Rust CLI binary runs")
-}
-
-/// The Rust binary with a specific user-data root, for a case that must not read the player's saves.
-fn rust_env(args: &[&str], root: &std::path::Path) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_dfo-cli"))
-        .args(args)
-        .current_dir(repo_root())
-        .env("DAGGER_USER_DATA", root)
-        .output()
-        .expect("the Rust CLI binary runs")
-}
+use common::{js_pinned as js, rust as rust_env, rust_pinned as rust};
 
 fn same(args: &[&str]) {
     let want = js(args);

@@ -8,28 +8,21 @@
 //!
 //! A missing `node` panics rather than skips, because a skipped differential proves nothing.
 
+mod common;
+
+use common::js_batch;
+
 #[path = "../src/graph.rs"]
 #[allow(dead_code)]
 mod graph;
 #[path = "../src/report.rs"]
 mod report;
 
-use std::io::Write;
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
-
 use dfo_core::analyze::{boss_target, gate_target};
 use dfo_core::spells::Spellbook;
 use dfo_core::theory::{theory_character, theory_fists};
 use dfo_core::value::Value::{self, Arr, Num, Str};
 use serde_json::{json, Value as JsonValue};
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-}
-
 const ORACLE: &str = r#"
 import { readFileSync } from 'node:fs';
 import { buildReport } from './src/report.js';
@@ -217,24 +210,8 @@ fn oracle() -> Vec<String> {
             })
         })
         .collect();
-    let mut child = Command::new("node")
-        .arg("--input-type=module")
-        .arg("-e")
-        .arg(ORACLE)
-        .current_dir(repo_root())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("node runs (this repository's Node project)");
     let input = serde_json::to_vec(&calls).expect("the call list serialises");
-    child
-        .stdin
-        .as_mut()
-        .expect("piped stdin")
-        .write_all(&input)
-        .expect("the call list is written");
-    let out = child.wait_with_output().expect("node finishes");
+    let out = js_batch(&["--input-type=module", "-e", ORACLE], &input);
     assert_eq!(
         out.status.code(),
         Some(0),

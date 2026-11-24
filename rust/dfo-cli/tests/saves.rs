@@ -7,28 +7,13 @@
 //! Usage errors compare the exit code and require stderr where the JS's own text is a parser's, not this port's. A
 //! skipped differential proves nothing, so a missing `node` panics.
 
+mod common;
+
+use common::{js, rust, temp_root};
+
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::Path;
 use std::time::{Duration, SystemTime};
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-}
-
-/// A fresh temp root; the caller's fixture lives under `<root>/Saves`.
-fn temp_root(label: &str) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let n = NEXT.fetch_add(1, Ordering::Relaxed);
-    let root =
-        std::env::temp_dir().join(format!("dfo-cli-saves-{label}-{}-{n}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(root.join("Saves")).expect("temp fixture root");
-    root
-}
 
 fn write(path: &Path, text: &str) {
     fs::write(path, text).expect("fixture file");
@@ -109,30 +94,6 @@ fn live_save() -> String {
 "masterSkills":true,"masteredSkills":[29,34],"martialPath":"berserker","legendaries":[]}}"#
     )
 }
-
-fn cli(program: &str, args: &[&str], root: &Path) -> Output {
-    Command::new(program)
-        .args(args)
-        .current_dir(repo_root())
-        .env("DAGGER_USER_DATA", root)
-        .output()
-        .expect("the CLI runs")
-}
-
-fn js(args: &[&str], root: &Path) -> Output {
-    Command::new("node")
-        .arg("bin/dfo-dps.js")
-        .args(args)
-        .current_dir(repo_root())
-        .env("DAGGER_USER_DATA", root)
-        .output()
-        .expect("the JS CLI runs (this repository's Node project)")
-}
-
-fn rust(args: &[&str], root: &Path) -> Output {
-    cli(env!("CARGO_BIN_EXE_dfo-cli"), args, root)
-}
-
 fn same(args: &[&str], root: &Path) {
     let want = js(args, root);
     let got = rust(args, root);
