@@ -345,3 +345,64 @@ Mutation gate (seed 1, count 400): `forge_gear.rs` 33 candidates, **33 killed, 0
 the shared whole-item hand law, the worn-list table and `leavers_for`) has 241 of 300 killed; every new-code mutant is
 killed, and each of the 47 survivors sits on a line whose text is byte-identical in the pre-change file (verified by
 matching each survivor's line against `git show HEAD:rust/dfo-core/src/gear.rs`), so none is new code.
+
+## Unverified inputs and waivers
+
+Each item below is a value a GUI may show that no runnable game code in this repository confirms. The mechanics are
+described in sections [2](#2-preview-a-refund), [6](#6-a-saved-allocation) and
+[7](#7-the-sidebars-numbers-maxima-and-the-armour-by-hit-location); this list says what is not checked and what to show.
+
+**1. Paperdoll armour rating, `(100 - av) / 5`.** Returns: the `armor_display` figure per body part (`sidebar.rs:588-596`).
+Unverified: the term exists only as a C# cite in a vendored comment, `vendor/upstream/a3eb1605/src/systems/equip.js:422-423`,
+and the oracle lists it as not drivable (`rust/dfo-core/tests/sidebar_oracle.mjs:19`). Only the enchantment-and-fold term
+(`entityArmorDisplayMod`, `entityMods.js:200-204`) is proven. GUI: show the proven part, or label the rating "unverified";
+do not present it as the game's paperdoll figure. Closes with: a paperdoll reading from the running game on a fixed build,
+added to `sidebar_oracle.mjs`.
+
+**2. `renownBonus` (Renown's Health and Spell Points).** Returns: the caller's `Layer.renown_hp` / `renown_mp`
+(`sidebar.rs:229-234`). Unverified: `renownBonus` is an inert stub (`vendor/upstream/a3eb1605/src/net/renown.js:51`),
+called at `systems/renownLayer.js:77`. The per-level literals are present (`renown.js:30,33`: 3 Health, 2 Spell Points),
+but the function that turns a level into the bonus is not. `Layer` reads an unstated Renown term as 0
+(`sidebar.rs:220-221`). GUI: pass Renown explicitly, and mark the maximum "incomplete" when it is not passed; never
+show a zero as the game's value. Closes with: the un-stubbed `renownBonus` (a user-run vendor re-pin), or in-game
+readings at two Renown levels.
+
+**3. `preview_respec` and the 10,000 gold.** Returns: `RespecPreview` with `gold: 10000` and no silver (`forge.rs:291-306`;
+`firmament_law.rs:460`). Unverified: there is no JS function. `vendor/firmament/firmamentLaw.js:477-480` holds the
+record `FIRM_RESPEC_GOLD = 10_000` and prose, and says the gold is paid by the account service (`:478-479`, not vendored).
+The vector generator uses the same reading (`tools/rust-forge-vectors.mjs:74-75`), so parity pins the shape and the
+constant, not an independent result. `Budget` has no gold purse, so the GUI cannot check affordability. GUI: show
+"Respec: 10,000 gold, the whole sky back" as the rule, with no balance check. Closes with: `respecFirmament` in
+`server-account/src/firmament.js` (not vendored), or a captured in-game respec.
+
+**4. Firmament allocations in a real save.** Returns: `Absent`, `EmptyTree` or `Tree` from a field named `firmament`
+(`forge.rs:473-476`). Unverified: the name and shape are a guess. `src/save.js` has no reference to the Firmament, and
+neither does `vendor/upstream/a3eb1605/src/systems/save/`. The tree is the account service's (`firmamentLive.js:7-8`), and
+`net/firmament/firmamentBook.js`, which hands it in, is not vendored. GUI: show an allocation only when the GUI's own
+source supplies one; for `Absent`, show "unknown", never "no stars". Closes with: the wire field from `firmamentBook.js`
+(a user-run re-pin), or a real save fixture that carries an allocation.
+
+**5. The sidebar's Firmament arithmetic.** Returns: `firmament_layer`'s Health and Spell Point shares, from totals the
+caller passes (`sidebar.rs:63-67`). Unverified: the tree's totals. The stub is `net/firmament/firmamentTree.js` (the star
+table, `vendor/upstream/a3eb1605/src/net/firmament/firmamentTree.js:1-10`), not `firmamentLive.js`, which is real code.
+`firmamentLive.js` takes the tree from the host (`:35-36`), starts from `EMPTY_TREE` (`:17`), and reports no stats
+until one is set (`:83`). Section 7 calls both "inert stubs", which is wrong for `firmamentLive.js`. Section 7's block also
+differs from the source: `firmamentPowers.js:258-270` takes Health from `rawMaxHealth` (or `maxHealth - renownHp`) and
+Spell Points from `maxMagicka - renownMp`, not from `maxHealth` and `maxMagicka`. `sidebar.rs:63-65` matches the source.
+GUI: pass totals only for a tree the account service confirmed; show absent totals as unknown. Closes with: the account
+service's totals for a known tree.
+
+**6. Conditional Spell Points after a gear edit.** Returns: `after_gear` keeps the saved maximum when the ExtraSpellPts
+rows are unchanged, and makes it `Unknown` when they change (`sidebar.rs:340-358`). Unverified: the save records no
+active rows, so the saved base is trusted to reflect the current condition (`sidebar.rs:340-342`; the condition is
+`enchantments.js:604-619`). GUI: after a changing edit show Spell
+Points as "unknown until re-read"; never the pre-edit number. Closes with: the condition's inputs in the save, or a
+game reading of the maximum before and after an edit on a known date.
+
+**7. The 0.1.14631 live game.** Returns: the 14512 weapon law, `js_min(320, gear * 0.44)` (`dfo-core/src/model_blow.rs:821`),
+matching the vendored `weaponMastery.js:87` and `powerBlows.js:48`. Unverified: the 14631 law is not in this checkout.
+The drift is recorded only in `rust/README.md:79-85`. The branch `model-14631` exists locally, not merged; its
+`src/cli.js:1971,1998` says the gear is a flat add with no percent, and `src/model.js:651` says the same. I did not
+confirm the `[floor(g/10), floor(g/5)]` range. GUI: label every weapon-gear figure "build 14512 (vendored)"; the Forge
+has no 14631 option. Closes with: the branch's `CHANGELOG-MECHANICS.md` GEAR-14631 entry and `test/build14631.test.js`
+read against the range, then a user-run re-pin before any port.
