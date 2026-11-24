@@ -61,7 +61,8 @@ fn relay_claim_matches_js_vectors() {
                 let level = c.f64();
                 let share = c.f64();
                 let fresh = c.bool();
-                let shield = c.f64();
+                // `-` is an absent shieldUntil: the constructor's default stands (Options::new, relayClaim.js:59).
+                let shield = c.opt();
                 let l = law(&mut c);
                 let n = c.u64();
                 let claims: Vec<(f64, f64)> = (0..n).map(|_| (c.f64(), c.f64())).collect();
@@ -69,7 +70,9 @@ fn relay_claim_matches_js_vectors() {
                 let mut o = Options::new(share);
                 o.level = level;
                 o.fresh = fresh;
-                o.shield_until = shield;
+                if let Some(s) = shield {
+                    o.shield_until = s;
+                }
                 o.law = l;
                 let mut e = RelayClaimEngine::new(o).unwrap_or_else(|x| c.fail(&x.to_string()));
                 for (i, (t, d)) in claims.iter().enumerate() {

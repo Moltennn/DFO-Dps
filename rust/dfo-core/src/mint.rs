@@ -53,6 +53,8 @@ fn whole_level(v: Option<f64>) -> Result<Option<f64>, Refused> {
 /// target.js:589-592): `min(100, level x 5 + 30)` for each.
 pub fn skills_at_level(level: f64) -> Vec<(i64, f64)> {
     let s = level * 5.0 + 30.0;
+    // mutation: equivalent - the level is a whole number (whole_level :44-50, the integer check at :121, and enemy_target's asked and handed levels at :242-243), so s = 5 x level + 30 is a multiple of 5 and never lies in (100, 101]; a `101` condition changes no value (enemyEntity.js:111-114 min(100, level x 5 + 30)).
+    // mutation: equivalent - at s == 100 both arms return 100.0 (the then-arm is 100.0, the else-arm is s itself), so `>=` changes no value (enemyEntity.js:111-114).
     let s = if s > 100.0 { 100.0 } else { s };
     (0..35).map(|id| (id, s)).collect()
 }
@@ -101,6 +103,7 @@ fn minted_body(
 ) -> Result<Body, Refused> {
     let kind = enemy_entity_type(mobile_type);
     let is_class = kind == Some(EntityType::Class);
+    // mutation: equivalent - mint_row (:31-40) returns None for every integer id that is neither a monster (0..=42) nor a class (128..=146): MINT_ROWS (generated/mint_rows.rs, from target.js mintRow over ids -10..300 x boots 0..7) has no such key (probe: 0 rows), so the `?` at :110 refuses under either operator.
     if !is_integer(mobile_type) || (!is_class && kind != Some(EntityType::Monster)) {
         return Err(Refused);
     }
@@ -114,6 +117,7 @@ fn minted_body(
         lv
     } else {
         let lv = row.level.ok_or(Refused)?;
+        // mutation: equivalent - every monster row with a level in MINT_ROWS (generated/mint_rows.rs) is a whole number >= 1, which target.js:686-688 also requires; the only monster row without a level (mobile 39, probe over target.js mintRow, boots 0..7) is refused at :119 first, so both operands are false here under either operator.
         if !is_integer(lv) || lv < 1.0 {
             return Err(Refused);
         }
@@ -122,6 +126,7 @@ fn minted_body(
     let armor = if is_class {
         100.0
     } else {
+        // mutation: equivalent - the default is unreachable: the only monster row with no armor_value is mobile 39 (MINT_ROWS, probe of target.js mintRow over boots 0..7), which has no level and is refused at :119 before this line; target.js:691 `?? 0` is the same default.
         row.armor_value.unwrap_or(0.0) * 5.0
     };
     let career_index = enemy_career_index(mobile_type);
@@ -245,6 +250,7 @@ pub fn enemy_target(
     let is_class = enemy_entity_type(mobile_type) == Some(EntityType::Class);
     let body = minted_body(
         mobile_type,
+        // mutation: equivalent - minted_body reads player_level only inside `if is_class` (:111-116), and its is_class (:105) equals this one (:250): both are enemy_entity_type(mobile_type) == Class, so a monster never reads the value (target.js:678-679 reads playerLevel for a class only).
         if is_class { given } else { Some(1.0) },
         o.career.as_ref(),
         rolls,
@@ -354,6 +360,7 @@ pub fn target_group_of(
     if is_class || affinity == Some("Human") {
         return Some("humanoid");
     }
+    // mutation: equivalent - enemy_entity_group(-1) == enemy_entity_group(-2) == ENEMY_GROUPS.none (-1): ENEMY_GROUP_BY_CAREER (generated/enemy_groups.rs) has keys 0..=42 only, so both fall back to none (vendored.rs:121-126; JS enemyGroups.js:69-75 returns -1 for both, probed), and a none group maps to None here.
     let g = enemy_entity_group(career_index.unwrap_or(-1.0));
     let e = ENEMY_GROUPS;
     if g == e.undead {

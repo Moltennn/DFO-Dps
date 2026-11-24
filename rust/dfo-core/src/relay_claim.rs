@@ -451,6 +451,8 @@ impl RelayClaimEngine {
             reference: law.reference,
             share,
             hp: self.hp,
+            // mutation: equivalent - the else arm is unreachable: new (:221) refuses any share that is not a positive finite number before it is stored (:245), and relayClaim.js:44 throws on the same input, so share > 0 on every path (JS remainingShare relayClaim.js:227 reads `initialShare > 0` the same way).
+            // mutation: equivalent - the guard can differ from `>=` only at share == 0, which new refuses (:221; relayClaim.js:44), so `>=` changes no value.
             remaining_share: if share > 0.0 { self.hp / share } else { 0.0 },
             killed: self.killed,
             killed_at: self.killed_at,

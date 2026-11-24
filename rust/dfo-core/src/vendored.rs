@@ -51,6 +51,10 @@ pub fn custom_item_class(template: f64, rri: Option<&RriSwitches>) -> Option<Cus
     let rri = rri?;
     let (_, v) = RRI_CLASSES.iter().find(|(k, _)| *k as f64 == template)?;
     let group = v.group?;
+    // mutation: NOT proven equivalent - OPEN COVERAGE GAP (AUDIT-1): `==` -> `!=` is observable for templates 513/514
+    // only when `newWeapons != newArmor`; no vector covers RRI classes 513..=526 and the shipped switches are both
+    // true (`RRI_ENABLED_DEFAULTS`), so it survives. Close it with a mixed-switch RRI vector family if those
+    // switches ever matter (scope change to the module doc above).
     let on = if group == "Weapons" {
         rri.module(rri.new_weapons)
     } else {
@@ -159,6 +163,7 @@ fn plate_armor_value(material: f64) -> f64 {
     PLATE_ARMOR_VALUES
         .get(metal as usize)
         .copied()
+        // mutation: equivalent - the default is unreachable: plate_armor_value returns at :156 unless material is an integer in 512..=521 (ARMOR_MATERIAL.iron..daedric, generated/armor_materials.rs:51), so metal is an integer in 0..=9, and PLATE_ARMOR_VALUES (generated/armor_materials.rs:54) has exactly those ten entries, so get() is always Some (armorMaterials.js:41-58 plateMetal).
         .unwrap_or(0.0)
 }
 
@@ -170,6 +175,7 @@ pub fn item_armor_value(item: Option<&Item>) -> f64 {
     let armor = item.is_some_and(|i| i.is_armor);
     let template = item.and_then(|i| i.template_index);
     if armor && is_shield_template(template) {
+        // mutation: equivalent - the default is unreachable: the guard above is is_shield_template(template), which is shield_value(template).is_some() (:135-137), so this lookup is always Some (armorMaterials.js:114-123 answers a shield its own value).
         return shield_value(template).unwrap_or(0.0);
     }
     let material = item
@@ -346,12 +352,15 @@ pub fn enemy_armor_values_with(
     }
     if is_class {
         for v in &mut av {
+            // mutation: equivalent - at v == 60.0 the arm assigns 60.0 to a value already equal to it, so `>=` changes no element (enemyEquipment.js:318-323, a class clamps to 60).
+            // mutation: equivalent - every element is 100 minus 5 x an integer (5 x material_armor_value's integers 3, 6, 7..21 at :346, or 5 x SHIELD_VALUE 1..4, generated/enemy_equipment.rs:47), so it is a multiple of 5 and never lies in (60, 61]; the clamp at 60 (enemyEquipment.js:318-323) is then the same for `61`.
             if *v > 60.0 {
                 *v = 60.0;
             }
         }
     } else {
         for v in &mut av {
+            // mutation: equivalent - at v == armor the arm assigns armor to a value already equal to it, so `>=` changes no element (enemyEquipment.js:318-323, a monster clamps to its own armour).
             if *v > armor {
                 *v = armor;
             }
@@ -363,11 +372,13 @@ pub fn enemy_armor_values_with(
 /// `SHIELD_VALUE[piece] ?? 0` (enemyEquipment.js:83).
 fn enemy_shield_value(piece: Option<f64>) -> f64 {
     let Some(p) = piece else {
+        // mutation: equivalent - the bonus is read only by the loop over enemy_shield_parts(a.piece) (:335-336), and enemy_shield_parts(None) is empty (:382-388), so the bonus of a None piece is never used (enemyEquipment.js:83-84, SHIELD_VALUE[piece] ?? 0 with SHIELD_PARTS[piece] ?? []).
         return 0.0;
     };
     ENEMY_SHIELD_VALUE
         .iter()
         .find(|(k, _)| *k as f64 == p)
+        // mutation: equivalent - SHIELD_PARTS (generated/enemy_equipment.rs:50) has the same key set as SHIELD_VALUE (:47), {109, 110, 111, 112}, so for a piece with no SHIELD_VALUE entry enemy_shield_parts is empty (:382-388) and the default bonus is never used (enemyEquipment.js:83-89).
         .map_or(0.0, |(_, v)| *v)
 }
 

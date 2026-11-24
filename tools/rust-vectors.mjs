@@ -780,7 +780,7 @@ const SUMMARY_KEYS = [['level', 'f'], ['ref', 'o'], ['share', 'f'], ['hp', 'f'],
 const RTOK = { ...TOK, s: (v) => String(v) };
 
 function genRelay() {
-  const out = new Out('relay_claim', 'kinds: relay_ctor level share law(0 | 1 depth rate cap hitHz ref(opt)) => ok|err | relay level share fresh shieldUntil law(0 | 1 depth rate cap hitHz ref(opt)) nclaims (t damage)* => per-claim (E | R reason t claim accepted refused tokenSpent want capped got clipped capClip bucketClip healthClip bucketBefore bucketRefilled bucketAfter tokensBefore tokensRefilled tokensAfter hpAfter clippedAfter dealtAfter killed dead)* then the summary fields in SUMMARY order (see tools/rust-vectors.mjs SUMMARY_KEYS)');
+  const out = new Out('relay_claim', 'kinds: relay_ctor level share law(0 | 1 depth rate cap hitHz ref(opt)) => ok|err | relay level share fresh shieldUntil(- = the default 0) law(0 | 1 depth rate cap hitHz ref(opt)) nclaims (t damage)* => per-claim (E | R reason t claim accepted refused tokenSpent want capped got clipped capClip bucketClip healthClip bucketBefore bucketRefilled bucketAfter tokensBefore tokensRefilled tokensAfter hpAfter clippedAfter dealtAfter killed dead)* then the summary fields in SUMMARY order (see tools/rust-vectors.mjs SUMMARY_KEYS)');
   const R = makeLcg(0x5005);
 
   const lawTokens = (law) => (law ? ['1', F(law.depth), F(law.rate), F(law.cap), F(law.hitHz), O(law.ref)] : ['0']);
@@ -809,7 +809,7 @@ function genRelay() {
     }
     const s = eng.summary();
     toks.push(...SUMMARY_KEYS.map(([k, ty]) => RTOK[ty](s[k])));
-    out.add('relay', F(level), F(share), B(fresh), F(shieldUntil), ...lawTokens(law), I(claims.length), ...claims.flatMap(([t, d]) => [F(t), F(d)]), '=>', ...toks);
+    out.add('relay', F(level), F(share), B(fresh), O(shieldUntil), ...lawTokens(law), I(claims.length), ...claims.flatMap(([t, d]) => [F(t), F(d)]), '=>', ...toks);
   };
 
   // hand-picked
@@ -832,6 +832,15 @@ function genRelay() {
   scenario(60, 15600, true, 0, null, Array.from({ length: 30 }, (_, i) => [i * 0.3, 1500 + i]));
   scenario(1, 1e-7, true, 0, null, [[1, 5], [2, 5]]);
   scenario(1, 50, true, 0, null, []);
+  // Boundaries, fixed inputs (no PRNG draw, so the random cases below keep their bytes). The kill is `hp <= KILL_EPS`
+  // (relayClaim.js:197). Cap 2^-21 and share 2^-21 + 1e-6 are both exact doubles, so the one claim leaves hp exactly
+  // 1e-6 (the subtraction is exact) and must kill; it lands at t = 0, where killDps is null (killedAt > 0, :263).
+  const EPS_CAP = 2 ** -21;
+  scenario(1, EPS_CAP + 1e-6, true, 0, customLaw({ depth: 1, rate: 1, cap: EPS_CAP, hitHz: 4, ref: undefined }), [[0, EPS_CAP + 1e-6]]);
+  // share 0.5 and an offer of 0.1: remainingShare is 0.8 and landedShare 1 (a `> 1` guard would read 0 for both).
+  scenario(1, 0.5, true, 0, null, [[1, 0.1]]);
+  // no shieldUntil given: the default is 0 (relayClaim.js:59), so a claim at t = 0.5 is accepted, not shielded.
+  scenario(1, 500, true, undefined, null, [[0.5, 10], [2, 10]]);
 
   // random
   for (let i = 0; i < 220; i++) {
@@ -2021,6 +2030,29 @@ async function genMaketarget() {
   for (let i = 0; i < 200; i++) {
     const id = R.chance(0.7) ? R.pick(MT_IDS) : R.int(-5, 200);
     out.add('iscl', F(id), '=>', B(isClassEnemyOf(id)));
+    bump('scalar');
+  }
+
+  // enemy (both levels given) and scalar (a negative weapon material): fixed inputs with no PRNG draw, so every family
+  // above keeps its bytes. enemyTarget refuses only a `level` and a `playerLevel` that disagree (target.js:772); an
+  // equal pair builds. materialRequirementMultiplier reads Number(weapon.material) with no sign check (pcaao.js:1640-1700).
+  for (const code of MT_CODES_ALL) {
+    for (const id of MT_IDS) {
+      for (const [pl, lv] of [[9, 9], [9, 21], [37, 37], [21, 14]]) {
+        let result = null;
+        try {
+          result = enemyTarget(id, { level: lv, playerLevel: pl, exactLevel: true, boot: bootOfCode(code) });
+        } catch (e) {
+          result = refused(e);
+        }
+        out.add('enemy', F(id), I(code), O(pl), O(lv), '-', '-', '-', '-', B(true), '-', '=>', result ? canonTarget(result) : '!');
+        bump('enemy');
+      }
+    }
+  }
+  for (const [min, wmat, soft] of [[0, -1, true], [0, -1, false], [0, -2.5, true]]) {
+    const r = materialRequirementMultiplier({ minMetalToHit: min }, { material: wmat }, { soft });
+    out.add('mrm', O(min), 'w', O(wmat), B(soft), '=>', F(r));
     bump('scalar');
   }
 
