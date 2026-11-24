@@ -12,9 +12,8 @@
 //! LIMITS (deliberate, not parity claims):
 //!   - a reference-foe target (`--target tough|soft|human`) crashes the JS card on `r.health.toLocaleString()`; this CLI
 //!     refuses it with exit 2 and one message instead of reproducing a crash, so no case compares that shape.
-//!   - `--gear-lines`/`--line-points` are refused by name by this CLI's flag table (the JS only warns that they are
-//!     obsolete), so no case compares the stderr note.
-//!   - the JS writes its `>38% damage` warning to stderr; a stdout-only comparison does not pin it.
+//!   - the JS writes its `>38% damage` warning to stderr; the output-only cases do not pin it (the obsolete
+//!     `--gear-lines`/`--line-points` note is compared, stderr included, by its own test).
 //!   - `weapons`/`skills` (the same page family) remain unported and are not touched here.
 //!
 //! A missing `node` panics rather than skips, because a skipped differential proves nothing.
@@ -186,6 +185,51 @@ fn the_gate_spelling_and_a_preset_remap_match_the_js() {
     let root = temp_root("remap");
     same(&["theory", "--target", "ARMOURED"], &root);
     same(&["theory", "--target", "gate", "--players", "3"], &root);
+    fs::remove_dir_all(&root).expect("cleanup");
+}
+
+#[test]
+fn the_obsolete_gear_flags_print_the_js_note() {
+    let root = temp_root("obsolete");
+    for args in [
+        &["theory", "--gear-lines", "5"][..],
+        &["theory", "--line-points", "5"][..],
+        &["theory", "--gear-lines", "5", "--line-points", "5"][..],
+    ] {
+        let want = js(args, &root);
+        let got = rust(args, &root);
+        assert_eq!(
+            want.status.code(),
+            Some(0),
+            "js {args:?}: {}",
+            String::from_utf8_lossy(&want.stderr)
+        );
+        assert_eq!(
+            got.status.code(),
+            want.status.code(),
+            "rust {args:?}: {}",
+            String::from_utf8_lossy(&got.stderr)
+        );
+        assert_eq!(got.stdout, want.stdout, "stdout differs for {args:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&got.stderr),
+            String::from_utf8_lossy(&want.stderr),
+            "stderr differs for {args:?}"
+        );
+        assert!(
+            String::from_utf8_lossy(&got.stderr)
+                .contains("--gear-lines / --line-points are obsolete"),
+            "the JS note is printed for {args:?}"
+        );
+    }
+    // Every other command keeps the refusal by name (the JS accepts and ignores the pair there).
+    let refused = rust(&["build", "--gear-lines", "5"], &root);
+    assert_eq!(refused.status.code(), Some(2));
+    assert!(refused.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8_lossy(&refused.stderr),
+        "--gear-lines is not read by build; only theory prints the obsolete note\n"
+    );
     fs::remove_dir_all(&root).expect("cleanup");
 }
 

@@ -57,6 +57,9 @@ bullets below and in the per-command notes.
   `enchant-plan`/`gear-plan`, `spells`, `weapons`/`skills`, `loadout`/`real-dps`) uses `O_CREAT|O_EXCL`: an existing file
   is refused with exit 2 and left untouched. The JS `writeFileSync` truncates it.
 - **Extra positionals and unread flags are refused by name (exit 2).** The JS ignores them.
+- **An invalid `--core`, `--target`, `--star-stat` or `--star-skill` is refused globally (exit 2),** even by a command
+  that never reads it (`saves`, `doctor`); the JS validates them inside the branch that prices the scenario, so it exits
+  0 there. The refusal is the same message the JS prints where it does validate; only error vs success differs.
 - **`--data` is read only by `probe`, `spell` and `spells`.** Any other command refuses it by name; the JS ignores it there.
 - **No Firmament disk cache.** The JS writes `.cache/firmament-plans.json` and prints `Firmament plans (N cached, M
   computed)`. This CLI prints the bare `Firmament plans` line; `--refresh` changes nothing.
@@ -303,12 +306,14 @@ Figures as reported at the 23 Nov audit. The docs edit that adds this section ra
   skill/gear curves, the three Firmament tables, the legal gear frontier, the long-blade table and the result card,
   text or `--json`, all rendered by `src/theory.rs` (pure data in and strings out) from `dfo_core::theory`'s characters
   and the shared `analyze`/`Profiles`/`THEORY_CAPS`. The command always reads the theory character (the JS branch sets
-  `values.theory = true` for `theory`) and prints the branch's `>38% damage` warning on stderr. Two documented
-  differences, both refusals rather than invented parity: a reference-foe target (`--target tough|soft|human`) crashes
-  the JS card on `r.health.toLocaleString()`, so this CLI exits 2 with one message before printing any card, and
-  `--gear-lines`/`--line-points` (obsolete in the JS, which only warns) are refused by the flag table.
+  `values.theory = true` for `theory`) and prints the branch's `>38% damage` warning on stderr. One documented
+  difference, a refusal rather than invented parity: a reference-foe target (`--target tough|soft|human`) crashes
+  the JS card on `r.health.toLocaleString()`, so this CLI exits 2 with one message before printing any card.
+  `--gear-lines`/`--line-points` are accepted (the JS prints its obsolete note on stderr and carries on; this CLI does
+  the same for `theory` and refuses the pair by name elsewhere).
   `dfo-cli/tests/cli_theory.rs` pins the whole command byte for byte against the JS CLI (default, `--json`, a boss
-  target, the Firmament preset, explicit gear and damage, the `ARMOURED` spelling and the gate remap); `tests/theory.rs`
+  target, the Firmament preset, explicit gear and damage, the `ARMOURED` spelling, the gate remap and the obsolete
+  pair's stdout/stderr/exit 0); `tests/theory.rs`
   pins the stage overrides, the generated cap order and the reference-foe refusal without `node`.
   A missing `node` fails the tests rather than skipping them.
 - **The `weapons`/`skills` ceiling page.** `dfo-cli weapons [--categories] [--firmament] [--vampire] [--race <name>]
@@ -675,7 +680,7 @@ share identical inputs and expected results by reference; the generated fixture 
 A Cargo workspace with one library crate, `dfo-core`: edition 2021, **no dependencies** (std only).
 It is a bit-exact port of a few pure rule modules of the JS in `../src/`. The JS and the vendored
 upstream (`../vendor/upstream/a3eb1605`) stay the source of truth; this crate changes no mechanic.
-Nothing here is wired into the CLI or the reports.
+The `dfo-cli` crate in this workspace is the only consumer: it wires these modules into the CLI and the reports.
 
 ## Scope of R1
 
@@ -1678,7 +1683,7 @@ node tools/gate.mjs mutate analyze.rs --tests analyze --count 1000 --seed 1 --ti
 Mutation result (seed 1): 323 candidates, 303 killed, 7 invalid, and 13 equivalent survivors
 with local proofs in `analyze.rs`. The mutation gate reports `FAIL` for equivalent survivors too.
 
-## Plan after R2 (R2 is done; the rest is a plan)
+## Plan after R2 (historical: every step shipped, kept as the record)
 
 Order chosen by dependency; each step ships only with vectors (or the upstream goldens) that fail first.
 
@@ -1702,6 +1707,8 @@ Order chosen by dependency; each step ships only with vectors (or the upstream g
    already ported `allowance`/`relay_claim`.
 7. **R8, CLI and reports** (`src/cli.js`, `src/report.js`, `src/graph.js`): I/O last, once the
    core is proven; keep it a thin layer over the library.
+
+Steps 2-7 are done; the sections above are the record of each, and the top of this file is the current `dfo-cli` state.
 
 Open choices for the maintainer: whether the (6.8 MB) vector files are committed or regenerated in
 CI, and whether `rust/` gets its own CI job (`cargo test`, `fmt --check`, `clippy -D warnings`).

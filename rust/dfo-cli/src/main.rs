@@ -224,6 +224,8 @@ Flags:
   --race <breton|redguard|nord|darkelf|highelf|woodelf|khajiit|argonian>
   --blade <template>                  theory long blade (default 123, Dai-katana)
   --gear-lb <n> --gear-cs <n>         gear points on weapon skill / Critical Strike (default: legal max)
+  --gear-lines <n> --line-points <n>  OBSOLETE: accepted for theory, which prints the JS note; a line is not a budget,
+                                      use --gear-lb/--gear-cs in points
   --damage-pct <n> --vampire
   --firmament --star-stat <name=n,...> --star-skill <id=n,...> --star-damage <pct>
   --no-rri --no-crit-damage --no-passive --pair --dual --spam --potency <pct> --pierce <n>
@@ -372,7 +374,7 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
     }
     if command == "probe" {
         // The JS takes at most one positional (`capture.json`) and ignores the rest; this slice refuses extras, as the
-        // other ported commands do. `--out` is refused by the probe module itself (the page HTML is not ported).
+        // other ported commands do. `--out` is read (`probe.html`, or the given path) through the create-only writer.
         if let Some(extra) = parsed.positionals.get(2) {
             return Err(usage(format!("unexpected positional argument \"{extra}\"")));
         }
@@ -665,6 +667,18 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
             }
         }
     }
+    // `--gear-lines`/`--line-points` are obsolete: `src/cli.js:1814-1816` prints a note on stderr and carries on, and
+    // only the `theory` branch reads them at all (for that note alone). Accepted for `theory`; refused by name
+    // everywhere else, as the JS accepts and ignores them there.
+    if command != "theory" {
+        for name in ["gear-lines", "line-points"] {
+            if parsed.raw(name).is_some() {
+                return Err(usage(format!(
+                    "--{name} is not read by {command}; only theory prints the obsolete note"
+                )));
+            }
+        }
+    }
     if parsed.raw("out").is_some() && !listed(FILE_COMMANDS) {
         return Err(usage(format!(
             "--out is only for commands that write a file ({FILE_COMMANDS}), not \"{command}\""
@@ -875,7 +889,8 @@ impl Parsed {
     }
 }
 
-/// Every `optsSpec` name of `src/cli.js`; anything outside this is an unknown option.
+/// Every `optsSpec` name of `src/cli.js`; anything outside this is an unknown option. Each is priced by at least one
+/// command; [`check_output_flags`] refuses it by name everywhere it would be ignored, never silently.
 const ALL_FLAGS: &str = concat!(
     "save target level armor health traits core offline weapon swing passive stacks rhythm unaware first-blow ",
     "health-share self-health-share bare base-stats no-effects behind backstab players blow-x categories build stars ",
@@ -884,19 +899,6 @@ const ALL_FLAGS: &str = concat!(
     "gear-lines line-points gear-lb gear-cs vampire firmament star-stat star-skill star-damage spell list all-spells ",
     "standard potency pierce cast-speed magicka seconds mana-limit data no-rri all from to step skill gear-skill ",
     "damage-pct no-crit-damage no-passive json top out stat help",
-);
-
-/// The flags this slice prices. Every other name in `ALL_FLAGS` gets an explicit "not supported" error, never a
-/// silent default.
-const SUPPORTED: &str = concat!(
-    "theory json vampire firmament rhythm unaware first-blow behind pair dual spam no-crit-damage no-passive no-rri ",
-    "help target level armor health traits core weapon swing stacks race blade gear-lb gear-cs star-stat star-skill ",
-    "star-damage potency pierce backstab players blow-x health-share self-health-share top damage-pct base-stats ",
-    "no-effects save offline passive bare out objective trials seed max-seconds max-blows no-carry samples stat all ",
-    "data old series from to step uncapped skill gear-skill build stars refresh family sort cap-aware ",
-    "shield soul-gem group repairs regen categories ",
-    "list all-spells standard spell mana-limit seconds cast-speed magicka ",
-    "encounter all-encounters shortlist",
 );
 
 fn in_flags(list: &str, name: &str) -> bool {
@@ -948,11 +950,6 @@ fn parse(args: &[String]) -> Result<Parsed, CliError> {
         };
         if !in_flags(ALL_FLAGS, name) {
             return Err(usage(format!("Unknown option '--{name}'")));
-        }
-        if !in_flags(SUPPORTED, name) {
-            return Err(usage(format!(
-                "--{name} is not read by this CLI (JS theory only prints an obsolete note for it; use --gear-lb/--gear-cs)"
-            )));
         }
         if in_flags(BOOLEAN_FLAGS, name) {
             if inline.is_some() {
@@ -1141,6 +1138,8 @@ struct Values {
     mana_limit: bool,
     /// `--categories`: the weapons/skills page shows one winner per type per slot.
     categories: bool,
+    /// `--gear-lines`/`--line-points`: obsolete, `theory` prints the JS note on stderr (presence only).
+    obsolete_gear_note: bool,
 }
 
 fn range_text(what: &str, min: f64, max: f64, exclusive_min: bool) -> String {
@@ -1483,6 +1482,8 @@ impl Values {
             spell_query: parsed.raw("spell").map(str::to_owned),
             mana_limit: parsed.flag("mana-limit"),
             categories: parsed.flag("categories"),
+            obsolete_gear_note: parsed.raw("gear-lines").is_some()
+                || parsed.raw("line-points").is_some(),
         })
     }
 
@@ -3042,6 +3043,12 @@ fn split_stat(text: &str) -> Option<(String, f64)> {
 /// `theory [options]` (`src/cli.js:1806-2054`): the renderer is [`theory::render`]; this command resolves the theory
 /// character, its target and the base scenario exactly as the shared load does, and prints the JS `>38%` stderr warning.
 fn theory_command(values: &Values) -> Result<String, CliError> {
+    // `src/cli.js:1814-1816`: the obsolete-pair note, on stderr before the damage warning and the card.
+    if values.obsolete_gear_note {
+        eprintln!(
+            "note: --gear-lines / --line-points are obsolete; a line is not a budget. Use --gear-lb / --gear-cs in points (the legal maximum is shown below)."
+        );
+    }
     let book = saves::load_spellbook();
     let ch = character(values, &book)?;
     let target = target_of(

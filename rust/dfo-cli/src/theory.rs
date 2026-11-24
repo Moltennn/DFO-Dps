@@ -9,8 +9,8 @@
 //! clock: the caller resolves the character, the target and the base scenario.
 //!
 //! The JS branch prints two warnings to stderr before the card (the obsolete `--gear-lines`/`--line-points` note and
-//! the `>38%` damage warning). This CLI's flag table refuses the obsolete pair by name (never accepted and ignored), and
-//! the damage warning is the caller's to emit.
+//! the `>38%` damage warning). Both are the caller's to emit; the flag table accepts the obsolete pair for `theory` and
+//! refuses it elsewhere.
 //!
 //! Unported variant, explicit: the JS branch crashes (`TypeError: Cannot read properties of null (reading
 //! 'toLocaleString')`) on a reference-foe target, because a non-boss card has no `health` to print. This port refuses
