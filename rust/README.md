@@ -87,9 +87,11 @@ bullets below and in the per-command notes.
   the same way, behind `--game-build`.
 
 - **`--game-build` (the shipped-build selector).** `--game-build <14512|14631>` selects the shipped build a weapon
-  card is priced under; the default stays `14512` (the vendored cut). It is refused by name on every command whose
-  card does not go through `scenarioOf` (only `build`, `objective`, `rank`, `report`, `compare`, `scale`, `tradeoff`,
-  `theory`, `graph` and `enchant` read it), and an unknown value is exit 2. `14631` changes:
+  card or a planner's numbers are priced under; the default stays `14512` (the vendored cut). It is refused by name on
+  every command that prices neither a card nor a plan (`firmament`, `probe`, `spells`, `spell`, `saves`, `doctor`);
+  the per-card commands (`build`, `objective`, `rank`, `report`, `compare`, `scale`, `tradeoff`, `theory`, `graph`,
+  `enchant`) and the planners (`imprints`, `weapons`/`skills`, `enchant-plan`/`gear-plan`, `loadout`/`real-dps`) read
+  it, and an unknown value is exit 2. `14631` changes:
   - the weapon gear law: a flat add on the roll, uniform on `[floor(s/10), floor(s/5)]`, replacing `min(320,
     gear*0.44)%`; the card enumerates every integer add, so a per-hit cap, a fight tier, a bow pull or the off hand's
     share sees the true spread (`model_blow::gear_blow_add`, `damage_model`);
@@ -97,17 +99,27 @@ bullets below and in the per-command notes.
   - the `brand` loot power: `floor(flat x elementShare(target, power.element))` into the flat accumulator;
   - the theory cap sheet's gear row and its formula-cap row (`dfo_core::theory::theory_caps`,
     `gear_mastery_points`).
+  - the legal-gear frontier's WINNER, because that frontier is a search over priced points: a flat add per weapon
+    skill point against no mastery percent moves the best split (`250/370/25%` -> `350/252/38%` on the Dai-katana).
+    The frontier cache keys on the build for this reason.
+  The public planner API takes the build additively: `Profiles::legal_gear`/`max_character`/`max_run` read
+  `opts.gameBuild`; `real_weapon_loadouts(_with)` take `game_build: &str` and `StageOpts` gained a `game_build` field
+  (`..Default::default()` is the cut); `ShortlistOpts` gained `game_build`; `enchant_plan::apply_plan_dps` and
+  `best_weapon_for_family(_with)` keep their old arities as cut wrappers, with `_at`/`_with_build` taking the build.
+  `model_blow::game_build_name`/`game_build_one` normalise a bare string.
   `14631` behaviour rests on `dist:` evidence from the shipped build, cited in `CHANGELOG-MECHANICS.md`
   (GEAR-14631 / BRAND-14631) and in `test/build14631.test.js`; the Rust vectors only prove the port matches the JS
   (`tools/rust-blow-vectors.mjs` appends the `14631` cards last, so every earlier vector byte is unchanged). A
   real-save diff against the live client is not done: parity with the JS validates the port, not the game. The
   carried-chain ratio `e/(1+e+a)`, `duelGearAdd`, the `sigilDueling()` gate, the Gilded item that carries `brand` and
   the defender sigil set are unmodelled.
-  Only a card built from a scenario that carries `gameBuild` moves. The modules that build their own fixed scenario -
-  `dfo_core::real_build` (the loadout planner stages), `dfo_core::imprints` (the imprint ranking) and
-  `dfo_core::maxprofile` (`Profiles`, `max_run`, the legal-gear and ceiling plans) - call `analyze` with no
-  `gameBuild`, so they **price the 14512 cut** whichever build a card names. The JS is the same: `src/maxprofile.js`,
-  `src/imprints.js` and `src/realBuild.js` never pass the key, and `scenarioOf` is the only reader of `--game-build`.
+  Only a card built from a scenario that carries `gameBuild` moves - which now includes the planners: `src/maxprofile.js`,
+  `src/imprints.js`, `src/enchantPlan.js` and `src/realBuild.js` (Rust `dfo_core::maxprofile`/`imprints`/`enchant_plan`/
+  `real_build`) take the key from their caller, so `imprints`, `weapons`/`skills`, `enchant-plan`/`gear-plan`,
+  `loadout`/`real-dps` are priced at the shipped build too. Two consequences worth knowing: (a) the legal-gear
+  frontier is a SEARCH over priced points, and 14631's flat add can pick a different winner (`250/370/25%` ->
+  `350/252/38%` on the Dai-katana), so the frontier cache keys on the build; (b) the historical command list grew from
+  ten to seventeen readers, and `firmament`/`probe`/`spells`/`spell`/`saves`/`doctor` still refuse the flag by name.
   A hypothetical `--gear-lb` past V8's spread limit crashes the JS with a `RangeError` (exit 1); the port raises the
   same `RangeError` (`model_blow::JsRangeError`, `MAX_ENUMERATED_BLOWS`) instead of running to an OOM, so it prices
   exactly the cards the JS prices.

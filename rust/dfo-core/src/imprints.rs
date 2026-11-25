@@ -9,7 +9,7 @@ use crate::spells::Spellbook;
 use crate::theory::{obj, s};
 use crate::value::{
     obj_table_get, parse,
-    Value::{self, Arr, Bool, Null, Num, Obj, Undefined},
+    Value::{self, Arr, Bool, Null, Num, Obj},
 };
 use std::cmp::Ordering;
 use std::sync::OnceLock;
@@ -130,10 +130,14 @@ pub fn rank_family(
     opts: &Value,
     profiles: &mut Profiles<'_>,
 ) -> Result<Value, String> {
-    let gate_opts = obj([("target", gate())]);
+    let gate_opts = obj([
+        ("target", gate()),
+        ("gameBuild", opts.get("gameBuild").clone()),
+    ]);
     let build_opts = obj([
         ("firmament", opts.get("firmament").clone()),
         ("vampire", opts.get("vampire").clone()),
+        ("gameBuild", opts.get("gameBuild").clone()),
     ]);
     let mut hosts = Vec::new();
     for t in family.get("templates").items() {
@@ -142,7 +146,7 @@ pub fn rank_family(
         }
         let ch = profiles.max_character(t, &build_opts)?;
         let cap_args = run_args(&ch, &gate_opts);
-        let raw_args = run_args(&ch, &Undefined);
+        let raw_args = run_args(&ch, &obj([("gameBuild", opts.get("gameBuild").clone())]));
         let base = analyze(&ch, &cap_args, profiles.book);
         let raw = analyze(&ch, &raw_args, profiles.book);
         hosts.push(Host {

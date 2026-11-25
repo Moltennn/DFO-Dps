@@ -536,8 +536,12 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
         )));
     }
     // `src/cli.js:899-904`: `--game-build` prices a weapon card, so only the commands that build a scenario read it.
-    const GAME_BUILD_COMMANDS: &str =
-        "build, objective, rank, report, compare, scale, tradeoff, theory, graph, enchant";
+    // The planners (`imprints`, `weapons`/`skills`, `enchant-plan`/`gear-plan`, `loadout`/`real-dps`) forge their own
+    // scenario and take it too: the 14631 gear law moves every price they print, though not the allocation or the fit.
+    const GAME_BUILD_COMMANDS: &str = concat!(
+        "build, objective, rank, report, compare, scale, tradeoff, theory, graph, enchant, ",
+        "imprints, weapons, skills, enchant-plan, gear-plan, loadout, real-dps",
+    );
     if parsed.raw("game-build").is_some() && !listed(GAME_BUILD_COMMANDS) {
         return Err(usage(format!(
             "--game-build is not read by {command} (it prices a weapon card: {GAME_BUILD_COMMANDS})"
@@ -2494,6 +2498,7 @@ fn imprints_command(values: &Values, out_flag: Option<&str>) -> Result<String, C
             ("firmament", Bool(values.firmament)),
             ("vampire", Bool(values.vampire)),
             ("sort", Str(sort.to_owned())),
+            ("gameBuild", Str(values.game_build.clone())),
         ]),
         &mut profiles,
     )
@@ -2577,6 +2582,7 @@ fn enchant_plan_command(values: &Values, out_flag: Option<&str>) -> Result<Strin
                         ("group", Str(values.group.clone())),
                         ("forceSkills", Bool(*force_skills)),
                         ("target", target.clone()),
+                        ("gameBuild", Str(values.game_build.clone())),
                     ]),
                     &mut profiles,
                 )
@@ -2609,6 +2615,7 @@ fn enchant_plan_command(values: &Values, out_flag: Option<&str>) -> Result<Strin
             ("regen", Num(regen)),
             ("forceSkills", Bool(*force_skills)),
             ("target", target.clone()),
+            ("gameBuild", Str(values.game_build.clone())),
         ]),
         &book,
     )
@@ -3209,6 +3216,7 @@ fn loadout_command(values: &Values, out_flag: Option<&str>) -> Result<String, Cl
             &["uncapped".to_owned()],
             values.vampire,
             "breach",
+            &values.game_build,
             &book,
         )
         .map_err(usage)?
@@ -3222,6 +3230,7 @@ fn loadout_command(values: &Values, out_flag: Option<&str>) -> Result<String, Cl
                 &["cap".to_owned()],
                 values.vampire,
                 id,
+                &values.game_build,
                 &book,
             )
             .map_err(usage)?;
@@ -3235,9 +3244,14 @@ fn loadout_command(values: &Values, out_flag: Option<&str>) -> Result<String, Cl
     }
     // `:1005`: `rankAll({ sort: 'uncapped' })`, the first three rows per family.
     let mut profiles = Profiles::new(&book);
-    let ranked =
-        dfo_core::imprints::rank_all(&obj([("sort", Str("uncapped".to_owned()))]), &mut profiles)
-            .map_err(usage)?;
+    let ranked = dfo_core::imprints::rank_all(
+        &obj([
+            ("sort", Str("uncapped".to_owned())),
+            ("gameBuild", Str(values.game_build.clone())),
+        ]),
+        &mut profiles,
+    )
+    .map_err(usage)?;
     let imprint_rows: Vec<Value> = ranked
         .items()
         .iter()
@@ -3332,6 +3346,7 @@ fn loadout_shortlist(
                 ("maxSeconds", Num(sampling.max_seconds)),
                 ("maxBlows", Num(sampling.max_blows)),
                 ("health", health.clone()),
+                ("gameBuild", Str(values.game_build.clone())),
             ]);
             rankings.push(
                 dfo_core::loadout_shortlist::shortlist_loadouts(
@@ -3385,6 +3400,7 @@ fn weapons_command(
         vampire: values.vampire,
         race: values.race.clone(),
         categories: values.categories,
+        game_build: values.game_build.clone(),
     };
     let rendered = weapons::render(&input, &book).map_err(usage)?;
     // `path.resolve(values.out === 'dfo-dps-report.html' ? defaultOut : values.out)`.
@@ -4075,8 +4091,13 @@ fn character(values: &Values, book: &Spellbook) -> Result<Value, CliError> {
         blade = tpl;
         material = mat;
     }
+    // The legal budget is picked at the caller's build: under 14631 the frontier winner can move (a flat add favours
+    // weapon-skill points over Critical Strike), so a 14631 card must wear the 14631 split.
     let legal = Profiles::new(book)
-        .legal_gear(&Num(blade), &Undefined)
+        .legal_gear(
+            &Num(blade),
+            &obj([("gameBuild", Str(values.game_build.clone()))]),
+        )
         .map_err(usage)?;
     let legal_field = |k: &str| legal.get(k).to_number();
     let star_stats = obj_pairs(&values.star_stats);
@@ -4579,6 +4600,7 @@ fn whatif_scenario(r: &dfo_core::analyze::Analysis, values: &Values) -> Value {
     obj([
         ("target", card.get("target").clone()),
         ("core", card.get("core").clone()),
+        ("gameBuild", Str(values.game_build.clone())),
         ("traits", card.get("traits").clone()),
         (
             "health",

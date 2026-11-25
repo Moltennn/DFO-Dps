@@ -88,8 +88,11 @@ pub(crate) fn gate() -> Value {
     gate_target(&Num(THEORY_LEVEL), &Undefined)
 }
 
-fn scenario(target: Value) -> Value {
-    obj([
+/// The scenario a max-profile card is priced under: the level-45 gate/ordinary-target identity, plus the shipped
+/// build (`--game-build`, GEAR-14631 / BRAND-14631). `game_build` is `Undefined` when the caller has no opinion, which
+/// prices as the cut.
+fn scenario(target: Value, game_build: &Value) -> Value {
+    let mut args = obj([
         ("target", target),
         ("core", s("overhaul")),
         ("rri", Bool(true)),
@@ -97,7 +100,11 @@ fn scenario(target: Value) -> Value {
         ("passiveOn", Bool(true)),
         // mutation: equivalent - all scenario readers of stacks use Blademaster's clamp to [0, 5], including both attack paths.
         ("stacks", Num(5.0)),
-    ])
+    ]);
+    if !matches!(game_build, Undefined) && !game_build.is_nullish() {
+        args.set("gameBuild", game_build.clone());
+    }
+    args
 }
 
 pub(crate) fn run_args(ch: &Value, opts: &Value) -> Value {
@@ -109,7 +116,7 @@ pub(crate) fn run_args(ch: &Value, opts: &Value) -> Value {
         opts.get("target").clone()
     };
     let health = crate::theory::nullish(t.get("maxHealth"), Num(0.0));
-    let mut args = scenario(t);
+    let mut args = scenario(t, opts.get("gameBuild"));
     args.set("health", health);
     args.set("pair", Bool(ch.get("_pair").truthy()));
     args.set("dual", Bool(ch.get("_dual").truthy()));
@@ -121,10 +128,11 @@ pub fn max_run(ch: &Value, opts: &Value, book: &Spellbook) -> Analysis {
 }
 
 /// Caller-owned cache; the immutable spellbook is fixed for this cache's lifetime.
-/// The tuple key uses the same template and shield coercions as the JS cache.
+/// The tuple key uses the same template, shield and `gameBuild` coercions as the JS cache: the 14631 gear law can move
+/// the frontier WINNER (a flat add favours weapon-skill points over Critical Strike), so the cache must key on it.
 pub struct Profiles<'a> {
     pub(crate) book: &'a Spellbook,
-    cache: HashMap<(String, String), (f64, Value)>,
+    cache: HashMap<(String, String, String), (f64, Value)>,
 }
 
 impl<'a> Profiles<'a> {
@@ -135,10 +143,12 @@ impl<'a> Profiles<'a> {
         }
     }
 
-    fn evaluated(&mut self, template: &Value, shield: &Value) -> Result<&(f64, Value), String> {
+    fn evaluated(&mut self, template: &Value, opts: &Value) -> Result<&(f64, Value), String> {
         let t = Num(template.to_number());
         obj_table_get(WEAPONS, &t)
             .ok_or_else(|| format!("unknown weapon template {}", template.to_js_string()))?;
+        let shield = opts.get("shield");
+        let game_build = crate::model_blow::game_build(opts);
         let key = (
             t.to_js_string(),
             if shield.is_nullish() {
@@ -146,6 +156,7 @@ impl<'a> Profiles<'a> {
             } else {
                 shield.to_js_string()
             },
+            game_build.to_owned(),
         );
         match self.cache.entry(key) {
             std::collections::hash_map::Entry::Occupied(e) => Ok(e.into_mut()),
@@ -156,10 +167,10 @@ impl<'a> Profiles<'a> {
                     ("skill", Num(skill)),
                     ("shield", shield.clone()),
                 ]));
-                let raw_args = scenario(tough());
+                let raw_args = scenario(tough(), &s(game_build));
                 let gate = gate();
                 let health = gate.get("maxHealth").clone();
-                let mut gate_args = scenario(gate);
+                let mut gate_args = scenario(gate, &s(game_build));
                 gate_args.set("health", health);
                 let mut rows = Vec::new();
                 for p in points.items() {
@@ -183,7 +194,7 @@ impl<'a> Profiles<'a> {
     }
 
     pub fn legal_frontier(&mut self, template: &Value, opts: &Value) -> Result<&Value, String> {
-        Ok(&self.evaluated(template, opts.get("shield"))?.1)
+        Ok(&self.evaluated(template, opts)?.1)
     }
 
     pub fn legal_gear(&mut self, template: &Value, opts: &Value) -> Result<Value, String> {
@@ -194,7 +205,7 @@ impl<'a> Profiles<'a> {
             "allowance" => "allowanceDps",
             m => return Err(format!("unknown metric \"{m}\"")),
         };
-        let (skill, rows) = self.evaluated(template, opts.get("shield"))?;
+        let (skill, rows) = self.evaluated(template, opts)?;
         let max = rows
             .items()
             .iter()
@@ -221,10 +232,10 @@ impl<'a> Profiles<'a> {
     }
 
     pub fn max_character(&mut self, template: &Value, opts: &Value) -> Result<Value, String> {
-        build_max(
-            template,
-            &gear_options(&self.legal_gear(template, &Undefined)?, opts),
-        )
+        // The gear budget it wears is picked at the caller's build (`legal_gear` re-prices the frontier), and the card
+        // it returns is priced at it too, so `opts.gameBuild` reaches both.
+        let legal = self.legal_gear(template, opts)?;
+        build_max(template, &gear_options(&legal, opts))
     }
 }
 

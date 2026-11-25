@@ -11,7 +11,7 @@ import { SKILLS, WEAPONS } from './data.js';
 import { THEORY_LEVEL } from './theory.js';
 import { maxCharacter, maxRun } from './maxprofile.js';
 import { IMPRINT_FAMILIES, imprintsFor, powerDps } from './imprints.js';
-import { gateTarget, referenceFoe } from './model.js';
+import { DEFAULT_GAME_BUILD, gateTarget, referenceFoe } from './model.js';
 import { enchantDps, ENCHANTMENT_TYPES } from './enchants.js';
 import {
   ITEM_ENCHANTMENT_MAX, defaultParam, enchantmentCost, enchantmentName, enchantmentParamName, itemEnchantmentPoints, itemTemplate,
@@ -98,21 +98,21 @@ function skillIdOf(template) {
 const skillIdsFor = (template) => [...new Set([skillIdOf(template), SKILLS.CriticalStrike])];
 
 /** The next +15-skill boss DPS, after the points already planned (`extra`). */
-function skillGain(ch, base, id, extra = {}, target) {
+function skillGain(ch, base, id, extra = {}, target, gameBuild = DEFAULT_GAME_BUILD) {
   const now = JSON.parse(JSON.stringify(ch));
   for (const [sid, points] of Object.entries(extra)) {
     now._mods.skills = { ...(now._mods.skills ?? {}), [sid]: (now._mods.skills?.[sid] ?? 0) + points };
   }
   const next = JSON.parse(JSON.stringify(now));
   next._mods.skills = { ...(next._mods.skills ?? {}), [id]: (next._mods.skills?.[id] ?? 0) + 15 };
-  return Math.max(0, maxRun(next, { target }).cappedDps - maxRun(now, { target }).cappedDps);
+  return Math.max(0, maxRun(next, { target, gameBuild }).cappedDps - maxRun(now, { target, gameBuild }).cappedDps);
 }
 
 /** Potent Vs' worth: the card re-run with the +5 on the blow where the game adds it (analyze's `with`). */
 const potentVsGain = (base) => base.with({ potentVs: 5 }).cappedDps - base.cappedDps;
 
 /** The weapon's strike candidates, priced by their actual capped spell DPS. */
-function weaponCandidates(ch, base, group, target) {
+function weaponCandidates(ch, base, group, target, gameBuild = DEFAULT_GAME_BUILD) {
   const out = [];
   for (const param of [50, 53, 52, 54, 56, 33, 20, 25, 16, 7, 55, 67]) {
     const cost = enchantmentCost('CastWhenStrikes', param);
@@ -126,7 +126,7 @@ function weaponCandidates(ch, base, group, target) {
   const pvValue = pv == null ? 0 : Math.max(0, potentVsGain(base));
   if (pv != null && pvValue > 0) out.push({ type: 'PotentVs', param: pv, cost: enchantmentCost('PotentVs', pv), value: pvValue, label: `${enchantmentName('PotentVs')}: ${enchantmentParamName('PotentVs', pv)}` });
   for (const id of skillIdsFor(ch._template)) {
-    const value = skillGain(ch, base, id, {}, target);
+    const value = skillGain(ch, base, id, {}, target, gameBuild);
     if (value > 0) out.push({ type: 'EnhancesSkill', param: id, cost: enchantmentCost('EnhancesSkill', id), value, label: enchantmentParamName('EnhancesSkill', id) });
   }
   return out.filter((x) => x.value > 0 && Number.isFinite(x.cost)).sort((a, b) => b.value / b.cost - a.value / a.cost);
@@ -160,7 +160,7 @@ const ITEM_ENCHANT_ID = Object.freeze({
 });
 
 /** Apply a plan's skill lines and weapon procs, then read the card ceiling. */
-function applyPlanDps(ch, plan, target) {
+function applyPlanDps(ch, plan, target, gameBuild = DEFAULT_GAME_BUILD) {
   const c = JSON.parse(JSON.stringify(ch));
   const item = c.weapon ?? c.wraps;
   const skills = { ...(c._mods.skills ?? {}) };
@@ -176,11 +176,11 @@ function applyPlanDps(ch, plan, target) {
     item.enchantments = enchants;
     item.currentCondition = item.maxCondition = Math.max(1, Number(item.maxCondition) || 800);
   }
-  const r = maxRun(c, { target });
+  const r = maxRun(c, { target, gameBuild });
   return { dps: r.ceilingTotalDps, cappedDps: r.cappedDps, procDps: r.enchantDps, weaponDps: r.cappedDps };
 }
 
-export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, skill = null, group = 'humanoid', repairs = 1, regen = 0, forceSkills = false, target = gateTarget(THEORY_LEVEL) } = {}) {
+export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, skill = null, group = 'humanoid', repairs = 1, regen = 0, forceSkills = false, target = gateTarget(THEORY_LEVEL), gameBuild = DEFAULT_GAME_BUILD } = {}) {
   const pieces = gearPieces({ weapon, shield });
   for (const p of pieces) {
     p.soul = soulGem ? SOUL_GEM_POINTS : 0;
@@ -189,18 +189,18 @@ export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, s
     p.effects = [];
   }
   const w = pieces[0];
-  const ch = maxCharacter(w.template, {});
+  const ch = maxCharacter(w.template, { gameBuild });
   ch._template = w.template;
-  const base = maxRun(ch, { target });
+  const base = maxRun(ch, { target, gameBuild });
   const rawTarget = referenceFoe(THEORY_LEVEL, 'tough');
-  const rawBase = maxRun(ch, { target: rawTarget });
+  const rawBase = maxRun(ch, { target: rawTarget, gameBuild });
   const skillId = skill == null ? skillIdOf(w.template) : Number(skill);
   const extra = {};
   const swings = Math.max(1, Math.round((base.ttk || 20) * base.cadence.aps));
   const maxProcs = Math.max(1, Math.min(3, Math.floor(hitPointsOf(w.template) / (10 * swings))));
 
   // Weapon: strike procs first, limited by the condition a fight can pay, then skills.
-  const weaponCands = weaponCandidates(ch, base, group, target);
+  const weaponCands = weaponCandidates(ch, base, group, target, gameBuild);
   const weaponPicks = selectWeaponCandidates(weaponCands, w.budget, maxProcs);
   for (const c of weaponPicks) {
     if (addEffect(w, c.type, c.param, c.cost, `${Math.round(c.value)} DPS`)) {
@@ -225,7 +225,7 @@ export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, s
         if (p.effects.some((e) => e.type === 'EnhancesSkill' && e.param === id)) continue;
         const cost = enchantmentCost('EnhancesSkill', id);
         if (cost > p.budget - p.spent) continue;
-        const value = skillGain(ch, base, id, extra, target);
+        const value = skillGain(ch, base, id, extra, target, gameBuild);
         if (value <= 0) continue;
         if (!best || value / cost > best.value / best.cost) best = { id, cost, value };
       }
@@ -242,7 +242,7 @@ export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, s
         if (p.effects.some((e) => e.type === 'EnhancesSkill' && e.param === id)) continue;
         const cost = enchantmentCost('EnhancesSkill', id);
         if (cost > p.budget - p.spent) continue;
-        const future = skillGain(ch, rawBase, id, extra, rawTarget);
+        const future = skillGain(ch, rawBase, id, extra, rawTarget, gameBuild);
         if (addEffect(p, 'EnhancesSkill', id, cost, `${Math.round(future)} DPS no-cap`)) extra[id] = (extra[id] ?? 0) + 15;
       }
     }
@@ -281,8 +281,8 @@ export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, s
     weaponRatings.push({ type: 'PotentVs', param: pvParam, label: `${enchantmentName('PotentVs')}: ${enchantmentParamName('PotentVs', pvParam)}`, cost: pvCost, value: pvValue, benefit: `${Math.round(pvValue)} DPS`, chosen: chosenCount('PotentVs', pvParam), rate: pvCost > 0 ? pvValue / pvCost : 0 });
   }
   const skillRatings = skillIdsFor(w.template).map((id) => {
-    const value = skillGain(ch, base, id, {}, target);
-    const future = skillGain(ch, rawBase, id, {}, rawTarget);
+    const value = skillGain(ch, base, id, {}, target, gameBuild);
+    const future = skillGain(ch, rawBase, id, {}, rawTarget, gameBuild);
     const cost = enchantmentCost('EnhancesSkill', id);
     return { id, label: enchantmentParamName('EnhancesSkill', id), cost, value, futureValue: future, benefit: `${Math.round(future)} DPS no-cap`, chosen: chosenCount('EnhancesSkill', id), rate: cost > 0 ? future / cost : 0 };
   });
@@ -306,8 +306,8 @@ export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, s
   const imprintTrigger = imprintPool.slice().sort((a, b) => b.carriedTriggerDps - a.carriedTriggerDps)[0] ?? null;
   const imprintUncapped = imprintPool.slice().sort((a, b) => b.carriedUncappedDps - a.carriedUncappedDps)[0] ?? null;
   const imprint = { base: imprintBase, trigger: imprintTrigger, uncapped: imprintUncapped };
-  const applied = applyPlanDps(ch, { rows }, target);
-  const future = applyPlanDps(ch, { rows }, rawTarget);
+  const applied = applyPlanDps(ch, { rows }, target, gameBuild);
+  const future = applyPlanDps(ch, { rows }, rawTarget, gameBuild);
   return {
     weapon: w.template, weaponName: w.item, shield: pieces.find((p) => /Shield|Buckler/.test(p.slot))?.template ?? null,
     soulGem: !!soulGem, soulPoints: soulGem ? SOUL_GEM_POINTS : 0,
@@ -320,22 +320,22 @@ export function planEnchants({ weapon = 123, shield = 'auto', soulGem = false, s
 }
 
 /** The family's best weapon at this target, by capped DPS. */
-export function bestWeaponForFamily(family, target) {
+export function bestWeaponForFamily(family, target, gameBuild = DEFAULT_GAME_BUILD) {
   let best = null;
   for (const t of family.templates) {
     if (!WEAPONS[t]) continue;
-    const run = maxRun(maxCharacter(t), { target });
+    const run = maxRun(maxCharacter(t, { gameBuild }), { target, gameBuild });
     if (!best || run.cappedDps > best.dps) best = { template: t, name: WEAPONS[t].name, dps: run.cappedDps };
   }
   return best;
 }
 
 /** One plan per weapon family, on that family's best weapon. */
-export function planMatrix({ soulGem = false, repairs = 1, regen = 0, group = 'daedra', forceSkills = false, target = gateTarget(THEORY_LEVEL) } = {}) {
+export function planMatrix({ soulGem = false, repairs = 1, regen = 0, group = 'daedra', forceSkills = false, target = gateTarget(THEORY_LEVEL), gameBuild = DEFAULT_GAME_BUILD } = {}) {
   return IMPRINT_FAMILIES.map((family) => {
-    const best = bestWeaponForFamily(family, target);
+    const best = bestWeaponForFamily(family, target, gameBuild);
     if (!best) return { family: family.name, key: family.key, weapon: null, plan: null };
-    const plan = planEnchants({ weapon: best.template, soulGem, repairs, regen, group, forceSkills, target });
+    const plan = planEnchants({ weapon: best.template, soulGem, repairs, regen, group, forceSkills, target, gameBuild });
     const skillPieces = plan.rows.filter((r) => r.effects.some((e) => e.type === 'EnhancesSkill' && e.param === plan.skillId)).length;
     const csPieces = plan.rows.filter((r) => r.effects.some((e) => e.type === 'EnhancesSkill' && e.param === SKILLS.CriticalStrike)).length;
     return { family: family.name, key: family.key, weapon: best.name, template: best.template, skillPieces, csPieces, plan };

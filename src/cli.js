@@ -98,7 +98,7 @@ Common options:
   --blow-x <n>                        gate relayBlowX (Elite/Vestiges cap multiplier; default 1)
   --categories                        condense the weapons page to the best of each type, sorted by DPS
   --build <id,...>                    firmament build(s): longblade, shortblade, axe, blunt, bow, fists, destruction, tank
-  --game-build <14512|14631>          shipped build a card is priced under (default: 14512)
+  --game-build <14512|14631>          shipped build a card or plan is priced under (default: 14512)
   --stars <n>                         firmament stars to spend (default 98)
   --refresh                           recompute firmament plans instead of using the cache
   --all                               enchant-plan: both matrices (--uncapped or --cap-aware picks one instead)
@@ -413,7 +413,9 @@ function loadCharacter(values) {
       if (Number.isFinite(mat)) material = mat;
     }
     const { starStats, starSkills } = starOptions(values);
-    const legal = legalGear(blade);
+    // The legal gear budget is a game fact, but the FRONTIER that picks it is priced per build (14631's gear law can
+    // move the winner), so pass the caller's build through.
+    const legal = legalGear(blade, { gameBuild: values['game-build'] });
     let ch = theoryCharacter({
       level: n(values.level, THEORY_LEVEL),
       race: values.race ?? 'darkelf',
@@ -647,7 +649,7 @@ function printLoadoutShortlist(values, modes, encounters, k) {
   }
   const health = values.health === undefined ? null : Number(values.health);
   if (health !== null && !(health > 0)) throw new RangeError('--health must be a positive number');
-  const opts = { ...sampledOptions(values), k, objective: values.objective, vampire: !!values.vampire, health };
+  const opts = { ...sampledOptions(values), k, objective: values.objective, vampire: !!values.vampire, health, gameBuild: values['game-build'] };
   const rankings = modes.flatMap((mode) => (mode === 'cap' ? encounters : [undefined])
     .map((encounter) => shortlistLoadouts({ ...opts, mode, encounter })));
   if (values.json) {
@@ -805,7 +807,7 @@ function printBuild(ch, r, targetPreset, values) {
     passiveOn: !values['no-passive'], stacks: n(values.stacks, 5), rhythm: values.rhythm,
     unaware: values.unaware, firstBlow: values['first-blow'], healthShare: n(values['health-share'], 1),
     backstabUptime: values.behind ? 1 : n(values.backstab, 0), critDamage: !values['no-crit-damage'], weapon: undefined,
-    rri: !values['no-rri'],
+    rri: !values['no-rri'], gameBuild: String(values['game-build'] ?? '14512'),
   });
   console.log(`\nWhat matters (${r.cap ? 'capped DPS' : 'DPS'})`);
   console.log(table(ms.map((m) => [m.label, `${m.delta >= 0 ? '+' : ''}${fmt(m.delta)}`, `${m.delta >= 0 ? '+' : ''}${fmt(m.pct)}%`]), ['Change', r.cap ? 'Capped DPS' : 'DPS', '%'], ['left', 'right', 'right']));
@@ -814,7 +816,7 @@ function printBuild(ch, r, targetPreset, values) {
     passiveOn: !values['no-passive'], stacks: n(values.stacks, 5), rhythm: values.rhythm,
     unaware: values.unaware, firstBlow: values['first-blow'], healthShare: n(values['health-share'], 1),
     backstabUptime: values.behind ? 1 : n(values.backstab, 0), critDamage: !values['no-crit-damage'],
-    rri: !values['no-rri'],
+    rri: !values['no-rri'], gameBuild: String(values['game-build'] ?? '14512'),
   });
   console.log(`\nAffixes / enchants (${r.cap ? 'capped DPS' : 'DPS'})`);
   console.log(table(affixes.map((m) => [m.label, `${m.delta >= 0 ? '+' : ''}${fmt(m.delta)}`, `${m.delta >= 0 ? '+' : ''}${fmt(m.pct)}%`]), ['Change', r.cap ? 'Capped DPS' : 'DPS', '%'], ['left', 'right', 'right']));
@@ -823,7 +825,7 @@ function printBuild(ch, r, targetPreset, values) {
     passiveOn: !values['no-passive'], stacks: n(values.stacks, 5), rhythm: values.rhythm,
     unaware: values.unaware, firstBlow: values['first-blow'], healthShare: n(values['health-share'], 1),
     backstabUptime: values.behind ? 1 : n(values.backstab, 0), critDamage: !values['no-crit-damage'],
-    rri: !values['no-rri'],
+    rri: !values['no-rri'], gameBuild: String(values['game-build'] ?? '14512'),
   }, { top: 8 });
   console.log('\nTop melee weapons');
   console.log(table(ranking.map((x) => [`${x.materialName} ${x.name}`, x.twoHanded ? '2H' : '1H', fmt(x.dps), fmt(x.cappedDps), fmt(x.perSwing), fmt2(x.aps)]), ['Weapon', 'Hands', 'DPS', 'Capped', 'Per swing', 'APS'], ['left', 'left', 'right', 'right', 'right', 'right']));
@@ -892,6 +894,15 @@ const FILE_COMMANDS = ['report', 'spells', 'weapons', 'skills', 'firmament', 'im
 const JSON_COMMANDS = ['build', 'objective', 'rank', 'scale', 'tradeoff', 'theory', 'spell', 'spells', 'enchant', 'weapons', 'skills', 'firmament', 'imprints', 'probe', 'enchant-plan', 'gear-plan', 'loadout', 'real-dps', 'graph'];
 /** The commands whose card goes through `scenarioOf` (the one place `--game-build` enters a formula). */
 const GAME_BUILD_COMMANDS = ['build', 'objective', 'rank', 'report', 'compare', 'scale', 'tradeoff', 'theory', 'graph', 'enchant'];
+/**
+ * The commands whose numbers come from a PLANNER that forges its own scenario (`maxprofile`, `imprints`,
+ * `enchantPlan`, `realBuild`). They take `--game-build` too: the 14631 gear law moves every price they print, while the
+ * legal allocation, the powers' fit and the plan's shape stay the game's facts.
+ */
+const GAME_BUILD_PLANNER_COMMANDS = ['imprints', 'weapons', 'skills', 'enchant-plan', 'gear-plan', 'loadout', 'real-dps'];
+
+/** Every command that reads `--game-build`; the others refuse it by name. */
+const GAME_BUILD_READERS = [...GAME_BUILD_COMMANDS, ...GAME_BUILD_PLANNER_COMMANDS];
 
 /** Reject flags the command would ignore instead of accepting them silently. */
 function checkOutputFlags(cmd, argv, values) {
@@ -899,8 +910,8 @@ function checkOutputFlags(cmd, argv, values) {
   if (given('out') && !FILE_COMMANDS.includes(cmd)) {
     throw new UsageError(`--out is only for commands that write a file (${FILE_COMMANDS.join(', ')}), not "${cmd}"`);
   }
-  if (given('game-build') && !GAME_BUILD_COMMANDS.includes(cmd)) {
-    throw new UsageError(`--game-build is not read by ${cmd} (it prices a weapon card: ${GAME_BUILD_COMMANDS.join(', ')})`);
+  if (given('game-build') && !GAME_BUILD_READERS.includes(cmd)) {
+    throw new UsageError(`--game-build is not read by ${cmd} (it prices a weapon card: ${GAME_BUILD_READERS.join(', ')})`);
   }
   if (!values.json) return;
   const unsupported = cmd === 'spell' && values.list ? 'spell --list'
@@ -995,9 +1006,9 @@ export async function main(argv = process.argv.slice(2)) {
     }
     const wantsUncapped = modes.includes('uncapped');
     const wantsCap = modes.includes('cap');
-    const uncappedRows = wantsUncapped ? realWeaponLoadouts({ modes: ['uncapped'], vampire: !!values.vampire }) : [];
+    const uncappedRows = wantsUncapped ? realWeaponLoadouts({ modes: ['uncapped'], vampire: !!values.vampire, gameBuild: values['game-build'] }) : [];
     const capRows = new Map();
-    if (wantsCap) for (const id of requested) capRows.set(id, realWeaponLoadouts({ modes: ['cap'], vampire: !!values.vampire, encounter: id }));
+    if (wantsCap) for (const id of requested) capRows.set(id, realWeaponLoadouts({ modes: ['cap'], vampire: !!values.vampire, encounter: id, gameBuild: values['game-build'] }));
     const rows = [...uncappedRows, ...[...capRows.values()].flat()];
     const byDps = (list) => list.slice().sort((a, b) => b.totalDps - a.totalDps);
     if (!values.json) {
@@ -1016,7 +1027,7 @@ export async function main(argv = process.argv.slice(2)) {
     const shared = uncappedRows.find((r) => r.category === '1H')?.enchPlan
       ?? [...capRows.values()].flat().find((r) => r.category === '1H')?.enchPlan
       ?? rows[0]?.enchPlan;
-    const imprintRows = rankAll({ sort: 'uncapped' }).flatMap((f) => f.rows.slice(0, 3).map((r) => ({ family: f.name, power: r.power.name, weapon: r.weapon, carriedBoss: r.baseDps, carriedUncapped: r.uncappedDps })));
+    const imprintRows = rankAll({ sort: 'uncapped', gameBuild: values['game-build'] }).flatMap((f) => f.rows.slice(0, 3).map((r) => ({ family: f.name, power: r.power.name, weapon: r.weapon, carriedBoss: r.baseDps, carriedUncapped: r.uncappedDps })));
     const builds = buildIds().map((id) => {
       const build = buildById(id);
       const p = planBuild(build);
@@ -1137,7 +1148,7 @@ export async function main(argv = process.argv.slice(2)) {
 
     if (values.all) {
       const results = selectedModes.map((mode) => {
-        const matrix = planMatrix({ soulGem: !!values['soul-gem'], repairs, regen, group, forceSkills: mode.forceSkills, target: mode.target });
+        const matrix = planMatrix({ soulGem: !!values['soul-gem'], repairs, regen, group, forceSkills: mode.forceSkills, target: mode.target, gameBuild: values['game-build'] });
         return { ...mode, matrix, summary: summarize(matrix), melee: canonical(matrix, mode.key) };
       });
       if (!values.json) {
@@ -1172,7 +1183,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
       return;
     }
     const mode = selectedModes[0];
-    const plan = planEnchants({ weapon, shield, soulGem: !!values['soul-gem'], group, repairs, regen, forceSkills: mode.forceSkills, target: mode.target });
+    const plan = planEnchants({ weapon, shield, soulGem: !!values['soul-gem'], group, repairs, regen, forceSkills: mode.forceSkills, target: mode.target, gameBuild: values['game-build'] });
     if (!values.json) {
       console.log(`Enchant plan  |  ${plan.weaponName}${plan.shield ? ` + ${plan.shield}` : ''}  |  ${plan.soulGem ? `soul gem +${SOUL_GEM_POINTS}` : 'template points only'}  |  Potent Vs: ${group}  |  ${plan.maxProcs} strike proc${plan.maxProcs === 1 ? '' : 's'} (condition)`);
       if (plan.imprint?.base) {
@@ -1238,8 +1249,8 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     }
     const sort = values.uncapped ? 'uncapped' : values['cap-aware'] ? 'boss' : values.sort === 'uncapped' ? 'uncapped' : values.sort === 'conditional' ? 'conditional' : 'boss';
     const rows = family
-      ? rankAll({ firmament: !!values.firmament, vampire: !!values.vampire, sort }).filter((f) => f.key === family.key)
-      : rankAll({ firmament: !!values.firmament, vampire: !!values.vampire, sort });
+      ? rankAll({ firmament: !!values.firmament, vampire: !!values.vampire, sort, gameBuild: values['game-build'] }).filter((f) => f.key === family.key)
+      : rankAll({ firmament: !!values.firmament, vampire: !!values.vampire, sort, gameBuild: values['game-build'] });
     if (!values.json) {
       console.log('Weapon imprints');
       for (const f of rows) {
@@ -1622,15 +1633,15 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     const familyOf = (t) => WEAPONS[t]?.skill ?? 'HandToHand';
     const maxTarget = referenceFoe(level, 'tough');
     const gate = gateTarget(level);
-    const maxRun = (ch, share = 1) => analyze(ch, { target: maxTarget, core: 'overhaul', rri: true, healthShare: share, passiveOn: true, stacks: 5, pair: !!ch?._pair, dual: !!ch?._dual });
-    const gateRun = (ch) => analyze(ch, { target: gate, core: 'overhaul', rri: true, health: gate.maxHealth, healthShare: 1, passiveOn: true, stacks: 5, pair: !!ch?._pair, dual: !!ch?._dual });
+    const maxRun = (ch, share = 1) => analyze(ch, { target: maxTarget, core: 'overhaul', rri: true, healthShare: share, passiveOn: true, stacks: 5, pair: !!ch?._pair, dual: !!ch?._dual, gameBuild: values['game-build'] });
+    const gateRun = (ch) => analyze(ch, { target: gate, core: 'overhaul', rri: true, health: gate.maxHealth, healthShare: 1, passiveOn: true, stacks: 5, pair: !!ch?._pair, dual: !!ch?._dual, gameBuild: values['game-build'] });
     const martialFor = () => 'blademaster';
     const shareFor = () => 1;
 
     const makeMax = (t, {
       race = 'darkelf', firmament = false, raw = 200, gear = null, critGear = null, damagePct = null, martial = martialFor(t),
     } = {}) => {
-      const legal = legalGear(familyOf(t) === 'HandToHand' && t == null ? 563 : t);
+      const legal = legalGear(familyOf(t) === 'HandToHand' && t == null ? 563 : t, { gameBuild: values['game-build'] });
       if (familyOf(t) === 'HandToHand') {
         const starStats = firmament ? { strength: 15, agility: 15, speed: 15, luck: 15 } : {};
         const starSkills = firmament ? { [SKILLS.HandToHand]: 15, [SKILLS.CriticalStrike]: 15, [SKILLS.Backstabbing]: 15 } : {};
@@ -1749,7 +1760,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     const familySections = families.map((f) => {
       const chartTemplate = f.key === 'HandToHand' ? 563 : (f.templates.find((t) => t != null) ?? 123);
       const gearMax = maxSingleSkill({ weaponTemplate: chartTemplate });
-      const culprit = legalGear(chartTemplate);
+      const culprit = legalGear(chartTemplate, { gameBuild: values['game-build'] });
       const rangedNote = f.key === 'Archery' ? ' Bows use the paced BOW_FAST window; the Pistolet is a pair.' : '';
       const gearVals = [];
       for (let v = 30; v < gearMax; v += 30) gearVals.push(v);
@@ -1821,7 +1832,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     const level = n(values.level, THEORY_LEVEL);
     const blade = ch.weapon?.templateIndex ?? DEFAULT_BLADE;
     const material = ch.weapon?.material ?? 9;
-    const legal = legalGear(blade);
+    const legal = legalGear(blade, { gameBuild: values['game-build'] });
     const lbCap = maxSingleSkill({ weaponTemplate: blade });
     const csCap = maxSingleSkill({ weaponTemplate: blade, skill: SKILLS.CriticalStrike });
     const damage = values['damage-pct'] != null ? n(values['damage-pct'], 0) : legal.dmg;

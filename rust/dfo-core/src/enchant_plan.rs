@@ -269,15 +269,26 @@ pub fn add_skill_points_of(ch: &mut Value, id: f64, points: f64) {
     add_skill_points(ch, id, points);
 }
 /// `skillGain(ch, base, id, extra, target)`: `Math.max(0, maxRun(next).cappedDps - maxRun(now).cappedDps)`. `extra`
-/// is the JS object's entries in insertion order.
-fn skill_gain(ch: &Value, id: f64, extra: &[(f64, f64)], target: &Value, book: &Spellbook) -> f64 {
+/// is the JS object's entries in insertion order. `game_build` is the caller's shipped build (the 14631 gear law moves
+/// the card this difference is read from).
+fn skill_gain(
+    ch: &Value,
+    id: f64,
+    extra: &[(f64, f64)],
+    target: &Value,
+    game_build: &Value,
+    book: &Spellbook,
+) -> f64 {
     let mut now = json_clone(ch);
     for &(sid, points) in extra {
         add_skill_points(&mut now, sid, points);
     }
     let mut next = json_clone(&now);
     add_skill_points(&mut next, id, 15.0);
-    let opts = obj([("target", target.clone())]);
+    let opts = obj([
+        ("target", target.clone()),
+        ("gameBuild", game_build.clone()),
+    ]);
     let a = max_run(&next, &opts, book).card.fields.capped_dps;
     let b = max_run(&now, &opts, book).card.fields.capped_dps;
     0.0f64.max(a - b)
@@ -353,6 +364,8 @@ struct Candidates<'a> {
     base: &'a Analysis,
     target: &'a Value,
     args: &'a Value,
+    /// The caller's shipped build (`opts.gameBuild`), forwarded to every card the candidates are priced on.
+    game_build: &'a Value,
     book: &'a Spellbook,
 }
 
@@ -432,7 +445,7 @@ fn weapon_candidates(ctx: &Candidates<'_>, group: &Value) -> Vec<Value> {
     }
     let template = ctx.ch.get("_template").to_number();
     for id in skill_ids_for(template) {
-        let value = skill_gain(ctx.ch, id, &[], ctx.target, ctx.book);
+        let value = skill_gain(ctx.ch, id, &[], ctx.target, ctx.game_build, ctx.book);
         // mutation: equivalent - a character built for a weapon has that weapon's skill at 200 and Critical Strike
         // mastered, so +15 to either is worth a positive card DPS on every template of the grid (never (0, 1)); the
         // plan's `ratings.weapon` would show the row if it were 0.
@@ -572,9 +585,26 @@ fn item_enchant_id(kind: &str) -> Option<f64> {
     }
 }
 
-/// `applyPlanDps`. The caller supplies `target`; a plan is `{rows}`. Exposed for the vectors, which feed it hand-built
-/// plans (the `maxCondition || 800` line is a real JS default a plan may hit).
+/// `applyPlanDps` at the cut: the pre-14631 signature. A plan is `{rows}`; exposed for the vectors, which feed it
+/// hand-built plans (the `maxCondition || 800` line is a real JS default a plan may hit).
 pub fn apply_plan_dps(ch: &Value, plan: &Value, target: &Value, book: &Spellbook) -> Value {
+    apply_plan_dps_at(
+        ch,
+        plan,
+        target,
+        crate::model_blow::DEFAULT_GAME_BUILD,
+        book,
+    )
+}
+
+/// [`apply_plan_dps`] at an explicit shipped build.
+pub fn apply_plan_dps_at(
+    ch: &Value,
+    plan: &Value,
+    target: &Value,
+    game_build: &str,
+    book: &Spellbook,
+) -> Value {
     let mut c = json_clone(ch);
     let on_weapon = !c.get("weapon").is_nullish();
     let item = if on_weapon {
@@ -642,7 +672,11 @@ pub fn apply_plan_dps(ch: &Value, plan: &Value, target: &Value, book: &Spellbook
             c.set("wraps", item);
         }
     }
-    let r = max_run(&c, &obj([("target", target.clone())]), book);
+    let r = max_run(
+        &c,
+        &obj([("target", target.clone()), ("gameBuild", s(game_build))]),
+        book,
+    );
     obj([
         ("dps", r.totals.ceiling_total_dps.map_or(Null, Num)),
         ("cappedDps", Num(r.card.fields.capped_dps)),
@@ -751,13 +785,23 @@ pub fn plan_enchants_with(opts: &Value, profiles: &mut Profiles<'_>) -> Result<V
         Undefined => gate_target(&Num(THEORY_LEVEL), &Undefined),
         v => v.clone(),
     };
-    let mut ch = profiles.max_character(&Num(template), &Obj(vec![]))?;
+    // The shipped build rides every card this plan prices: the legal budget it picks, the baseline it reads the gains
+    // from, and the plan's own ceiling.
+    let game_build = opts.get("gameBuild").clone();
+    let mut ch =
+        profiles.max_character(&Num(template), &obj([("gameBuild", game_build.clone())]))?;
     ch.set("_template", Num(template));
-    let run_opts = obj([("target", target.clone())]);
+    let run_opts = obj([
+        ("target", target.clone()),
+        ("gameBuild", game_build.clone()),
+    ]);
     let args = run_args(&ch, &run_opts);
     let base = max_run(&ch, &run_opts, book);
     let raw_target = reference_foe(&Num(THEORY_LEVEL), &s("tough"));
-    let raw_opts = obj([("target", raw_target.clone())]);
+    let raw_opts = obj([
+        ("target", raw_target.clone()),
+        ("gameBuild", game_build.clone()),
+    ]);
     let raw_args = run_args(&ch, &raw_opts);
     let raw_base = max_run(&ch, &raw_opts, book);
     let skill =
@@ -788,6 +832,7 @@ pub fn plan_enchants_with(opts: &Value, profiles: &mut Profiles<'_>) -> Result<V
         base: &base,
         target: &target,
         args: &args,
+        game_build: &game_build,
         book,
     };
     let weapon_cands = weapon_candidates(&ctx, &group);
@@ -888,7 +933,7 @@ pub fn plan_enchants_with(opts: &Value, profiles: &mut Profiles<'_>) -> Result<V
                     if !fits_budget(p, cost) {
                         continue;
                     }
-                    let value = skill_gain(&ch, id, &extra, &target, book);
+                    let value = skill_gain(&ch, id, &extra, &target, &game_build, book);
                     if value <= 0.0 {
                         continue;
                     }
@@ -950,7 +995,7 @@ pub fn plan_enchants_with(opts: &Value, profiles: &mut Profiles<'_>) -> Result<V
                 if !fits_budget(p, cost) {
                     continue;
                 }
-                let future = skill_gain(&ch, id, &extra, &raw_target, book);
+                let future = skill_gain(&ch, id, &extra, &raw_target, &game_build, book);
                 let benefit = format!("{} DPS no-cap", number_to_string(math_round(future)));
                 if add_effect(
                     &mut pieces,
@@ -1089,8 +1134,8 @@ pub fn plan_enchants_with(opts: &Value, profiles: &mut Profiles<'_>) -> Result<V
     let skill_ratings: Vec<Value> = skill_ids_for(template)
         .into_iter()
         .map(|id| {
-            let value = skill_gain(&ch, id, &[], &target, book);
-            let future = skill_gain(&ch, id, &[], &raw_target, book);
+            let value = skill_gain(&ch, id, &[], &target, &game_build, book);
+            let future = skill_gain(&ch, id, &[], &raw_target, &game_build, book);
             // mutation: equivalent - every id is 28..34 and each is a row of `ENCHANTMENT_PRICE_ROWS` under
             // `EnhancesSkill` (the probe checked every template), so the `unwrap_or(0.0)` is unreachable.
             let cost = enchantment_cost(ENCHANTMENT_TYPES.enhances_skill, Some(id)).unwrap_or(0.0);
@@ -1222,8 +1267,20 @@ pub fn plan_enchants_with(opts: &Value, profiles: &mut Profiles<'_>) -> Result<V
         ("uncapped", best_by("carriedUncappedDps")),
     ]);
     let rows_value = Arr(rows.clone());
-    let applied = apply_plan_dps(&ch, &obj([("rows", rows_value.clone())]), &target, book);
-    let future = apply_plan_dps(&ch, &obj([("rows", rows_value)]), &raw_target, book);
+    let applied = apply_plan_dps_at(
+        &ch,
+        &obj([("rows", rows_value.clone())]),
+        &target,
+        crate::model_blow::game_build_one(&game_build),
+        book,
+    );
+    let future = apply_plan_dps_at(
+        &ch,
+        &obj([("rows", rows_value)]),
+        &raw_target,
+        crate::model_blow::game_build_one(&game_build),
+        book,
+    );
     let shield = pieces
         .iter()
         .find(|p| {
@@ -1268,20 +1325,55 @@ pub fn plan_enchants_with(opts: &Value, profiles: &mut Profiles<'_>) -> Result<V
     ]))
 }
 
-/// `bestWeaponForFamily`: the family's best weapon at this target, by capped DPS.
+/// `bestWeaponForFamily` at the cut: the pre-14631 signature, kept for callers (and the vectors) that pass no build.
 pub fn best_weapon_for_family(
     family: &Value,
     target: &Value,
     book: &Spellbook,
 ) -> Result<Value, String> {
-    let mut profiles = Profiles::new(book);
-    best_weapon_for_family_with(family, target, &mut profiles)
+    best_weapon_for_family_at(family, target, crate::model_blow::DEFAULT_GAME_BUILD, book)
 }
 
-/// [`best_weapon_for_family`] on a caller-owned frontier cache.
+/// [`best_weapon_for_family`] at an explicit shipped build.
+pub fn best_weapon_for_family_at(
+    family: &Value,
+    target: &Value,
+    game_build: &str,
+    book: &Spellbook,
+) -> Result<Value, String> {
+    let mut profiles = Profiles::new(book);
+    best_weapon_for_family_at_with(family, target, game_build, &mut profiles)
+}
+
+/// [`best_weapon_for_family_at`] on a caller-owned frontier cache.
+pub fn best_weapon_for_family_at_with(
+    family: &Value,
+    target: &Value,
+    game_build: &str,
+    profiles: &mut Profiles<'_>,
+) -> Result<Value, String> {
+    best_weapon_for_family_with_build(family, target, &s(game_build), profiles)
+}
+
+/// `bestWeaponForFamily` on a caller-owned frontier cache, at the cut: the pre-14631 signature (the vectors pass it).
 pub fn best_weapon_for_family_with(
     family: &Value,
     target: &Value,
+    profiles: &mut Profiles<'_>,
+) -> Result<Value, String> {
+    best_weapon_for_family_with_build(
+        family,
+        target,
+        &s(crate::model_blow::DEFAULT_GAME_BUILD),
+        profiles,
+    )
+}
+
+/// [`best_weapon_for_family_with`] at an explicit shipped build (a scenario-ready `Value`).
+pub fn best_weapon_for_family_with_build(
+    family: &Value,
+    target: &Value,
+    game_build: &Value,
     profiles: &mut Profiles<'_>,
 ) -> Result<Value, String> {
     let book = profiles.book;
@@ -1295,8 +1387,16 @@ pub fn best_weapon_for_family_with(
         let Some(w) = weapon_row(template) else {
             continue;
         };
-        let ch = profiles.max_character(&Num(template), &Obj(vec![]))?;
-        let run = max_run(&ch, &obj([("target", target.clone())]), book);
+        let ch =
+            profiles.max_character(&Num(template), &obj([("gameBuild", game_build.clone())]))?;
+        let run = max_run(
+            &ch,
+            &obj([
+                ("target", target.clone()),
+                ("gameBuild", game_build.clone()),
+            ]),
+            book,
+        );
         let dps = run.card.fields.capped_dps;
         // mutation: equivalent - `>` -> `>=`: no two templates in a family tie at either target (the probe compared
         // every family's capped DPS list), so strict and non-strict pick the same winner; `best` is `None` on the first
@@ -1327,7 +1427,8 @@ pub fn plan_matrix_with(opts: &Value, profiles: &mut Profiles<'_>) -> Result<Val
             Undefined => gate_target(&Num(THEORY_LEVEL), &Undefined),
             v => v.clone(),
         };
-        let best = best_weapon_for_family_with(family, &target, profiles)?;
+        let game_build = opts.get("gameBuild").clone();
+        let best = best_weapon_for_family_with_build(family, &target, &game_build, profiles)?;
         if matches!(best, Null) {
             out.push(obj([
                 ("family", family.get("name").clone()),
@@ -1348,6 +1449,7 @@ pub fn plan_matrix_with(opts: &Value, profiles: &mut Profiles<'_>) -> Result<Val
                 default_is(opts.get("forceSkills"), Bool(false)),
             ),
             ("target", target.clone()),
+            ("gameBuild", game_build.clone()),
         ]);
         let plan = plan_enchants_with(&plan_opts, profiles)?;
         let skill_id = n(&plan, "skillId");

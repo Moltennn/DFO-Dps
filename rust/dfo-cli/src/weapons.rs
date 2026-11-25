@@ -354,6 +354,8 @@ pub struct Input {
     pub race: Option<String>,
     /// `--categories`: the per-slot winners instead of the whole list, and no family curves.
     pub categories: bool,
+    /// `values['game-build'] ?? '14512'`: the shipped build every card and frontier this page prices is read at.
+    pub game_build: String,
 }
 
 /// The two outputs: the page the JS writes and the `--json` document it prints (which is built in both modes, because
@@ -374,6 +376,8 @@ struct MakeOpts {
     raw: f64,
     gear: Option<f64>,
     crit_gear: Option<f64>,
+    /// The page's `--game-build`: the legal split the character wears is picked at it.
+    game_build: String,
 }
 
 impl MakeOpts {
@@ -387,6 +391,7 @@ impl MakeOpts {
             raw: 200.0,
             gear: None,
             crit_gear: None,
+            game_build: input.game_build.clone(),
         }
     }
 }
@@ -427,7 +432,12 @@ fn make_max(profiles: &mut Profiles, t: Option<f64>, o: &MakeOpts) -> Result<Val
     } else {
         t.unwrap_or(123.0)
     };
-    let legal = profiles.legal_gear(&Num(legal_template), &Undefined)?;
+    // The legal budget is picked at the page's build: under 14631 the flat add makes weapon-skill points beat Critical
+    // Strike, so `legalGear` can return a different split (measured 250/370/25% -> 350/252/38% on 118).
+    let legal = profiles.legal_gear(
+        &Num(legal_template),
+        &obj([("gameBuild", Str(o.game_build.clone()))]),
+    )?;
     let legal_lb = legal.get("lb").to_number();
     let legal_cs = legal.get("cs").to_number();
     let legal_dmg = legal.get("dmg").to_number();
@@ -518,8 +528,9 @@ fn make_dual(profiles: &mut Profiles, t: f64, o: &MakeOpts) -> Result<Value, Str
     Ok(ch)
 }
 
-/// `maxRun` (`src/cli.js:1611`): the uncapped reference target, the branch's own scenario.
-fn run_max(ch: &Value, target: &Value, book: &Spellbook) -> Analysis {
+/// `maxRun` (`src/cli.js:1611`): the uncapped reference target, the branch's own scenario. `game_build` is the
+/// page's `--game-build` (the 14631 gear law moves every row and curve).
+fn run_max(ch: &Value, target: &Value, game_build: &str, book: &Spellbook) -> Analysis {
     analyze(
         ch,
         &obj([
@@ -531,13 +542,14 @@ fn run_max(ch: &Value, target: &Value, book: &Spellbook) -> Analysis {
             ("stacks", Num(5.0)),
             ("pair", Bool(ch.get("_pair").truthy())),
             ("dual", Bool(ch.get("_dual").truthy())),
+            ("gameBuild", Str(game_build.to_owned())),
         ]),
         book,
     )
 }
 
 /// `gateRun` (`src/cli.js:1612`): the Breach, with its own health.
-fn run_gate(ch: &Value, gate: &Value, book: &Spellbook) -> Analysis {
+fn run_gate(ch: &Value, gate: &Value, game_build: &str, book: &Spellbook) -> Analysis {
     analyze(
         ch,
         &obj([
@@ -550,6 +562,7 @@ fn run_gate(ch: &Value, gate: &Value, book: &Spellbook) -> Analysis {
             ("stacks", Num(5.0)),
             ("pair", Bool(ch.get("_pair").truthy())),
             ("dual", Bool(ch.get("_dual").truthy())),
+            ("gameBuild", Str(game_build.to_owned())),
         ]),
         book,
     )
@@ -607,16 +620,16 @@ fn rows(
     for t in melee_templates() {
         let ch = make_max(profiles, Some(t), &MakeOpts::base(input, false))?;
         let tree = dfo_core::real_build::apply_tree(&ch, family_of(Some(t)));
-        let r = run_max(&tree, max_target, book);
-        let g = run_gate(&tree, gate, book);
+        let r = run_max(&tree, max_target, &input.game_build, book);
+        let g = run_gate(&tree, gate, &input.game_build, book);
         out.push(row_of(t, name_of(Some(t)), false, race, &r, &g));
     }
     out.sort_by(|a, b| by_desc(a.max_dps, b.max_dps));
     for t in DUAL_TEMPLATES {
         let ch = make_dual(profiles, t, &MakeOpts::base(input, false))?;
         let tree = dfo_core::real_build::apply_tree(&ch, family_of(Some(t)));
-        let r = run_max(&tree, max_target, book);
-        let g = run_gate(&tree, gate, book);
+        let r = run_max(&tree, max_target, &input.game_build, book);
+        let g = run_gate(&tree, gate, &input.game_build, book);
         let name = format!("Dual {}", name_of(Some(t)));
         out.push(row_of(t, name, true, race, &r, &g));
     }
@@ -652,7 +665,10 @@ fn family_section(
         templates.iter().flatten().next().copied().unwrap_or(123.0)
     };
     let gear_max = max_single_skill(&obj([("weaponTemplate", Num(chart_template))]));
-    let culprit = profiles.legal_gear(&Num(chart_template), &Undefined)?;
+    let culprit = profiles.legal_gear(
+        &Num(chart_template),
+        &obj([("gameBuild", Str(input.game_build.clone()))]),
+    )?;
     let race = input.race.as_deref().unwrap_or("darkelf");
     let gear_vals = gear_values(gear_max);
 
@@ -670,11 +686,12 @@ fn family_section(
                     raw: v,
                     gear: Some(0.0),
                     crit_gear: None,
+                    game_build: input.game_build.clone(),
                 },
             )?;
             points.push(Point {
                 x: effective_skill(&Num(v)),
-                y: run_max(&ch, max_target, book).dps,
+                y: run_max(&ch, max_target, &input.game_build, book).dps,
             });
         }
         for &v in &gear_vals {
@@ -688,11 +705,12 @@ fn family_section(
                     raw: 200.0,
                     gear: Some(v),
                     crit_gear: None,
+                    game_build: input.game_build.clone(),
                 },
             )?;
             points.push(Point {
                 x: 140.0 + v,
-                y: run_max(&ch, max_target, book).dps,
+                y: run_max(&ch, max_target, &input.game_build, book).dps,
             });
         }
         series.push(Series {
@@ -783,11 +801,12 @@ fn cs_section(
                     raw: 200.0,
                     gear: None,
                     crit_gear: Some(v),
+                    game_build: input.game_build.clone(),
                 },
             )?;
             points.push(Point {
                 x: v,
-                y: run_max(&ch, max_target, book).dps,
+                y: run_max(&ch, max_target, &input.game_build, book).dps,
             });
         }
         series.push(Series {

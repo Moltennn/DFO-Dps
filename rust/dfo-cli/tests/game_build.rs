@@ -263,21 +263,9 @@ fn the_commands_that_price_a_card_read_it() {
 #[test]
 fn every_other_command_refuses_it_by_name() {
     let root = temp_root("refuses");
-    for cmd in [
-        "weapons",
-        "skills",
-        "imprints",
-        "loadout",
-        "real-dps",
-        "firmament",
-        "probe",
-        "saves",
-        "doctor",
-        "enchant-plan",
-        "gear-plan",
-        "spells",
-        "spell",
-    ] {
+    // The planners (`weapons`, `skills`, `imprints`, `loadout`, `real-dps`, `enchant-plan`, `gear-plan`) take the flag
+    // as of the planner step; only the commands that price neither a card nor a plan refuse it.
+    for cmd in ["firmament", "probe", "saves", "doctor", "spells", "spell"] {
         same_usage(&[cmd, "--theory", "--game-build", "14631"], &root);
     }
     fs::remove_dir_all(&root).expect("cleanup");
