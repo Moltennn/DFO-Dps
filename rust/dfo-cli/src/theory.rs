@@ -451,7 +451,10 @@ pub struct Rendered {
 pub fn render(input: &Input, base: &Value, book: &Spellbook) -> Result<Rendered, String> {
     let blade = Num(input.blade);
     let mut profiles = Profiles::new(book);
-    let legal = profiles.legal_gear(&blade, &Undefined)?;
+    // The legal budget is picked at the caller's build: under 14631 the frontier winner can move (a flat add favours
+    // weapon-skill points over Critical Strike). The frontier rows below are re-priced at the scenario's build too.
+    let build_opts = obj([("gameBuild", Str(input.game_build.clone()))]);
+    let legal = profiles.legal_gear(&blade, &build_opts)?;
     let legal_gear = Gear {
         lb: legal.get("lb").to_number(),
         cs: legal.get("cs").to_number(),
@@ -487,7 +490,7 @@ pub fn render(input: &Input, base: &Value, book: &Spellbook) -> Result<Rendered,
 
     // The legal frontier re-run at THIS target (`src/cli.js:1836-1840`).
     let frontier = profiles
-        .legal_frontier(&blade, &Undefined)?
+        .legal_frontier(&blade, &build_opts)?
         .items()
         .to_vec();
     let mut splits: Vec<Split> = Vec::with_capacity(frontier.len());

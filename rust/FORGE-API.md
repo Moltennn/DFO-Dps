@@ -320,15 +320,25 @@ let card = dfo_core::analyze::analyze(&ch, &scenario, &book);
   `CHANGELOG-MECHANICS.md` and `test/build14631.test.js`), so parity with the JS validates the port, not the game. The
   carried-chain ratio, `duelGearAdd`, the `sigilDueling()` gate, the Gilded item that carries `brand` and the defender
   sigil set are unmodelled; a GUI must not present them as priced.
-- **Which entries take the key.** Only a card built from a scenario that carries `gameBuild` moves: `build`,
-  `objective`, `rank`, `report`, `compare`, `scale`, `tradeoff`, `theory`, `graph` and `enchant`. The modules that
-  build their own fixed scenario instead call `analyze` with no `gameBuild` and therefore price the **14512 cut**
-  whatever the GUI does: `dfo_core::real_build` (`real_weapon_loadouts`, the Firmament/gear planner stages),
-  `dfo_core::imprints` (the imprint ranking) and `dfo_core::maxprofile` (`Profiles`, `max_run`, the legal-gear and
-  weapon-ceiling plans). Their scenarios are `maxprofile::scenario`/`run_args` and the `imprints` host args, none of
-  which sets `gameBuild`; the JS is the same (`src/maxprofile.js`, `src/imprints.js` and `src/realBuild.js` never pass
-  the key, and only `scenarioOf` reads `--game-build`). So a 14631 picker shows aligned in the per-card numbers and
-  unaligned in those planner/ranking surfaces, exactly as today.
+- **Which entries take the key.** Every entry that prices a card or a plan: the per-card commands (`build`,
+  `objective`, `rank`, `report`, `compare`, `scale`, `tradeoff`, `theory`, `graph`, `enchant`) and the planners
+  (`imprints`, `weapons`/`skills`, `enchant-plan`/`gear-plan`, `loadout`/`real-dps`). In Rust, a planner call takes
+  it from the options record it already reads:
+  - `dfo_core::maxprofile::Profiles::legal_gear` / `legal_frontier` / `max_character` and `max_run` read
+    `opts.gameBuild`; pass `{"gameBuild": "14631"}` to price the frontier and its winner at the shipped build.
+  - `dfo_core::real_build::real_weapon_loadouts(_with)` take a `game_build: &str`, and `StageOpts` carries
+    `game_build: String` (an additive field: `..Default::default()` is the cut). `StageOpts::from_value` reads
+    `gameBuild`.
+  - `dfo_core::imprints::rank_family`/`rank_all` read `opts.gameBuild`; `dfo_core::enchant_plan::plan_enchants(_with)`
+    and `plan_matrix(_with)` read it too, and `apply_plan_dps_at`/`best_weapon_for_family_at(_with)` take it explicitly
+    (the old arities remain as cut wrappers).
+  - `dfo_core::loadout_shortlist::ShortlistOpts` carries `game_build`, so the sampled shortlist draws at it.
+  `model_blow::game_build_name`/`game_build_one` normalise a bare string. A GUI that leaves the key out gets the
+  `14512` cut everywhere, which is what every existing caller does.
+- **One planner assumption this exposed.** `legalGear` picks the frontier point by DPS, so it is a *search over
+  prices*, not a fixed allocation: at `14631` the flat add makes weapon-skill points beat Critical Strike and the
+  winner moves (`250/370/25%` -> `350/252/38%` on the Dai-katana). The frontier cache keys on the build for exactly
+  this reason; a GUI that caches a profile itself must key on it too.
 - **A hypothetical gear line crashes, it does not loop.** `14631` enumerates every integer add, so a `--gear-lb` past
   V8's spread limit makes the JS throw a `RangeError` (exit 1). The port raises the same `RangeError`
   (`model_blow::JsRangeError`, `MAX_ENUMERATED_BLOWS`) instead of running to an OOM, so it prices exactly the cards

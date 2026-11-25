@@ -6,6 +6,54 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Stage JS-2: the planners take the shipped build, in both languages (2026-11-25)
+
+`--game-build` reached only the per-card commands (`src/cli.js:546` `scenarioOf`); the planners forge their own
+scenario (`maxprofile.js`, `imprints.js`, `enchantPlan.js`, `realBuild.js`), so a 0.1.14631 picker could price a card
+but not a loadout, an imprint rating or an enchant plan. Every one now takes the same key, and the commands that read
+it grew from ten to seventeen: `imprints`, `weapons`, `skills`, `enchant-plan`, `gear-plan`, `loadout`, `real-dps`
+join the original list. The four commands that price neither a card nor a plan (`firmament`, `probe`, `spells`,
+`spell`, plus `saves`/`doctor`) still refuse it by name.
+
+**The planner assumption the ticket warned about is real and had to be fixed.** `legalGear` picks the frontier point
+with the most DPS, and the 14631 law changes what a point is WORTH: a flat add per weapon-skill point against no
+mastery percent means weapon skill beats Critical Strike, so the winner moves. Measured on the level-45 Dai-katana
+(118): `250 / 370 / 25%` at `14512` becomes `350 / 252 / 38%` at `14631`, and the uncapped DPS of the legal point
+958.1 -> 1381.0. Nothing was hard-coded (the search re-prices every point), but the frontier cache keyed on
+`(template, shield)` alone, so a 14631 plan could have reused a 14512 frontier; it now keys on the build
+(`maxprofile.js evaluatedFrontier`, Rust `Profiles::evaluated`). The same class of bug sat in the Rust CLI: `weapons`,
+`theory` and the shared `character()` loader each read `legal_gear` without the build, which the weapons-page
+differential caught (a dual row's `maxDps` 2197.6 vs 2287.9).
+
+**One more missing thread the differentials found:** the what-if tables `printBuild` prints (marginals, affix ratings,
+top weapons) rebuilt their own scenario without `gameBuild`, so a 14631 card's *headline* moved but its tables stayed
+on the cut. Fixed in both languages (`src/cli.js:810,819,828`, Rust `whatif_scenario`).
+
+**Outputs moved: none by default.** Every default-run output is byte-identical: `imprints --json`,
+`enchant-plan --json`, `weapons --json/-page`, `loadout --json/-page`, `report --page` and `theory --json` were
+compared byte for byte at `14512` before and after (`test/planners14631.test.js`, `rust/dfo-cli/tests/planners.rs`).
+At `14631` the planners move as one would expect from the law (a level-45 Dai-katana max-profile `maxRun`'s carried
+per-hit-capped DPS 963.8 -> 1311.6, and the whole loadout table with it).
+
+**Public Rust API (additive).** `StageOpts` gained `game_build: String` (`..Default::default()` keeps the cut);
+`real_weapon_loadouts(_with)` take `game_build: &str`; `ShortlistOpts` gained `game_build` (read from `gameBuild`);
+`enchant_plan::apply_plan_dps`/`best_weapon_for_family(_with)` keep their old arities as cut wrappers, with
+`*_at`/`*_with_build` taking the build; `model_blow::game_build_name`/`game_build_one` normalise a bare string.
+`Profiles::legal_gear`/`legal_frontier`/`max_character` read `opts.gameBuild`.
+
+**Tests.** `test/planners14631.test.js` (JS) and `rust/dfo-core/tests/planners.rs` (Rust API) pin the frontier
+re-pick, the module wiring and the default-identity; `rust/dfo-cli/tests/planners.rs` is the byte-for-byte CLI
+differential for all seven newly accepting commands at both builds, each case asserting the 14631 result differs.
+
+## Rust parity: a string `element` or `rangeType` on a spell record (2026-11-25)
+
+**Source.** `src/spells.js` reads `TARGET_COST_MULT[spell.rangeType]` (`spellCost`) and
+`ELEMENT_FLAG_BY_INDEX[element]` (`savingChanceOutcome`) as property keys, so `"2"` names the same row as `2`; its
+strict compares (`elementTraitOf`, `spellHasFlags`) do not match a string. **Changed:** the Rust port only
+(`rust/dfo-core/src/spells.rs`), which read both strings as no row. No JS number moves. **Test:** the `card` vectors of
+`tools/rust-spell-vectors.mjs` replayed by `cargo test -p dfo-core --test spells` against the live JS. Red: a card
+with `element: "0"`, magnitude 400, expected damage 201 (saving 0.5025), got 67 (saving 0.1675). Green after.
+
 ## Stage JS-1: the 0.1.14631 weapon-gear law and `brand`, opt-in (2026-11-23)
 
 **Source.** These facts are readable only in the shipped 0.1.14631 build, so they are cited `dist:` (the weaker

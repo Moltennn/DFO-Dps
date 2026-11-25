@@ -24,7 +24,7 @@ import * as S from '../src/loadoutShortlist.js';
 import { IMPRINT_FAMILIES } from '../src/imprints.js';
 import { WEAPONS } from '../src/data.js';
 import { enchantmentCost, itemTemplate } from '../src/enchantData.js';
-import { gateTarget, referenceFoe } from '../src/model.js';
+import { DEFAULT_GAME_BUILD, gateTarget, referenceFoe } from '../src/model.js';
 import { ENCHANTMENT_TYPES } from '../src/enchants.js';
 import { maxCharacter, maxRun } from '../src/maxprofile.js';
 import { THEORY_LEVEL } from '../src/theory.js';
@@ -139,14 +139,16 @@ function hitPointsOf(t) {
 function applyPlanDps(ch, plan, target) {
   const here = dirname(fileURLToPath(import.meta.url));
   const text = readFileSync(join(here, '..', 'src', 'enchantPlan.js'), 'utf8');
-  const head = 'function applyPlanDps(ch, plan, target) {';
+  const head = 'function applyPlanDps(ch, plan, target, gameBuild = DEFAULT_GAME_BUILD) {';
   const at = text.indexOf(head);
   if (at < 0 || text.indexOf(head, at + 1) >= 0) throw new Error('rust-planner-vectors: applyPlanDps must be unique');
   const end = text.indexOf('\n}\n', at);
   if (end < 0) throw new Error('rust-planner-vectors: no close for applyPlanDps');
   const itemEnchantId = { CastWhenStrikes: ENCHANTMENT_TYPES.CastWhenStrikes, PotentVs: ENCHANTMENT_TYPES.PotentVs };
-  const fn = new Function('ITEM_ENCHANT_ID', 'maxRun', `${text.slice(at, end + 3)}\nreturn applyPlanDps;`);
-  return fn(itemEnchantId, maxRun)(ch, plan, target);
+  // `DEFAULT_GAME_BUILD` is a module constant the cut function reads; the vectors price the cut unless they name a
+  // build, so it is injected here rather than reinvented.
+  const fn = new Function('ITEM_ENCHANT_ID', 'maxRun', 'DEFAULT_GAME_BUILD', `${text.slice(at, end + 3)}\nreturn applyPlanDps;`);
+  return fn(itemEnchantId, maxRun, DEFAULT_GAME_BUILD)(ch, plan, target);
 }
 
 /**

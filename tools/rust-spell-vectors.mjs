@@ -82,6 +82,13 @@ export function genSpellFamilies(Out, makeLcg) {
   const card = (sp, ch, t, opts, mode = 'avg') => put('card', [sp, ch, t, opts, mode], [S.spellCost(sp, ch, opts), S.spellDamage(sp, ch, t, { ...opts, mode }), S.castRate(ch, opts), S.analyzeSpell(sp, ch, t, opts), S.spellRotation(sp, ch, t, opts)]);
   const mk = (type, mag, rounds = 0) => ({ ...effect([type, 0]), magnitudeBaseLow: mag, magnitudeBaseHigh: mag, magnitudeLevelBase: 0, magnitudeLevelHigh: 0,
     durationBase: rounds, durationMod: 0, durationPerLevel: 1 });
+  // A save or custom record may carry `element`/`rangeType` as strings: the JS coerces them as property keys (the
+  // element's flag, the range's cost) and not in its strict compares (the proof trait, the race flags).
+  const strings = ['0', '2', '3', '4', '5', '02', ' 2', null].map((element) => ({ element, rangeType: 0 }))
+    .concat(['0', '2', '3', '4', '02', null].map((rangeType) => ({ element: 0, rangeType })));
+  for (const t of targets.filter((x) => x?.bossTraits || x?.raceTemplate || x?.raceId === 4)) {
+    for (const spec of strings) card({ effects: [mk(4, 400)], ...spec }, {}, t, {});
+  }
   const pureDot = { effects: [mk(1, 8, 1)] };
   const ch = { maxMagicka: 1000, skills: { [SKILLS.Destruction]: 104 } };
   const thresholdSave = S.spellDamage({ effects: [mk(4, 1)] }, {}, {}).saving;

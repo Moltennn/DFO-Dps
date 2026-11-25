@@ -13,7 +13,7 @@
  */
 import { WEAPONS } from './data.js';
 import { THEORY_LEVEL } from './theory.js';
-import { gateTarget } from './model.js';
+import { DEFAULT_GAME_BUILD, gateTarget } from './model.js';
 import { maxCharacter, maxRun } from './maxprofile.js';
 
 /** Weapon Legendaries that can supply an imprint, with their power. */
@@ -83,6 +83,9 @@ export function powerDps(power, base, conditional = false, { capped = false } = 
   // from the target and the scenario. `conditional` only assumes the trigger holds (a pricing assumption).
   // The figure is the CARRIED metric (the held item's long-run mean), not the card's floored estimate: a
   // percentage power's worth is its exact share (W-LOOT-CARRY).
+  //
+  // `base` is an `analyze()` run made with the caller's `gameBuild`, and `with` re-runs the SAME scenario
+  // (`model.js:1185`), so the 14631 gear law rides through without a second argument.
   const priced = base.with({ imprint: power, assumeTriggers: conditional });
   return capped ? priced.carriedCappedDps : priced.carriedDps;
 }
@@ -113,15 +116,15 @@ const TRIGGER = Object.freeze({
 });
 
 /** Rank the family's eligible imprints on its best max-profile weapon. */
-export function rankFamily(family, { firmament = false, vampire = false, sort = 'base' } = {}) {
+export function rankFamily(family, { firmament = false, vampire = false, sort = 'base', gameBuild = DEFAULT_GAME_BUILD } = {}) {
   const gate = gateTarget(THEORY_LEVEL);
   const bases = new Map();
   const uncapped = new Map();
   for (const t of family.templates) {
     if (!WEAPONS[t]) continue;
-    const ch = maxCharacter(t, { firmament, vampire });
-    bases.set(t, maxRun(ch, { target: gate }));
-    uncapped.set(t, maxRun(ch));
+    const ch = maxCharacter(t, { firmament, vampire, gameBuild });
+    bases.set(t, maxRun(ch, { target: gate, gameBuild }));
+    uncapped.set(t, maxRun(ch, { gameBuild }));
   }
   let best = null;
   for (const [t, base] of bases) if (!best || base.carriedCappedDps > best.base.carriedCappedDps) best = { template: t, base };
@@ -163,5 +166,4 @@ export function rankFamily(family, { firmament = false, vampire = false, sort = 
 }
 
 export const rankAll = (opts = {}) => FAMILIES.map((f) => rankFamily(f, opts));
-
 export const imprintFamilyById = (id) => FAMILIES.find((f) => f.key.toLowerCase() === String(id).toLowerCase()) ?? null;

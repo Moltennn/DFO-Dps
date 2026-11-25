@@ -196,6 +196,7 @@ fn stages_loadouts_sampled_apply() {
                     std::slice::from_ref(&opt.mode),
                     opt.vampire,
                     &opt.encounter,
+                    &opt.game_build,
                     profiles,
                 )
                 .expect("realWeaponLoadouts");

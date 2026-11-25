@@ -13,7 +13,7 @@ import { buildById, effectiveValue, planBuild } from './firmament.js';
 import { planEnchants } from './enchantPlan.js';
 import { IMPRINT_FAMILIES, imprintsFor, powerDps } from './imprints.js';
 import { maxCharacter, maxRun } from './maxprofile.js';
-import { referenceFoe } from './model.js';
+import { referenceFoe, DEFAULT_GAME_BUILD } from './model.js';
 import { encounterTarget } from './encounters.js';
 import { simulatePurse } from './purse.js';
 import { THEORY_LEVEL } from './theory.js';
@@ -116,33 +116,33 @@ function bestImprint(template, run, capped) {
  * not a percentage channel); the benchmark (`tools/benchmark-loadouts.mjs`) runs the same characters through
  * `simulateFights`. One construction, so the two cannot drift.
  */
-export function realBuildStages(template, family, { mode = 'uncapped', vampire = false, dual = false, encounter = 'breach' } = {}) {
+export function realBuildStages(template, family, { mode = 'uncapped', vampire = false, dual = false, encounter = 'breach', gameBuild = DEFAULT_GAME_BUILD } = {}) {
   const capped = mode !== 'uncapped';
   const target = capped ? encounterTarget(encounter, THEORY_LEVEL) : referenceFoe(THEORY_LEVEL, 'tough');
   const tree = planBuild(buildById(BUILD_ID[family.key] ?? family.key), {});
   // The gear-only baseline is kept before the tree folds into the same character (`applyFirmament` mutates).
-  const gearCh = maxCharacter(template, { vampire });
+  const gearCh = maxCharacter(template, { vampire, gameBuild });
   const treeCh = applyFirmament(clone(gearCh), tree);
   if (dual) {
     treeCh.offWeapon = { ...treeCh.weapon, equipSlot: 21 };
     treeCh._dual = true;
   }
-  const treeRun = maxRun(treeCh, { target });
+  const treeRun = maxRun(treeCh, { target, gameBuild });
   const group = target.group ?? (capped ? 'none' : 'humanoid');
-  const enchPlan = planEnchants({ weapon: template, soulGem: true, forceSkills: !capped, target, group });
+  const enchPlan = planEnchants({ weapon: template, soulGem: true, forceSkills: !capped, target, group, gameBuild });
   const enchCh = applyEnchants(clone(treeCh), enchPlan);
   if (dual && enchCh.offWeapon) {
     enchCh.offWeapon.enchantments = [...(enchCh.weapon?.enchantments ?? [])];
     enchCh.offWeapon.currentCondition = enchCh.offWeapon.maxCondition = Math.max(1, Number(enchCh.offWeapon.maxCondition) || 800);
   }
-  const enchRun = maxRun(enchCh, { target });
+  const enchRun = maxRun(enchCh, { target, gameBuild });
   const imprint = bestImprint(template, enchRun, capped);
   return { capped, target, tree, treeCh, gearCh, enchCh, enchPlan, treeRun, enchRun, imprint };
 }
 
 /** One real loadout for one template. */
-export function realTemplate(template, family, { mode = 'uncapped', vampire = false, dual = false, encounter = 'breach' } = {}) {
-  const { capped, tree, treeCh, treeRun, enchRun, enchPlan, imprint } = realBuildStages(template, family, { mode, vampire, dual, encounter });
+export function realTemplate(template, family, { mode = 'uncapped', vampire = false, dual = false, encounter = 'breach', gameBuild = DEFAULT_GAME_BUILD } = {}) {
+  const { capped, tree, treeCh, treeRun, enchRun, enchPlan, imprint } = realBuildStages(template, family, { mode, vampire, dual, encounter, gameBuild });
   // ONE metric per row: the CARRIED capped blow (a held item's long-run mean) plus the proc layer, which is not a
   // percentage channel. The imprint step is therefore carried minus carried, never a metric jump. `cardEnchDps`
   // keeps the plain card ceiling under its own name (W-LOOT-CARRY).
@@ -172,7 +172,7 @@ export function realTemplate(template, family, { mode = 'uncapped', vampire = fa
 }
 
 /** Every weapon template in every hold configuration, not just the winners. */
-export function realWeaponLoadouts({ modes = ['uncapped', 'cap'], vampire = false, encounter = 'breach' } = {}) {
+export function realWeaponLoadouts({ modes = ['uncapped', 'cap'], vampire = false, encounter = 'breach', gameBuild = DEFAULT_GAME_BUILD } = {}) {
   const out = [];
   for (const mode of modes) {
     for (const family of IMPRINT_FAMILIES) {
@@ -180,9 +180,9 @@ export function realWeaponLoadouts({ modes = ['uncapped', 'cap'], vampire = fals
         const w = WEAPONS[t];
         if (!w) continue;
         const category = w.skill === 'HandToHand' ? 'Fists' : w.twoHanded ? '2H' : '1H';
-        out.push({ ...realTemplate(t, family, { mode, vampire, encounter }), category });
+        out.push({ ...realTemplate(t, family, { mode, vampire, encounter, gameBuild }), category });
         if (!w.twoHanded && w.skill !== 'Archery' && w.skill !== 'HandToHand') {
-          out.push({ ...realTemplate(t, family, { mode, vampire, dual: true, encounter }), category: 'DW' });
+          out.push({ ...realTemplate(t, family, { mode, vampire, dual: true, encounter, gameBuild }), category: 'DW' });
         }
       }
     }

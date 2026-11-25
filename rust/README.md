@@ -87,9 +87,11 @@ bullets below and in the per-command notes.
   the same way, behind `--game-build`.
 
 - **`--game-build` (the shipped-build selector).** `--game-build <14512|14631>` selects the shipped build a weapon
-  card is priced under; the default stays `14512` (the vendored cut). It is refused by name on every command whose
-  card does not go through `scenarioOf` (only `build`, `objective`, `rank`, `report`, `compare`, `scale`, `tradeoff`,
-  `theory`, `graph` and `enchant` read it), and an unknown value is exit 2. `14631` changes:
+  card or a planner's numbers are priced under; the default stays `14512` (the vendored cut). It is refused by name on
+  every command that prices neither a card nor a plan (`firmament`, `probe`, `spells`, `spell`, `saves`, `doctor`);
+  the per-card commands (`build`, `objective`, `rank`, `report`, `compare`, `scale`, `tradeoff`, `theory`, `graph`,
+  `enchant`) and the planners (`imprints`, `weapons`/`skills`, `enchant-plan`/`gear-plan`, `loadout`/`real-dps`) read
+  it, and an unknown value is exit 2. `14631` changes:
   - the weapon gear law: a flat add on the roll, uniform on `[floor(s/10), floor(s/5)]`, replacing `min(320,
     gear*0.44)%`; the card enumerates every integer add, so a per-hit cap, a fight tier, a bow pull or the off hand's
     share sees the true spread (`model_blow::gear_blow_add`, `damage_model`);
@@ -97,17 +99,27 @@ bullets below and in the per-command notes.
   - the `brand` loot power: `floor(flat x elementShare(target, power.element))` into the flat accumulator;
   - the theory cap sheet's gear row and its formula-cap row (`dfo_core::theory::theory_caps`,
     `gear_mastery_points`).
+  - the legal-gear frontier's WINNER, because that frontier is a search over priced points: a flat add per weapon
+    skill point against no mastery percent moves the best split (`250/370/25%` -> `350/252/38%` on the Dai-katana).
+    The frontier cache keys on the build for this reason.
+  The public planner API takes the build additively: `Profiles::legal_gear`/`max_character`/`max_run` read
+  `opts.gameBuild`; `real_weapon_loadouts(_with)` take `game_build: &str` and `StageOpts` gained a `game_build` field
+  (`..Default::default()` is the cut); `ShortlistOpts` gained `game_build`; `enchant_plan::apply_plan_dps` and
+  `best_weapon_for_family(_with)` keep their old arities as cut wrappers, with `_at`/`_with_build` taking the build.
+  `model_blow::game_build_name`/`game_build_one` normalise a bare string.
   `14631` behaviour rests on `dist:` evidence from the shipped build, cited in `CHANGELOG-MECHANICS.md`
   (GEAR-14631 / BRAND-14631) and in `test/build14631.test.js`; the Rust vectors only prove the port matches the JS
   (`tools/rust-blow-vectors.mjs` appends the `14631` cards last, so every earlier vector byte is unchanged). A
   real-save diff against the live client is not done: parity with the JS validates the port, not the game. The
   carried-chain ratio `e/(1+e+a)`, `duelGearAdd`, the `sigilDueling()` gate, the Gilded item that carries `brand` and
   the defender sigil set are unmodelled.
-  Only a card built from a scenario that carries `gameBuild` moves. The modules that build their own fixed scenario -
-  `dfo_core::real_build` (the loadout planner stages), `dfo_core::imprints` (the imprint ranking) and
-  `dfo_core::maxprofile` (`Profiles`, `max_run`, the legal-gear and ceiling plans) - call `analyze` with no
-  `gameBuild`, so they **price the 14512 cut** whichever build a card names. The JS is the same: `src/maxprofile.js`,
-  `src/imprints.js` and `src/realBuild.js` never pass the key, and `scenarioOf` is the only reader of `--game-build`.
+  Only a card built from a scenario that carries `gameBuild` moves - which now includes the planners: `src/maxprofile.js`,
+  `src/imprints.js`, `src/enchantPlan.js` and `src/realBuild.js` (Rust `dfo_core::maxprofile`/`imprints`/`enchant_plan`/
+  `real_build`) take the key from their caller, so `imprints`, `weapons`/`skills`, `enchant-plan`/`gear-plan`,
+  `loadout`/`real-dps` are priced at the shipped build too. Two consequences worth knowing: (a) the legal-gear
+  frontier is a SEARCH over priced points, and 14631's flat add can pick a different winner (`250/370/25%` ->
+  `350/252/38%` on the Dai-katana), so the frontier cache keys on the build; (b) the historical command list grew from
+  ten to seventeen readers, and `firmament`/`probe`/`spells`/`spell`/`saves`/`doctor` still refuse the flag by name.
   A hypothetical `--gear-lb` past V8's spread limit crashes the JS with a `RangeError` (exit 1); the port raises the
   same `RangeError` (`model_blow::JsRangeError`, `MAX_ENUMERATED_BLOWS`) instead of running to an OOM, so it prices
   exactly the cards the JS prices.
@@ -172,7 +184,7 @@ Figures as reported at the 23 Nov audit. The docs edit that adds this section ra
   `Firmament plans` card (or its `{ build, name, start, startName, stars, budget, freeStars, keys, totals }` document),
   and writes `firmament.html` (or `--out`) from `src/firmament.rs`'s sections through the same create-only writer.
   One observable difference, documented in `src/main.rs`: the JS keeps a disk cache in `.cache/firmament-plans.json`
-  and its first line reads `Firmament plans (N cached, M computed)`. This CLI keeps no cache - a plan is a pure function
+  and its first line reads `Firmament plans (N cached, M computed)`. This CLI keeps no disk cache - a plan is a pure function
   of build and purse - so it replans every run, `--refresh` changes nothing, and the line is the bare `Firmament plans`;
   the plans and page are byte-identical. `dfo-cli/tests/cli_firmament.rs` pins that against the JS CLI.
 - **The imprints page.** `dfo-cli imprints [--family <key>] [--sort <boss|uncapped|conditional>] [--uncapped]
@@ -513,8 +525,9 @@ changes paths, scores and plans. Never copy these tables by hand.
   then `Object.assign`ing the winner's copies. The port owns its `Vec<(String, f64)>` pairs and simply replaces them
   with the winner's, which is the same value in the same key order (the winner's own order; the JS's `Object.assign`
   keeps the winner's insertion order too).
-- **`PLAN_CACHE` is not ported**: a plan is a pure function of (build, purse, forced start). A caller that wants the JS
-  cache's speed keeps its own map keyed by `plan_key`.
+- **`PLAN_CACHE`**: `plan_build` memoises per process, as the JS does, but keys on the whole `(build, opts)` in the
+  value codec rather than on the build id and purse, so two builds sharing an id or a new option never share a plan.
+  It holds at most 128 plans; a new one then pushes one other out.
 - **`FIRMAMENT_NODES`** is the constant 518 (the Map's size), and the `nodes` vector row is the whole sky, so a star
   added or removed fails the port.
 - `planBuild`'s purse: `Math.max(0, Math.min(98, Math.trunc(Number(stars) || 0)))` where `Number(stars) || 0` turns NaN,
@@ -588,7 +601,7 @@ the text moves or the name is not unique. They are generated now, unused, for st
 
 - **`universeCache` is not ported.** A universe is a pure function of `(mode, vampire, encounter)`, so the caller owns
   the cache: `eligible_universe` returns a fresh sorted vector, and the CLI's cache-hit and cache-miss paths become the
-  same code. `rust/README.md`'s stage-1 note on `PLAN_CACHE` is the same decision.
+  same code.
 - **`run.with({imprint})` needs the character and the original scenario**, not the serialized `Analysis`; `Stages`
   therefore carries `ench_ch` and `ench_args` beside `ench_run`, and `best_imprint`/`real_template` price with
   `analyze_with` on those (the same call `imprints::power_dps` makes).

@@ -811,6 +811,24 @@ pub fn game_build(opts: &Value) -> &'static str {
     }
 }
 
+/// Normalize a build string a caller already holds (the CLI's `--game-build`, a `StageOpts` field): `game_build`'s
+/// one normalisation point for a bare value instead of a scenario key.
+pub fn game_build_name(build: &str) -> &'static str {
+    if build == "14631" {
+        "14631"
+    } else {
+        DEFAULT_GAME_BUILD
+    }
+}
+
+/// [`game_build_name`] for a caller that holds the value in a scenario slot (a `Value::Str`, or a nullish `Value`).
+pub fn game_build_one(value: &Value) -> &'static str {
+    match value.as_str() {
+        Some(build) => game_build_name(build),
+        None => DEFAULT_GAME_BUILD,
+    }
+}
+
 pub fn mastery_pct(ch: &Value, w: &Value, opts: &Value) -> f64 {
     if !on(ch, "online") || !w.truthy() {
         return 0.0;

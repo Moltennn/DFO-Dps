@@ -191,6 +191,15 @@ pub fn number_to_string(x: f64) -> String {
         // mutation: equivalent - this arm runs only when x.is_infinite(), so x is +inf or -inf, and `x > 0.0`, `x >= 0.0` and `x > 1.0` each hold exactly for +inf.
         return if x > 0.0 { "Infinity" } else { "-Infinity" }.to_owned();
     }
+    // An integer below 2^53 prints as its own decimal digits. Property reads by skill or template id come through here,
+    // and the float formatter below cost a quarter of a planner run.
+    // mutation: equivalent - 2^53 itself prints the same digits on either path, so `<` and `<=` agree; the literal one
+    // higher is no double and rounds back to 2^53; and `fract() == 1.0` is never true, which only sends integers down
+    // the formatter below, whose output is the same (the test `integer_fast_path_prints_what_the_float_formatter_prints`
+    // compares the two forms).
+    if x.fract() == 0.0 && x.abs() < 9007199254740992.0 {
+        return (x as i64).to_string();
+    }
     // mutation: equivalent - NaN, zero and the infinities returned above, so x is finite and nonzero here, and for such x `x < 0.0` and `x <= 0.0` are the same test.
     let sign = if x < 0.0 { "-" } else { "" };
     let sci = format!("{:e}", x.abs());
@@ -770,6 +779,22 @@ mod tests {
         assert_eq!(number_to_string(-0.0), "0");
         assert_eq!(number_to_string(1.5), "1.5");
         assert_eq!(number_to_string(5e-324), "5e-324");
+    }
+
+    // Local invariant: the integer fast path against std's float `Display`, which writes an integral double below
+    // 1e21 as plain digits, as JS does (std keeps the sign of -0, checked above).
+    #[test]
+    fn integer_fast_path_prints_what_the_float_formatter_prints() {
+        let edges = (0..63).flat_map(|p| {
+            let x = 2f64.powi(p);
+            [x - 1.0, x, x + 1.0, x + 2.0, x - 0.5, x + 0.5]
+        });
+        for x in (1..=100_000).map(f64::from).chain(edges) {
+            if x != 0.0 {
+                assert_eq!(number_to_string(x), format!("{x}"));
+                assert_eq!(number_to_string(-x), format!("{}", -x));
+            }
+        }
     }
 
     #[test]

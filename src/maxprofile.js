@@ -1,6 +1,6 @@
 /* The weapons page's max character, shared by the imprint and enchant planners. */
 import { SKILLS, WEAPONS } from './data.js';
-import { analyze, gateTarget, referenceFoe } from './model.js';
+import { analyze, gateTarget, referenceFoe, DEFAULT_GAME_BUILD, gameBuildOf } from './model.js';
 import { perfectSockets } from './sockets.js';
 import { legalTotals, validatePlan, slotsFor } from './gearProfile.js';
 import { THEORY_LEVEL, theoryCharacter, theoryFists } from './theory.js';
@@ -50,13 +50,16 @@ const _frontiers = new Map();
 
 /**
  * Every legal frontier point of a build, evaluated against the uncapped target and the level-45 Breach.
- * Cached per slot set: the frontier is small and the search is deterministic.
+ * Cached per slot set: the frontier is small and the search is deterministic. `gameBuild` changes only the PRICE of
+ * each point (the 14631 gear law), never the allocation, so the cache key includes it - a 14631 and a 14512 frontier
+ * are different numbers.
  */
-function evaluatedFrontier(template, { shield = null } = {}) {
+function evaluatedFrontier(template, { shield = null, gameBuild = DEFAULT_GAME_BUILD } = {}) {
   const t = Number(template);
   const w = WEAPONS[t];
   if (!w) throw new Error(`unknown weapon template ${template}`);
-  const key = `${t}:${shield ?? ''}`;
+  const build = gameBuildOf(gameBuild);
+  const key = `${t}:${shield ?? ''}:${build}`;
   if (_frontiers.has(key)) return _frontiers.get(key);
   const skill = SKILL_OF_FAMILY[w.skill] ?? SKILLS.HandToHand;
   const points = legalTotals({ weaponTemplate: t, skill, shield });
@@ -64,8 +67,8 @@ function evaluatedFrontier(template, { shield = null } = {}) {
   const gate = gateTarget(THEORY_LEVEL);
   const evaluated = points.map((p) => {
     const ch = buildMax(t, { gearSkill: p.lb, gearCrit: p.cs, damagePct: p.dmg });
-    const r = analyze(ch, { target, core: 'overhaul', rri: true, healthShare: 1, passiveOn: true, stacks: 5 });
-    const g = analyze(ch, { target: gate, core: 'overhaul', rri: true, health: gate.maxHealth, healthShare: 1, passiveOn: true, stacks: 5 });
+    const r = analyze(ch, { target, core: 'overhaul', rri: true, healthShare: 1, passiveOn: true, stacks: 5, gameBuild: build });
+    const g = analyze(ch, { target: gate, core: 'overhaul', rri: true, health: gate.maxHealth, healthShare: 1, passiveOn: true, stacks: 5, gameBuild: build });
     return {
       ...p,
       dps: r.dps,
@@ -93,10 +96,10 @@ const METRICS = Object.freeze({ uncapped: 'dps', capped: 'cappedDps', allowance:
  * rules leave open. `violations` re-checks the plan, so an illegal assumption cannot creep back in
  * silently.
  */
-export function legalGear(template, { shield = null, metric = 'uncapped' } = {}) {
+export function legalGear(template, { shield = null, metric = 'uncapped', gameBuild = DEFAULT_GAME_BUILD } = {}) {
   const field = METRICS[metric];
   if (!field) throw new Error(`unknown metric "${metric}"`);
-  const { skill, evaluated } = evaluatedFrontier(template, { shield });
+  const { skill, evaluated } = evaluatedFrontier(template, { shield, gameBuild });
   const max = Math.max(...evaluated.map((p) => p[field]));
   const ties = evaluated.filter((p) => Math.abs(p[field] - max) <= 1e-9);
   const best = ties[0];
@@ -116,8 +119,8 @@ export function legalFrontier(template, opts) {
 }
 
 /** The max character: the legal gear budget, then the usual ceiling identity. */
-export function maxCharacter(template, { firmament = false, vampire = false, race = 'darkelf' } = {}) {
-  const g = legalGear(template);
+export function maxCharacter(template, { firmament = false, vampire = false, race = 'darkelf', gameBuild = DEFAULT_GAME_BUILD } = {}) {
+  const g = legalGear(template, { gameBuild });
   return buildMax(Number(template), { gearSkill: g.lb, gearCrit: g.cs, damagePct: g.dmg, firmament, vampire, race });
 }
 
@@ -125,13 +128,18 @@ export function maxCharacter(template, { firmament = false, vampire = false, rac
 export const legalGearPlan = (template, opts) => legalGear(template, opts).plan;
 export { slotsFor, validatePlan };
 
-export function maxRun(ch, { target = referenceFoe(THEORY_LEVEL, 'tough'), gate = false } = {}) {
+/**
+ * One card of a max-profile character at the level-45 gate or an ordinary target. `gameBuild` is passed straight to the
+ * scenario: the 14631 gear law moves the carried figure, never the build.
+ */
+export function maxRun(ch, { target = referenceFoe(THEORY_LEVEL, 'tough'), gate = false, gameBuild = DEFAULT_GAME_BUILD } = {}) {
   const t = gate ? gateTarget(THEORY_LEVEL) : target;
   return analyze(ch, {
     target: t,
     health: t.maxHealth ?? 0,
     core: 'overhaul', rri: true, healthShare: 1, passiveOn: true, stacks: 5,
     pair: !!ch?._pair, dual: !!ch?._dual,
+    gameBuild,
   });
 }
 

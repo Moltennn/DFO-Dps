@@ -36,6 +36,9 @@ pub struct ShortlistOpts {
     pub max_seconds: f64,
     pub max_blows: f64,
     pub health: Value,
+    /// The shipped build (`--game-build`); additive, defaulting to the cut. The universe is priced per build, so a
+    /// shortlist's cache key carries it (a 14631 shortlist cannot reuse a 14512 one).
+    pub game_build: String,
 }
 
 impl ShortlistOpts {
@@ -84,6 +87,7 @@ impl ShortlistOpts {
                 Value::Undefined => Null,
                 v => v.clone(),
             },
+            game_build: crate::model_blow::game_build(opts).to_owned(),
         }
     }
 }
@@ -113,6 +117,7 @@ pub fn eligible_universe_with(
         std::slice::from_ref(&opts.mode),
         opts.vampire,
         &opts.encounter,
+        &opts.game_build,
         profiles,
     )?
     .into_iter()
@@ -213,6 +218,7 @@ pub fn shortlist_loadouts_with(
                 vampire: opts.vampire,
                 dual: row.get("dual").truthy(),
                 encounter: opts.encounter.clone(),
+                game_build: opts.game_build.clone(),
             };
             real_build_stages_with(row.get("template"), &family, &stage_opts, profiles)
         })
@@ -241,6 +247,7 @@ pub fn shortlist_loadouts_with(
         })
         .collect();
     let mut scenario = max_run_scenario();
+    scenario.set("gameBuild", Str(opts.game_build.clone()));
     scenario.set("objective", Str(objective.clone()));
     scenario.set("target", stages[0].target.clone());
     scenario.set("health", opts.health.clone());

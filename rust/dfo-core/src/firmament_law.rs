@@ -12,7 +12,8 @@
 use crate::generated::firmament::{FIRM_ADJ, FIRM_NODES, START_KEYS, STAT_DEF_ROWS, STAT_WORDS};
 use crate::round::math_round;
 use crate::value::Value::{self, Num};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
+use std::sync::OnceLock;
 
 pub const FIRMAMENT_NODES: usize = 518;
 pub const FIRMAMENT_STARS: f64 = 98.0;
@@ -120,29 +121,33 @@ pub struct Node {
     pub y: f64,
 }
 
+/// A generated table's row numbers by key, built once: the planner looks stars up millions of times.
+fn rows_by_key(keys: impl Iterator<Item = &'static str>) -> HashMap<&'static str, usize> {
+    keys.enumerate().map(|(row, key)| (key, row)).collect()
+}
+
 pub fn node(key: &str) -> Option<Node> {
-    FIRM_NODES
-        .iter()
-        .find(|(k, _)| *k == key)
-        .map(|(_, n)| Node {
-            key: n.key,
-            kind: n.kind,
-            ring: n.ring,
-            sector: n.sector,
-            cluster: n.cluster,
-            name: n.name,
-            stats: n.stats,
-            text: n.text,
-            x: n.x,
-            y: n.y,
-        })
+    static ROWS: OnceLock<HashMap<&'static str, usize>> = OnceLock::new();
+    let rows = ROWS.get_or_init(|| rows_by_key(node_keys()));
+    let (_, n) = &FIRM_NODES[*rows.get(key)?];
+    Some(Node {
+        key: n.key,
+        kind: n.kind,
+        ring: n.ring,
+        sector: n.sector,
+        cluster: n.cluster,
+        name: n.name,
+        stats: n.stats,
+        text: n.text,
+        x: n.x,
+        y: n.y,
+    })
 }
 
 pub fn adj(key: &str) -> &'static [&'static str] {
-    FIRM_ADJ
-        .iter()
-        .find(|(k, _)| *k == key)
-        .map_or(&[], |(_, v)| *v)
+    static ROWS: OnceLock<HashMap<&'static str, usize>> = OnceLock::new();
+    let rows = ROWS.get_or_init(|| rows_by_key(FIRM_ADJ.iter().map(|(k, _)| *k)));
+    rows.get(key).map_or(&[], |row| FIRM_ADJ[*row].1)
 }
 
 /// Every star's key, in the Map's insertion order (`[...FIRM_NODES.keys()]`).
@@ -783,4 +788,29 @@ pub fn totals(tree: &Tree) -> Vec<(String, f64)> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Local invariant: the indexed lookups answer as a first-match scan of the generated tables does.
+    #[test]
+    fn indexed_star_lookups_agree_with_a_scan() {
+        let keys = FIRM_NODES
+            .iter()
+            .map(|(k, _)| *k)
+            .chain(FIRM_ADJ.iter().map(|(k, _)| *k))
+            .chain(["", "no.such.star"]);
+        for key in keys {
+            let row = FIRM_NODES.iter().find(|(k, _)| *k == key);
+            assert_eq!(
+                node(key).map(|n| (n.key, n.name, n.stats, n.x, n.y)),
+                row.map(|(_, n)| (n.key, n.name, n.stats, n.x, n.y)),
+                "{key}"
+            );
+            let near = FIRM_ADJ.iter().find(|(k, _)| *k == key);
+            assert_eq!(adj(key), near.map_or(&[][..], |(_, v)| *v), "{key}");
+        }
+    }
 }

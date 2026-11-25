@@ -62,8 +62,12 @@ const num = (v, d = 0) => (Number.isFinite(v) ? v : d);
  *  finding in CHANGELOG-MECHANICS.md (GEAR-14631, BRAND-14631). Opt-in, default '14512'; anything that is not
  *  exactly '14631' prices as the cut. */
 export const GAME_BUILDS = Object.freeze(['14512', '14631']);
-const DEFAULT_GAME_BUILD = '14512';
+/** The default build: the vendored cut. Flipping 14631 to default is a one-line change here (and in the Rust twin). */
+export const DEFAULT_GAME_BUILD = '14512';
 const buildOf = (opts) => (opts?.gameBuild === '14631' ? '14631' : DEFAULT_GAME_BUILD);
+
+/** Normalize a caller's build once, as `buildOf` does for a scenario key (`model.js:66`). */
+export const gameBuildOf = (gameBuild) => (gameBuild === '14631' ? '14631' : DEFAULT_GAME_BUILD);
 
 /** Unity's Mathf.Round: half to even (pcaao.js unityRound). */
 export function unityRound(x) {

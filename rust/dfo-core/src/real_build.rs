@@ -266,12 +266,14 @@ fn family_tree(family_key: &str) -> Result<Value, String> {
     Ok(plan_build(build, &Obj(vec![])))
 }
 
-/// The options `realBuildStages` reads, as the JS destructured defaults leave them.
+/// The options `realBuildStages` reads, as the JS destructured defaults leave them. `game_build` is additive: an
+/// `..Default::default()` caller keeps the cut, and `StageOpts::from_value` reads `gameBuild`.
 pub struct StageOpts {
     pub mode: String,
     pub vampire: bool,
     pub dual: bool,
     pub encounter: String,
+    pub game_build: String,
 }
 
 impl Default for StageOpts {
@@ -281,6 +283,7 @@ impl Default for StageOpts {
             vampire: false,
             dual: false,
             encounter: "breach".to_owned(),
+            game_build: crate::model_blow::DEFAULT_GAME_BUILD.to_owned(),
         }
     }
 }
@@ -303,6 +306,9 @@ impl StageOpts {
         if let Some(encounter) = opts.get("encounter").as_str() {
             out.encounter = encounter.to_owned();
         }
+        if let Some(build) = opts.get("gameBuild").as_str() {
+            out.game_build = crate::model_blow::game_build_name(build).to_owned();
+        }
         out
     }
 
@@ -313,6 +319,7 @@ impl StageOpts {
             ("vampire", Bool(self.vampire)),
             ("dual", Bool(self.dual)),
             ("encounter", s(&self.encounter)),
+            ("gameBuild", s(&self.game_build)),
         ])
     }
 }
@@ -362,8 +369,16 @@ pub fn real_build_stages_with(
     };
     let family_key = family.get("key").to_js_string();
     let tree = family_tree(&family_key)?;
+    // The shipped build rides every card this chain prices (the legal budget it picks and both runs it reads).
+    let game_build = s(&opts.game_build);
     // The gear-only baseline is kept before the tree folds into the same character (`applyFirmament` mutates).
-    let gear_ch = profiles.max_character(template, &obj([("vampire", Bool(opts.vampire))]))?;
+    let gear_ch = profiles.max_character(
+        template,
+        &obj([
+            ("vampire", Bool(opts.vampire)),
+            ("gameBuild", game_build.clone()),
+        ]),
+    )?;
     let mut tree_ch = apply_firmament(&gear_ch, &tree);
     if opts.dual {
         let mut off = tree_ch.get("weapon").clone();
@@ -371,7 +386,10 @@ pub fn real_build_stages_with(
         tree_ch.set("offWeapon", off);
         tree_ch.set("_dual", Bool(true));
     }
-    let tree_opts = obj([("target", target.clone())]);
+    let tree_opts = obj([
+        ("target", target.clone()),
+        ("gameBuild", game_build.clone()),
+    ]);
     let tree_args = run_args(&tree_ch, &tree_opts);
     let tree_run = max_run(&tree_ch, &tree_opts, book);
     let group = match target.get("group") {
@@ -385,6 +403,7 @@ pub fn real_build_stages_with(
             ("forceSkills", Bool(!capped)),
             ("target", target.clone()),
             ("group", group),
+            ("gameBuild", game_build.clone()),
         ]),
         profiles,
     )?;
@@ -401,7 +420,10 @@ pub fn real_build_stages_with(
         off.set("maxCondition", Num(condition));
         ench_ch.set("offWeapon", off);
     }
-    let ench_opts = obj([("target", target.clone())]);
+    let ench_opts = obj([
+        ("target", target.clone()),
+        ("gameBuild", game_build.clone()),
+    ]);
     let ench_args = run_args(&ench_ch, &ench_opts);
     let ench_run = max_run(&ench_ch, &ench_opts, book);
     let imprint = best_imprint(
@@ -552,10 +574,11 @@ pub fn real_weapon_loadouts(
     modes: &[String],
     vampire: bool,
     encounter: &str,
+    game_build: &str,
     book: &Spellbook,
 ) -> Result<Vec<Value>, String> {
     let mut profiles = Profiles::new(book);
-    real_weapon_loadouts_with(modes, vampire, encounter, &mut profiles)
+    real_weapon_loadouts_with(modes, vampire, encounter, game_build, &mut profiles)
 }
 
 /// [`real_weapon_loadouts`] on a caller-owned frontier cache: every row of one universe reuses one evaluation per
@@ -564,8 +587,10 @@ pub fn real_weapon_loadouts_with(
     modes: &[String],
     vampire: bool,
     encounter: &str,
+    game_build: &str,
     profiles: &mut Profiles<'_>,
 ) -> Result<Vec<Value>, String> {
+    let game_build = crate::model_blow::game_build_name(game_build).to_owned();
     let mut out = Vec::new();
     for mode in modes {
         for family in imprint_families() {
@@ -585,6 +610,7 @@ pub fn real_weapon_loadouts_with(
                     vampire,
                     dual: false,
                     encounter: encounter.to_owned(),
+                    game_build: game_build.clone(),
                 };
                 let mut row = real_template_with(t, family, &opts, profiles)?;
                 row.set("category", s(category));
@@ -595,6 +621,7 @@ pub fn real_weapon_loadouts_with(
                         vampire,
                         dual: true,
                         encounter: encounter.to_owned(),
+                        game_build: game_build.clone(),
                     };
                     let mut row = real_template_with(t, family, &dual_opts, profiles)?;
                     row.set("category", s("DW"));

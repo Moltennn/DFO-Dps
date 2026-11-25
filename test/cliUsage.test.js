@@ -68,13 +68,13 @@ test('--game-build validates and selects the shipped build', () => {
 });
 
 test('--game-build is rejected by every command that does not read it', () => {
-  for (const cmd of ['weapons', 'skills', 'imprints', 'loadout', 'real-dps', 'firmament', 'probe', 'saves', 'doctor', 'enchant-plan', 'gear-plan', 'spells', 'spell']) {
+  for (const cmd of ['firmament', 'probe', 'saves', 'doctor', 'spells', 'spell']) {
     const result = cli(cmd, '--theory', '--game-build', '14631');
     assert.equal(result.status, 2, `${cmd}: ${result.stderr}`);
     assert.match(result.stderr, new RegExp(`--game-build is not read by ${cmd}`));
   }
-  // and the commands that do read it accept it
-  for (const cmd of ['build', 'rank']) {
+  // and the commands that do read it accept it (cards and planners alike)
+  for (const cmd of ['build', 'rank', 'imprints', 'weapons', 'skills', 'enchant-plan', 'gear-plan']) {
     const result = cli(cmd, '--theory', '--game-build', '14631');
     assert.equal(result.status, 0, `${cmd}: ${result.stderr}`);
   }
