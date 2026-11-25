@@ -14,18 +14,26 @@
  *   --seed    shuffle seed (default 1)
  *   --lines   only mutate these 1-based lines, as `a-b,c,d-e`: a scoped sweep of one change's code, with no shuffle
  *             (the whole selected set runs and `--count` is ignored)
- *   --jobs    parallel workers (default min(8, cores/2)); each owns a private copy of the crate under ~/.cache/dfo-mut/wN
+ *   --jobs    parallel workers (default: as many as cores/2 allows, at most 8, reduced until each worker's cap is >= 1 GiB)
  *   --timeout seconds per mutant before it counts as a hang and is killed with its whole process group (default 180)
+ *   --max-mem per-worker memory cap, e.g. 2G, 512M or 300 (MiB). Default: half of RAM split equally between the workers.
+ *             Every cargo run (build and test binary) is capped; a mutant that hits the cap is killed and reported as
+ *             `killed (memory cap ...)`. Only that one run dies: the cap is a separate cgroup, not the session's.
+ *   --no-mem-cap  run with no memory cap at all. Without it the gate refuses to run when no cap mechanism works.
  *   --list    print the candidate mutants and exit
+ *
+ * Memory cap (tools/mem-cap.mjs): a transient systemd scope (MemoryMax, MemorySwapMax=0) when the user manager can make
+ * one, else `prlimit --data`. The mechanism is chosen by a probe that reads the limit back, and the choice is printed.
  *
  * Code under `#[cfg(test)]`, comments, doc comments and string literals are never mutated. Mutants run in PRIVATE COPIES of
  * the crate (see the run section), so the real source tree is never written and there is nothing to restore.
  */
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { homedir, cpus } from 'node:os';
+import { homedir, cpus, totalmem } from 'node:os';
 import { spawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fmtMiB, parseSize, planMemory, probeMechanism, wrap } from './mem-cap.mjs';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const rustDir = join(root, 'rust');
@@ -35,9 +43,11 @@ const flag = (name, def) => {
   const i = args.indexOf(`--${name}`);
   return i < 0 ? def : args[i + 1];
 };
-const file = args.find((a) => !a.startsWith('--') && !args[args.indexOf(a) - 1]?.startsWith('--'));
+/** Flags that take no value, so the word after them is not theirs. */
+const BOOLEAN_FLAGS = new Set(['--list', '--no-mem-cap']);
+const file = args.find((a, i) => !a.startsWith('--') && !(i > 0 && args[i - 1].startsWith('--') && !BOOLEAN_FLAGS.has(args[i - 1])));
 if (!file) {
-  console.error('usage: node tools/rust-mutate.mjs <file under rust/dfo-core/src> --tests a,b [--count N] [--seed S] [--lines a-b,c] [--jobs J] [--timeout S] [--list]');
+  console.error('usage: node tools/rust-mutate.mjs <file under rust/dfo-core/src> --tests a,b [--count N] [--seed S] [--lines a-b,c] [--jobs J] [--timeout S] [--max-mem SIZE] [--no-mem-cap] [--list]');
   process.exit(2);
 }
 const path = join(rustDir, 'dfo-core', 'src', file);
@@ -125,11 +135,41 @@ if (listOnly) {
 // Parallel pool. Each worker owns a private COPY of the crate (own source, own target dir; the generated vectors are
 // symlinked), so mutants run side by side and the real source tree is never touched: a killed run leaves nothing to
 // restore. Tests are built with opt-level 2 (about 3x faster than debug for these numeric vector loops).
-const jobs = Math.max(1, Number(flag('jobs', Math.min(8, Math.floor(cpus().length / 2)))));
 const mutantTimeoutS = Number(flag('timeout', 180));
 const workRoot = join(homedir(), '.cache', 'dfo-mut');
 const cargoArgs = ['test', '-q', ...tests.flatMap((t) => ['--test', t]), '--lib'];
 const cargoEnv = { ...process.env, CARGO_PROFILE_DEV_OPT_LEVEL: '2', CARGO_PROFILE_DEV_DEBUG: '0' };
+
+// Memory: every cargo run below is capped. The workers together stay within half of RAM (planMemory), and a refusal
+// comes before any work when no mechanism can cap, unless --no-mem-cap says so.
+const noMemCap = args.includes('--no-mem-cap');
+let mem;
+let mech;
+try {
+  mem = planMemory({
+    totalBytes: totalmem(),
+    cores: cpus().length,
+    jobsOpt: args.includes('--jobs') ? Number(flag('jobs')) : undefined,
+    maxMemOpt: flag('max-mem', undefined) === undefined ? undefined : parseSize(flag('max-mem')),
+    noCap: noMemCap,
+  });
+  mech = noMemCap ? 'none' : probeMechanism(mem.capBytes);
+} catch (e) {
+  console.error(`rust-mutate: ${e.message}`);
+  process.exit(2);
+}
+if (mech === 'none' && !noMemCap) {
+  console.error('rust-mutate: no memory cap mechanism works here (neither a systemd user scope with MemoryMax nor prlimit --data).\n' +
+    'Refusing to run uncapped: a runaway mutant can take the session down. Pass --no-mem-cap to run anyway.');
+  process.exit(2);
+}
+const jobs = mem.jobs;
+const capText = mech === 'none' ? 'UNCAPPED (--no-mem-cap)' : `${mech} cap ${fmtMiB(mem.capBytes)} per worker`;
+console.log(`memory: ${capText}; ${jobs} worker(s); budget ${fmtMiB(mem.budget)} (half of RAM)`);
+/** True when a run died at the memory cap: SIGKILL from the scope's OOM killer (cargo reports the signal), or a Rust
+ *  allocation failure under prlimit. A hang is never a cap death. */
+const hitCap = (r) => mech !== 'none' && !r.hung && r.status !== 0 &&
+  (r.signal === 'SIGKILL' || /signal: 9, SIGKILL|memory allocation of \d+ bytes failed|cannot allocate memory/.test(r.out));
 
 const live = new Set();
 const killGroup = (child) => { if (child?.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* gone */ } } };
@@ -171,16 +211,18 @@ function prepare(w) {
 
 function run(dir, timeoutS) {
   return new Promise((resolveRun) => {
-    const child = spawn('cargo', cargoArgs, { cwd: dir, env: { ...cargoEnv, CARGO_TARGET_DIR: join(dir, 'target') }, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    // The whole cargo run (rustc and the test binary) goes under the cap, so a runaway build or test dies alone.
+    const w = wrap(mech, mem.capBytes, 'cargo', cargoArgs);
+    const child = spawn(w.cmd, w.args, { cwd: dir, env: { ...cargoEnv, CARGO_TARGET_DIR: join(dir, 'target') }, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
     live.add(child);
     let out = '';
     let hung = false;
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { out += d; });
     const timer = setTimeout(() => { hung = true; killGroup(child); }, timeoutS * 1000);
-    const done = (status) => { clearTimeout(timer); live.delete(child); killGroup(child); resolveRun({ status: hung ? null : status, out, hung }); };
+    const done = (status, signal) => { clearTimeout(timer); live.delete(child); killGroup(child); resolveRun({ status: hung ? null : status, signal, out, hung }); };
     child.on('close', done);
-    child.on('error', () => done(127));
+    child.on('error', () => done(127, null));
   });
 }
 
@@ -189,7 +231,8 @@ const rel = join('dfo-core', 'src', file);
 
 const base = await run(dirs[0], 900);
 if (base.status !== 0) {
-  console.error(`the unmutated file does not pass (${cargoArgs.join(' ')}):\n${base.out.slice(-1500)}`);
+  const why = hitCap(base) ? ` It hit the memory cap (${fmtMiB(mem.capBytes)} per worker): raise --max-mem, or lower --jobs.` : '';
+  console.error(`the unmutated file does not pass (${cargoArgs.join(' ')}).${why}\n${base.out.slice(-1500)}`);
   process.exit(1);
 }
 
@@ -209,6 +252,7 @@ async function worker(w) {
     const r = await run(dir, mutantTimeoutS);
     let verdict;
     if (r.hung) verdict = `killed (hang > ${mutantTimeoutS}s)`;
+    else if (hitCap(r)) verdict = `killed (memory cap ${fmtMiB(mem.capBytes)})`;
     else if (r.status === 0) verdict = 'SURVIVED';
     else if (/error(\[E\d+\])?:/.test(r.out) && /could not compile/.test(r.out)) verdict = 'invalid (does not compile)';
     else verdict = 'killed';
@@ -222,7 +266,8 @@ await Promise.all(dirs.map((_, w) => worker(w)));
 const survivors = picked.filter((_, i) => verdicts[i] === 'SURVIVED').map((m) => ({ ...m, text: original.split('\n')[m.line].trim() }));
 const killed = verdicts.filter((v) => v.startsWith('killed')).length;
 const invalid = verdicts.filter((v) => v.startsWith('invalid')).length;
+const capKills = verdicts.filter((v) => v.includes('memory cap')).length;
 const same = readFileSync(path, 'utf8') === original; // the real file is never written; this stays true
-console.log(`\n${file}: ${picked.length} mutants (of ${mutants.length} candidates): ${killed} killed, ${survivors.length} survived, ${invalid} invalid; file restored: ${same}  [${jobs} workers]`);
+console.log(`\n${file}: ${picked.length} mutants (of ${mutants.length} candidates): ${killed} killed (${capKills} at the memory cap), ${survivors.length} survived, ${invalid} invalid; file restored: ${same}  [${jobs} workers, ${capText}]`);
 for (const sv of survivors.sort((a, b) => a.line - b.line)) console.log(`  SURVIVOR ${file}:${sv.line + 1}  ${sv.what}\n      ${sv.text}`);
 process.exit(same ? 0 : 3);
