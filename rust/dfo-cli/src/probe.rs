@@ -177,16 +177,18 @@ fn absolute(p: &str) -> PathBuf {
     }
 }
 
-/// `os.homedir()`: `HOME`, then `USERPROFILE`.
+/// `os.homedir()`: `HOME` as libuv reads it (an empty value is that empty path), else the OS user database; Windows
+/// reads `USERPROFILE`. `HOME` unset must not leave a relative capture folder under the working directory.
 fn home() -> PathBuf {
-    ["HOME", "USERPROFILE"]
-        .iter()
-        .find_map(|name| {
-            std::env::var_os(name)
-                .filter(|v| !v.is_empty())
-                .map(PathBuf::from)
-        })
-        .unwrap_or_default()
+    let var = if cfg!(target_os = "windows") {
+        "USERPROFILE"
+    } else {
+        "HOME"
+    };
+    if let Some(value) = std::env::var_os(var) {
+        return PathBuf::from(value);
+    }
+    std::env::home_dir().unwrap_or_default()
 }
 
 /// `path.join(os.homedir(), '.local/share/dfo-tools/probe-mod/captures')` (`src/cli.js:1269`).

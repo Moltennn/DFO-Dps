@@ -2,6 +2,8 @@
 name = "dfo-core"
 version = "0.1.0"
 edition = "2021"
+# The workspace's newest std calls are `slice::as_chunks` (the SPELLS.STD reader) and `usize::is_multiple_of`: 1.88.
+rust-version = "1.88"
 description = "Bit-exact Rust port of the pure DPS core of dfo-dps (milestone R1)"
 license = "MIT"
 publish = false

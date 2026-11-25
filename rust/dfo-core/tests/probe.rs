@@ -229,6 +229,63 @@ fn a_fractional_player_count_is_truncated_not_refused() {
 }
 
 #[test]
+fn a_huge_player_count_is_refused_not_filled() {
+    // LOCAL INVARIANT (src/probe.js:65): the JS `Array(count - known.length)` throws a `RangeError` (V8's array-length
+    // ceiling or an OOM) for a group of 1e15 players, so the port refuses it too instead of filling a billion terms.
+    // The CLI turns the payload into the JS crash line and exit 1.
+    let sample = |t: f64, hp: f64| {
+        Value::Obj(vec![
+            ("t".into(), Value::Num(t)),
+            (
+                "boss".into(),
+                Value::Obj(vec![("hp".into(), Value::Num(hp))]),
+            ),
+        ])
+    };
+    let data = Value::Obj(vec![
+        ("version".into(), Value::Num(1.0)),
+        ("players".into(), Value::Num(1e15)),
+        ("levels".into(), Value::Arr(vec![])),
+        (
+            "samples".into(),
+            Value::Arr(vec![
+                sample(0.0, 100.0),
+                sample(1000.0, 90.0),
+                sample(2000.0, 80.0),
+            ]),
+        ),
+    ]);
+    let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        probe::summarize_probe(&data, &Value::Undefined)
+    }))
+    .expect_err("a huge group is refused");
+    let range = payload
+        .downcast_ref::<dfo_core::model_blow::JsRangeError>()
+        .expect("the JS RangeError payload");
+    assert_eq!(range.0, "RangeError: Invalid array length");
+
+    // Just under the guard still prices (the guard is a ceiling, not a ban on large groups).
+    let at_cap = Value::Obj(vec![
+        ("version".into(), Value::Num(1.0)),
+        ("players".into(), Value::Num(1_000_000.0)),
+        ("levels".into(), Value::Arr(vec![])),
+        (
+            "samples".into(),
+            Value::Arr(vec![
+                sample(0.0, 100.0),
+                sample(1000.0, 90.0),
+                sample(2000.0, 80.0),
+            ]),
+        ),
+    ]);
+    let out = probe::summarize_probe(&at_cap, &Value::Undefined).expect("the guard's own bound");
+    assert_eq!(
+        out.get("fights").items()[0].get("players"),
+        &Value::Num(1_000_000.0)
+    );
+}
+
+#[test]
 fn boss_content_is_the_source_regex_order() {
     // ORACLE (`src/probe.js:17-23`): the first matching family wins, and the sky-ketch name outranks the rest.
     let content = |name: &str, sub: &str| {
