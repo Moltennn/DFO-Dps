@@ -11,7 +11,8 @@
 //! `build` resolves it from the launcher's `config.json` -> `arena2Path`. This slice now does the same read-only lookup
 //! (`saves::load_spellbook`), and `cws_*` below proves a nonzero proc over a synthetic temp `SPELLS.STD` (never the
 //! machine's real one). A missing config, a bad one, or a missing/oversized `SPELLS.STD` is an empty book on both sides,
-//! and `build_missing_config_matches_the_js` pins that. Nested custom spell records and `--data` remain unported.
+//! and `build_missing_config_matches_the_js` pins that. A save's custom spell records are read by `spell` and `spells` only,
+//! never by Cast When Strikes (the JS does the same), and `--data` remains unported here.
 //!
 //! The spellbook tests set `DAGGER_USER_DATA` to their own temp root, so neither CLI can read the player's launcher
 //! config or game files.

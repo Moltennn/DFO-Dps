@@ -260,9 +260,11 @@ saved), and `spell_points_from_career` is documented as a base explanation, not 
 
 ```text
 end     = capAt("endurance", totals.endurance + pctOf(stats.endurance, totals."pct.endurance"))
-floored = maxHealth + evenHpOf(maxHealth, level, stats.endurance + end)
+baseHp  = rawMaxHealth, or maxHealth - renownHp when rawMaxHealth is not set
+floored = baseHp + (evenHpOf(entity, stats.endurance + end) when rawMaxHealth is set, else 0)
 hp      = capAt("hp", totals.hp + pctOf(floored, totals.hpPct))
-mp      = capAt("mp", totals.mp + pctOf(maxMagicka, totals.mpPct))
+baseMp  = maxMagicka - renownMp
+mp      = capAt("mp", totals.mp + pctOf(baseMp, totals.mpPct))
 ```
 
 `pctOf` is `floor(base x pct / 100)`, and **both reads use the PERMANENT `entity.stats`**, never `liveStat`
@@ -279,8 +281,10 @@ the differential proves only `armor_display_mod`. There is no single "armour" to
 **What this is not, and what is unknown.** No movement, regeneration, leech or ordered route: those need units and
 triggers and their own verification, and they are deliberately absent rather than stubbed. Renown's own HP/SP per Renown
 level cannot be read in this repository (`net/renown.js` is a vendored stub), so the `Layer` fields are the caller's.
-Firmament's tree is the account service's and the vendored `firmamentTree`/`firmamentLive` are inert stubs, so a GUI
-passes the law's capped totals for the tree it knows is in force; absent totals are `Unknown`, not 0.
+Firmament's tree is the account service's. The vendored `firmamentTree` is an inert stub, but `firmamentLive` is real
+code: it takes the tree from the host and reports no stats until a tree is set and the page is online
+(`systems/firmamentLive.js:35-36, :81-83`). So a GUI passes the law's capped totals for the tree it knows is in force;
+absent totals are `Unknown`, not 0.
 
 **How it is proven.** `tests/sidebar.rs` runs `tests/sidebar_oracle.mjs` and replays every case through
 `import_save` (with a `character_from_save`-normalized build) + `firmament_layer` + `vitals`. The oracle drives what this
@@ -386,9 +390,8 @@ source supplies one; for `Absent`, show "unknown", never "no stars". Closes with
 caller passes (`sidebar.rs:63-67`). Unverified: the tree's totals. The stub is `net/firmament/firmamentTree.js` (the star
 table, `vendor/upstream/a3eb1605/src/net/firmament/firmamentTree.js:1-10`), not `firmamentLive.js`, which is real code.
 `firmamentLive.js` takes the tree from the host (`:35-36`), starts from `EMPTY_TREE` (`:17`), and reports no stats
-until one is set (`:83`). Section 7 calls both "inert stubs", which is wrong for `firmamentLive.js`. Section 7's block also
-differs from the source: `firmamentPowers.js:258-270` takes Health from `rawMaxHealth` (or `maxHealth - renownHp`) and
-Spell Points from `maxMagicka - renownMp`, not from `maxHealth` and `maxMagicka`. `sidebar.rs:63-65` matches the source.
+until a tree is set and the page is online (`:81`, `:83`). Section 7's block follows `firmamentPowers.js:258-270`: Health
+from `rawMaxHealth` (or `maxHealth - renownHp`), Spell Points from `maxMagicka - renownMp`.
 GUI: pass totals only for a tree the account service confirmed; show absent totals as unknown. Closes with: the account
 service's totals for a known tree.
 

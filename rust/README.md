@@ -72,8 +72,10 @@ bullets below and in the per-command notes.
   byte-identical.
 - **`theory` on a reference foe exits 2.** `theory --target tough|soft|human` crashes the JS card on
   `r.health.toLocaleString()`; this CLI prints one message and exits 2 before any card.
-- **Custom nested spell records in a save are not ported.** Only the save's flat `spells` entries are read; a nested
-  custom record inside a save is not.
+- **Custom spell records in a save.** A save's `spells` entries are read as the JS reads them: a number is a stock
+  index, and any other entry is kept whole (a shallow copy, `save.js:283`) and priced only when it has an `effects`
+  array (`resolveSpells`, `spells.js:97-104`). Only `spell` and `spells` read them. Cast When Strikes never does: its
+  rows price through the launcher's `SPELLS.STD` (`src/cws.js`), as in the JS.
 - **Read-only saves.** There is no game-save writer. `import` is read-only and keeps no copy of the save bytes after
   the character is built.
 - **The model is the 14512 snapshot.** It is the vendored upstream `vendor/upstream/a3eb1605`. The live game is build
@@ -364,8 +366,8 @@ long-blade table, the result card and the `--json` document), its `weapons`/`ski
 family and Critical Strike curves, the relay sections, the page and the `--json` document), and its `loadout`/`real-dps`
 branch by `dfo-cli/src/loadout.rs`: the shortlist card and the default report page (`report_text`/`report_page`), their
 `--json` documents and the row list, with the mode/content resolution in this file. `--json` with `spell --list`
-is refused as the JS does. Nested custom spell records in `--data`'s book are read by the same `read_spells_std`; nothing
-beyond the `SPELLS.STD` record shape is parsed.
+is refused as the JS does. A save's custom records reach the same `resolve_spells` as above; `--data`'s book is `SPELLS.STD`
+records only, read by `read_spells_std`, and nothing beyond the 89-byte record shape is parsed.
 
 ## R5c: theory builds, legal budgets, and imprint rankings
 

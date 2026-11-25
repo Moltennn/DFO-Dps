@@ -125,3 +125,46 @@ fn save_helpers_match_the_js_vectors() {
         );
     }
 }
+
+/// A save's `spells` entry that is a string holding an astral character must not panic. `{ ...s }` (save.js:283) spreads
+/// it to its UTF-16 units, and one half of the emoji is a lone surrogate a `Value` cannot hold; the JS keeps that object
+/// and `resolveSpells` drops it (spells.js:103: an object is kept only when `Array.isArray(sp.effects)`).
+///
+/// LOCAL INVARIANT, not a vector: the JS result holds a lone surrogate, which no vector can state. The JS side was
+/// checked by running node on the spread and on `resolveSpells` (`{...s}` keys 0..5, units d83d dd25, `resolveSpells`
+/// returns `[]`). What is pinned here is the Rust reading of that: the entry is kept as an object with no `effects`, the
+/// stock index beside it is kept, and a representable string spreads to its own units as before.
+#[test]
+fn a_spell_string_with_an_astral_character_is_dropped_not_a_panic() {
+    let spells = Value::Arr(vec![
+        Value::Num(1.0),
+        Value::Str("Fire\u{1F525}".to_owned()),
+        Value::Str("Ice".to_owned()),
+    ]);
+    let save = Value::Obj(vec![("spells".to_owned(), spells)]);
+    let ch = character_from_save(&save, &Value::Obj(Vec::new()));
+    let kept = ch.get("spells").items();
+    assert_eq!(
+        kept.len(),
+        3,
+        "every entry of the save's spells array is kept, as save.js:283 keeps it"
+    );
+    assert_eq!(
+        kept[0],
+        Value::Num(1.0),
+        "a stock index is kept as the number"
+    );
+    assert!(
+        matches!(kept[1], Value::Obj(_)),
+        "a spread string is an object"
+    );
+    assert!(
+        !matches!(kept[1].get("effects"), Value::Arr(_)),
+        "a spread string never has an effects array, so resolveSpells never keeps it"
+    );
+    assert_eq!(
+        kept[2].prop(&Value::Str("1".to_owned())),
+        Value::Str("c".to_owned()),
+        "a representable string spreads to its own units, unchanged"
+    );
+}

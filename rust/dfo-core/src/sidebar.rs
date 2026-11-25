@@ -48,8 +48,10 @@
 //!   number.
 //! - **Renown's and the Spire's terms.** `renownBonus` is a vendored stub (`vendor/upstream/a3eb1605/src/net/renown.js:51`),
 //!   so the caller states them in [`Layer`].
-//! - **The Firmament.** Its tree is the account service's, and the vendored `firmamentTree`/`firmamentLive` are inert
-//!   stubs; the caller passes the law's capped totals, and an absent total is [`Fact::Unknown`], never 0.
+//! - **The Firmament.** Its tree is the account service's. The vendored `firmamentTree` is an inert stub, but
+//!   `firmamentLive` is real code: it takes its tree from the host and reports no stats until a tree is set and the page
+//!   is online (`systems/firmamentLive.js:35-36, :81-83`). The caller passes the law's capped totals, and an absent total
+//!   is [`Fact::Unknown`], never 0.
 //! - **Movement, regeneration, leech, the ordered route.** Not in this slice; deliberately absent rather than stubbed.
 //!
 //! ## Rules, each cited

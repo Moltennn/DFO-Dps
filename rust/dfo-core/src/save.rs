@@ -245,7 +245,9 @@ fn or_default(v: &Value, fallback: Value) -> Value {
 
 /// `{ ...v }` (object spread): a new object of `v`'s own enumerable keys. A primitive spreads to `{}`, an array spreads
 /// its indices, a string its UTF-16 units. One half of an astral character is a lone surrogate, which a `Value` cannot
-/// hold (rust/README.md, R4a): that read is refused rather than lossily answered.
+/// hold, so that index is left out: the same undefined read as `Value::prop` on such a half (value.rs:278). The one
+/// reader that could meet a spread string is `resolve_spells` (spells.rs), which keeps an object only with an `effects`
+/// array; an index key never gives one, so a spell string resolves as the JS does (spells.js:103).
 fn spread(v: &Value) -> Value {
     match v {
         Value::Obj(entries) => Value::Obj(entries.clone()),
@@ -259,12 +261,9 @@ fn spread(v: &Value) -> Value {
         Value::Str(s) => {
             let mut out = Value::Obj(Vec::new());
             for (i, unit) in s.encode_utf16().enumerate() {
-                let half = String::from_utf16(&[unit]).unwrap_or_else(|_| {
-                    panic!(
-                        "not representable: spreading a string at a half of an astral character reads a lone surrogate"
-                    )
-                });
-                out.set(&i.to_string(), Value::Str(half));
+                if let Ok(half) = String::from_utf16(&[unit]) {
+                    out.set(&i.to_string(), Value::Str(half));
+                }
             }
             out
         }
