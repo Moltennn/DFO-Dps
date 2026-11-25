@@ -77,6 +77,7 @@ test('wrap: systemd sets MemoryMax, no swap, and the OOM score; prlimit sets RLI
   assert.ok(s.args.includes('MemorySwapMax=0'));
   assert.ok(!s.args.some((a) => a.startsWith('OOMScoreAdjust')), 'scope units reject OOMScoreAdjust');
   assert.ok(s.args.includes('--expand-environment=no'), 'wrapped arguments are passed through unchanged');
+  assert.ok(s.args.includes('OOMPolicy=continue'), 'the runner survives its killed child and sees the signal');
   assert.deepEqual(s.args.slice(-3), ['cargo', 'test', '-q']);
 
   const p = wrap('prlimit', 300 * MiB, 'cargo', ['test']);

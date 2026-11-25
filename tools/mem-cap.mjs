@@ -8,7 +8,8 @@
  * Mechanisms, chosen by probeMechanism() from what the child process really sees, never by assumption:
  *   systemd  systemd-run --user --scope -p MemoryMax=<cap> -p MemorySwapMax=0 <cmd>
  *            a transient cgroup v2 scope. The kernel OOM killer chooses victims only inside the scope, so the parent
- *            and the rest of the session stay outside it. Preferred. --expand-environment=no stops systemd-run from
+ *            and the rest of the session stay outside it. OOMPolicy=continue lets cargo outlive the killed test and report
+ *            the SIGKILL, so the run is counted as a cap death. Preferred. --expand-environment=no stops systemd-run from
  *            rewriting `${...}` in the wrapped arguments, which broke the probe's own script.
  *   prlimit  prlimit --data=<cap> <cmd>. RLIMIT_DATA: an allocation past the cap fails inside the process. No cgroup,
  *            so the kernel OOM killer is not contained; the cap holds only while the sum of workers fits in RAM (see
@@ -70,7 +71,7 @@ export function planMemory({ totalBytes = totalmem(), cores, jobsOpt, maxMemOpt,
 /** The program and arguments that run `cmd args` under the mechanism. `none` (or no cap) runs them unchanged. */
 export function wrap(mech, capBytes, cmd, args) {
   if (mech === 'systemd') {
-    return { cmd: 'systemd-run', args: ['--user', '--scope', '--quiet', '--expand-environment=no', '-p', `MemoryMax=${capBytes}`, '-p', 'MemorySwapMax=0', cmd, ...args] };
+    return { cmd: 'systemd-run', args: ['--user', '--scope', '--quiet', '--expand-environment=no', '-p', `MemoryMax=${capBytes}`, '-p', 'MemorySwapMax=0', '-p', 'OOMPolicy=continue', cmd, ...args] };
   }
   if (mech === 'prlimit') return { cmd: 'prlimit', args: [`--data=${capBytes}`, cmd, ...args] };
   return { cmd, args };
