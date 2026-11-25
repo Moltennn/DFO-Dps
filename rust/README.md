@@ -184,7 +184,7 @@ Figures as reported at the 23 Nov audit. The docs edit that adds this section ra
   `Firmament plans` card (or its `{ build, name, start, startName, stars, budget, freeStars, keys, totals }` document),
   and writes `firmament.html` (or `--out`) from `src/firmament.rs`'s sections through the same create-only writer.
   One observable difference, documented in `src/main.rs`: the JS keeps a disk cache in `.cache/firmament-plans.json`
-  and its first line reads `Firmament plans (N cached, M computed)`. This CLI keeps no cache - a plan is a pure function
+  and its first line reads `Firmament plans (N cached, M computed)`. This CLI keeps no disk cache - a plan is a pure function
   of build and purse - so it replans every run, `--refresh` changes nothing, and the line is the bare `Firmament plans`;
   the plans and page are byte-identical. `dfo-cli/tests/cli_firmament.rs` pins that against the JS CLI.
 - **The imprints page.** `dfo-cli imprints [--family <key>] [--sort <boss|uncapped|conditional>] [--uncapped]
@@ -517,8 +517,9 @@ changes paths, scores and plans. Never copy these tables by hand.
   then `Object.assign`ing the winner's copies. The port owns its `Vec<(String, f64)>` pairs and simply replaces them
   with the winner's, which is the same value in the same key order (the winner's own order; the JS's `Object.assign`
   keeps the winner's insertion order too).
-- **`PLAN_CACHE` is not ported**: a plan is a pure function of (build, purse, forced start). A caller that wants the JS
-  cache's speed keeps its own map keyed by `plan_key`.
+- **`PLAN_CACHE`**: `plan_build` memoises per process, as the JS does, but keys on the whole `(build, opts)` in the
+  value codec rather than on the build id and purse, so two builds sharing an id or a new option never share a plan.
+  It holds at most 128 plans; a new one then pushes one other out.
 - **`FIRMAMENT_NODES`** is the constant 518 (the Map's size), and the `nodes` vector row is the whole sky, so a star
   added or removed fails the port.
 - `planBuild`'s purse: `Math.max(0, Math.min(98, Math.trunc(Number(stars) || 0)))` where `Number(stars) || 0` turns NaN,
@@ -592,7 +593,7 @@ the text moves or the name is not unique. They are generated now, unused, for st
 
 - **`universeCache` is not ported.** A universe is a pure function of `(mode, vampire, encounter)`, so the caller owns
   the cache: `eligible_universe` returns a fresh sorted vector, and the CLI's cache-hit and cache-miss paths become the
-  same code. `rust/README.md`'s stage-1 note on `PLAN_CACHE` is the same decision.
+  same code.
 - **`run.with({imprint})` needs the character and the original scenario**, not the serialized `Analysis`; `Stages`
   therefore carries `ench_ch` and `ench_args` beside `ench_run`, and `best_imprint`/`real_template` price with
   `analyze_with` on those (the same call `imprints::power_dps` makes).
