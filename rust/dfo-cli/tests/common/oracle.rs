@@ -60,6 +60,23 @@ pub fn pinned_root() -> &'static Path {
     })
 }
 
+/// A fixture file's mtime is part of the oracle key, and one fresher than [`PINNED_MTIME`] makes every call that reads
+/// it uncacheable. A case that writes a save, a config or a capture pins it here: any old, fixed stamp is cacheable,
+/// and only a case whose assertion depends on file order (`listSaves` newest first) needs distinct values.
+pub fn pin_mtime(path: &Path) {
+    pin_mtime_at(path, 1_700_000_000);
+}
+
+/// [`pin_mtime`] at an explicit epoch second, for a case whose assertion depends on which of two files is newer.
+pub fn pin_mtime_at(path: &Path, secs: u64) {
+    fs::File::options()
+        .write(true)
+        .open(path)
+        .expect("fixture file opens")
+        .set_modified(UNIX_EPOCH + Duration::from_secs(secs))
+        .expect("fixture mtime");
+}
+
 /// An empty, process-wide `HOME`, pinned for every child so `os.homedir()` discovery can never read the host. A case
 /// that needs a home of its own passes `HOME` explicitly.
 pub fn home_root() -> &'static Path {

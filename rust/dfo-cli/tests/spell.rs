@@ -15,7 +15,7 @@
 
 mod common;
 
-use common::{js, temp_root};
+use common::{js, pin_mtime, temp_root};
 
 #[path = "../src/spell.rs"]
 mod spell;
@@ -94,6 +94,7 @@ fn write_spellbook(root: &Path) -> PathBuf {
     let arena = root.join("ARENA2");
     fs::create_dir_all(&arena).expect("arena dir");
     fs::write(arena.join("SPELLS.STD"), spells_std()).expect("synthetic SPELLS.STD");
+    pin_mtime(&arena.join("SPELLS.STD"));
     arena
 }
 

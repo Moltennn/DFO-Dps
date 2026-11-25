@@ -14,7 +14,7 @@
 
 mod common;
 
-use common::{js, rust, temp_root};
+use common::{js, pin_mtime_at, rust, temp_root};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -143,6 +143,12 @@ fn write_save(root: &Path, folder: &str, text: &str) -> PathBuf {
     fs::create_dir_all(&dir).expect("save folder");
     let file = dir.join("SaveData.txt");
     fs::write(&file, text).expect("save fixture");
+    // The stamp follows the slot number, so a newest-first listing still prefers a higher slot as the write order did.
+    let slot: u64 = folder
+        .trim_start_matches("SAVE")
+        .parse()
+        .expect("a numbered save slot");
+    pin_mtime_at(&file, 1_700_000_000 + slot);
     file
 }
 

@@ -18,7 +18,9 @@
 
 mod common;
 
-use common::{js as js_env, js_pinned as js, rust as rust_env, rust_pinned as rust, temp_root};
+use common::{
+    js as js_env, js_pinned as js, pin_mtime, rust as rust_env, rust_pinned as rust, temp_root,
+};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -298,6 +300,7 @@ fn build_offline_save_text_matches_the_js() {
     let dir = root.join("Saves").join("SAVE1");
     fs::create_dir_all(&dir).expect("save folder");
     fs::write(dir.join("SaveData.txt"), offline_save(20)).expect("fixture save");
+    pin_mtime(&dir.join("SaveData.txt"));
 
     for args in [
         &["build"][..],
@@ -324,6 +327,7 @@ fn build_live_save_text_matches_the_js() {
     let dir = root.join("Saves").join("SAVE20");
     fs::create_dir_all(&dir).expect("save folder");
     fs::write(dir.join("SaveData.txt"), live_save()).expect("fixture save");
+    pin_mtime(&dir.join("SaveData.txt"));
 
     for args in [
         &["build"][..],
@@ -395,6 +399,7 @@ fn build_offline_save_json_matches_the_js() {
     let dir = root.join("Saves").join("SAVE1");
     fs::create_dir_all(&dir).expect("save folder");
     fs::write(dir.join("SaveData.txt"), offline_save(20)).expect("fixture save");
+    pin_mtime(&dir.join("SaveData.txt"));
 
     for args in [
         &["build", "--json"][..],
@@ -421,6 +426,7 @@ fn build_live_save_json_matches_the_js() {
     let dir = root.join("Saves").join("SAVE20");
     fs::create_dir_all(&dir).expect("save folder");
     fs::write(dir.join("SaveData.txt"), live_save()).expect("fixture save");
+    pin_mtime(&dir.join("SaveData.txt"));
 
     for args in [
         &["build", "--json"][..],
@@ -530,6 +536,9 @@ fn write_spellbook(root: &Path) {
         format!(r#"{{"arena2Path":{}}}"#, json_string(&arena)),
     )
     .expect("launcher config");
+    // One stamp for both: no assertion here depends on which of the config and the book is newer.
+    pin_mtime(&arena.join("SPELLS.STD"));
+    pin_mtime(&root.join("config.json"));
 }
 
 /// A JSON string body for a path (the fixture paths are ASCII).
@@ -542,6 +551,7 @@ fn cws_root(label: &str) -> PathBuf {
     let dir = root.join("Saves").join("SAVE30");
     fs::create_dir_all(&dir).expect("save folder");
     fs::write(dir.join("SaveData.txt"), cws_save()).expect("fixture save");
+    pin_mtime(&dir.join("SaveData.txt"));
     root
 }
 
@@ -587,6 +597,7 @@ fn a_missing_or_bad_launcher_config_is_an_empty_book_like_the_js() {
         let root = cws_root(label);
         if let Some(text) = config {
             fs::write(root.join("config.json"), text).expect("launcher config");
+            pin_mtime(&root.join("config.json"));
         }
         for args in [
             &["build"][..],
@@ -615,6 +626,7 @@ fn a_missing_spells_std_is_an_empty_book_like_the_js() {
         format!(r#"{{"arena2Path":{}}}"#, json_string(&arena)),
     )
     .expect("launcher config");
+    pin_mtime(&root.join("config.json"));
     // Missing file: both fall back to an empty book (the JS `catch` returns a fresh empty `Map`).
     same_env(&["build", "--json"], &root);
     fs::remove_dir_all(&root).expect("cleanup");

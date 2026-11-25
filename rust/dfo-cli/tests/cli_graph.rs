@@ -14,7 +14,7 @@
 
 mod common;
 
-use common::{js, js_root, rust, rust_root, take_page, temp_root};
+use common::{js, js_root, pin_mtime, rust, rust_root, take_page, temp_root};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -120,6 +120,7 @@ fn write_save(root: &Path) -> PathBuf {
     fs::create_dir_all(&folder).expect("save folder");
     let file = folder.join("SaveData.txt");
     fs::write(&file, offline_save()).expect("save fixture");
+    pin_mtime(&file);
     file
 }
 
@@ -678,6 +679,7 @@ fn graph_refuses_to_overwrite() {
     // An unrelated save-shaped file and an existing report are refused and byte-identical.
     let unrelated = root.join("SaveData.txt");
     fs::write(&unrelated, "a game save the CLI must never touch").expect("save fixture");
+    pin_mtime(&unrelated);
     assert_refused(
         &["graph", "--theory", "--out", unrelated.to_str().unwrap()],
         &root,
@@ -686,6 +688,7 @@ fn graph_refuses_to_overwrite() {
     );
     let report = root.join("graph.html");
     fs::write(&report, "an older graph").expect("report fixture");
+    pin_mtime(&report);
     assert_refused(
         &["graph", "--theory", "--out", report.to_str().unwrap()],
         &root,
@@ -703,7 +706,10 @@ fn graph_refuses_to_overwrite() {
         String::from_utf8_lossy(&got.stderr)
     );
     assert!(got.stdout.is_empty(), "no card before a failed page write");
-    let want = js(&["graph", "--theory", "--out", "."], &root);
+    // The same directory path, spelled absolutely: the JS call's cwd is the checkout, so "." would be an argv path
+    // outside the fixture root (and the refusal is the same either way).
+    let dir_path = root.to_str().expect("utf-8 fixture path");
+    let want = js(&["graph", "--theory", "--out", dir_path], &root);
     assert_eq!(want.status.code(), Some(2), "js page dir");
 
     // Unix aliases: a hard link, a symlink and a dangling symlink all exist to `O_EXCL`, so all are refused.
@@ -750,6 +756,10 @@ fn graph_refuses_to_overwrite() {
             "the dangling symlink survives"
         );
         assert!(!root.join("never-written.html").exists());
+        // Done asserting them: a symlink or a hard link is never cacheable, so the later call must not see one.
+        fs::remove_file(&dangling).expect("cleanup the dangling symlink");
+        fs::remove_file(&link).expect("cleanup the symlink");
+        fs::remove_file(&hard).expect("cleanup the hard link");
     }
 
     // What the deviation protects: the JS truncates the save it imported into a page.

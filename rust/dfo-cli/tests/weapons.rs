@@ -15,7 +15,7 @@
 
 mod common;
 
-use common::{js_root as js, rust_root as rust, temp_root};
+use common::{js_root as js, pin_mtime, rust_root as rust, temp_root};
 
 use std::fs;
 use std::path::Path;
@@ -207,6 +207,7 @@ fn weapons_refuses_to_overwrite() {
     let root = temp_root("create-only");
     let path = root.join("keep.html");
     fs::write(&path, "an older report").expect("fixture");
+    pin_mtime(&path);
     let got = rust(&["weapons", "--out", path.to_str().unwrap()], &root);
     assert_eq!(
         got.status.code(),

@@ -16,7 +16,9 @@
 
 mod common;
 
-use common::{js_at, js_cwd as js, rust_at, rust_cwd as rust, temp_root as temp_dir};
+use common::{
+    js_at, js_cwd as js, pin_mtime, pin_mtime_at, rust_at, rust_cwd as rust, temp_root as temp_dir,
+};
 
 use std::ffi::OsStr;
 use std::fs;
@@ -155,6 +157,9 @@ fn capture_with(seconds: u32, chart: bool, gate: bool) -> String {
 fn write_capture(dir: &Path, name: &str, text: &str) -> String {
     let path = dir.join(name);
     fs::write(&path, text).expect("capture fixture");
+    // Discovery ranks by `capturedAt` when present and the mtime otherwise; a fixed stamp keeps every capture call
+    // cacheable, and the discovery case gives its two captures distinct stamps below.
+    pin_mtime(&path);
     path.to_string_lossy().into_owned()
 }
 
@@ -255,12 +260,17 @@ fn probe_discovers_the_newest_capture_like_the_js() {
     fs::write(live.join("a.json"), &older).expect("older capture");
     fs::write(live.join("b.json"), &newer).expect("newer capture");
     fs::write(live.join("not-a-capture.txt"), "ignored").expect("non-json file");
+    // Distinct stamps keep the fixture's own story: a.json is the older file, and its `capturedAt` must still win.
+    pin_mtime_at(&live.join("a.json"), 1_700_000_000);
+    pin_mtime_at(&live.join("b.json"), 1_700_001_000);
+    pin_mtime_at(&live.join("not-a-capture.txt"), 1_700_002_000);
     // The archive folder keeps its own capture; `--old` must pick it.
     let archived = capture(15, false).replace(
         r#""version":1"#,
         r#""version":1,"capturedAt":"2026-10-01T00:00:00.000Z""#,
     );
     fs::write(live.join("old").join("c.json"), &archived).expect("archived capture");
+    pin_mtime(&live.join("old").join("c.json"));
 
     let with_home = |args: &[&str]| {
         let home: [(&str, &OsStr); 1] = [("HOME", root.as_os_str())];
@@ -469,6 +479,7 @@ fn probe_page_write_is_create_only() {
     // An unrelated existing file (a save-shaped fixture and a previous report) is refused and byte-identical.
     let save = dir.join("SaveData.txt");
     fs::write(&save, "a game save the CLI must never touch").expect("save fixture");
+    pin_mtime(&save);
     assert_refused(
         &["probe", "capture.json", "--out", "SaveData.txt"],
         &dir,
@@ -477,6 +488,7 @@ fn probe_page_write_is_create_only() {
     );
     let report = dir.join("probe.html");
     fs::write(&report, "an older report").expect("report fixture");
+    pin_mtime(&report);
     assert_refused(
         &["probe", "capture.json"],
         &dir,
@@ -525,6 +537,9 @@ fn probe_page_write_is_create_only() {
             "the dangling symlink survives"
         );
         assert!(!dir.join("never-written.html").exists());
+        // Done asserting it: a symlink is never cacheable, so the later calls must not see one.
+        fs::remove_file(&dangling).expect("cleanup the dangling symlink");
+        fs::remove_file(&link).expect("cleanup the symlink");
     }
 
     // What the deviation protects: the JS truncates an unrelated save and the capture itself into a page.
@@ -536,6 +551,10 @@ fn probe_page_write_is_create_only() {
             .starts_with("<!doctype html>"),
         "the JS overwrote the unrelated save with its page"
     );
+    // Both files were just written by this test (and a replayed call would write one, too): pin them so the next call
+    // reads a stable fixture instead of one whose mtime is the run's own clock.
+    pin_mtime(&save);
+    pin_mtime(Path::new(&file));
     let want = js(&["probe", "capture.json", "--out", "capture.json"], &dir);
     assert_eq!(want.status.code(), Some(0), "js overwrite fixture");
     assert!(
@@ -593,6 +612,8 @@ fn probe_escapes_capture_derived_text_in_the_page() {
     );
 
     // The JS inserts the same text raw, so the pages differ only there: this pins the deviation, not a parity claim.
+    // Remove the Rust page first: a page left by this run would make the fixture uncacheable for no test reason.
+    fs::remove_file(dir.join("probe.html")).expect("drop the Rust page");
     let want = js(&["probe", &file], &dir);
     assert_eq!(want.status.code(), Some(0), "js hostile capture");
     let want_html = fs::read_to_string(dir.join("probe.html")).expect("the JS page");

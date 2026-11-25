@@ -12,7 +12,7 @@
 
 mod common;
 
-use common::{js as js_env, rust as rust_env, rust_pinned, temp_root};
+use common::{js as js_env, pin_mtime, rust as rust_env, rust_pinned, temp_root};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -52,6 +52,7 @@ fn save_root(label: &str) -> PathBuf {
     let dir = root.join("Saves").join("SAVE1");
     fs::create_dir_all(&dir).expect("fixture save folder");
     fs::write(dir.join("SaveData.txt"), offline_save()).expect("fixture save");
+    pin_mtime(&dir.join("SaveData.txt"));
     root
 }
 

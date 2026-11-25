@@ -14,7 +14,7 @@
 
 mod common;
 
-use common::{js_page as js, temp_root};
+use common::{js_page as js, pin_mtime, temp_root};
 
 // The renderer test pins the text card over a real plan; the page/`--all` renderers are pinned end-to-end against
 // the JS by `tests/cli_enchant_plan.rs`, so the test crate does not call them.
@@ -93,6 +93,9 @@ fn write_spellbook(root: &Path) -> Vec<u8> {
         ),
     )
     .expect("launcher config");
+    // One stamp for both: no assertion here depends on which of the config and the book is newer.
+    pin_mtime(&arena.join("SPELLS.STD"));
+    pin_mtime(&root.join("config.json"));
     bytes
 }
 
@@ -136,6 +139,8 @@ fn same(args: &[&str], opts: &Value, book: &Spellbook, root: &Path) {
         "js {args:?}: {}",
         String::from_utf8_lossy(&want.stderr)
     );
+    // The page itself is not compared here: drop it so the next call in this root reads an unchanged fixture.
+    let _ = fs::remove_file(&out);
     let plan = plan_enchants(opts, book).expect("planEnchants");
     let got = format!(
         "{}enchant plan written: {}\n",

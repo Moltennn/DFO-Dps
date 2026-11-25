@@ -13,7 +13,7 @@
 
 mod common;
 
-use common::{js, js_root, rust, rust_root, take_page, temp_root};
+use common::{js, js_root, pin_mtime, rust, rust_root, take_page, temp_root};
 
 use std::fs;
 use std::path::Path;
@@ -307,6 +307,7 @@ fn imprints_refuses_to_overwrite() {
 
     let report = root.join("imprints.html");
     fs::write(&report, "an older report").expect("report fixture");
+    pin_mtime(&report);
     assert_refused(
         &["imprints", "--out", report.to_str().unwrap()],
         &root,
@@ -316,6 +317,7 @@ fn imprints_refuses_to_overwrite() {
 
     let save = root.join("SaveData.txt");
     fs::write(&save, "a game save the CLI must never touch").expect("save fixture");
+    pin_mtime(&save);
     assert_refused(
         &["imprints", "--out", save.to_str().unwrap()],
         &root,

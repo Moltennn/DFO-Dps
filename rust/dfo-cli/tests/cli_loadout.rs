@@ -21,7 +21,7 @@
 
 mod common;
 
-use common::{js_root as js, rust_root as rust, take_page, temp_root};
+use common::{js_root as js, pin_mtime, rust_root as rust, take_page, temp_root};
 
 use std::fs;
 use std::path::Path;
@@ -565,6 +565,7 @@ fn deliberate_refusals_and_create_only_writer() {
 
     // The create-only writer: an existing path is refused and left untouched, where the JS truncates it.
     fs::write(&page, b"keep me").expect("a pre-existing page");
+    pin_mtime(&page);
     let got = rust(&["loadout", "--out", page.to_str().unwrap()], &root);
     assert_eq!(got.status.code(), Some(2), "the create-only refusal");
     assert_eq!(fs::read(&page).expect("the file survives"), b"keep me");

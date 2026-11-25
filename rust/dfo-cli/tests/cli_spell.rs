@@ -15,7 +15,7 @@
 
 mod common;
 
-use common::{js, rust, temp_root};
+use common::{js, pin_mtime, rust, temp_root};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -135,6 +135,7 @@ fn write_arena(root: &Path) -> PathBuf {
     let arena = root.join("ARENA2");
     fs::create_dir_all(&arena).expect("arena dir");
     fs::write(arena.join("SPELLS.STD"), spells_std()).expect("synthetic SPELLS.STD");
+    pin_mtime(&arena.join("SPELLS.STD"));
     arena
 }
 
@@ -143,6 +144,7 @@ fn write_other_arena(root: &Path) -> PathBuf {
     let arena = root.join("ARENA_OTHER");
     fs::create_dir_all(&arena).expect("arena dir");
     fs::write(arena.join("SPELLS.STD"), other_spells_std()).expect("synthetic SPELLS.STD");
+    pin_mtime(&arena.join("SPELLS.STD"));
     arena
 }
 
@@ -154,6 +156,7 @@ fn write_config(root: &Path, arena: &Path) {
         format!(r#"{{"arena2Path":"{path}"}}"#),
     )
     .expect("launcher config");
+    pin_mtime(&root.join("config.json"));
 }
 
 /// A synthetic offline save: stock spell indices 1 and 2 plus one custom record with no index, so the pool is
@@ -198,12 +201,14 @@ fn write_save(root: &Path) {
     let dir = root.join("Saves").join("SAVE1");
     fs::create_dir_all(&dir).expect("save folder");
     fs::write(dir.join("SaveData.txt"), save_with_spells()).expect("fixture save");
+    pin_mtime(&dir.join("SaveData.txt"));
 }
 
 fn write_save_with(root: &Path, indices: &[u8]) {
     let dir = root.join("Saves").join("SAVE1");
     fs::create_dir_all(&dir).expect("save folder");
     fs::write(dir.join("SaveData.txt"), save_with_indices(indices)).expect("fixture save");
+    pin_mtime(&dir.join("SaveData.txt"));
 }
 
 /// The theory character over the explicit `--data` book, every flag the branch reads.
@@ -324,6 +329,7 @@ fn theory_list_with_explicit_data_matches_the_js() {
         spell_record(3, "Lvl 1 Probe", 4, 0, &[(4, 0, 0, 0, 1, 1, 3, 0, 0, 1)]),
     )
     .expect("debug-only book");
+    pin_mtime(&arena.join("SPELLS.STD"));
     same(
         &[
             "spell",
@@ -552,6 +558,7 @@ fn the_empty_book_line_matches_the_js() {
     let arena = short.join("ARENA2");
     fs::create_dir_all(&arena).expect("arena dir");
     fs::write(arena.join("SPELLS.STD"), vec![0u8; 0x58]).expect("short book");
+    pin_mtime(&arena.join("SPELLS.STD"));
     same(
         &[
             "spell",
@@ -582,6 +589,7 @@ fn the_empty_book_line_matches_the_js() {
         let root = temp_root(&format!("config-{label}"));
         let arena = write_other_arena(&root);
         fs::write(root.join("config.json"), config).expect("launcher config");
+        pin_mtime(&root.join("config.json"));
         same(
             &[
                 "spell",
@@ -746,6 +754,7 @@ fn an_empty_standard_pool_crashes_like_the_js() {
         spell_record(3, "Lvl 1 Probe", 4, 0, &[(4, 0, 0, 0, 1, 1, 3, 0, 0, 1)]),
     )
     .expect("debug-only book");
+    pin_mtime(&arena.join("SPELLS.STD"));
     let args = [
         "spell",
         "--theory",

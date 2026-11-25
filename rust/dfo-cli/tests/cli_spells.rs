@@ -16,7 +16,7 @@
 
 mod common;
 
-use common::{js_root as js, rust_root as rust, take_page, temp_root};
+use common::{js_root as js, pin_mtime, rust_root as rust, take_page, temp_root};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -176,6 +176,7 @@ fn write_arena(root: &Path) -> PathBuf {
     let arena = root.join("ARENA2");
     fs::create_dir_all(&arena).expect("arena dir");
     fs::write(arena.join("SPELLS.STD"), spells_std()).expect("synthetic SPELLS.STD");
+    pin_mtime(&arena.join("SPELLS.STD"));
     arena
 }
 
@@ -187,6 +188,7 @@ fn write_config(root: &Path, arena: &Path) {
         format!(r#"{{"arena2Path":"{path}"}}"#),
     )
     .expect("launcher config");
+    pin_mtime(&root.join("config.json"));
 }
 
 /// A synthetic offline save whose `spells` hold two stock indices (1 and 2, which the branch's merge drops because the
@@ -225,6 +227,7 @@ fn write_save(root: &Path) {
     let dir = root.join("Saves").join("SAVE1");
     fs::create_dir_all(&dir).expect("save folder");
     fs::write(dir.join("SaveData.txt"), save_with_spells()).expect("fixture save");
+    pin_mtime(&dir.join("SaveData.txt"));
 }
 
 #[test]
@@ -437,7 +440,6 @@ fn spells_default_output_name_matches_the_js() {
 fn the_empty_book_line_matches_the_js() {
     let root = temp_root("empty");
     let page = root.join("spells.html");
-    let out = page.to_str().unwrap();
     for args in [
         &["spells", "--theory"][..],
         &["spells", "--theory", "--json"][..],
@@ -465,13 +467,17 @@ fn the_empty_book_line_matches_the_js() {
     let arena = short.join("ARENA2");
     fs::create_dir_all(&arena).expect("arena dir");
     fs::write(arena.join("SPELLS.STD"), vec![0u8; 0x58]).expect("short book");
+    pin_mtime(&arena.join("SPELLS.STD"));
+    // The page path is inside the fixture the call runs against: an `--out` under another root is a write the cache
+    // could neither see nor replay.
+    let short_page = short.join("spells.html");
     let args = [
         "spells",
         "--theory",
         "--data",
         arena.to_str().unwrap(),
         "--out",
-        out,
+        short_page.to_str().unwrap(),
     ];
     let want = js(&args, &short);
     assert_eq!(want.status.code(), Some(0));
@@ -482,7 +488,7 @@ fn the_empty_book_line_matches_the_js() {
         String::from_utf8_lossy(&want.stdout),
         "the short-book line differs"
     );
-    assert!(!page.exists(), "no page for a short book");
+    assert!(!short_page.exists(), "no page for a short book");
     fs::remove_dir_all(&root).expect("cleanup");
     fs::remove_dir_all(&short).expect("cleanup");
 }
@@ -500,6 +506,7 @@ fn spells_refuses_to_overwrite() {
     ] {
         let path = root.join(name);
         fs::write(&path, body).expect("fixture");
+        pin_mtime(&path);
         let got = rust(
             &["spells", "--theory", "--out", path.to_str().unwrap()],
             &root,

@@ -16,7 +16,7 @@
 
 mod common;
 
-use common::{js_root as js, rust_root as rust, take_page, temp_root};
+use common::{js_root as js, pin_mtime, rust_root as rust, take_page, temp_root};
 
 use std::fs;
 use std::path::Path;
@@ -120,6 +120,9 @@ fn write_spellbook(root: &Path) {
         ),
     )
     .expect("launcher config");
+    // One stamp for both: no assertion here depends on which of the config and the book is newer.
+    pin_mtime(&arena.join("SPELLS.STD"));
+    pin_mtime(&root.join("config.json"));
 }
 
 /// Assert a create-only refusal: exit 2, an `EEXIST` line naming the path, no stdout, the file left intact.
@@ -462,6 +465,7 @@ fn enchant_plan_refuses_to_overwrite() {
         let report = root.join("older.html");
         let _ = fs::remove_file(&report);
         fs::write(&report, "an older report").expect("report fixture");
+        pin_mtime(&report);
         let mut args = args_for.to_vec();
         let path = report.to_str().unwrap();
         args.extend(["--out", path]);
@@ -470,6 +474,7 @@ fn enchant_plan_refuses_to_overwrite() {
 
         let save = root.join("SaveData.txt");
         fs::write(&save, "a game save the CLI must never touch").expect("save fixture");
+        pin_mtime(&save);
         let mut args = args_for.to_vec();
         args.extend(["--out", save.to_str().unwrap()]);
         assert_refused(&args, &root, &save, b"a game save the CLI must never touch");

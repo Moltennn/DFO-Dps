@@ -13,7 +13,7 @@
 
 mod common;
 
-use common::{js, rust, temp_root};
+use common::{js, pin_mtime, rust, temp_root};
 
 use std::fs;
 use std::path::Path;
@@ -121,6 +121,7 @@ fn write_save(root: &Path, slot: &str, body: &str) {
     let dir = root.join("Saves").join(slot);
     fs::create_dir_all(&dir).expect("save folder");
     fs::write(dir.join("SaveData.txt"), body).expect("fixture save");
+    pin_mtime(&dir.join("SaveData.txt"));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -180,6 +181,9 @@ fn write_spellbook(root: &Path) {
         format!(r#"{{"arena2Path":{}}}"#, json_string(&arena)),
     )
     .expect("launcher config");
+    // One stamp for both: no assertion here depends on which of the config and the book is newer.
+    pin_mtime(&arena.join("SPELLS.STD"));
+    pin_mtime(&root.join("config.json"));
 }
 
 // ---------------------------------------------------------------------------------------------------------------

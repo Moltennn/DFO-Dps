@@ -15,7 +15,7 @@
 
 mod common;
 
-use common::{js, js_root, rust, rust_root, take_page, temp_root};
+use common::{js, js_root, pin_mtime, rust, rust_root, take_page, temp_root};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -119,6 +119,7 @@ fn write_save(root: &Path) -> PathBuf {
     fs::create_dir_all(&folder).expect("save folder");
     let file = folder.join("SaveData.txt");
     fs::write(&file, offline_save()).expect("save fixture");
+    pin_mtime(&file);
     file
 }
 
@@ -356,6 +357,7 @@ fn report_refuses_to_overwrite() {
     // An unrelated save-shaped file and an existing report are refused and byte-identical.
     let unrelated = root.join("SaveData.txt");
     fs::write(&unrelated, "a game save the CLI must never touch").expect("save fixture");
+    pin_mtime(&unrelated);
     assert_refused(
         &["report", "--theory", "--out", unrelated.to_str().unwrap()],
         &root,
@@ -364,6 +366,7 @@ fn report_refuses_to_overwrite() {
     );
     let report = root.join("report.html");
     fs::write(&report, "an older report").expect("report fixture");
+    pin_mtime(&report);
     assert_refused(
         &["report", "--theory", "--out", report.to_str().unwrap()],
         &root,
@@ -425,6 +428,10 @@ fn report_refuses_to_overwrite() {
             "the dangling symlink survives"
         );
         assert!(!root.join("never-written.html").exists());
+        // Done asserting them: a symlink is never cacheable, so the later call must not see one.
+        fs::remove_file(&dangling).expect("cleanup the dangling symlink");
+        fs::remove_file(&link).expect("cleanup the symlink");
+        fs::remove_file(&hard).expect("cleanup the hard link");
     }
 
     // What the deviation protects: the JS truncates the save it imported into a page.

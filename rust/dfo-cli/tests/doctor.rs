@@ -20,6 +20,8 @@ use std::time::{Duration, SystemTime};
 
 fn write(path: &Path, text: &str) {
     fs::write(path, text).expect("fixture file");
+    // Pinned by default; the ordering case overrides `SaveData.txt` with distinct stamps below.
+    set_mtime(path, "1700000000");
 }
 
 fn set_mtime(path: &Path, when: &str) {
