@@ -3204,12 +3204,14 @@ fn loadout_command(values: &Values, out_flag: Option<&str>) -> Result<String, Cl
     }
     // `:982-1081`: the full report.
     let book = saves::load_spellbook();
+    // One gear-frontier cache for the whole command, as the JS module-level `_frontiers` map is.
+    let mut profiles = Profiles::new(&book);
     let uncapped_rows = if modes.contains(&"uncapped") {
-        dfo_core::real_build::real_weapon_loadouts(
+        dfo_core::real_build::real_weapon_loadouts_with(
             &["uncapped".to_owned()],
             values.vampire,
             "breach",
-            &book,
+            &mut profiles,
         )
         .map_err(usage)?
     } else {
@@ -3218,11 +3220,11 @@ fn loadout_command(values: &Values, out_flag: Option<&str>) -> Result<String, Cl
     let mut cap_rows: Vec<(&str, Vec<Value>)> = Vec::new();
     if modes.contains(&"cap") {
         for id in &requested {
-            let rows = dfo_core::real_build::real_weapon_loadouts(
+            let rows = dfo_core::real_build::real_weapon_loadouts_with(
                 &["cap".to_owned()],
                 values.vampire,
                 id,
-                &book,
+                &mut profiles,
             )
             .map_err(usage)?;
             let id = ENCOUNTER_IDS
@@ -3234,7 +3236,6 @@ fn loadout_command(values: &Values, out_flag: Option<&str>) -> Result<String, Cl
         }
     }
     // `:1005`: `rankAll({ sort: 'uncapped' })`, the first three rows per family.
-    let mut profiles = Profiles::new(&book);
     let ranked =
         dfo_core::imprints::rank_all(&obj([("sort", Str("uncapped".to_owned()))]), &mut profiles)
             .map_err(usage)?;
@@ -3305,6 +3306,7 @@ fn loadout_shortlist(
     let book = saves::load_spellbook();
     let health = values.nums.get("health").copied().map(Num).unwrap_or(Null);
     let mut rankings: Vec<Value> = Vec::new();
+    let mut profiles = Profiles::new(&book);
     for mode in modes {
         let encounters: Vec<Option<&str>> = if *mode == "cap" {
             requested.iter().map(|e| Some(e.as_str())).collect()
@@ -3334,9 +3336,9 @@ fn loadout_shortlist(
                 ("health", health.clone()),
             ]);
             rankings.push(
-                dfo_core::loadout_shortlist::shortlist_loadouts(
+                dfo_core::loadout_shortlist::shortlist_loadouts_with(
                     &dfo_core::loadout_shortlist::ShortlistOpts::from_value(&opts),
-                    &book,
+                    &mut profiles,
                 )
                 .map_err(shortlist_error)?,
             );

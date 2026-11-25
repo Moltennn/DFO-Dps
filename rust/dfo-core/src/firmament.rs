@@ -1,8 +1,8 @@
 //! The Firmament tree planner (`src/firmament.js`): the build presets, the channel score, the greedy 98-star walk and
 //! the summary rows.
 //!
-//! The JS keeps a module-level `PLAN_CACHE`; a plan is a pure function of its build and purse, so the cache is not
-//! ported: callers may keep their own.
+//! The JS keeps a module-level `PLAN_CACHE` keyed by build id and purse; a plan costs about 0.1 s and the planners ask
+//! for the same few again and again, so [`plan_build`] memoises too, keyed on the whole of its arguments.
 //!
 //! Sort notes: `tree.keys.sort()` and `chosen.slice().sort()` are JS default sorts over star keys, whose alphabet is
 //! ASCII (`mg.c1.3`), so Rust's byte order equals JS's UTF-16 order. `planSummary` ends with
@@ -17,10 +17,11 @@ use crate::firmament_law::{
 use crate::generated::firmament::BUILDS;
 use crate::theory::obj;
 use crate::value::{
-    parse,
+    parse, write,
     Value::{self, Arr, Null, Num, Obj, Str, Undefined},
 };
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 const TOL: f64 = 1e-9;
 // mutation: equivalent - the planner's gains are channel shares of the form k/def.max * weight with denormals no smaller
@@ -142,7 +143,8 @@ fn combat_keys(start: &str) -> Vec<&'static str> {
 
 struct Paths {
     have: Vec<String>,
-    from: Vec<(String, Option<String>)>,
+    /// Every reachable star and the star it is reached from.
+    from: HashMap<String, Option<String>>,
 }
 
 /// `pathsFrom`: one breadth-first walk from the allocated stars to every reachable star. A keystone may be reached but
@@ -154,7 +156,7 @@ fn paths_from(tree: &Tree) -> Paths {
             have.push(k.clone());
         }
     }
-    let mut from: Vec<(String, Option<String>)> = Vec::new();
+    let mut from: HashMap<String, Option<String>> = HashMap::new();
     let mut queue: Vec<String> = Vec::new();
     for key in &have {
         let Some(n) = node(key) else { continue };
@@ -166,7 +168,7 @@ fn paths_from(tree: &Tree) -> Paths {
         {
             continue;
         }
-        from.push((key.clone(), None));
+        from.insert(key.clone(), None);
         queue.push(key.clone());
     }
     let mut i = 0;
@@ -174,10 +176,10 @@ fn paths_from(tree: &Tree) -> Paths {
         let key = queue[i].clone();
         i += 1;
         for next in law::adj(&key) {
-            if from.iter().any(|(k, _)| k == next) || is_start(next) {
+            if from.contains_key(*next) || is_start(next) {
                 continue;
             }
-            from.push(((*next).to_owned(), Some(key.clone())));
+            from.insert((*next).to_owned(), Some(key.clone()));
             if node(next).is_some_and(|n| n.kind != "keystone") {
                 queue.push((*next).to_owned());
             }
@@ -191,7 +193,7 @@ fn path_for(paths: &Paths, target: &str) -> Vec<String> {
     if paths.have.iter().any(|k| k == target) {
         return vec![];
     }
-    if !paths.from.iter().any(|(k, _)| k == target) {
+    if !paths.from.contains_key(target) {
         return vec![];
     }
     let mut out = Vec::new();
@@ -201,11 +203,7 @@ fn path_for(paths: &Paths, target: &str) -> Vec<String> {
             break;
         }
         out.push(key.clone());
-        at = paths
-            .from
-            .iter()
-            .find(|(k, _)| k == &key)
-            .and_then(|(_, p)| p.clone());
+        at = paths.from.get(&key).cloned().flatten();
     }
     out.reverse();
     out
@@ -415,8 +413,38 @@ fn greedy(start: &str, build: &Value, budget: f64) -> Greedy {
 /// A tree as the JS shapes it (`{ start, keys }`), and the law's typed form.
 pub use crate::firmament_law::Tree;
 
-/// The plan object a build's purse produces (`planBuild`), minus the JS cache.
+/// Most plans the cache holds before it starts over: far above the eight presets, low enough that a long-lived process
+/// walking every purse stays small.
+const PLAN_CACHE_MAX: usize = 128;
+
+type PlanCache = Mutex<HashMap<(String, String), Value>>;
+
+/// The plan object a build's purse produces (`planBuild`), memoised for the process.
+///
+/// The key is the whole of both arguments in their bit-exact encoding, so two builds that share an id, or any option
+/// added to `opts` later, never share a plan. A new input that does NOT arrive through the arguments must join the key.
 pub fn plan_build(build: &Value, opts: &Value) -> Value {
+    static CACHE: OnceLock<PlanCache> = OnceLock::new();
+    cached_plan(CACHE.get_or_init(Default::default), build, opts)
+}
+
+fn cached_plan(cache: &PlanCache, build: &Value, opts: &Value) -> Value {
+    let key = (write(build), write(opts));
+    // The lock is never held while planning, and a map is valid after any panic, so poisoning is ignored.
+    let lock = || cache.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(hit) = lock().get(&key) {
+        return hit.clone();
+    }
+    let plan = compute_plan(build, opts);
+    let mut map = lock();
+    if map.len() >= PLAN_CACHE_MAX {
+        map.clear();
+    }
+    map.insert(key, plan.clone());
+    plan
+}
+
+fn compute_plan(build: &Value, opts: &Value) -> Value {
     let stars = match opts.get("stars") {
         Undefined => Num(FIRMAMENT_STARS),
         v => v.clone(),
@@ -844,4 +872,90 @@ pub fn tree_blow(plan: &Value) -> f64 {
     let skill = plan.get("build").get("skill");
     let skill = skill.as_str();
     blow_pct(&totals_of(plan.get("totals")), skill, None, false, false)
+}
+
+// Local invariants of the plan memo (no JS oracle here: the golden vectors pin the plans themselves).
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stars(n: f64) -> Value {
+        Obj(vec![("stars".to_owned(), Num(n))])
+    }
+
+    fn size(cache: &PlanCache) -> usize {
+        cache.lock().unwrap().len()
+    }
+
+    #[test]
+    fn a_miss_is_the_computed_plan_and_a_hit_reads_the_stored_one() {
+        let cache = PlanCache::default();
+        let (build, opts) = (&builds()[0], stars(12.0));
+        let fresh = write(&compute_plan(build, &opts));
+        assert_eq!(write(&cached_plan(&cache, build, &opts)), fresh);
+        assert_eq!(write(&cached_plan(&cache, build, &opts)), fresh);
+        assert_eq!(size(&cache), 1);
+        // Mark the stored entry: only a read of the map can return the mark.
+        cache
+            .lock()
+            .unwrap()
+            .values_mut()
+            .for_each(|v| *v = s("stored"));
+        assert_eq!(cached_plan(&cache, build, &opts), s("stored"));
+        assert_eq!(write(&plan_build(build, &opts)), fresh);
+        assert_eq!(write(&plan_build(build, &opts)), fresh);
+    }
+
+    #[test]
+    fn every_argument_separates_the_key() {
+        let cache = PlanCache::default();
+        let build = builds()[0].clone();
+        // The same id with other content: the JS key (id and purse) would confuse these two.
+        let mut same_id = builds()[1].clone();
+        same_id.set("id", build.get("id").clone());
+        let mut forced = stars(12.0);
+        forced.set("start", s(law_start_keys()[1]));
+        let mut later_option = stars(12.0);
+        later_option.set("gameBuild", s("14631"));
+        let cases = [
+            (&build, stars(12.0)),
+            (&same_id, stars(12.0)),
+            (&build, stars(13.0)),
+            (&build, forced),
+            (&build, later_option),
+        ];
+        for (i, (build, opts)) in cases.iter().enumerate() {
+            let got = cached_plan(&cache, build, opts);
+            assert_eq!(write(&got), write(&compute_plan(build, opts)), "case {i}");
+            assert_eq!(size(&cache), i + 1, "case {i} took another case's entry");
+        }
+    }
+
+    #[test]
+    fn the_cache_starts_over_when_full() {
+        let cache = PlanCache::default();
+        let fill = |n: usize| {
+            let mut map = cache.lock().unwrap();
+            map.clear();
+            map.extend((0..n).map(|i| ((i.to_string(), String::new()), Null)));
+        };
+        fill(PLAN_CACHE_MAX - 1);
+        cached_plan(&cache, &builds()[0], &stars(1.0));
+        assert_eq!(size(&cache), PLAN_CACHE_MAX);
+        cached_plan(&cache, &builds()[0], &stars(2.0));
+        assert_eq!(size(&cache), 1);
+    }
+
+    #[test]
+    fn threads_sharing_the_cache_get_the_computed_plan() {
+        let cache = PlanCache::default();
+        let (build, opts) = (&builds()[0], stars(8.0));
+        let fresh = write(&compute_plan(build, &opts));
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| assert_eq!(write(&cached_plan(&cache, build, &opts)), fresh));
+            }
+        });
+        assert_eq!(size(&cache), 1);
+    }
 }

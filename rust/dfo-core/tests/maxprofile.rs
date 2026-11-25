@@ -87,6 +87,45 @@ fn run() {
     });
 }
 
+// Local invariant: `loadout` hands one cache to every encounter and the imprint ranking, so a warm cache must answer
+// as a fresh one does, and a template or a shield must not read another's entry.
+#[test]
+fn a_warm_frontier_cache_answers_as_a_fresh_one() {
+    let stock = common::stream("maxprofile")
+        .next()
+        .expect("fixture spellbook");
+    let book: Spellbook = common::planning::spellbook(stock);
+    let shield = |t: f64| Value::Obj(vec![("shield".to_owned(), Value::Num(t))]);
+    let capped = Value::Obj(vec![("metric".to_owned(), Value::Str("capped".into()))]);
+    let requests = [
+        (123.0, Value::Undefined),
+        (123.0, shield(112.0)),
+        (118.0, Value::Undefined),
+        (123.0, capped),
+        (123.0, Value::Undefined),
+    ];
+    let mut warm = m::Profiles::new(&book);
+    for (template, opts) in &requests {
+        let t = Value::Num(*template);
+        let mut fresh = m::Profiles::new(&book);
+        assert_eq!(
+            write(warm.legal_frontier(&t, opts).unwrap()),
+            write(fresh.legal_frontier(&t, opts).unwrap()),
+            "{template}"
+        );
+        assert_eq!(
+            write(&warm.legal_gear(&t, opts).unwrap()),
+            write(&fresh.legal_gear(&t, opts).unwrap()),
+            "{template}"
+        );
+        assert_eq!(
+            write(&warm.max_character(&t, opts).unwrap()),
+            write(&fresh.max_character(&t, opts).unwrap()),
+            "{template}"
+        );
+    }
+}
+
 #[test]
 fn legal() {
     replay(
