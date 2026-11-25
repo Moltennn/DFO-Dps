@@ -507,7 +507,7 @@ changes paths, scores and plans. Never copy these tables by hand.
   keeps the winner's insertion order too).
 - **`PLAN_CACHE`**: `plan_build` memoises per process, as the JS does, but keys on the whole `(build, opts)` in the
   value codec rather than on the build id and purse, so two builds sharing an id or a new option never share a plan.
-  It holds at most 128 plans, then starts over.
+  It holds at most 128 plans; a new one then pushes one other out.
 - **`FIRMAMENT_NODES`** is the constant 518 (the Map's size), and the `nodes` vector row is the whole sky, so a star
   added or removed fails the port.
 - `planBuild`'s purse: `Math.max(0, Math.min(98, Math.trunc(Number(stars) || 0)))` where `Number(stars) || 0` turns NaN,

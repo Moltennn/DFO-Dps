@@ -193,7 +193,10 @@ pub fn number_to_string(x: f64) -> String {
     }
     // An integer below 2^53 prints as its own decimal digits. Property reads by skill or template id come through here,
     // and the float formatter below cost a quarter of a planner run.
-    // mutation: equivalent - 2^53 itself prints the same digits on either path, so `<` and `<=` agree.
+    // mutation: equivalent - 2^53 itself prints the same digits on either path, so `<` and `<=` agree; the literal one
+    // higher is no double and rounds back to 2^53; and `fract() == 1.0` is never true, which only sends integers down
+    // the formatter below, whose output is the same (the test `integer_fast_path_prints_what_the_float_formatter_prints`
+    // compares the two forms).
     if x.fract() == 0.0 && x.abs() < 9007199254740992.0 {
         return (x as i64).to_string();
     }

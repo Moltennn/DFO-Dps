@@ -413,8 +413,8 @@ fn greedy(start: &str, build: &Value, budget: f64) -> Greedy {
 /// A tree as the JS shapes it (`{ start, keys }`), and the law's typed form.
 pub use crate::firmament_law::Tree;
 
-/// Most plans the cache holds before it starts over: far above the eight presets, low enough that a long-lived process
-/// walking every purse stays small.
+/// Most plans the cache holds before a new one pushes another out: far above the eight presets, low enough that a
+/// long-lived process walking every purse stays small.
 const PLAN_CACHE_MAX: usize = 128;
 
 type PlanCache = Mutex<HashMap<(String, String), Value>>;
@@ -436,12 +436,19 @@ fn cached_plan(cache: &PlanCache, build: &Value, opts: &Value) -> Value {
         return hit.clone();
     }
     let plan = compute_plan(build, opts);
-    let mut map = lock();
-    if map.len() >= PLAN_CACHE_MAX {
-        map.clear();
-    }
-    map.insert(key, plan.clone());
+    remember(&mut lock(), key, plan.clone());
     plan
+}
+
+/// Store a plan, dropping one other (whichever the map yields first) when a new key finds it full. A key another thread
+/// stored meanwhile costs nobody their entry.
+fn remember(map: &mut HashMap<(String, String), Value>, key: (String, String), plan: Value) {
+    if map.len() >= PLAN_CACHE_MAX && !map.contains_key(&key) {
+        if let Some(old) = map.keys().next().cloned() {
+            map.remove(&old);
+        }
+    }
+    map.insert(key, plan);
 }
 
 fn compute_plan(build: &Value, opts: &Value) -> Value {
@@ -932,18 +939,25 @@ mod tests {
     }
 
     #[test]
-    fn the_cache_starts_over_when_full() {
-        let cache = PlanCache::default();
-        let fill = |n: usize| {
-            let mut map = cache.lock().unwrap();
-            map.clear();
-            map.extend((0..n).map(|i| ((i.to_string(), String::new()), Null)));
+    fn a_full_cache_drops_one_plan_for_a_new_key_and_none_for_a_held_one() {
+        // The documented bound.
+        assert_eq!(PLAN_CACHE_MAX, 128);
+        let key = |i: usize| (i.to_string(), String::new());
+        let mut map: HashMap<_, _> = (0..PLAN_CACHE_MAX - 1).map(|i| (key(i), Null)).collect();
+        let held = |map: &HashMap<_, _>| {
+            (0..=PLAN_CACHE_MAX)
+                .filter(|i| map.contains_key(&key(*i)))
+                .count()
         };
-        fill(PLAN_CACHE_MAX - 1);
-        cached_plan(&cache, &builds()[0], &stars(1.0));
-        assert_eq!(size(&cache), PLAN_CACHE_MAX);
-        cached_plan(&cache, &builds()[0], &stars(2.0));
-        assert_eq!(size(&cache), 1);
+        remember(&mut map, key(PLAN_CACHE_MAX - 1), Null);
+        assert_eq!((map.len(), held(&map)), (PLAN_CACHE_MAX, PLAN_CACHE_MAX));
+        // Two threads that missed the same key: the second store replaces, it does not evict.
+        remember(&mut map, key(0), s("again"));
+        assert_eq!((map.len(), held(&map)), (PLAN_CACHE_MAX, PLAN_CACHE_MAX));
+        assert_eq!(map[&key(0)], s("again"));
+        remember(&mut map, key(PLAN_CACHE_MAX), Null);
+        assert_eq!((map.len(), held(&map)), (PLAN_CACHE_MAX, PLAN_CACHE_MAX));
+        assert!(map.contains_key(&key(PLAN_CACHE_MAX)));
     }
 
     #[test]

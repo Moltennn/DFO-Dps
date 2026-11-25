@@ -4,7 +4,7 @@ use crate::generated::{boss_traits::RESIST_SHARE, data::SKILLS, races, spell_tab
 use crate::round::{js_clamp, js_max, js_min, to_int32};
 use crate::save::{effective_skill, skill_value};
 use crate::target;
-use crate::value::{obj_table_get, Value, Value::Num};
+use crate::value::{index_key, obj_table_get, Value, Value::Num};
 
 pub use spell_tables::{CAST_COST_FLOOR, EFFECT_COST_TABLE, MAGIC_ROUND_SECONDS, TARGET_COST_MULT};
 pub const SPELL_RECORD_SIZE: usize = spell_tables::SPELL_RECORD_SIZE as usize;
@@ -203,7 +203,10 @@ pub fn spell_cost(spell: &Value, ch: &Value, online: bool) -> f64 {
         // No negative effect type has a row; effect_cost returns (+0, +0) for those records.
         sp += effect_cost(e, |id| skill_value(ch, &Num(id)), online).1;
     }
-    sp = (sp * obj_table_get(TARGET_COST_MULT, spell.get("rangeType")).unwrap_or(1.0)).trunc();
+    // `TARGET_COST_MULT[rangeType]` is a property read: the string "2" names the same row as the number.
+    let range = index_key(&spell.get("rangeType").to_js_string())
+        .and_then(|i| obj_table_get(TARGET_COST_MULT, &Num(i.into())));
+    sp = (sp * range.unwrap_or(1.0)).trunc();
     if spell.get("minimumCastingCost").truthy() {
         sp = CAST_COST_FLOOR;
     }
@@ -297,12 +300,14 @@ pub fn fighting_climb(entity: &Value, id: &Value) -> Value {
 
 pub fn saving_chance_outcome(target: &Value, opts: &Value) -> (f64, bool) {
     use crate::target::*;
-    let element = opts.get("element").num_or(4.0);
-    let default = ELEMENT_FLAG_BY_INDEX
-        .iter()
-        .enumerate()
-        .find(|(i, _)| element == *i as f64)
-        .map_or(MAGIC, |(_, f)| *f);
+    // A string element (a save or custom record) is NaN to the strict compares below, as in the JS, but still names
+    // its flag: `ELEMENT_FLAG_BY_INDEX[element]` reads it as a property key.
+    let raw = opts.get("element");
+    let element = raw.num_or(4.0);
+    // A nullish element names no row and lands on Magic, which is the default element's flag too.
+    let default = index_key(&raw.to_js_string())
+        .and_then(|i| ELEMENT_FLAG_BY_INDEX.get(i as usize))
+        .map_or(MAGIC, |f| *f);
     let flags = to_int32(opts.get("effectFlags").finite_or(default));
     let player = target.get("isPlayer").truthy();
     let mut saving = 50.0;
@@ -467,7 +472,8 @@ pub fn spell_damage(spell: &Value, ch: &Value, target: &Value, opts: &Value, mod
     let rows = spell.get("effects").items();
     let school = rows.first().map_or(SKILLS.destruction, effect_school);
     let climb = effective_skill(&ch.get("skills").prop(&Num(school)));
-    // mutation: equivalent - at climb == 100 the overcap expression produces exactly 1, same as the else branch.
+    // mutation: equivalent - `>` -> `>=` differs only at climb == 100.0, where `1.0 + (100.0 - 100.0) * 0.01` is
+    // `1.0 + 0.0`, bit-identical to the else branch's 1.0.
     let school_mult = if online(ch, opts) && climb > 100.0 {
         1.0 + (climb - 100.0) * 0.01
     } else {
@@ -478,7 +484,10 @@ pub fn spell_damage(spell: &Value, ch: &Value, target: &Value, opts: &Value, mod
     let (chance, immune) = saving_chance_outcome(
         target,
         &object([
-            ("element", Num(element)),
+            (
+                "element",
+                crate::theory::nullish(spell.get("element"), Num(4.0)),
+            ),
             ("pierce", opts.get("pierce").clone()),
             ("effectFlags", spell.get("effectFlags").clone()),
         ]),

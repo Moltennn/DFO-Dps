@@ -6,6 +6,15 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Rust parity: a string `element` or `rangeType` on a spell record (2026-11-25)
+
+**Source.** `src/spells.js` reads `TARGET_COST_MULT[spell.rangeType]` (`spellCost`) and
+`ELEMENT_FLAG_BY_INDEX[element]` (`savingChanceOutcome`) as property keys, so `"2"` names the same row as `2`; its
+strict compares (`elementTraitOf`, `spellHasFlags`) do not match a string. **Changed:** the Rust port only
+(`rust/dfo-core/src/spells.rs`), which read both strings as no row. No JS number moves. **Test:** the `card` vectors of
+`tools/rust-spell-vectors.mjs` replayed by `cargo test -p dfo-core --test spells` against the live JS. Red: a card
+with `element: "0"`, magnitude 400, expected damage 201 (saving 0.5025), got 67 (saving 0.1675). Green after.
+
 ## Stage JS-1: the 0.1.14631 weapon-gear law and `brand`, opt-in (2026-11-23)
 
 **Source.** These facts are readable only in the shipped 0.1.14631 build, so they are cited `dist:` (the weaker
