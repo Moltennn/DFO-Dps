@@ -5,8 +5,9 @@
  *   node tools/gate.mjs js [--no-game]          npm test, then vendor:verify
  *   node tools/gate.mjs rust                    rust-data --check, rust-vectors, cargo fmt --check, clippy, cargo test
  *   node tools/gate.mjs all                     js, then rust (when rust/ exists on this branch)
- *   node tools/gate.mjs mutate <file> --tests a,b [--count N] [--seed S]
- *                                               tools/rust-mutate.mjs: lists the mutants the tests do NOT kill
+ *   node tools/gate.mjs mutate <file> --tests a,b [--count N] [--seed S] [--max-mem SIZE] [--no-mem-cap]
+ *                                               tools/rust-mutate.mjs: lists the mutants the tests do NOT kill; every
+ *                                               mutant build and test run is memory-capped (tools/mem-cap.mjs)
  *   node tools/gate.mjs --help
  *
  * Why this exists: an agent whose shell allowlist is per command cannot run `cd rust && cargo test 2>&1 | grep ...`
@@ -320,11 +321,12 @@ function gateMutate() {
     console.error('usage: node tools/gate.mjs mutate <file under rust/dfo-core/src> --tests a,b [--count N] [--seed S]');
     process.exit(2);
   }
-  const passthrough = ['--tests', 'count', 'seed', 'timeout', 'jobs'].flatMap((k) => {
+  const passthrough = ['--tests', 'count', 'seed', 'timeout', 'jobs', 'max-mem'].flatMap((k) => {
     const name = k.replace(/^--/, '');
     const v = opt(name, undefined);
     return v === undefined ? [] : [`--${name}`, v];
   });
+  if (flag('no-mem-cap')) passthrough.push('--no-mem-cap');
   const r = run(process.execPath, ['tools/rust-mutate.mjs', file, ...passthrough]);
   const text = strip(r.out);
   const summary = text.split('\n').find((l) => new RegExp(`^${file.replace('.', '\\.')}:`).test(l)) ?? first(r.out, 6);
