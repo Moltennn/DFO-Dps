@@ -209,6 +209,41 @@ fn report_theory_text_and_page_match_the_js() {
 }
 
 #[test]
+fn report_threads_the_shipped_build_into_the_page() {
+    // `src/cli.js:2286` threads `scenario.gameBuild` into `buildReport`, and `report.js:30` adds the flat row. Both
+    // sides are compared byte for byte, so this pins the wiring and the row in one go.
+    let root = temp_root("game-build");
+    let page = root.join("build.html");
+    let out = page.to_str().unwrap();
+    same(
+        &["report", "--theory", "--game-build", "14631", "--out", out],
+        &root,
+        &page,
+    );
+    same(
+        &["report", "--theory", "--game-build", "14512", "--out", out],
+        &root,
+        &page,
+    );
+    // The default is an explicit 14512 run: same page bytes.
+    same(&["report", "--theory", "--out", out], &root, &page);
+    // A command that does not read it refuses it by name, as `checkOutputFlags` does.
+    let refusal = root.join("refused.html");
+    same_usage(
+        &[
+            "report",
+            "--game-build",
+            "14513",
+            "--out",
+            refusal.to_str().unwrap(),
+        ],
+        &root,
+        &refusal,
+    );
+    fs::remove_dir_all(&root).expect("cleanup");
+}
+
+#[test]
 fn report_from_an_imported_save_matches_the_js() {
     let root = temp_root("save");
     write_save(&root);

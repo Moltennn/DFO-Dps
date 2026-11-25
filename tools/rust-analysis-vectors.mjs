@@ -200,6 +200,28 @@ export function genAnalysisFamilies(Out, makeLcg) {
     put('refusal', [opts], err.name === 'RangeError' ? null : err.message);
   }
   grid();
+  // The shipped-build selector (`--game-build`, CHANGELOG-MECHANICS.md GEAR-14631 / BRAND-14631): full analysis cards
+  // under both builds, one gear-heavy theory character over a curbing boss and a plain reference foe, plus brand
+  // powers. Appended last, so every case above keeps its bytes. `14512` must equal the default exactly.
+  for (const gameBuild of ['14512', '14631']) {
+    for (const gearLB of [0, 250, 700]) {
+      const ch = theoryCharacter({ race: 4, level: 45, blade: 123, rawBlade: 200, rawCrit: 200, gearLB, gearCS: 370, damagePct: 15 });
+      for (const target of [
+        M.bossTarget({ level: 45, health: 4000, traits: ['curbing'] }),
+        M.referenceFoe(45, 'tough'),
+      ]) {
+        const extra = { target, health: target.health || 4000, gameBuild, swing: 'StrikeLeft', core: 'overhaul', rri: true };
+        put('probe', [ch, extra], M.analyze(ch, { ...extra, standard }));
+      }
+    }
+    // A brand power rides `opts.imprints`, so the flat accumulator is visible on the card's blow.
+    const ch = theoryCharacter({ blade: 121, level: 45, rawBlade: 200, rawCrit: 200, gearLB: 400 });
+    const brand = { kind: 'brand', element: 'fire', flat: 8 };
+    for (const target of [M.referenceFoe(45, 'tough'), { ...M.referenceFoe(45, 'tough'), career: { resistanceFlags: 8 } }]) {
+      const extra = { target, health: 4000, gameBuild, swing: 'StrikeLeft', imprints: [brand] };
+      put('probe', [ch, extra], M.analyze(ch, { ...extra, standard }));
+    }
+  }
   const total = out.write();
   console.log('rust-analysis-vectors:', counts);
   return { analysis: total };

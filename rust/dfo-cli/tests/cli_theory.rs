@@ -199,6 +199,23 @@ fn the_obsolete_gear_flags_print_the_js_note() {
 }
 
 #[test]
+fn the_shipped_build_moves_the_cap_sheet_and_the_formula_cap_row() {
+    // `src/cli.js:1918,1963,1971,1998,2063`: under `14631` the formula-cap row is skipped and the gear row of the cap
+    // sheet says it is flat; `14512` is the frozen table. Both sides are compared byte for byte.
+    let root = temp_root("game-build");
+    for extra in [&["--json"][..], &[][..]] {
+        for build in ["14631", "14512"] {
+            let mut args = vec!["theory", "--game-build", build];
+            args.extend_from_slice(extra);
+            same(&args, &root);
+        }
+        // The default is an explicit 14512 run.
+        same(&["theory"], &root);
+    }
+    fs::remove_dir_all(&root).expect("cleanup");
+}
+
+#[test]
 fn a_reference_foe_is_refused_instead_of_crashing() {
     let root = temp_root("foe");
     let got = rust(&["theory", "--target", "tough"], &root);

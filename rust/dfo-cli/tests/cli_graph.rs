@@ -397,6 +397,47 @@ fn graph_json_matches_the_js() {
 }
 
 #[test]
+fn the_shipped_build_reaches_the_graph_scenario() {
+    // `src/cli.js:2057-2127`: `graph` prices its series through `scenarioOf`, so `--game-build` must reach it.
+    let root = temp_root("game-build");
+    let page = root.join("drift.html");
+    let out = page.to_str().unwrap();
+    same(
+        &[
+            "graph",
+            "--theory",
+            "--game-build",
+            "14631",
+            "--series",
+            "stat:strength",
+            "--from",
+            "0",
+            "--to",
+            "20",
+            "--step",
+            "10",
+            "--out",
+            out,
+        ],
+        &root,
+        &page,
+    );
+    same(
+        &[
+            "graph",
+            "--theory",
+            "--series",
+            "stat:strength",
+            "--out",
+            out,
+        ],
+        &root,
+        &page,
+    );
+    fs::remove_dir_all(&root).expect("cleanup");
+}
+
+#[test]
 fn help_lists_the_graph_command() {
     let got = rust(&["--help"], &temp_root("help"));
     assert_eq!(got.status.code(), Some(0));

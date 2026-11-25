@@ -12,6 +12,45 @@ pub(crate) fn s(text: &str) -> Value {
     Str(text.to_owned())
 }
 
+/// The points the gear's percent cap needs on this shipped build, or `None` when it has no percent cap
+/// (`theory.js:50-53`).
+pub fn gear_mastery_points(game_build: &str) -> Option<f64> {
+    if game_build == "14631" {
+        None
+    } else {
+        Some(GEAR_MASTERY_POINTS)
+    }
+}
+
+/// The gear-mastery row of the cap sheet, per shipped build (`theory.js:56-70`): `14512` is the
+/// `min(320, gear x 0.44)` percent, `14631` the flat roll add with no cap. The rest of the sheet is
+/// build-independent.
+pub fn theory_caps(game_build: &str) -> Vec<TheoryCapsItem> {
+    // `14631` swaps the gear row for the shipped build's; every other string is the frozen `14512` table
+    // (`theory.js:56-70`, whose `GEAR_CAPS[14512]` row is that table's own).
+    if game_build != "14631" {
+        return THEORY_CAPS.to_vec();
+    }
+    let Some((_, gear)) = GEAR_CAPS.iter().find(|(id, _)| *id == 14631) else {
+        return THEORY_CAPS.to_vec();
+    };
+    THEORY_CAPS
+        .iter()
+        .map(|c| {
+            if c.channel == "Gear Long Blade" {
+                TheoryCapsItem {
+                    channel: c.channel,
+                    cap: gear.cap,
+                    formula: gear.formula,
+                    note: c.note,
+                }
+            } else {
+                *c
+            }
+        })
+        .collect()
+}
+
 pub(crate) fn obj<const N: usize>(pairs: [(&str, Value); N]) -> Value {
     let mut out = Obj(vec![]);
     for (key, value) in pairs {

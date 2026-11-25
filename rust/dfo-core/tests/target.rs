@@ -1,6 +1,7 @@
 mod common;
 
 use common::Case;
+use dfo_core::boot::RriSwitches;
 use dfo_core::target::*;
 use dfo_core::vendored::*;
 use std::collections::BTreeMap;
@@ -703,6 +704,46 @@ fn target_matches_js_vectors() {
                     c.check_f64(&format!("enemyArmorValues[{i}]"), *w, *g);
                 }
             }
+            "rri_class" => {
+                // Differential against the vendored oracle (`customItemClass`, rriItems.js:626-631).
+                let t = c.f64();
+                let enabled = c.bool();
+                let new_weapons = c.bool();
+                let new_armor = c.bool();
+                c.expect("=>");
+                let want_some = c.bool();
+                let want_group = c.opt_name();
+                let want_slot = c.opt_name();
+                let want_hands = c.opt_name();
+                let rri = RriSwitches {
+                    enabled,
+                    new_weapons,
+                    new_armor,
+                    realistic_enemy_equipment: false,
+                };
+                let got = custom_item_class(t, Some(&rri));
+                c.check_eq(
+                    &format!("customItemClass({t:?}).is_some"),
+                    want_some,
+                    got.is_some(),
+                );
+                let got = got.map(|k| (k.group.to_string(), k.equip_slot, k.item_hands));
+                c.check_eq(
+                    &format!("customItemClass({t:?}).group"),
+                    want_group,
+                    got.as_ref().map(|g| g.0.clone()),
+                );
+                c.check_eq(
+                    &format!("customItemClass({t:?}).equipSlot"),
+                    want_slot,
+                    got.as_ref().and_then(|g| g.1).map(str::to_string),
+                );
+                c.check_eq(
+                    &format!("customItemClass({t:?}).itemHands"),
+                    want_hands,
+                    got.as_ref().and_then(|g| g.2).map(str::to_string),
+                );
+            }
             other => c.fail(&format!("unknown kind `{other}`")),
         }
         c.done();
@@ -767,6 +808,7 @@ fn target_matches_js_vectors() {
                 "silver_doubles",
                 "is_shield_template",
                 "enemy_armor_values",
+                "rri_class",
             ],
         ),
     ];
@@ -780,4 +822,11 @@ fn target_matches_js_vectors() {
             "target.txt: only {n} cases in the `{family}` family (expected >= 2000)"
         );
     }
+    // The RRI mixed-switch family (22 templates x the 8 switch mixes): it alone differs between `group == "Weapons"`
+    // and its negation, so losing it silently would hand the comparison back a free pass.
+    let rri = seen.get("rri_class").copied().unwrap_or(0);
+    assert!(
+        rri >= 176,
+        "target.txt: only {rri} `rri_class` cases (expected >= 176)"
+    );
 }

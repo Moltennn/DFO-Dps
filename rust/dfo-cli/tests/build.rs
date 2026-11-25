@@ -211,6 +211,34 @@ fn build_theory_json_matches_the_js_cli() {
         "--star-damage",
         "12",
     ]);
+    // The shipped build (`--game-build`, CHANGELOG-MECHANICS.md GEAR-14631 / BRAND-14631): `14631` is the opt-in drift
+    // finding, `14512` the default. The gear-heavy row is the one that moves; the JSON must carry `terms.gearAdd`.
+    same(&[
+        "build",
+        "--theory",
+        "--json",
+        "--gear-lb",
+        "250",
+        "--gear-cs",
+        "370",
+        "--damage-pct",
+        "15",
+        "--game-build",
+        "14631",
+    ]);
+    same(&[
+        "build",
+        "--theory",
+        "--json",
+        "--gear-lb",
+        "250",
+        "--gear-cs",
+        "370",
+        "--damage-pct",
+        "15",
+        "--game-build",
+        "14512",
+    ]);
 }
 
 #[test]
@@ -293,6 +321,31 @@ fn build_theory_text_matches_the_js_cli() {
     same(&["build", "--theory", "--blade", "114"]);
     // `--top` only sizes the JSON summary's ranking; the text card is fixed at 8 rows, so this pins that too.
     same(&["build", "--theory", "--top", "3"]);
+    // 0.1.14631 (`--game-build`) on the text card: the flat add row appears and the mastery row loses the percent.
+    same(&[
+        "build",
+        "--theory",
+        "--gear-lb",
+        "535",
+        "--gear-cs",
+        "370",
+        "--damage-pct",
+        "15",
+        "--game-build",
+        "14631",
+    ]);
+    same(&[
+        "build",
+        "--theory",
+        "--gear-lb",
+        "535",
+        "--gear-cs",
+        "370",
+        "--damage-pct",
+        "15",
+        "--game-build",
+        "14512",
+    ]);
 }
 
 #[test]
@@ -364,6 +417,7 @@ fn build_usage_errors_match_the_js() {
     same_usage(&["build", "--theory", "--json", "--weapon", "999:9"]);
     same_usage(&["build", "--theory", "--json", "--traits", "nope"]);
     same_usage(&["build", "--theory", "--json", "--out", "x.html"]);
+    same_usage(&["build", "--theory", "--json", "--game-build", "14513"]);
 
     // The parser's own text is not this port's (node's `parseArgs` appends the whole help; this slice prints the
     // message only), so an unknown option compares the exit code and that the refusal explains itself.

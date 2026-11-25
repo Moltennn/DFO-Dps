@@ -796,6 +796,21 @@ pub fn martial_blow_pct(ch: &Value, t: Option<&target::Target>, opts: &Value) ->
     }
 }
 
+/// The shipped builds a card can be priced under (`model.js:63-66`): `14512` is the vendored cut
+/// (`a3eb1605`), `14631` the drift finding (CHANGELOG-MECHANICS.md GEAR-14631 / BRAND-14631). Opt-in:
+/// anything that is not exactly `14631` prices as the cut. Flip [`DEFAULT_GAME_BUILD`] in one line.
+pub const GAME_BUILDS: [&str; 2] = ["14512", "14631"];
+pub const DEFAULT_GAME_BUILD: &str = GAME_BUILDS[0];
+
+/// `buildOf(opts)` (`model.js:66`).
+pub fn game_build(opts: &Value) -> &'static str {
+    if opts.get("gameBuild").is_str("14631") {
+        "14631"
+    } else {
+        DEFAULT_GAME_BUILD
+    }
+}
+
 pub fn mastery_pct(ch: &Value, w: &Value, opts: &Value) -> f64 {
     if !on(ch, "online") || !w.truthy() {
         return 0.0;
@@ -810,11 +825,14 @@ pub fn mastery_pct(ch: &Value, w: &Value, opts: &Value) -> f64 {
         let share = num(opts, "healthShare", 1.0);
         if ws == SKILLS.long_blade || ws == SKILLS.archery {
             pct += climb;
+        } else if game_build(opts) == "14631" && (ws == SKILLS.axe || ws == SKILLS.blunt_weapon) {
+            // 0.1.14631 (`_()`) puts Axe and Blunt in the sword's arm: one climb term, no half line.
+            pct += climb;
         } else if (ws == SKILLS.axe && share < 0.5) || (ws == SKILLS.blunt_weapon && share >= 0.5) {
             pct += climb * 2.0;
         }
     }
-    if ws != SKILLS.hand_to_hand && !on(ch, "_mentor") {
+    if game_build(opts) == "14512" && ws != SKILLS.hand_to_hand && !on(ch, "_mentor") {
         let gear = crate::save::skill_mod_of(ch, id);
         // mutation: equivalent - the >= mutant includes only signed zero; adding either sign to a nonnegative +0-or-larger pct retains its bits.
         if gear > 0.0 {
@@ -822,6 +840,55 @@ pub fn mastery_pct(ch: &Value, w: &Value, opts: &Value) -> f64 {
         }
     }
     pct
+}
+
+/// 0.1.14631 (drift finding GEAR-14631, `model.js:646-674`): the weapon gear is a FLAT add on the damage roll,
+/// not a mastery percent. One blow adds an integer uniform on `[floor(s/10), floor(s/5)]`, `s` = the attacker's
+/// gear points for the weapon's skill. The card enumerates every integer, so its mean and full support are exact.
+/// The guards are the target's (`!isPlayer && !warded`) and the attacker's (online, not a peer, not a mentor, not
+/// the beast, a real weapon skill that is not Hand-to-Hand). `ASSUMPTION:` unknown - the carried-chain ratio
+/// `e/(1+e+a)` a later blow of a chain reads is not traced; this model applies only the flat add. `duelGearAdd`
+/// (a peer's copy) and the `sigilDueling()` gate are unmodelled: there is no duel state here.
+pub fn gear_blow_add(
+    ch: &Value,
+    w: &Value,
+    t: Option<&target::Target>,
+    opts: &Value,
+) -> Option<(f64, f64)> {
+    // mutation: equivalent - proven, not argued: a scratch copy of this file with the surviving mutant
+    //   `A || !ch || !w` -> `A || (!ch && !w)` (A = build != 14631) passes a probe that calls it with exactly one
+    //   falsy clause (falsy `ch`; null, undefined and false `w`) and gets None each time, plus the happy path's
+    //   Some(70, 140). A falsy `w` has a non-finite `skillId` and the next guard returns None; a falsy `ch` has no
+    //   `_mods`, so `skill_mod_of` reads 0 and the `s > 0` guard returns None. The other spelling, `(A || !ch) && !w`,
+    //   is killed by the falsy-`ch` case (it would proceed where the original returns None early).
+    if game_build(opts) != "14631" || !ch.truthy() || !w.truthy() {
+        return None;
+    }
+    let id = w.get("skillId");
+    if !on(ch, "online") || on(ch, "peer") || on(ch, "_mentor") || on(ch, "isInBeastForm") {
+        return None;
+    }
+    let id_num = id.num_or(f64::NAN);
+    // mutation: equivalent - proven with the same scratch probe: the surviving mutant `A || B || C` ->
+    //   `A || (B && C)` (A = Hand-to-Hand, B = non-finite id, C = fractional id) gets None for NaN, ±Infinity and
+    //   29.5, where the original does too. `fract()` of NaN or an infinity is NaN and `NaN != 0.0` is true, so B
+    //   implies C. The other spelling, `(A || B) && C`, is killed by a Hand-to-Hand weapon with an integer id.
+    if ws(w) == SKILLS.hand_to_hand || !id_num.is_finite() || id_num.fract() != 0.0 {
+        return None;
+    }
+    match t {
+        None => return None,
+        Some(t) if t.is_player || t.warded => return None,
+        Some(_) => (),
+    }
+    let s = crate::save::skill_mod_of(ch, id);
+    // mutation: equivalent - a NaN gear reads through the same arm; `>=` would let NaN add a NaN range, so keep the
+    // JS `!(s > 0)` spelling with the lint waived, or the port would diverge on a non-finite mod.
+    #[allow(clippy::neg_cmp_op_on_partial_ord)]
+    if !(s > 0.0) {
+        return None;
+    }
+    Some(((s / 10.0).floor(), (s / 5.0).floor()))
 }
 
 pub fn loot_power_terms(powers: &[Value], t: Option<&target::Target>, opts: &Value) -> (f64, f64) {
@@ -858,6 +925,15 @@ pub fn loot_power_terms(powers: &[Value], t: Option<&target::Target>, opts: &Val
                     * if all || foe < 0.5 { 2.0 } else { 1.0 }
                     * target::element_share(t, Some("poison")))
                 .floor()
+            }
+            // 0.1.14631 (drift finding BRAND-14631, model.js:868-873): flat on the power's own element, no
+            // doubling, after venom. Only the loot POWER is modelled; the Gilded item that carries it is not.
+            "brand" => {
+                if game_build(opts) == "14631" {
+                    flat += (num(p, "flat", 0.0)
+                        * target::element_share(t, p.get("element").as_str()))
+                    .floor();
+                }
             }
             "moon" if all || on(opts, "night") => {
                 pct += q + if all || group_of(t) == Some("animal") {
@@ -1033,6 +1109,41 @@ fn extrema(rolls: &[f64]) -> (f64, f64, f64) {
     (lo, hi, total / rolls.len() as f64)
 }
 
+/// The JS `RangeError`s the 14631 enumeration raises, as a panic payload the CLI turns into exit 1 with this message.
+/// `Array.from({ length })` (`model.js:1024`) throws above 2^32-1 elements, and `Math.min(...plain)` (`:1076`) throws
+/// past V8's spread limit. Both are crash paths, not values, so the port raises the same `RangeError` instead of
+/// looping to an OOM.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JsRangeError(pub String);
+
+/// The most blows the port will enumerate before raising the JS spread `RangeError` instead of allocating. The JS limit
+/// is V8 stack depth, not a clean function of the blow count (`Math.min(...plain)`, `model.js:1076`), so it cannot be
+/// reproduced exactly but is bracketed by measurement. Through the CLI on the 18-roll theory blade, `--gear-lb 69000`
+/// (124,218 blows) priced in ~172 s and `69500` (125,118) threw at once; a direct 15-roll `damageModel` call priced
+/// 125,055 and threw at 125,070. Above 2^32-1 adds `Array.from` throws its own deterministic `RangeError` (`:1024`), and
+/// between the two the JS aborts on OOM (exit 134, around 1e9 adds). This cap sits in the observed success-to-crash gap,
+/// so every card the JS was measured to price is priced and nothing allocates far enough to OOM. The largest LEGAL card
+/// is ~1,620 blows (535 gear points), ~77x below.
+pub const MAX_ENUMERATED_BLOWS: f64 = 124_500.0;
+
+/// `Array.from({ length })` (`model.js:1024`) throws above this: JS's own array-length ceiling, 2^32-1.
+pub const MAX_ADD_ARRAY_LENGTH: f64 = 4_294_967_295.0;
+
+fn js_range_error(message: &str) -> ! {
+    std::panic::panic_any(JsRangeError(message.to_owned()))
+}
+
+/// The enumeration `damage_model` is about to build, or the JS `RangeError` it would raise (`model.js:1024,1076`).
+fn check_enumeration(adds: f64, rolls: f64) {
+    // `Array.from({ length: gear.hi - gear.lo + 1 })`: an array length past 2^32-1 is the JS's own `RangeError`.
+    if adds > MAX_ADD_ARRAY_LENGTH {
+        js_range_error("RangeError: Invalid array length");
+    }
+    if adds * rolls > MAX_ENUMERATED_BLOWS {
+        js_range_error("RangeError: Maximum call stack size exceeded");
+    }
+}
+
 pub fn damage_model(
     ch: &Value,
     w: &Value,
@@ -1052,7 +1163,7 @@ pub fn damage_model(
     let dmg_mods = swing_damage + prof + race;
     let has_weapon = w.truthy();
     let two = on(w, "twoHanded");
-    let (mut r, hi, pct, bonus, mat_mod) = if has_weapon {
+    let (r0, hi, pct, bonus, mat_mod) = if has_weapon {
         (
             read(w, "min", f64::NAN),
             read(w, "max", f64::NAN),
@@ -1071,14 +1182,60 @@ pub fn damage_model(
         )
     };
     let mut rolls = Vec::new();
-    while r <= hi {
-        let rolled = if pct.truthy() {
-            (r * (1.0 + pct.to_number() / 100.0)).trunc()
+    // 0.1.14631 (`model.js:1022-1041`): the gear's flat add enters the weapon ROLL inside the damage formula,
+    // before Strength and the material, so the strength/material/enemy-type/blow/crit terms all see it and no
+    // percent scales it. The add is an integer uniform, so every (roll, add) pair is enumerated: the joint support
+    // carries the widened band and a cap, a fight tier, a bow pull or the off hand's share reads the true spread.
+    let gear = if has_weapon {
+        gear_blow_add(ch, w, t, opts)
+    } else {
+        None
+    };
+    // The JS's own limits, before anything is allocated: `Array.from`'s length and the spread's stack. A legal card is
+    // ~1.6k blows, so only a hypothetical `--gear-lb` reaches this.
+    if let Some((add_lo, add_hi)) = gear {
+        check_enumeration(add_hi - add_lo + 1.0, hi - r0 + 1.0);
+    }
+    let adds: Vec<f64> = match gear {
+        Some((lo, hi)) => {
+            let mut out = Vec::new();
+            let mut a = lo;
+            while a <= hi {
+                out.push(a);
+                a += 1.0;
+            }
+            out
+        }
+        None => vec![0.0],
+    };
+    // `rollOf` (`model.js:1028`): the weapon's own damage modifier folds over the gear-added roll, then the
+    // weapon's bonus damage is added.
+    let roll_of = |r: f64, add: f64| {
+        (if pct.truthy() {
+            ((r + add) * (1.0 + pct.to_number() / 100.0)).trunc()
         } else {
-            r
-        };
-        rolls.push(if has_weapon { rolled + bonus } else { rolled });
-        r += 1.0;
+            r + add
+        }) + bonus
+    };
+    if has_weapon {
+        for &add in &adds {
+            let mut r = r0;
+            while r <= hi {
+                rolls.push(roll_of(r, add));
+                r += 1.0;
+            }
+        }
+    } else {
+        let mut r = r0;
+        while r <= hi {
+            let rolled = if pct.truthy() {
+                (r * (1.0 + pct.to_number() / 100.0)).trunc()
+            } else {
+                r
+            };
+            rolls.push(rolled);
+            r += 1.0;
+        }
     }
     let str_mod = if overhaul {
         damage::pcaao_damage_modifier(str_) * if has_weapon && two { 2.0 } else { 1.0 }
@@ -1238,6 +1395,16 @@ pub fn damage_model(
             ("slayer", n(read(w, "slayer", 0.0))),
         ]),
     );
+    // 0.1.14631 only: the add's integer range (the enumerated mean is `mean`). Absent on '14512', so its parts
+    // object is byte-identical to before the option existed (`model.js:1099-1104`).
+    if let Some((lo, hi)) = gear {
+        let mut parts = out.get("parts").clone();
+        parts.set(
+            "gearAdd",
+            obj([("lo", n(lo)), ("hi", n(hi)), ("mean", n((lo + hi) / 2.0))]),
+        );
+        out.set("parts", parts);
+    }
     out.set("crit", crit);
     out
 }

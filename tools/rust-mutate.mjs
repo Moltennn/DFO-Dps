@@ -12,6 +12,8 @@
  *   --tests   integration test names (rust/dfo-core/tests/<name>.rs) that cover the file; lib unit tests always run
  *   --count   how many mutants to try (default 40), drawn with a seeded shuffle so a run is reproducible
  *   --seed    shuffle seed (default 1)
+ *   --lines   only mutate these 1-based lines, as `a-b,c,d-e`: a scoped sweep of one change's code, with no shuffle
+ *             (the whole selected set runs and `--count` is ignored)
  *   --jobs    parallel workers (default min(8, cores/2)); each owns a private copy of the crate under ~/.cache/dfo-mut/wN
  *   --timeout seconds per mutant before it counts as a hang and is killed with its whole process group (default 180)
  *   --list    print the candidate mutants and exit
@@ -35,7 +37,7 @@ const flag = (name, def) => {
 };
 const file = args.find((a) => !a.startsWith('--') && !args[args.indexOf(a) - 1]?.startsWith('--'));
 if (!file) {
-  console.error('usage: node tools/rust-mutate.mjs <file under rust/dfo-core/src> --tests a,b [--count N] [--seed S] [--jobs J] [--timeout S] [--list]');
+  console.error('usage: node tools/rust-mutate.mjs <file under rust/dfo-core/src> --tests a,b [--count N] [--seed S] [--lines a-b,c] [--jobs J] [--timeout S] [--list]');
   process.exit(2);
 }
 const path = join(rustDir, 'dfo-core', 'src', file);
@@ -43,6 +45,13 @@ const tests = (flag('tests', '') || '').split(',').filter(Boolean);
 const count = Number(flag('count', 40));
 const seed = Number(flag('seed', 1));
 const listOnly = args.includes('--list');
+/** `--lines a-b,c,d-e`: 1-based line ranges; only mutants inside them are candidates. */
+const lineRanges = (flag('lines', '') || '')
+  .split(',')
+  .filter(Boolean)
+  .map((r) => r.split('-').map(Number))
+  .map(([a, b]) => [a, b ?? a]);
+const scoped = (n) => lineRanges.some(([a, b]) => n + 1 >= a && n + 1 <= b);
 
 const original = readFileSync(path, 'utf8');
 
@@ -74,6 +83,7 @@ const mutants = [];
 for (let n = 0; n < limit; n++) {
   const raw = lines[n];
   if (/^\s*(\/\/|#\[|#!)/.test(raw)) continue;
+  if (lineRanges.length && !scoped(n)) continue;
   const c = code(raw);
   const add = (col, len, repl, what) => mutants.push({ line: n, col, len, repl, what });
   for (const m of c.matchAll(/(?<![\w.])(\d+\.\d+|\d+)(?![\w.])/g)) {
@@ -90,7 +100,7 @@ for (let n = 0; n < limit; n++) {
   for (const m of c.matchAll(/ - (?=[\w(])/g)) add(m.index, m[0].length, ' + ', "'-' -> '+'");
 }
 
-// seeded shuffle (mulberry32)
+// seeded shuffle (mulberry32); a `--lines` scope runs every selected mutant, in file order
 let s = seed >>> 0;
 const rnd = () => {
   s = (s + 0x6d2b79f5) >>> 0;
@@ -99,9 +109,11 @@ const rnd = () => {
   t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 };
-for (let i = mutants.length - 1; i > 0; i--) {
-  const j = Math.floor(rnd() * (i + 1));
-  [mutants[i], mutants[j]] = [mutants[j], mutants[i]];
+if (!lineRanges.length) {
+  for (let i = mutants.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    [mutants[i], mutants[j]] = [mutants[j], mutants[i]];
+  }
 }
 
 if (listOnly) {
@@ -181,7 +193,7 @@ if (base.status !== 0) {
   process.exit(1);
 }
 
-const picked = mutants.slice(0, count);
+const picked = lineRanges.length ? mutants : mutants.slice(0, count);
 const verdicts = new Array(picked.length);
 let next = 0;
 let finished = 0;

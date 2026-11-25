@@ -208,7 +208,7 @@ fn breakdown(r: &Value) -> String {
             v.to_js_string()
         )
     };
-    let rows = [
+    let mut rows: Vec<(String, String, String)> = vec![
         (
             "Weapon roll".to_owned(),
             format!(
@@ -252,6 +252,20 @@ fn breakdown(r: &Value) -> String {
             format!("{}%", n1(p.get("mastery").to_number())),
             "online skill past 100 and gear skill".to_owned(),
         ),
+    ];
+    // `report.js:30`: `...(p.gearAdd ? [...] : [])`, the 14631 flat add, after the mastery/gear row.
+    if p.get("gearAdd").truthy() {
+        rows.push((
+            "Gear add (flat)".to_owned(),
+            n1(p.get("gearAdd").get("mean").to_number()),
+            format!(
+                "integer uniform {}..{} on the roll, enumerated per blow (0.1.14631 only)",
+                p.get("gearAdd").get("lo").to_js_string(),
+                p.get("gearAdd").get("hi").to_js_string()
+            ),
+        ));
+    }
+    rows.extend([
         (
             "Martial passive".to_owned(),
             format!("{}%", n1(p.get("martial").to_number())),
@@ -314,7 +328,7 @@ fn breakdown(r: &Value) -> String {
             n1(r.get("perSwing").to_number()),
             "hit chance x damage, criticals included".to_owned(),
         ),
-    ];
+    ]);
     rows.into_iter()
         .map(|(k, v, s)| {
             format!(
@@ -952,6 +966,7 @@ pub fn build_report(ch: &Value, opts: &Value, book: &Spellbook) -> String {
         ("bowSpam", opt(opts, "bowSpam", Bool(false))),
         ("potencyPct", opt(opts, "potencyPct", Num(0.0))),
         ("pierce", opt(opts, "pierce", Num(0.0))),
+        ("gameBuild", opt(opts, "gameBuild", Str("14512".to_owned()))),
     ]);
     let players = opt(opts, "players", Num(1.0)).to_number();
     let blow_x = opt(opts, "blowX", Num(1.0)).to_number();

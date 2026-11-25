@@ -294,6 +294,46 @@ stubbed `firmamentTree`, the C# paperdoll rating, `renownBonus`). Composition, n
 also pin a **real upstream save shape** (`items[]`+`equipSlot`, no `worn`), the before/after wear path, the
 unknown-propagation cases, and no mutation of either input.
 
+## (8) The shipped build a card is priced under
+
+A GUI that shows damage numbers must pick the game build it prices under. `dfo_core::model_blow` reads it from the
+card's own scenario, as the CLI's `--game-build` does:
+
+```rust
+use dfo_core::model_blow::{DEFAULT_GAME_BUILD, GAME_BUILDS};   // ["14512", "14631"]; the default is GAME_BUILDS[0]
+
+let mut scenario = /* the scenario you would pass to analyze */;
+scenario.set("gameBuild", Value::Str(build.clone()));   // "14512" | "14631"
+let card = dfo_core::analyze::analyze(&ch, &scenario, &book);
+```
+
+- **`14512`** is the vendored cut (`vendor/upstream/a3eb1605`) and the default: anything that is not exactly `14631`
+  prices as it. It is `DEFAULT_GAME_BUILD`, so the GUI does not have to set the key at all.
+- **`14631`** is the shipped build's drift finding (`CHANGELOG-MECHANICS.md` GEAR-14631 / BRAND-14631): the weapon gear
+  becomes a flat integer add on the roll (`damage.parts.gearAdd = { lo, hi, mean }`, the card enumerates every integer),
+  Axe/Blunt lose their half line, and the `brand` loot power adds flat elemental damage. `model_blow::game_build`
+  normalizes the value once; `GAME_BUILDS` is the accepted list, for a picker.
+- **What changes for the reader**: `damage.parts.mastery` is the climb only under `14631`, `damage.parts.gearAdd` is
+  present only there, and the add widens `damage.min..max` and `perSwing` (so a cap, a fight tier or an off hand reads
+  the true spread). It is opt-in next to `scenario`'s other keys and changes no `14512` number.
+- **The evidence is weaker than a `path:line`.** `14631` is only readable in the shipped build (`dist:` citations in
+  `CHANGELOG-MECHANICS.md` and `test/build14631.test.js`), so parity with the JS validates the port, not the game. The
+  carried-chain ratio, `duelGearAdd`, the `sigilDueling()` gate, the Gilded item that carries `brand` and the defender
+  sigil set are unmodelled; a GUI must not present them as priced.
+- **Which entries take the key.** Only a card built from a scenario that carries `gameBuild` moves: `build`,
+  `objective`, `rank`, `report`, `compare`, `scale`, `tradeoff`, `theory`, `graph` and `enchant`. The modules that
+  build their own fixed scenario instead call `analyze` with no `gameBuild` and therefore price the **14512 cut**
+  whatever the GUI does: `dfo_core::real_build` (`real_weapon_loadouts`, the Firmament/gear planner stages),
+  `dfo_core::imprints` (the imprint ranking) and `dfo_core::maxprofile` (`Profiles`, `max_run`, the legal-gear and
+  weapon-ceiling plans). Their scenarios are `maxprofile::scenario`/`run_args` and the `imprints` host args, none of
+  which sets `gameBuild`; the JS is the same (`src/maxprofile.js`, `src/imprints.js` and `src/realBuild.js` never pass
+  the key, and only `scenarioOf` reads `--game-build`). So a 14631 picker shows aligned in the per-card numbers and
+  unaligned in those planner/ranking surfaces, exactly as today.
+- **A hypothetical gear line crashes, it does not loop.** `14631` enumerates every integer add, so a `--gear-lb` past
+  V8's spread limit makes the JS throw a `RangeError` (exit 1). The port raises the same `RangeError`
+  (`model_blow::JsRangeError`, `MAX_ENUMERATED_BLOWS`) instead of running to an OOM, so it prices exactly the cards
+  the JS prices and fails the same way; a legal card (~1,620 blows at 535 points) is ~77x below the cap.
+
 ## How parity is checked
 
 `tools/rust-forge-vectors.mjs` writes `rust/tests/vectors/forge.txt` (**41,135** cases) from the **real** vendored law

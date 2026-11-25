@@ -25,13 +25,13 @@ use dfo_core::enchant_plan::grouped_number_of;
 use dfo_core::gear_profile::{max_point_total, max_single_skill};
 use dfo_core::generated::data::{RACE_NAMES, WEAPONS};
 use dfo_core::generated::gear_profile::AFFIX_DAMAGE_TOP;
-use dfo_core::generated::theory::{GEAR_MASTERY_POINTS, LONG_BLADES, THEORY_CAPS};
+use dfo_core::generated::theory::{GEAR_MASTERY_POINTS, LONG_BLADES};
 use dfo_core::maxprofile::Profiles;
 use dfo_core::round::math_round;
 use dfo_core::save::{live_stat, skill_value};
 use dfo_core::sockets::perfect_sockets;
 use dfo_core::spells::Spellbook;
-use dfo_core::theory::{theory_blade, theory_character};
+use dfo_core::theory::{gear_mastery_points, theory_blade, theory_caps, theory_character};
 use dfo_core::value::{
     number_to_string, obj_table_get, Value,
     Value::{Arr, Bool, Null, Num, Obj, Str, Undefined},
@@ -229,6 +229,9 @@ pub struct Input {
     pub target_name: String,
     /// `!values['no-rri']`.
     pub rri: bool,
+    /// `values['game-build'] ?? '14512'` (`src/cli.js:1918,1963,1971,1998,2063`): the cap sheet and the
+    /// formula-cap row follow it. The scenario carries it too, so the numbers do.
+    pub game_build: String,
 }
 
 /// The resolved `maxLb` / `maxCs` / `damage` the card prints and the stages read.
@@ -808,13 +811,16 @@ fn skill_rows(
         &[0.0, 200.0, 400.0, 535.0],
         false,
     )?;
-    add(
-        "Gear Long Blade (formula cap, hypothetical)",
-        "gear",
-        "29",
-        &[GEAR_MASTERY_POINTS],
-        false,
-    )?;
+    // `14512`'s formula cap is the 320% row's hypothetical; `14631` has no such cap, so the row is skipped.
+    if let Some(formula_cap) = gear_mastery_points(&input.game_build) {
+        add(
+            "Gear Long Blade (formula cap, hypothetical)",
+            "gear",
+            "29",
+            &[formula_cap],
+            false,
+        )?;
+    }
     add(
         "Gear Critical Strike (legal to 535)",
         "gear",
@@ -1138,7 +1144,7 @@ fn text(c: &Computed) -> String {
 
     out.push_str("\nCaps (push in this order)\n");
     out.push_str(&table(
-        &THEORY_CAPS
+        &theory_caps(&c.input.game_build)
             .iter()
             .map(|cap| {
                 vec![
@@ -1217,8 +1223,12 @@ fn text(c: &Computed) -> String {
     ));
     out.push('\n');
     out.push_str(&format!(
-        "The \"formula cap\" row is hypothetical: the legal single-skill maximum is 535 points (the weapon record + 17 Exalted slots); the 320% mastery cap would need {} points.\n",
-        n(GEAR_MASTERY_POINTS)
+        "The \"formula cap\" row is hypothetical: the legal single-skill maximum is 535 points (the weapon record + 17 Exalted slots); {}.\n",
+        if c.input.game_build == "14631" {
+            "0.1.14631 drops the 320% cap (the gear is flat, no percent)".to_owned()
+        } else {
+            format!("the 320% mastery cap would need {} points", n(GEAR_MASTERY_POINTS))
+        }
     ));
 
     out.push_str("\nFirmament attributes (the tree caps a channel at +15; the gain also lifts the 100 ceiling)\n");
@@ -1282,7 +1292,14 @@ fn text(c: &Computed) -> String {
         ],
     ));
     out.push('\n');
-    out.push_str("The sheet showing 215 is raw 200 + 15; the formula reads 155 (effectiveSkill(200)=140 + 15). Gear skill adds on top of both, and for Long Blade it converts at 0.44% per point, capped at +320%.\n");
+    out.push_str(&format!(
+        "The sheet showing 215 is raw 200 + 15; the formula reads 155 (effectiveSkill(200)=140 + 15). Gear skill adds on top of both, and for Long Blade it converts at 0.44% per point{}.\n",
+        if c.input.game_build == "14631" {
+            ", and on 0.1.14631 that percent is gone: the gear is a flat add on the roll, no cap"
+        } else {
+            ", capped at +320%"
+        }
+    ));
 
     out.push_str("\nFirmament weapon blow (general channel cap +30%; conditions can take the total to +50%)\n");
     let firm_values = [0.0, 10.0, 20.0, 30.0];
@@ -1653,7 +1670,7 @@ fn document(c: &Computed) -> Value {
         })
         .collect());
 
-    let caps = Arr(THEORY_CAPS
+    let caps = Arr(theory_caps(&c.input.game_build)
         .iter()
         .map(|cap| {
             obj([

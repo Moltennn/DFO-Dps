@@ -354,6 +354,85 @@ fn objective_sampled_matches_the_js_cli() {
 }
 
 #[test]
+fn the_shipped_build_reaches_the_objective_scenarios() {
+    // `src/cli.js:611-613` builds the scenario with `scenarioOf`, so `--game-build` must reach every objective that
+    // prices a card. Both builds are compared to the JS byte for byte, and the two must differ: a gear-heavy theory
+    // character (legal 535/370/15%) moves the deterministic relay and the sampled TTK, while the default card does not.
+    let root = temp_root("game-build");
+    let gear = ["--gear-lb", "535", "--gear-cs", "370", "--damage-pct", "15"];
+    let cases: [&[&str]; 3] = [
+        // The deterministic relay card (its `uncappedDps` and its drum).
+        &[
+            "objective",
+            "--theory",
+            "--json",
+            "--objective",
+            "relay",
+            "--target",
+            "breach",
+        ],
+        // The sampled TTK card at the audit's trial floor, with the same short horizon the other sampled cases use.
+        &[
+            "objective",
+            "--theory",
+            "--json",
+            "--objective",
+            "stochastic-ttk",
+            "--target",
+            "soft",
+            "--health",
+            "5000",
+            "--max-seconds",
+            "10",
+            "--max-blows",
+            "12",
+            "--seed",
+            "7",
+            "--trials",
+            "1000",
+        ],
+        // The deterministic relay-ceiling card over the same body.
+        &[
+            "objective",
+            "--theory",
+            "--json",
+            "--objective",
+            "relay-ceiling",
+            "--target",
+            "breach",
+        ],
+    ];
+    for args in cases {
+        let mut cut: Vec<&str> = args.to_vec();
+        cut.extend_from_slice(&gear);
+        cut.extend_from_slice(&["--game-build", "14512"]);
+        let mut drift: Vec<&str> = args.to_vec();
+        drift.extend_from_slice(&gear);
+        drift.extend_from_slice(&["--game-build", "14631"]);
+        same(&cut);
+        same(&drift);
+        let cut_out = js_env(&cut, &root).stdout;
+        let drift_out = js_env(&drift, &root).stdout;
+        assert_ne!(
+            String::from_utf8_lossy(&cut_out),
+            String::from_utf8_lossy(&drift_out),
+            "14631 must move this gear-heavy card: {args:?}"
+        );
+    }
+    // And the default is the cut: no flag prices the same bytes as an explicit 14512 run.
+    let mut plain: Vec<&str> = cases[0].to_vec();
+    plain.extend_from_slice(&gear);
+    let mut explicit: Vec<&str> = plain.clone();
+    explicit.extend_from_slice(&["--game-build", "14512"]);
+    assert_eq!(
+        String::from_utf8_lossy(&js_env(&plain, &root).stdout),
+        String::from_utf8_lossy(&js_env(&explicit, &root).stdout),
+        "no --game-build is 14512"
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn objective_relay_sampled_matches_the_js_cli() {
     let base = [
         "objective",

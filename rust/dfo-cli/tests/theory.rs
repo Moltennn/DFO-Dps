@@ -62,6 +62,7 @@ fn input(gear: theory::GearFlags) -> theory::Input {
         gear,
         target_name: "gate".to_owned(),
         rri: true,
+        game_build: "14512".to_owned(),
     }
 }
 

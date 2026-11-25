@@ -83,8 +83,34 @@ bullets below and in the per-command notes.
   - the weapon gear law: a flat add with uniform range `[floor(g/10), floor(g/5)]`, replacing `min(320, gear*0.44)%`;
   - the axe/blunt half line, which is removed;
   - a brand loot power and a defender sigil set, which are added.
-  The JS has an opt-in `--game-build 14631` on branch `model-14631` (not merged to `main`). The Rust port does not
-  model build 14631.
+  The JS has an opt-in `--game-build 14631` on branch `model-14631` (not merged to `main`); the Rust port models it
+  the same way, behind `--game-build`.
+
+- **`--game-build` (the shipped-build selector).** `--game-build <14512|14631>` selects the shipped build a weapon
+  card is priced under; the default stays `14512` (the vendored cut). It is refused by name on every command whose
+  card does not go through `scenarioOf` (only `build`, `objective`, `rank`, `report`, `compare`, `scale`, `tradeoff`,
+  `theory`, `graph` and `enchant` read it), and an unknown value is exit 2. `14631` changes:
+  - the weapon gear law: a flat add on the roll, uniform on `[floor(s/10), floor(s/5)]`, replacing `min(320,
+    gear*0.44)%`; the card enumerates every integer add, so a per-hit cap, a fight tier, a bow pull or the off hand's
+    share sees the true spread (`model_blow::gear_blow_add`, `damage_model`);
+  - the axe/blunt half line, which is removed: both share the sword's single climb term;
+  - the `brand` loot power: `floor(flat x elementShare(target, power.element))` into the flat accumulator;
+  - the theory cap sheet's gear row and its formula-cap row (`dfo_core::theory::theory_caps`,
+    `gear_mastery_points`).
+  `14631` behaviour rests on `dist:` evidence from the shipped build, cited in `CHANGELOG-MECHANICS.md`
+  (GEAR-14631 / BRAND-14631) and in `test/build14631.test.js`; the Rust vectors only prove the port matches the JS
+  (`tools/rust-blow-vectors.mjs` appends the `14631` cards last, so every earlier vector byte is unchanged). A
+  real-save diff against the live client is not done: parity with the JS validates the port, not the game. The
+  carried-chain ratio `e/(1+e+a)`, `duelGearAdd`, the `sigilDueling()` gate, the Gilded item that carries `brand` and
+  the defender sigil set are unmodelled.
+  Only a card built from a scenario that carries `gameBuild` moves. The modules that build their own fixed scenario -
+  `dfo_core::real_build` (the loadout planner stages), `dfo_core::imprints` (the imprint ranking) and
+  `dfo_core::maxprofile` (`Profiles`, `max_run`, the legal-gear and ceiling plans) - call `analyze` with no
+  `gameBuild`, so they **price the 14512 cut** whichever build a card names. The JS is the same: `src/maxprofile.js`,
+  `src/imprints.js` and `src/realBuild.js` never pass the key, and `scenarioOf` is the only reader of `--game-build`.
+  A hypothetical `--gear-lb` past V8's spread limit crashes the JS with a `RangeError` (exit 1); the port raises the
+  same `RangeError` (`model_blow::JsRangeError`, `MAX_ENUMERATED_BLOWS`) instead of running to an OOM, so it prices
+  exactly the cards the JS prices.
 
 ### Verification status
 
@@ -935,7 +961,8 @@ Vendored helpers (`vendored.rs`): `career_attack_modifier` (combat/formulas.js:1
   at import. A mod that registers one would change the port; the port has no hook for it.
 - `customItemClass` (rriItems.js:626) reads the built-in `RRI_CLASSES`, whose keys are 513..=526 only.
   `armorSlotRule` and `pieceBodyPart` therefore use the classic rule table for every template outside 513..=526.
-  The vectors stay outside that range. Inside it, the port is NOT exact (it would need the RRI class table).
+  The general vectors stay outside that range; the `rri_class` family covers all 14 rows under every mix of the mod's
+  switches (`Enabled`, `newWeapons`, `newArmor`), so the `group === 'Weapons'` arm is pinned, not just assumed.
 
 ### JS semantics decided here (review these)
 
@@ -975,6 +1002,11 @@ and a `weights` value that is `null`.
 - Ten families, each at least 2000 cases (the test asserts it): `career`, `natural`, `enemy_type`, `silver`,
   `hide`, `armour`, `shield`, `outcome`, `equip`, `scalar`. The generator prints the targets and the count of
   each kind. The floors are per family, so `body_part_weights` (three cases) counts toward `scalar`.
+- `rri_class` (176 cases, its own floor): `customItemClass` for the 14 RRI rows 513..=526 plus misses (512, 527,
+  102, 300, 0.5, NaN, Infinity, -0) under all eight mixes of the mod's switches, read through the real
+  `setModSetting`; the shipped defaults are restored before the file is written. This is the family the
+  `group === 'Weapons'` arm of `custom_item_class` needs: a weapon's switch must gate a weapon and an armour switch an
+  armour, which the both-switches-on defaults cannot see.
 - Damage grids include 0, -0, 1, fractions, 2.5/3.5/4.5 ties, huge values, 5e-324, 1e-9, NaN and infinities.
   Armour covers the templates 102..112 (plate, chain and leather rows, the shields, the cuirass, both pauldrons)
   against materials and conditions, with and without sharp edge. Shield rows cover block and no-block parts.

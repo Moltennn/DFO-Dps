@@ -484,7 +484,7 @@ const SOURCES = [  { file: 'data', from: 'src/data.js', mod: data, names: null }
   },
   { file: 'js_prototypes', from: 'the JS engine: own names of Object, Array, String, Number and Boolean .prototype', mod: prototypeKeys(), names: ['OBJECT_PROTOTYPE_KEYS', 'ARRAY_PROTOTYPE_KEYS', 'STRING_PROTOTYPE_KEYS', 'NUMBER_PROTOTYPE_KEYS', 'BOOLEAN_PROTOTYPE_KEYS'] },
   { file: 'gate_boss', from: `${V}/world/gate/gateBoss.js`, mod: gateBoss, names: ['BOSS_ARMOR'] },
-  { file: 'theory', from: 'src/theory.js', mod: theory, names: ['THEORY_LEVEL', 'THEORY_STATS', 'THEORY_RACES', 'LONG_BLADES', 'DEFAULT_BLADE', 'GEAR_LINE_MAX', 'DAMAGE_AFFIX_MAX', 'GEAR_MASTERY_CAP', 'GEAR_MASTERY_POINTS', 'GEAR_LB_LINES', 'GEAR_CS_LINES', 'GEAR_SKILL_LINES', 'GEAR_H2H_LINES', 'THEORY_CAPS'] },
+  { file: 'theory', from: 'src/theory.js', mod: { ...theory, GEAR_CAPS: cutLiteral('src/theory.js', 'GEAR_CAPS', '})') }, names: ['THEORY_LEVEL', 'THEORY_STATS', 'THEORY_RACES', 'LONG_BLADES', 'DEFAULT_BLADE', 'GEAR_LINE_MAX', 'DAMAGE_AFFIX_MAX', 'GEAR_MASTERY_CAP', 'GEAR_MASTERY_POINTS', 'GEAR_LB_LINES', 'GEAR_CS_LINES', 'GEAR_SKILL_LINES', 'GEAR_H2H_LINES', 'THEORY_CAPS', 'GEAR_CAPS'] },
   { file: 'gear_profile', from: 'src/gearProfile.js', mod: gearProfile, names: ['ARMOUR_SLOTS', 'JEWEL_SLOTS', 'SKILL_BAND_TOP', 'AFFIX_DAMAGE_TOP', 'EXALTED_SKILL_FLOOR', 'SKILL_IDS'] },
   { file: 'planning', from: 'src/imprints.js and vendored lootRarity.js', mod: {
     IMPRINT_FAMILIES: encodeValue(IMPRINT_FAMILIES), WEAPON_IMPRINTS: encodeValue(WEAPON_IMPRINTS),

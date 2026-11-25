@@ -64,6 +64,8 @@ import { isShieldTemplate, itemArmorValue, materialArmorValue } from '../vendor/
 import { armorBodyParts, slotForBodyPart } from '../vendor/upstream/a3eb1605/src/systems/equip.js';
 import { conditionPercentage } from '../vendor/upstream/a3eb1605/src/systems/item/itemTemplates.js';
 import { enemyCareerIndex, enemyEntityType } from '../vendor/upstream/a3eb1605/src/characters/enemy/enemyBasics.js';
+import { setModSetting, MOD_SETTINGS } from '../vendor/upstream/a3eb1605/src/systems/modSettings.js';
+import { customItemClass } from '../vendor/upstream/a3eb1605/src/systems/roleplayRealismItems/rriItems.js';
 // R4a: the value codec (tools/rust-codec.mjs, re-exported below), the save helpers, the gear and socket readers, the
 // lootRarity readers and foeGroup
 import { encodeValue, numToken } from './rust-codec.mjs';
@@ -960,6 +962,7 @@ function genTarget() {
     'ITEM = group=Armor(b) templateIndex(opt) material(opt) artifact(b) maxCondition(opt) currentCondition(opt). ITEMOPT = 0 | 1 ITEM. WOPT = 0 | 1 skillId material flags itemFlags (opts). TREF/AREF = - | tgt/atk id.',
     'cases: career_tolerance flag CAREER => word | element_share TREF element(-|n:) => f64 | natural TREF => f64 | live_stat t|a id stat => f64 | enemy_type_group TREF => f64 | bonus_range AREF TREF => group decoded bonus penalty will targetLevel | bonus_value AREF TREF roll => f64 | bonus_values AREF TREF => n f64* | silver_applies TREF WOPT => b | skeletal_damage damage TREF WOPT => f64 | is_skeletal TREF => b | monster_hide TREF damage blunt natural(opt, - = default) exact => f64 | intrinsic_damage TREF damage WOPT exact => f64',
     'armour_material_id ITEMOPT => f64 | armour_condition ITEMOPT sharp => f64 | armour_reduction ITEMOPT damage natural blunt unarmed sharp => f64 | shield_reduction (same) => f64 | shield_block TREF strong ITEMOPT => f64 | shield_beats TREF part natural(opt) sharp => b | struck_slot TREF part => ITEMOPT | left_hand TREF => ITEMOPT | has_worn TREF => b',
+    'rri_class template enabled newWeapons newArmor => 0|1 group(n:) equipSlot(-|n:) itemHands(-|n:)',
     'part_outcomes TREF damage part WOPT sharp => n (p damage)* | part_damage TREF damage part WOPT sharp => f64 | expected_damage TREF damage WOPT weights(- default, else n f64*) map(- none, 1 x*0.75, 2 x+1, 3 floor(x/3)) => f64|-',
     'equip_armour TREF n ITEM* armorValues(b) => n (slot ITEM)* m f64* | material_armor_value material(NaN = missing) => f64 | item_armor_value ITEMOPT => f64 | enemy_group career => f64 | career_attack_modifier flags group => f64 | enemy_entity_type id => monster|class|null | enemy_career_index id => f64 | slot_for_body_part part => f64 | armor_body_parts ITEMOPT => n part* | condition_percentage ITEMOPT => f64 | armour_piece max(opt) condition => f64 | body_part_weights overhaul|struck|undef => n f64* | silver_doubles TREF => b | is_shield_template t(opt) => b | enemy_armor_values isClass(b) armor n (piece(opt) material(opt) shield(b))* => 7 f64',
   ].join(' | '));
@@ -1547,6 +1550,29 @@ function genTarget() {
   }
 
   const perKind = {};
+  // The RRI item classes (rriItems.js:626-631) under every mix of the mod's switches: `customItemClass` gates a class
+  // on Enabled and on the group's own switch (newWeapons for a weapon, newArmor for armour), so a mixed-switch sweep is
+  // the only way the group comparison differs from its negation. Templates outside 513..=526 stay in too, and every
+  // answer is written with its three fields (the port's `CustomClass`). The shipped defaults are restored afterwards.
+  const RRI_VENDOR = 'roleplay-realism-items';
+  const RRI_DEFAULTS = MOD_SETTINGS[RRI_VENDOR].keys;
+  const RRI_TEMPLATES = [...Array.from({ length: 14 }, (_, i) => 513 + i), 512, 527, 102, 300, 0.5, NaN, Infinity, -0];
+  for (const enabled of [true, false]) {
+    for (const newWeapons of [true, false]) {
+      for (const newArmor of [true, false]) {
+        setModSetting(RRI_VENDOR, 'Enabled', enabled);
+        setModSetting(RRI_VENDOR, 'newWeapons', newWeapons);
+        setModSetting(RRI_VENDOR, 'newArmor', newArmor);
+        for (const t of RRI_TEMPLATES) {
+          const cls = customItemClass(t);
+          out.add('rri_class', F(t), B(enabled), B(newWeapons), B(newArmor), '=>',
+            B(cls !== null), NO(cls?.group), NO(cls?.equipSlot), NO(cls?.itemHands));
+        }
+      }
+    }
+  }
+  for (const k of ['Enabled', 'newWeapons', 'newArmor']) setModSetting(RRI_VENDOR, k, RRI_DEFAULTS[k].default);
+
   for (const line of out.lines) {
     const k = line.split(' ', 1)[0];
     if (k !== 'tgt' && k !== 'atk') perKind[k] = (perKind[k] ?? 0) + 1;

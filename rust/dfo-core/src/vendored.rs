@@ -7,8 +7,9 @@
 //! the import path `src/target.js` reaches, nothing registers one (`installEnemyExpansion` is the only caller of
 //! `registerEnemyGroup`, and it is not run at import), so each registry is modelled as EMPTY. The one built-in
 //! table is `RRI_CLASSES` (rriItems.js:581), whose keys are 513..=526 only: `customItemClass` answers for those
-//! ids alone, so the armour helpers below are exact for every template id outside 513..=526 (the vectors stay
-//! there; see `rust/README.md`).
+//! ids alone, so the armour helpers below are exact for every template id outside 513..=526 (the general vectors stay
+//! there; the `rri_class` family in `tools/rust-vectors.mjs` covers the 14 rows under every switch mix; see
+//! `rust/README.md`).
 //!
 //! JS `undefined` is `None`. A JS career index that is `undefined` is passed as NaN where a lookup is made, since
 //! no table key equals NaN and no key is `undefined` (the same miss in JS).
@@ -51,10 +52,9 @@ pub fn custom_item_class(template: f64, rri: Option<&RriSwitches>) -> Option<Cus
     let rri = rri?;
     let (_, v) = RRI_CLASSES.iter().find(|(k, _)| *k as f64 == template)?;
     let group = v.group?;
-    // mutation: NOT proven equivalent - OPEN COVERAGE GAP (AUDIT-1): `==` -> `!=` is observable for templates 513/514
-    // only when `newWeapons != newArmor`; no vector covers RRI classes 513..=526 and the shipped switches are both
-    // true (`RRI_ENABLED_DEFAULTS`), so it survives. Close it with a mixed-switch RRI vector family if those
-    // switches ever matter (scope change to the module doc above).
+    // The group comparison is observable only for a weapon class (513/514) while `newWeapons != newArmor`; the vectors
+    // write `customItemClass` for all 14 rows x the 8 switch mixes (`rri_class` in tools/rust-vectors.mjs, read by
+    // tests/target.rs), so `==` -> `!=` and `newWeapons` <-> `newArmor` both change an answer.
     let on = if group == "Weapons" {
         rri.module(rri.new_weapons)
     } else {

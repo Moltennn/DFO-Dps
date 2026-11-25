@@ -117,7 +117,7 @@ use dfo_core::generated::data::{BOSS_TRAITS, RACE_NAMES, SOURCE, WEAPONS};
 use dfo_core::generated::level_cap::LEVEL_CAP;
 use dfo_core::generated::theory::{DEFAULT_BLADE, THEORY_LEVEL, THEORY_RACES};
 use dfo_core::maxprofile::Profiles;
-use dfo_core::model_blow::{synthetic_weapon, weapon_of};
+use dfo_core::model_blow::{synthetic_weapon, weapon_of, DEFAULT_GAME_BUILD, GAME_BUILDS};
 use dfo_core::objectives::{
     evaluate_objective, MIN_STOCHASTIC_TRIALS, OBJECTIVE_IDS, STOCHASTIC_OBJECTIVE_IDS,
 };
@@ -221,6 +221,7 @@ Flags:
   --core <overhaul|classic> --swing <random|StrikeLeft|...> --stacks <0-5> --rhythm --unaware --first-blow
   --behind --backstab <0..1> --health-share <0..1> --self-health-share <0..1>
   --weapon <template[:material]>      theory blade/material override
+  --game-build <14512|14631>          shipped build a card is priced under (default: 14512)
   --race <breton|redguard|nord|darkelf|highelf|woodelf|khajiit|argonian>
   --blade <template>                  theory long blade (default 123, Dai-katana)
   --gear-lb <n> --gear-cs <n>         gear points on weapon skill / Critical Strike (default: legal max)
@@ -288,6 +289,19 @@ Every JS `COMMANDS` entry is handled. A flag a command does not read is refused 
 ignored, as the JS `parseArgs`/`validateFlags` do.";
 
 fn main() -> ExitCode {
+    // A `dfo_core::model_blow::JsRangeError` is the JS `RangeError` the enumeration raises (`model.js:1024,1076`).
+    // V8 prints its stack and exits 1; the CLI prints the message line only, as it does for every other JS crash.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| match info
+        .payload()
+        .downcast_ref::<dfo_core::model_blow::JsRangeError>()
+    {
+        Some(e) => std::process::exit({
+            eprintln!("{}", e.0);
+            1
+        }),
+        None => default_hook(info),
+    }));
     match run(std::env::args().skip(1).collect()) {
         Ok(out) => {
             print!("{out}");
@@ -514,6 +528,21 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
         "imprints, probe, enchant-plan, gear-plan, loadout, real-dps, graph",
     );
     let listed = |list: &str| list.split(", ").any(|f| f.trim() == command);
+    // `checkOutputFlags` runs the `--out` refusal (`src/cli.js:897-898`) before the per-command `--game-build` one
+    // (`:901-903`), so a command with both bad names `--out`.
+    if parsed.raw("out").is_some() && !listed(FILE_COMMANDS) {
+        return Err(usage(format!(
+            "--out is only for commands that write a file ({FILE_COMMANDS}), not \"{command}\""
+        )));
+    }
+    // `src/cli.js:899-904`: `--game-build` prices a weapon card, so only the commands that build a scenario read it.
+    const GAME_BUILD_COMMANDS: &str =
+        "build, objective, rank, report, compare, scale, tradeoff, theory, graph, enchant";
+    if parsed.raw("game-build").is_some() && !listed(GAME_BUILD_COMMANDS) {
+        return Err(usage(format!(
+            "--game-build is not read by {command} (it prices a weapon card: {GAME_BUILD_COMMANDS})"
+        )));
+    }
     // `--stat` is priced by `compare` and `scale`; `--all` by `compare`, `scale` and `enchant-plan`; JS accepts and
     // ignores them elsewhere, and this CLI refuses them by name, as it does `--out`, never silently.
     if command != "compare" && command != "scale" {
@@ -678,11 +707,6 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
                 )));
             }
         }
-    }
-    if parsed.raw("out").is_some() && !listed(FILE_COMMANDS) {
-        return Err(usage(format!(
-            "--out is only for commands that write a file ({FILE_COMMANDS}), not \"{command}\""
-        )));
     }
     // `checkOutputFlags` (`src/cli.js:892-897`): the command name in the message is `spell --list` / `scale --all`
     // when that branch has no JSON form. Only `spell --list` lacks one; every other `spell` mode has its document.
@@ -898,7 +922,7 @@ const ALL_FLAGS: &str = concat!(
     "trials seed max-seconds max-blows no-carry samples old pair dual spam series uncapped theory race blade ",
     "gear-lines line-points gear-lb gear-cs vampire firmament star-stat star-skill star-damage spell list all-spells ",
     "standard potency pierce cast-speed magicka seconds mana-limit data no-rri all from to step skill gear-skill ",
-    "damage-pct no-crit-damage no-passive json top out stat help",
+    "damage-pct no-crit-damage no-passive json top out stat help game-build",
 );
 
 fn in_flags(list: &str, name: &str) -> bool {
@@ -1051,6 +1075,8 @@ const NUMERIC_FLAGS: [(&str, f64, Range); 30] = [
 struct Values {
     theory: bool,
     json: bool,
+    /// `--game-build`: the shipped build a card is priced under (`model.js:63-66`); default `14512`.
+    game_build: String,
     vampire: bool,
     firmament: bool,
     rhythm: bool,
@@ -1354,20 +1380,8 @@ impl Values {
                 )));
             }
         }
-        // `validateFlags` (`src/cli.js:382-384`): every command's `--encounter`, checked before the branch runs.
-        if let Some(encounter) = parsed.raw("encounter") {
-            if !ENCOUNTER_IDS.contains(&encounter.to_lowercase().as_str()) {
-                return Err(usage(format!(
-                    "--encounter must be one of {}, got \"{encounter}\"",
-                    ENCOUNTER_IDS.join(", ")
-                )));
-            }
-        }
-        let weapon = match parsed.raw("weapon") {
-            Some(raw) => Some(weapon_flag(raw)?),
-            None => None,
-        };
-        // `validateFlags` (`src/cli.js:375-379`): `--shield` must be a template number, `none` or `auto`.
+        // `validateFlags` (`src/cli.js:375-379`): `--shield` must be a template number, `none` or `auto`. It is
+        // checked BEFORE `--game-build` (`:383-384`), so two bad flags name the shield.
         let shield = match parsed.raw("shield") {
             Some(raw) => {
                 let shield = raw.to_lowercase();
@@ -1384,6 +1398,28 @@ impl Values {
                 shield
             }
             None => "auto".to_owned(),
+        };
+        // `validateFlags` (`src/cli.js:383-384`): the shipped build, checked after `--shield` and before `--encounter`.
+        if let Some(game_build) = parsed.raw("game-build") {
+            if !GAME_BUILDS.contains(&game_build) {
+                return Err(usage(format!(
+                    "--game-build must be one of {}, got \"{game_build}\"",
+                    GAME_BUILDS.join(", ")
+                )));
+            }
+        }
+        // `validateFlags` (`src/cli.js:382-384`): every command's `--encounter`, checked before the branch runs.
+        if let Some(encounter) = parsed.raw("encounter") {
+            if !ENCOUNTER_IDS.contains(&encounter.to_lowercase().as_str()) {
+                return Err(usage(format!(
+                    "--encounter must be one of {}, got \"{encounter}\"",
+                    ENCOUNTER_IDS.join(", ")
+                )));
+            }
+        }
+        let weapon = match parsed.raw("weapon") {
+            Some(raw) => Some(weapon_flag(raw)?),
+            None => None,
         };
         let core = parsed.raw("core").unwrap_or("overhaul").to_owned();
         if !matches!(core.to_lowercase().as_str(), "overhaul" | "classic") {
@@ -1421,6 +1457,10 @@ impl Values {
         Ok(Values {
             theory: parsed.flag("theory"),
             json: parsed.flag("json"),
+            game_build: parsed
+                .raw("game-build")
+                .unwrap_or(DEFAULT_GAME_BUILD)
+                .to_owned(),
             vampire: parsed.flag("vampire"),
             firmament: parsed.flag("firmament"),
             rhythm: parsed.flag("rhythm"),
@@ -2295,6 +2335,7 @@ fn report_command(values: &Values, out_flag: Option<&str>) -> Result<String, Cli
         ("potencyPct", Num(values.num("potency", 0.0))),
         ("pierce", Num(values.num("pierce", 0.0))),
         ("weapon", scenario.get("weapon").clone()),
+        ("gameBuild", scenario.get("gameBuild").clone()),
     ]);
     let html = report::build_report(&ch, &opts, &book);
     // `path.resolve(values.out)`: the JS default name, with no per-command rename (unlike probe/graph).
@@ -3091,6 +3132,7 @@ fn theory_command(values: &Values) -> Result<String, CliError> {
             values.target.clone()
         },
         rri: values.rri,
+        game_build: values.game_build.clone(),
     };
     let rendered = theory::render(&input, &scenario, &book).map_err(usage)?;
     // `src/cli.js:1817-1819`: the hypothetical damage line's warning, on stderr before the card.
@@ -4203,6 +4245,9 @@ fn scenario_of(ch: &Value, values: &Values, traits: &[String], target: &Value) -
     obj([
         ("target", target.clone()),
         ("core", Str(values.core.to_lowercase())),
+        // The shipped build a card is priced under (`src/cli.js:541-546`, CHANGELOG-MECHANICS.md GEAR-14631 /
+        // BRAND-14631). `14512` is the vendored cut and the default; `14631` opts into the drift finding.
+        ("gameBuild", Str(values.game_build.clone())),
         ("rri", Bool(values.rri)),
         (
             "traits",
@@ -4321,14 +4366,21 @@ fn table(rows: &[Vec<String>], headers: &[&str], aligns: &[bool]) -> String {
     let mut widths: Vec<usize> = headers.iter().map(|h| utf16_len(h)).collect();
     for row in rows {
         for (i, c) in row.iter().enumerate() {
-            widths[i] = widths[i].max(utf16_len(c));
+            if let Some(w) = widths.get_mut(i) {
+                *w = (*w).max(utf16_len(c));
+            }
         }
     }
     let line = |cells: &[String]| {
+        // The JS `widths[i]` is undefined past the last header, and `padEnd(undefined)` is a no-op: the cell is
+        // joined unpadded, never an index panic (`src/cli.js:396-400`).
         let joined: Vec<String> = cells
             .iter()
             .enumerate()
-            .map(|(i, c)| pad(c, widths[i], aligns.get(i).copied().unwrap_or(false)))
+            .map(|(i, c)| match widths.get(i) {
+                Some(w) => pad(c, *w, aligns.get(i).copied().unwrap_or(false)),
+                None => c.clone(),
+            })
             .collect();
         joined.join("  ").trim_end().to_owned()
     };
@@ -4871,73 +4923,87 @@ fn print_build(
             v.to_js_string()
         )
     };
+    // The JS spreads the `14631`-only add row after `mastery / gear` (`src/cli.js:791`), and its cells never exceed
+    // the two headers, so this builder carries one row per term.
+    let mut terms: Vec<Vec<String>> = vec![
+        vec![
+            "weapon roll".to_owned(),
+            format!(
+                "{}-{}",
+                roll.at(0).to_js_string(),
+                roll.at(1).to_js_string()
+            ),
+        ],
+        vec![
+            "material".to_owned(),
+            format!(
+                "{} ({})",
+                signed(p.get("matMod")),
+                if w.truthy() {
+                    w.get("materialName").to_js_string()
+                } else {
+                    "-".to_owned()
+                }
+            ),
+        ],
+        vec![
+            "strength".to_owned(),
+            format!(
+                "{}{}",
+                signed(p.get("strMod")),
+                if p.get("twoHanded").truthy() {
+                    " (two-handed x2)"
+                } else {
+                    ""
+                }
+            ),
+        ],
+        vec!["proficiency".to_owned(), signed(p.get("prof"))],
+        vec!["race".to_owned(), signed(p.get("racial"))],
+        vec![
+            "mastery / gear".to_owned(),
+            format!("{}%", fmt(p.get("mastery"))),
+        ],
+    ];
+    if p.get("gearAdd").truthy() {
+        // The JS row has a third cell though the table has two headers: `widths[2]` is undefined and `padEnd`
+        // leaves it unpadded (`src/cli.js:396-400`), which [`table`] reproduces.
+        terms.push(vec![
+            "gear add (flat)".to_owned(),
+            fmt(p.get("gearAdd").get("mean")),
+            format!(
+                "integer uniform {}..{} on the roll, enumerated per blow; the mean is the reported figure (0.1.14631 only)",
+                p.get("gearAdd").get("lo").to_js_string(),
+                p.get("gearAdd").get("hi").to_js_string()
+            ),
+        ]);
+    }
+    terms.extend([
+        vec!["martial".to_owned(), format!("{}%", fmt(p.get("martial")))],
+        vec!["slayer".to_owned(), format!("{}%", fmt(p.get("slayer")))],
+        vec![
+            "hit terms".to_owned(),
+            format!(
+                "base {}, armor {}, other {}",
+                hit.get("terms").get("base").to_js_string(),
+                hit.get("terms").get("armour").to_js_string(),
+                hit.get("terms").get("other").to_js_string()
+            ),
+        ],
+        vec![
+            "speed".to_owned(),
+            format!(
+                "tick {}s, heft {}, handling {}, pace {}%",
+                fmt2(cadence.get("tick")),
+                fmt2(cadence.get("heft")),
+                fmt2(cadence.get("handling")),
+                fmt(cadence.get("pace"))
+            ),
+        ],
+    ]);
     out.push_str(&format!(
         "{}\n",
-        table(
-            &[
-                vec![
-                    "weapon roll".to_owned(),
-                    format!(
-                        "{}-{}",
-                        roll.at(0).to_js_string(),
-                        roll.at(1).to_js_string()
-                    ),
-                ],
-                vec![
-                    "material".to_owned(),
-                    format!(
-                        "{} ({})",
-                        signed(p.get("matMod")),
-                        if w.truthy() {
-                            w.get("materialName").to_js_string()
-                        } else {
-                            "-".to_owned()
-                        }
-                    ),
-                ],
-                vec![
-                    "strength".to_owned(),
-                    format!(
-                        "{}{}",
-                        signed(p.get("strMod")),
-                        if p.get("twoHanded").truthy() {
-                            " (two-handed x2)"
-                        } else {
-                            ""
-                        }
-                    ),
-                ],
-                vec!["proficiency".to_owned(), signed(p.get("prof"))],
-                vec!["race".to_owned(), signed(p.get("racial"))],
-                vec![
-                    "mastery / gear".to_owned(),
-                    format!("{}%", fmt(p.get("mastery"))),
-                ],
-                vec!["martial".to_owned(), format!("{}%", fmt(p.get("martial")))],
-                vec!["slayer".to_owned(), format!("{}%", fmt(p.get("slayer")))],
-                vec![
-                    "hit terms".to_owned(),
-                    format!(
-                        "base {}, armor {}, other {}",
-                        hit.get("terms").get("base").to_js_string(),
-                        hit.get("terms").get("armour").to_js_string(),
-                        hit.get("terms").get("other").to_js_string()
-                    ),
-                ],
-                vec![
-                    "speed".to_owned(),
-                    format!(
-                        "tick {}s, heft {}, handling {}, pace {}%",
-                        fmt2(cadence.get("tick")),
-                        fmt2(cadence.get("heft")),
-                        fmt2(cadence.get("handling")),
-                        fmt(cadence.get("pace"))
-                    ),
-                ],
-            ],
-            &["Term", "Value"],
-            &[false, false],
-        )
+        table(&terms, &["Term", "Value"], &[false, false])
     ));
 
     let marginal_ch = match values.weapon {
