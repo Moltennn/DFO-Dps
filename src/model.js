@@ -55,7 +55,60 @@ const trunc = Math.trunc;
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 const floor = Math.floor;
 const fround = Math.fround;
-const mean = (a) => a.reduce((s, x) => s + x, 0) / a.length;
+const mean = (a) => {
+  let sum = 0;
+  for (let i = 0; i < a.length; i++) sum += a[i];
+  return sum / a.length;
+};
+/** The lists `damageModel` laid out, each with the (values, index) form it was laid out from. */
+const LAID_OUT = new WeakMap();
+/** A roll list as shared values and each blow's slot among them: `damageModel`'s own form, else found here. */
+function distinct(rolls) {
+  const known = LAID_OUT.get(rolls);
+  if (known) return known;
+  const slots = new Map();
+  const values = [];
+  const index = rolls.map((d) => {
+    let k = slots.get(d);
+    if (k === undefined) {
+      k = values.push(d) - 1;
+      slots.set(d, k);
+    }
+    return k;
+  });
+  return { values, index };
+}
+/** A column laid out per blow, remembering that form for `distinct`. */
+function layOut(values, index) {
+  const list = index.map((k) => values[k]);
+  LAID_OUT.set(list, { values, index });
+  return list;
+}
+/** `rolls.map(f)` for a pure `f`, run once per distinct value. */
+function perValue(rolls, f) {
+  const { values, index } = distinct(rolls);
+  return layOut(values.map((d) => f(d)), index);
+}
+/** A card's rolls with their `distinct` form and range. Nothing here is mutated afterwards. */
+const enumerated = (rolls) => ({ rolls, ...distinct(rolls), min: Math.min(...rolls), max: Math.max(...rolls) });
+// The same for every swing direction and pricing pass, so the last few are kept (bounded: cleared when full).
+const WEAPON_ROLLS = new Map();
+/** Every (add, roll) pair of a weapon, adds outer: its damage modifier folds over the gear-added roll, then the bonus
+ *  damage is added. Without the 14631 gear the one add is 0. */
+function weaponRolls(w, gear) {
+  const key = `${w.min}|${w.max}|${w.damagePct}|${w.bonusDamage}|${gear?.lo}|${gear?.hi}`;
+  let found = WEAPON_ROLLS.get(key);
+  if (!found) {
+    const rollOf = (r, add) => (w.damagePct ? trunc((r + add) * (1 + w.damagePct / 100)) : r + add) + w.bonusDamage;
+    const adds = gear ? Array.from({ length: gear.hi - gear.lo + 1 }, (_, i) => gear.lo + i) : [0];
+    const rolls = [];
+    for (const a of adds) for (let r = w.min; r <= w.max; r++) rolls.push(rollOf(r, a));
+    found = enumerated(rolls);
+    if (WEAPON_ROLLS.size >= 64) WEAPON_ROLLS.clear();
+    WEAPON_ROLLS.set(key, found);
+  }
+  return found;
+}
 const num = (v, d = 0) => (Number.isFinite(v) ? v : d);
 
 /** The shipped builds a card can be priced under. '14631' is the live game (a drift finding vs the vendored cut);
@@ -98,7 +151,26 @@ export const SWING_DIRECTIONS = Object.freeze(CLICK_ATTACK_DIRECTIONS.map((d) =>
 function mixCards(cards) {
   if (cards.length === 1) return cards[0];
   const n = cards.length;
-  const avgArr = (key) => (cards[0][key] ? cards[0][key].map((_, i) => cards.reduce((s, c) => s + c[key][i], 0) / n) : undefined);
+  // Plain loops: 14631's lists are ~1.6k long.
+  const avgArr = (key) => {
+    if (!cards[0][key]) return undefined;
+    const lists = cards.map((c) => c[key]);
+    // Cards laid out from one shared index average once per shared row.
+    const forms = lists.map((list) => LAID_OUT.get(list));
+    const index = forms[0]?.index;
+    if (index && forms.every((f) => f?.index === index)) {
+      return layOut(forms[0].values.map((_, row) => {
+        let sum = 0;
+        for (let k = 0; k < n; k++) sum += forms[k].values[row];
+        return sum / n;
+      }), index);
+    }
+    return lists[0].map((_, i) => {
+      let sum = 0;
+      for (let k = 0; k < n; k++) sum += lists[k][i];
+      return sum / n;
+    });
+  };
   const parts = cards[0].parts
     ? { ...cards[0].parts, dmgMods: cards.reduce((s, c) => s + c.parts.dmgMods, 0) / n, swingDamage: cards.reduce((s, c) => s + c.parts.swingDamage, 0) / n }
     : cards[0].parts;
@@ -1024,27 +1096,25 @@ export function damageModel(ch, w, target, swingKey, core, opts = {}) {
   // The add is a uniform INTEGER, so the card enumerates every (roll, add) pair: the joint support then carries the
   // widened band, and a cap, a fight tier, a bow pull or the off hand's share reads the true distribution.
   const gear = gearBlowAdd(ch, w, target, opts);
-  const rollOf = (r, add) => (w.damagePct ? trunc((r + add) * (1 + w.damagePct / 100)) : r + add) + w.bonusDamage;
-  const adds = gear ? Array.from({ length: gear.hi - gear.lo + 1 }, (_, i) => gear.lo + i) : [0];
-  let rolls;
+  let enumeration;
   let strMod;
   let matMod = 0;
   if (!w) {
     const h2h = skill(ch, SKILLS.HandToHand, opts);
     const lo = floor(h2h / 10) + 1;
     const hi = floor(h2h / 5) + 1;
-    rolls = [];
+    const rolls = [];
     const wrapsPct = opts.wraps?.damagePct ?? 0;
     for (let r = lo; r <= hi; r++) rolls.push(wrapsPct ? trunc(r * (1 + wrapsPct / 100)) : r);
+    enumeration = enumerated(rolls);
     strMod = core === 'overhaul' ? pcaaoDamageModifier(str) : classicStrength(str, opts);
   } else {
-    rolls = [];
-    for (const a of adds) for (let r = w.min; r <= w.max; r++) rolls.push(rollOf(r, a));
+    enumeration = weaponRolls(w, gear);
     matMod = WEAPON_MATERIAL_MODIFIER[w.material] ?? 0;
     strMod = core === 'overhaul' ? pcaaoDamageModifier(str) * (w.twoHanded ? 2 : 1) : classicStrength(str, opts);
   }
-  const bases = [];
-  const one = (roll) => {
+  const bonuses = core === 'overhaul' ? enemyTypeBonusValues(ch, target) : [0];
+  const one = (roll, bases) => {
     // pcaao.js:555-590: silver/skeletal act on the weapon roll plus the swing/proficiency/racial
     // modifiers, BEFORE Strength and the material modifier. The enemy-type bonus (:511-522) is a
     // flat integer added after Strength/material and the floor, and BEFORE the blow modifiers.
@@ -1054,7 +1124,6 @@ export function damageModel(ch, w, target, swingKey, core, opts = {}) {
     // The stock WEAPON arm clamps below 1; the stock FIST arm does not (a STR-0 punch can be
     // negative on the card). The overhaul clamps both at the same point.
     if (base < 1 && (core === 'overhaul' || !!w)) base = 0;
-    const bonuses = core === 'overhaul' ? enemyTypeBonusValues(ch, target) : [0];
     return bonuses.map((bonus) => {
       let d = base >= 1 ? base + bonus : base;
       // The value BEFORE the percentage channels: the carried fight stream re-resolves them with the live remainder.
@@ -1068,14 +1137,25 @@ export function damageModel(ch, w, target, swingKey, core, opts = {}) {
     core, critMult: crit.damageMult, matReq, conditionMult, hasWeapon: !!w, carried: opts.carried === true,
   };
   const finish = (d, critical) => finishBlow(d, finishParams, critical);
-  const values = [];
-  for (const r of rolls) for (const d of one(r)) values.push(d);
-  const plain = values.map((d) => finish(d, false));
-  const crits = values.map((d) => finish(d, true));
+  // Every stage here is pure in the roll, so it runs once per distinct roll and is laid out per blow - except under a
+  // live carry, whose remainder moves from blow to blow. (A -0 roll cannot differ from 0: `+ dmgMods + ...` follows.)
+  const stateful = !!opts.carryState && opts.carried !== true;
+  const { rolls } = enumeration;
+  const shared = stateful ? { values: rolls, index: rolls.map((_, i) => i) } : enumeration;
+  const bases = [];
+  const unique = []; // `bonuses.length` rows a shared roll
+  for (const roll of shared.values) for (const d of one(roll, bases)) unique.push(d);
+  // each blow's row, in the enumerated order
+  const n = bonuses.length;
+  const layout = n === 1 ? shared.index : shared.index.flatMap((k) => bonuses.map((_, j) => k * n + j));
+  const expand = (column) => layOut(column, layout);
+  const values = expand(unique);
+  const plain = expand(unique.map((d) => finish(d, false)));
+  const crits = expand(unique.map((d) => finish(d, true)));
   // pcaao.js:471-479, 1724/1768: a landed blow rolls once for the ×3 and the triple is taken
   // BEFORE the critical multiplier, the material requirement and the condition band.
-  const backstabPlain = values.map((d) => finish(d * 3, false));
-  const backstabCrits = values.map((d) => finish(d * 3, true));
+  const backstabPlain = expand(unique.map((d) => finish(d * 3, false)));
+  const backstabCrits = expand(unique.map((d) => finish(d * 3, true)));
   return {
     min: Math.min(...plain), max: Math.max(...plain), avg: mean(plain),
     critMin: Math.min(...crits), critMax: Math.max(...crits), critAvg: mean(crits),
@@ -1086,10 +1166,10 @@ export function damageModel(ch, w, target, swingKey, core, opts = {}) {
     preFinishRolls: values,
     // The blow before the percentage channels, when the carried stream asked for it (carryBases): the fight loop's
     // tier keys an atom on this and re-resolves the channels with the live remainder.
-    ...(opts.carryBases === true ? { blowBaseRolls: bases } : {}),
+    ...(opts.carryBases === true ? { blowBaseRolls: expand(bases) } : {}),
     backstabPlainRolls: backstabPlain, backstabCritRolls: backstabCrits,
     parts: {
-      roll: [Math.min(...rolls), Math.max(...rolls)],
+      roll: [enumeration.min, enumeration.max],
       matMod, strMod, prof: prof.damage, racial: race.damage, twoHanded: !!w?.twoHanded,
       dmgMods, swingDamage: swing.damage,
       enemyType: core === 'overhaul'
@@ -1379,14 +1459,13 @@ function analyzeCard(ch, {
   const shaft = bowOf(w, opts);
   const hits = swingKeys.map((key) => hitModel(ch, w, tgt, key, core, simOpts));
   const dmgs = swingKeys.map((key) => damageModel(ch, w, tgt, key, core, simOpts));
-  const dmgMix = mixCards(dmgs);
   const cardOf = (dmg) => {
     // The off hand's share is applied after the target's intrinsic defenses in the hit path; keep the
     // returned `damage` card in the hand's post-share terms for display/API compatibility.
     const cardDmg = opts.offHand
       ? (() => {
-          const plain = dmg.plainRolls.map((d) => offHandDamage(d));
-          const crits = dmg.critRolls.map((d) => offHandDamage(d));
+          const plain = perValue(dmg.plainRolls, (d) => offHandDamage(d));
+          const crits = perValue(dmg.critRolls, (d) => offHandDamage(d));
           return {
             ...dmg,
             min: Math.min(...plain), max: Math.max(...plain), avg: mean(plain),
@@ -1399,8 +1478,8 @@ function analyzeCard(ch, {
     // path applies the pull after the defence.
     return shaft
       ? (() => {
-          const plain = cardDmg.plainRolls.map((d) => bowBlow(d, shaft));
-          const crits = cardDmg.critRolls.map((d) => bowBlow(d, shaft));
+          const plain = perValue(cardDmg.plainRolls, (d) => bowBlow(d, shaft));
+          const crits = perValue(cardDmg.critRolls, (d) => bowBlow(d, shaft));
           return {
             ...cardDmg,
             min: Math.min(...plain), max: Math.max(...plain), avg: mean(plain),
@@ -1473,6 +1552,17 @@ function analyzeCard(ch, {
   const landed = (o) => o.v + (o.x ?? 0);
   const claimed = (o) => capped(o.v) + (o.x ?? 0);
   const computeBranch = (h, plainRolls, critRolls) => {
+    // 14631 lists ~1.6k blows sharing ~100 card values: one outcome list and one figure per distinct value. The mean
+    // is still the in-order float sum over every blow; min and max depend only on the set of values.
+    const plainSet = distinct(plainRolls);
+    const critSet = distinct(critRolls);
+    const meanAcross = (per, index) => {
+      let sum = 0;
+      for (let i = 0; i < index.length; i++) sum += per[index[i]];
+      return sum / index.length;
+    };
+    const lowAcross = (per) => Math.min(...per);
+    const highAcross = (per) => Math.max(...per);
     if (geared) {
       // Per part, every card roll resolves into the whole-number outcomes the game can produce
       // (the shield's block or its miss), each already through the off hand's share and the boss
@@ -1485,15 +1575,15 @@ function analyzeCard(ch, {
         parts.push({
           part,
           weight,
-          plain: plainRolls.map((d) => resolveBlow(d, part, ctx)),
-          crit: critRolls.map((d) => resolveBlow(d, part, ctx)),
+          plain: plainSet.values.map((d) => resolveBlow(d, part, ctx)),
+          crit: critSet.values.map((d) => resolveBlow(d, part, ctx)),
         });
       }
       // `fn` reduces one roll's outcome list to a number; `across` combines the rolls.
       const meanOf = (outs, f) => outs.reduce((sum, o) => sum + o.p * f(o), 0);
       const agg = (across, one) => parts.reduce(
-        (sum, p) => sum + p.weight * ((1 - h.crit.chance) * h.byPart.plain[p.part] * across(p.plain.map((o) => one(o)))
-          + h.crit.chance * h.byPart.crit[p.part] * across(p.crit.map((o) => one(o)))),
+        (sum, p) => sum + p.weight * ((1 - h.crit.chance) * h.byPart.plain[p.part] * across(p.plain.map((o) => one(o)), plainSet.index)
+          + h.crit.chance * h.byPart.crit[p.part] * across(p.crit.map((o) => one(o)), critSet.index)),
         0,
       );
       // A swing that missed returns 0 - or Potent Vs' five (afterShare) - so with that enchantment a miss is an
@@ -1506,9 +1596,9 @@ function analyzeCard(ch, {
       const sumOver = (outs, f) => outs.reduce((x, o) => x + o.p * f(o), 0);
       const lowOver = (outs, f) => Math.min(...outs.map((o) => f(o)));
       const highOver = (outs, f) => Math.max(...outs.map((o) => f(o)));
-      const expect = (f) => agg(mean, (outs) => meanOf(outs, f)) + missOf(f, sumOver);
-      const lowest = (f) => agg((a) => Math.min(...a), (outs) => Math.min(...outs.map((o) => f(o)))) + missOf(f, lowOver);
-      const highest = (f) => agg((a) => Math.max(...a), (outs) => Math.max(...outs.map((o) => f(o)))) + missOf(f, highOver);
+      const expect = (f) => agg(meanAcross, (outs) => meanOf(outs, f)) + missOf(f, sumOver);
+      const lowest = (f) => agg(lowAcross, (outs) => Math.min(...outs.map((o) => f(o)))) + missOf(f, lowOver);
+      const highest = (f) => agg(highAcross, (outs) => Math.max(...outs.map((o) => f(o)))) + missOf(f, highOver);
       return {
         perSwing: expect(landed),
         perSwingMin: lowest(landed),
@@ -1520,10 +1610,10 @@ function analyzeCard(ch, {
     }
     // A bare target (no worn piece): one defended number per roll, then the same host steps as outcomes.
     const ctx = { weapon: w, offHand: !!opts.offHand, traits: traitList, strikeKind, bow, potentVs: strikes, echoes, relay: !!tgt.relayBody, warded: tgt.warded === true };
-    const each = (rolls) => rolls.map((d) => afterShare(hand(defended(d)), 1, ctx));
-    const plain = each(plainRolls);
-    const crits = each(critRolls);
-    const over = (rows, f, across) => across(rows.map((outs) => f(outs)));
+    const each = (set) => ({ index: set.index, rows: set.values.map((d) => afterShare(hand(defended(d)), 1, ctx)) });
+    const plain = each(plainSet);
+    const crits = each(critSet);
+    const over = ({ rows, index }, f, across) => across(rows.map((outs) => f(outs)), index);
     const e = (g) => (outs) => outs.reduce((sum, o) => sum + o.p * g(o), 0);
     const lo = (g) => (outs) => Math.min(...outs.map((o) => g(o)));
     const hi = (g) => (outs) => Math.max(...outs.map((o) => g(o)));
@@ -1533,12 +1623,12 @@ function analyzeCard(ch, {
     const miss = (fOne) => (missOuts ? missP * fOne(missOuts) : 0);
     const mix = (fOne, across) => (1 - h.crit.chance) * h.hitPlain * over(plain, fOne, across) + h.crit.chance * h.hitCrit * over(crits, fOne, across) + miss(fOne);
     return {
-      perSwing: mix(e(landed), mean),
-      perSwingMin: mix(lo(landed), (a) => Math.min(...a)),
-      perSwingMax: mix(hi(landed), (a) => Math.max(...a)),
-      cappedPerSwing: mix(e(claimed), mean),
-      cappedPerSwingMin: mix(lo(claimed), (a) => Math.min(...a)),
-      cappedPerSwingMax: mix(hi(claimed), (a) => Math.max(...a)),
+      perSwing: mix(e(landed), meanAcross),
+      perSwingMin: mix(lo(landed), lowAcross),
+      perSwingMax: mix(hi(landed), highAcross),
+      cappedPerSwing: mix(e(claimed), meanAcross),
+      cappedPerSwingMin: mix(lo(claimed), lowAcross),
+      cappedPerSwingMax: mix(hi(claimed), highAcross),
     };
   };
   // Three outcomes: an ordinary swing (the foe not back-facing), and a back-facing swing that is
@@ -1656,10 +1746,11 @@ function analyzeCard(ch, {
       uptime: backUptime,
       expectedMult: 1 + 2 * backUptime * backProb,
       watchful,
-      min: struck(bowBlow(defended(Math.min(...dmgMix.backstabPlainRolls)), bow)),
-      max: struck(bowBlow(defended(Math.max(...dmgMix.backstabPlainRolls)), bow)),
-      critMin: struck(bowBlow(defended(Math.min(...dmgMix.backstabCritRolls)), bow)),
-      critMax: struck(bowBlow(defended(Math.max(...dmgMix.backstabCritRolls)), bow)),
+      // `cardOf` leaves the backstab lists alone, so the displayed mix carries the cards' own.
+      min: struck(bowBlow(defended(Math.min(...displayDmg.backstabPlainRolls)), bow)),
+      max: struck(bowBlow(defended(Math.max(...displayDmg.backstabPlainRolls)), bow)),
+      critMin: struck(bowBlow(defended(Math.min(...displayDmg.backstabCritRolls)), bow)),
+      critMax: struck(bowBlow(defended(Math.max(...displayDmg.backstabCritRolls)), bow)),
     },
     traits: traitList, healthShare: simOpts.healthShare,
     notes: {

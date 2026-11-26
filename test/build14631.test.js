@@ -23,7 +23,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 import {
-  analyze, bossTarget, gearBlowAdd, lootPowerTerms, masteryPct, referenceFoe, weaponOf,
+  analyze, bossTarget, createCarryState, damageModel, gearBlowAdd, lootPowerTerms, masteryPct, referenceFoe, weaponBlow,
+  weaponOf,
 } from '../src/model.js';
 import { blowFightTier, tierMeans } from '../src/blowOutcomes.js';
 import { GEAR_MASTERY_POINTS, gearMasteryPoints, theoryCharacter, theoryCaps } from '../src/theory.js';
@@ -170,6 +171,35 @@ test('14631 gear: a hit cap inside the spread clips per blow, identical on the c
   // The cut enumerates too, and its spread sits under the cap, so nothing clips there.
   const cut = analyze(PLAIN(700), { ...args, gameBuild: '14512' });
   assert.equal(cut.cappedPerSwing, cut.perSwing);
+});
+
+test('14631 gear: sharing the work of equal roll values changes no blow', () => {
+  // Local invariant (no oracle): damageModel runs the per-blow stages once per distinct roll value and lays them out
+  // per blow. A one-roll weapon has no two equal (roll + add) sums, so nothing is shared there: the full card must be
+  // those cards laid out add by add.
+  const ch = PLAIN(700);
+  const opts = { gameBuild: '14631', carryBases: true, firmamentDamagePct: 7 }; // a percentage channel, for the carry
+  const w = { ...ROLL_100(), min: 10, max: 18, damagePct: 10 };
+  const model = (weapon, extra = {}) => damageModel(ch, weapon, STRUCK(), 'StrikeLeft', 'overhaul', { ...opts, ...extra });
+  const full = model(w);
+  const singles = Array.from({ length: 9 }, (_, i) => model({ ...w, min: 10 + i, max: 10 + i }));
+  const LISTS = ['plainRolls', 'critRolls', 'preFinishRolls', 'blowBaseRolls', 'backstabPlainRolls', 'backstabCritRolls'];
+  for (const key of LISTS) {
+    const want = Array.from({ length: 71 }, (_, add) => singles.map((s) => s[key][add])).flat();
+    assert.deepEqual(full[key], want, key);
+  }
+  assert.ok(new Set(full.preFinishRolls).size < full.preFinishRolls.length / 4, 'values are shared');
+  for (const [key, min, max, avg] of [['plainRolls', 'min', 'max', 'avg'], ['critRolls', 'critMin', 'critMax', 'critAvg']]) {
+    assert.equal(full[avg], full[key].reduce((a, b) => a + b, 0) / full[key].length, avg);
+    assert.equal(full[min], Math.min(...full[key]), min);
+    assert.equal(full[max], Math.max(...full[key]), max);
+  }
+  // A live carry remainder moves between equal blows, so nothing may be shared there: every blow in turn.
+  const live = model(w, { carryState: createCarryState() });
+  const carryState = createCarryState();
+  const want = live.blowBaseRolls.map((d) => weaponBlow(ch, w, d, STRUCK(), { ...opts, carryState }));
+  assert.deepEqual(live.preFinishRolls, want);
+  assert.notDeepEqual(want, full.preFinishRolls, 'the carry is live');
 });
 
 test('14631 gear: the fight tier\'s support IS the add\'s support (700 gear)', () => {

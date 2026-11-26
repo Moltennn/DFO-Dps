@@ -6,8 +6,9 @@
 //! every case here also states that the cut's behaviour is untouched when the option is absent.
 
 use dfo_core::model_blow::{
-    damage_model, gear_blow_add, loot_power_terms, mastery_pct, JsRangeError, DEFAULT_GAME_BUILD,
-    GAME_BUILDS, MAX_ADD_ARRAY_LENGTH, MAX_ENUMERATED_BLOWS,
+    create_carry_state, damage_model, gear_blow_add, loot_power_terms, mastery_pct, weapon_blow,
+    Carry, JsRangeError, DEFAULT_GAME_BUILD, GAME_BUILDS, MAX_ADD_ARRAY_LENGTH,
+    MAX_ENUMERATED_BLOWS,
 };
 use dfo_core::target::Target;
 use dfo_core::value::Value;
@@ -366,6 +367,84 @@ fn the_card_enumerates_the_add_and_reports_its_range() {
     // more (the mastery percent scales it), never less.
     assert!(card.get("min").to_number() - none.get("min").to_number() >= 70.0);
     assert!(card.get("max").to_number() - none.get("max").to_number() >= 140.0);
+}
+
+// `damage_model` runs the per-blow stages once per distinct roll value and expands them. A one-roll weapon has no two
+// equal (roll + add) sums, so nothing is shared there: the full card must be those cards laid out add by add.
+#[test]
+fn shared_roll_values_expand_in_the_enumerated_order() {
+    const LISTS: [&str; 6] = [
+        "plainRolls",
+        "critRolls",
+        "preFinishRolls",
+        "blowBaseRolls",
+        "backstabPlainRolls",
+        "backstabCritRolls",
+    ];
+    let ch = attacker(29.0, 700.0);
+    let options = obj([("core", Str("overhaul".into())), ("carryBases", Bool(true))]);
+    let card = |min: f64, max: f64, carry: &mut Carry<'_>| {
+        let mut w = weapon(29.0, min, max);
+        w.set("damagePct", Num(10.0));
+        damage_model(
+            &ch,
+            &w,
+            Some(&foe()),
+            "StrikeLeft",
+            "overhaul",
+            &options,
+            carry,
+        )
+    };
+    let list = |card: &Value, key: &str| -> Vec<f64> {
+        card.get(key).items().iter().map(Value::to_number).collect()
+    };
+    let full = card(10.0, 18.0, &mut Carry::default());
+    let singles: Vec<_> = (10..=18)
+        .map(|r| card(f64::from(r), f64::from(r), &mut Carry::default()))
+        .collect();
+    for key in LISTS {
+        let columns: Vec<_> = singles.iter().map(|c| list(c, key)).collect();
+        let want: Vec<f64> = (0..71)
+            .flat_map(|add| columns.iter().map(move |c| c[add]))
+            .collect();
+        assert_eq!(list(&full, key), want, "{key}");
+    }
+    for (key, min, max, avg) in [
+        ("plainRolls", "min", "max", "avg"),
+        ("critRolls", "critMin", "critMax", "critAvg"),
+    ] {
+        let blows = list(&full, key);
+        let mean = blows.iter().fold(0.0, |a, b| a + b) / blows.len() as f64;
+        assert_eq!(full.get(avg).to_number().to_bits(), mean.to_bits());
+        let low = blows.iter().copied().fold(f64::INFINITY, f64::min);
+        let high = blows.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        assert_eq!(full.get(min).to_number(), low);
+        assert_eq!(full.get(max).to_number(), high);
+    }
+    // A live carry remainder moves between equal blows, so nothing may be shared: every blow in turn.
+    let mut state = create_carry_state();
+    let live = card(
+        10.0,
+        18.0,
+        &mut Carry {
+            state: Some(&mut state),
+            ..Default::default()
+        },
+    );
+    let mut w = weapon(29.0, 10.0, 18.0);
+    w.set("damagePct", Num(10.0));
+    let mut state = create_carry_state();
+    let mut carry = Carry {
+        state: Some(&mut state),
+        ..Default::default()
+    };
+    let want: Vec<f64> = list(&live, "blowBaseRolls")
+        .into_iter()
+        .map(|d| weapon_blow(&ch, &w, d, Some(&foe()), &options, &mut carry))
+        .collect();
+    assert_eq!(list(&live, "preFinishRolls"), want);
+    assert_ne!(want, list(&full, "preFinishRolls"), "the carry is live");
 }
 
 #[test]

@@ -286,8 +286,23 @@ fn mix_cards(cards: &[Value]) -> Value {
     if let [only] = cards {
         return only.clone();
     }
+    const ROLLS: [&str; 5] = [
+        "plainRolls",
+        "critRolls",
+        "preFinishRolls",
+        "backstabPlainRolls",
+        "backstabCritRolls",
+    ];
     let first = cards.first().expect("nonempty swing draw");
-    let mut out = first.clone();
+    // The roll lists are rebuilt below, so they are not copied first.
+    let mut out = Obj(first
+        .entries()
+        .iter()
+        .map(|(k, v)| {
+            let rebuilt = ROLLS.contains(&k.as_str());
+            (k.clone(), if rebuilt { Undefined } else { v.clone() })
+        })
+        .collect());
     for (key, reduce) in [
         ("min", low as fn(&[f64]) -> f64),
         ("max", high),
@@ -299,21 +314,18 @@ fn mix_cards(cards: &[Value]) -> Value {
         let values: Vec<_> = cards.iter().map(|c| number(c, key)).collect();
         out.set(key, Num(reduce(&values)));
     }
-    for key in [
-        "plainRolls",
-        "critRolls",
-        "preFinishRolls",
-        "backstabPlainRolls",
-        "backstabCritRolls",
-    ] {
+    for key in ROLLS {
         let field = first.get(key);
         let values = if field.truthy() {
-            numbers((0..field.items().len()).map(|i| {
-                cards
-                    .iter()
-                    .fold(0.0, |sum, c| sum + c.get(key).at(i).to_number())
-                    / cards.len() as f64
-            }))
+            // Card by card across all positions: each position still adds the cards in order.
+            let mut sums = vec![0.0; field.items().len()];
+            for card in cards {
+                let list = card.get(key);
+                for (i, sum) in sums.iter_mut().enumerate() {
+                    *sum += list.at(i).to_number();
+                }
+            }
+            numbers(sums.into_iter().map(|sum| sum / cards.len() as f64))
         } else {
             Undefined
         };
@@ -483,12 +495,11 @@ impl Defence<'_> {
                 _ => out.iter().map(damage).fold(f64::NEG_INFINITY, js_max),
             }
         };
-        let per_roll = |rolls: &Value, part| {
-            rolls
-                .items()
+        // One outcome list per distinct card roll, and each blow's slot in it.
+        let per_roll = |(unique, index): &(Vec<f64>, Vec<u32>), part| {
+            let rows: Vec<_> = unique
                 .iter()
-                .map(|v| {
-                    let d = v.to_number();
+                .map(|&d| {
                     if self.geared {
                         model::resolve_blow(d, part, Some(self.t), self.weapon, &self.ctx)
                     } else {
@@ -496,16 +507,26 @@ impl Defence<'_> {
                         after(if self.off { off_hand_damage(d) } else { d })
                     }
                 })
-                .collect::<Vec<_>>()
+                .collect();
+            let per: [Vec<f64>; 6] =
+                std::array::from_fn(|i| rows.iter().map(|row| reduce_out(row, i)).collect());
+            // The means (0 uncapped, 3 capped) are left-to-right float sums: every blow, in the enumerated order,
+            // both in one pass.
+            let (landed, claimed) = index.iter().fold((0.0, 0.0), |(a, b), &k| {
+                (a + per[0][k as usize], b + per[3][k as usize])
+            });
+            let n = index.len() as f64;
+            let reduced: [f64; 6] = std::array::from_fn(|i| match i {
+                0 => landed / n,
+                3 => claimed / n,
+                // Min and max depend only on the set of values.
+                _ => REDUCE[i % 3](&per[i]),
+            });
+            reduced
         };
-        let over = |rolls: &[Vec<BlowOutcome>], i: usize| {
-            REDUCE[i % 3](
-                &rolls
-                    .iter()
-                    .map(|row| reduce_out(row, i))
-                    .collect::<Vec<_>>(),
-            )
-        };
+        let rolls = |v: &Value| model::distinct(v.items().iter().map(Value::to_number));
+        let plain = rolls(plain);
+        let crit = rolls(crit);
         if self.geared {
             let by = hit.get("byPart");
             let parts: Vec<_> = self
@@ -519,14 +540,14 @@ impl Defence<'_> {
                         w,
                         (1.0 - chance) * by.get("plain").at(p).to_number(),
                         chance * by.get("crit").at(p).to_number(),
-                        per_roll(plain, p as f64),
-                        per_roll(crit, p as f64),
+                        per_roll(&plain, p as f64),
+                        per_roll(&crit, p as f64),
                     )
                 })
                 .collect();
             std::array::from_fn(|i| {
                 let landed = parts.iter().fold(0.0, |sum, (w, hp, hc, plain, crit)| {
-                    sum + w * (hp * over(plain, i) + hc * over(crit, i))
+                    sum + w * (hp * plain[i] + hc * crit[i])
                 });
                 let missed = miss.as_ref().map_or(0.0, |row| {
                     parts.iter().fold(0.0, |sum, (w, hp, hc, _, _)| {
@@ -537,16 +558,16 @@ impl Defence<'_> {
             })
         } else {
             // mutation: equivalent - per_roll reads its part only in the geared branch; it is unused for either bare roll list.
-            let plain = per_roll(plain, 0.0);
+            let plain = per_roll(&plain, 0.0);
             // mutation: equivalent - per_roll reads its part only in the geared branch; it is unused for either bare roll list.
-            let crit = per_roll(crit, 0.0);
+            let crit = per_roll(&crit, 0.0);
             let hp = (1.0 - chance) * number(hit, "hitPlain");
             let hc = chance * number(hit, "hitCrit");
             std::array::from_fn(|i| {
                 let missed = miss
                     .as_ref()
                     .map_or(0.0, |row| (1.0 - (hp + hc)) * reduce_out(row, i));
-                hp * over(&plain, i) + hc * over(&crit, i) + missed
+                hp * plain[i] + hc * crit[i] + missed
             })
         }
     }
@@ -816,13 +837,16 @@ fn analyze_card(ch: &Value, args: &Value, book: &Spellbook) -> Card {
         .collect();
     let off = opts.get("offHand").truthy();
     let bow = model::bow_of(&w, &opts);
-    let damage = mix_cards(
-        &dmgs
-            .iter()
-            .map(|d| display_card(d, off, &bow))
-            .collect::<Vec<_>>(),
-    );
-    let dmg_mix = mix_cards(&dmgs);
+    let damage = if off || bow.truthy() {
+        mix_cards(
+            &dmgs
+                .iter()
+                .map(|d| display_card(d, off, &bow))
+                .collect::<Vec<_>>(),
+        )
+    } else {
+        mix_cards(&dmgs)
+    };
 
     let watchful = matches!(t.get("watchful"), Bool(true))
         || matches!(t.get("revenant").get("edge").get("watchful"), Bool(true));
@@ -1009,12 +1033,8 @@ fn analyze_card(ch: &Value, args: &Value, book: &Spellbook) -> Card {
     let total = capped_dps + e("dps");
     let ttk = ceiling(health, ward, shields, capped_dps);
     let back_dmg = |k, f: fn(&[f64]) -> f64| {
-        let rolls: Vec<_> = dmg_mix
-            .get(k)
-            .items()
-            .iter()
-            .map(Value::to_number)
-            .collect();
+        // `display_card` leaves the backstab lists alone, so the displayed mix carries the card's own.
+        let rolls: Vec<_> = damage.get(k).items().iter().map(Value::to_number).collect();
         let d = model::bow_blow(defence.defended(f(&rolls)), &bow);
         model::resist_blow(traits.items(), d, kind, &w, None)
     };

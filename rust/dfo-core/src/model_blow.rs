@@ -1166,6 +1166,34 @@ fn check_enumeration(adds: f64, rolls: f64) {
     }
 }
 
+/// The distinct values of `xs` by exact bits, in order of first appearance, and each element's slot in that list: a
+/// pure per-blow stage runs once per distinct value and is expanded back in the original order. 14631 enumerates every
+/// (roll, add) pair, ~1.6k blows sharing ~100 values.
+pub(crate) fn distinct(xs: impl ExactSizeIterator<Item = f64>) -> (Vec<f64>, Vec<u32>) {
+    let size = (xs.len() * 2).next_power_of_two().max(2);
+    let shift = 64 - size.trailing_zeros();
+    // Open addressing over `slot + 1`; 0 is empty and the table is at most half full.
+    let mut table = vec![0_u32; size];
+    let mut values: Vec<f64> = Vec::new();
+    let index = xs
+        .map(|x| {
+            let mut at = (x.to_bits().wrapping_mul(0x9e37_79b9_7f4a_7c15) >> shift) as usize;
+            loop {
+                match table[at] {
+                    0 => {
+                        values.push(x);
+                        table[at] = values.len() as u32;
+                        break table[at] - 1;
+                    }
+                    k if values[k as usize - 1].to_bits() == x.to_bits() => break k - 1,
+                    _ => at = (at + 1) & (size - 1),
+                }
+            }
+        })
+        .collect();
+    (values, index)
+}
+
 pub fn damage_model(
     ch: &Value,
     w: &Value,
@@ -1286,7 +1314,14 @@ pub fn damage_model(
     let mut bases = Vec::new();
     let mut values = Vec::new();
     let carry_bases = yes(opts, "carryBases");
-    for &r in &rolls {
+    // A live carry remainder moves from blow to blow, so only then is every blow resolved on its own.
+    let stateful = carry.state.is_some() && !yes(opts, "carried");
+    let (unique, index) = if stateful {
+        (rolls.clone(), (0..rolls.len() as u32).collect())
+    } else {
+        distinct(rolls.iter().copied())
+    };
+    for &r in &unique {
         let mut base = r + dmg_mods;
         if overhaul {
             base = target::skeletal_silver_damage(base, t, weapon.as_ref());
@@ -1307,6 +1342,15 @@ pub fn damage_model(
             });
         }
     }
+    // `values` and `bases` hold one row of `bonuses.len()` per distinct roll; this lays them out per blow.
+    let expand = |rows: &[f64]| {
+        let n = bonuses.len();
+        let mut out = Vec::with_capacity(index.len() * n);
+        for &k in &index {
+            out.extend(rows[k as usize * n..][..n].iter().map(|&v| Value::Num(v)));
+        }
+        Value::Arr(out)
+    };
     let params = obj([
         ("core", s(core)),
         ("critMult", crit.get("damageMult").clone()),
@@ -1327,11 +1371,23 @@ pub fn damage_model(
             .map(|d| finish_blow(d * mult, &params, critical))
             .collect::<Vec<_>>()
     };
-    let plain = finish(false, 1.0);
-    let crits = finish(true, 1.0);
-    let (min, max, avg) = extrema(&plain);
-    let (cmin, cmax, cavg) = extrema(&crits);
-    let (rmin, rmax, _) = extrema(&rolls);
+    let plain_rows = finish(false, 1.0);
+    let crit_rows = finish(true, 1.0);
+    let plain = expand(&plain_rows);
+    let crits = expand(&crit_rows);
+    // Min and max depend only on the set of values; the means are in-order sums over every blow, both in one pass.
+    let (min, max, _) = extrema(&plain_rows);
+    let (cmin, cmax, _) = extrema(&crit_rows);
+    let (total, ctotal) = plain
+        .items()
+        .iter()
+        .zip(crits.items())
+        .fold((0.0, 0.0), |(a, b), (p, c)| {
+            (a + p.to_number(), b + c.to_number())
+        });
+    let count = plain.items().len() as f64;
+    let (avg, cavg) = (total / count, ctotal / count);
+    let (rmin, rmax, _) = extrema(&unique);
     let (group, decoded, bonus, penalty, will, level) = if overhaul {
         let r = target::enemy_type_bonus_range(Some(&a), t);
         (
@@ -1359,15 +1415,15 @@ pub fn damage_model(
         ("critMin", n(cmin)),
         ("critMax", n(cmax)),
         ("critAvg", n(cavg)),
-        ("plainRolls", nums(plain)),
-        ("critRolls", nums(crits)),
+        ("plainRolls", plain),
+        ("critRolls", crits),
         ("preFinishRolls", Value::Undefined),
     ]);
-    let backstab_plain = nums(finish(false, 3.0));
-    let backstab_crit = nums(finish(true, 3.0));
-    out.set("preFinishRolls", nums(values));
+    let backstab_plain = expand(&finish(false, 3.0));
+    let backstab_crit = expand(&finish(true, 3.0));
+    out.set("preFinishRolls", expand(&values));
     if carry_bases {
-        out.set("blowBaseRolls", nums(bases));
+        out.set("blowBaseRolls", expand(&bases));
     }
     out.set("backstabPlainRolls", backstab_plain);
     out.set("backstabCritRolls", backstab_crit);
