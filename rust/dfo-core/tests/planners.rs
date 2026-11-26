@@ -128,7 +128,7 @@ fn the_imprint_and_enchant_plans_move_with_the_build() {
 }
 
 /// A LOCAL INVARIANT: the real-loadout chain takes the build through `StageOpts` (the field is additive: a
-/// `Default` caller keeps the cut), and every row of the universe moves.
+/// `Default` caller is the live build), and every row of the universe moves.
 #[test]
 fn the_real_loadout_chain_takes_the_build() {
     let book = Spellbook::default();

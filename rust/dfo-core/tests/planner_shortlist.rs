@@ -3,7 +3,7 @@
 //! JS's own 1,000-trial sampler twice over. These pin the same wiring without spawning Node.
 //!
 //! The sites:
-//!   `ShortlistOpts::from_value`'s `game_build`                         (`an_absent_or_unknown_build_is_the_cut`)
+//!   `ShortlistOpts::from_value`'s `game_build`                         (`an_absent_or_unknown_build_is_the_live_build`)
 //!   `eligible_universe_with`'s forward to the universe                (`the_shortlist_moves_with_the_shipped_build`)
 //!   the candidates' `StageOpts { game_build }`                        (same test, the proc column)
 //!   the ranking scenario's `gameBuild`                                (`the_shortlist_ranks_at_its_own_build`)
@@ -201,7 +201,7 @@ fn the_shortlist_option_defaults_are_the_js_defaults() {
 
 /// A LOCAL INVARIANT: `--shortlist <K>` refuses one past the eligible pool and accepts exactly the pool (`>` not `>=`,
 /// `loadout_shortlist.rs:201`). The refused case short-circuits before any sampling, so it is cheap; the accepted one needs
-/// the exact eligible count, which is one universe away at the cut.
+/// the exact eligible count, which is one universe away at the live build.
 #[test]
 fn the_k_boundary_is_the_eligible_count() {
     let book = stock_book();
@@ -248,9 +248,10 @@ fn the_k_boundary_is_the_eligible_count() {
     );
 }
 
-/// A LOCAL INVARIANT: the default and an unknown spelling are the cut, in the one place that reads the key.
+/// A LOCAL INVARIANT: the default and an unknown spelling are the live build, in the one place that reads the key, and
+/// only an explicit `14512` is the cut.
 #[test]
-fn an_absent_or_unknown_build_is_the_cut() {
+fn an_absent_or_unknown_build_is_the_live_build() {
     let plain = ShortlistOpts::from_value(&obj([
         ("k", Num(1.0)),
         ("mode", Str("uncapped".to_owned())),
@@ -259,7 +260,8 @@ fn an_absent_or_unknown_build_is_the_cut() {
         ("maxSeconds", Num(1.0)),
         ("maxBlows", Num(1.0)),
     ]));
-    assert_eq!(plain.game_build, "14512");
+    assert_eq!(plain.game_build, "14631");
+    assert_ne!(plain.game_build, "14512", "the default is not the cut");
     let bogus = ShortlistOpts::from_value(&obj([
         ("k", Num(1.0)),
         ("mode", Str("uncapped".to_owned())),
@@ -269,5 +271,14 @@ fn an_absent_or_unknown_build_is_the_cut() {
         ("maxBlows", Num(1.0)),
         ("gameBuild", Str("1463".to_owned())),
     ]));
-    assert_eq!(bogus.game_build, "14512", "a bogus build is the cut");
+    assert_eq!(bogus.game_build, "14631", "a bogus build is the live build");
+    assert_ne!(bogus.game_build, "14512");
+    let cut = ShortlistOpts::from_value(&obj([
+        ("k", Num(1.0)),
+        ("mode", Str("uncapped".to_owned())),
+        ("maxSeconds", Num(1.0)),
+        ("maxBlows", Num(1.0)),
+        ("gameBuild", Str("14512".to_owned())),
+    ]));
+    assert_eq!(cut.game_build, "14512", "only an explicit 14512 is the cut");
 }

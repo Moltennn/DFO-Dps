@@ -54,12 +54,12 @@ fn the_uncapped_shortlist_moves_with_the_shipped_build() {
     let mut cut = base.to_vec();
     cut.extend_from_slice(&["--game-build", "14512"]);
     let cut_text = same(&cut, &root);
-    // The default is the cut: the 14631 rows are the ones that move.
+    // The default is the live build: the 14512 rows are the ones that move.
     let plain = same(&base, &root);
     assert_eq!(
         String::from_utf8_lossy(&plain),
-        String::from_utf8_lossy(&cut_text),
-        "no --game-build is 14512"
+        String::from_utf8_lossy(&drift_text),
+        "no --game-build is 14631"
     );
     assert_ne!(
         String::from_utf8_lossy(&drift_text),
@@ -133,8 +133,8 @@ fn the_all_matrices_move_with_the_shipped_build() {
     let plain = run("plain", None);
     assert_eq!(
         String::from_utf8_lossy(&plain),
-        String::from_utf8_lossy(&cut_text),
-        "no --game-build is 14512"
+        String::from_utf8_lossy(&drift_text),
+        "no --game-build is 14631"
     );
     assert_ne!(
         String::from_utf8_lossy(&drift_text),

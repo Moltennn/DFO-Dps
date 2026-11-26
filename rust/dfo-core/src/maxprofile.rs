@@ -90,7 +90,7 @@ pub(crate) fn gate() -> Value {
 
 /// The scenario a max-profile card is priced under: the level-45 gate/ordinary-target identity, plus the shipped
 /// build (`--game-build`, GEAR-14631 / BRAND-14631). `game_build` is `Undefined` when the caller has no opinion, which
-/// prices as the cut.
+/// prices as the live build.
 fn scenario(target: Value, game_build: &Value) -> Value {
     let mut args = obj([
         ("target", target),

@@ -18,7 +18,7 @@
 //!                   `best_weapon_for_family_with_build`                                  (plan, matrix, best)
 //!   real_build.rs  `StageOpts::from_value`, `real_build_stages_with`'s four scenario keys,
 //!                   `real_weapon_loadouts_with`'s normalisation                          (template, stage, loadouts)
-//!   model_blow.rs  `game_build_name` / `game_build_one` (a bogus build must price as the cut)
+//!   model_blow.rs  `game_build_name` / `game_build_one` (a bogus build must price as the live build)
 
 mod common;
 
@@ -362,7 +362,7 @@ fn run_kind(kind: &str, input: &Value, book: &Spellbook, profiles: &mut Profiles
         "best" => best_weapon_for_family_at(
             input.get("family"),
             input.get("target"),
-            input.get("build").as_str().unwrap_or("14512"),
+            input.get("build").as_str().unwrap_or("14631"),
             book,
         )
         .expect("bestWeaponForFamily"),
@@ -389,7 +389,7 @@ fn run_kind(kind: &str, input: &Value, book: &Spellbook, profiles: &mut Profiles
                 &modes,
                 input.get("vampire").truthy(),
                 &input.get("encounter").to_js_string(),
-                input.get("build").as_str().unwrap_or("14512"),
+                input.get("build").as_str().unwrap_or("14631"),
                 profiles,
             )
             .expect("realWeaponLoadouts");
@@ -496,7 +496,7 @@ fn replay(kinds: &[&str]) {
 /// The twin cases are what prove the differential above is not passing on identical answers, so this check is separate
 /// from both replays.
 #[test]
-fn the_build_moves_the_legal_budget_and_the_default_is_the_cut() {
+fn the_build_moves_the_legal_budget_and_the_default_is_the_live_build() {
     let book = stock_book();
     let mut p = Profiles::new(&book);
     let point = |profiles: &mut Profiles<'_>, build: &str| {
@@ -514,9 +514,15 @@ fn the_build_moves_the_legal_budget_and_the_default_is_the_cut() {
         point(&mut p, "14631"),
         "14631 re-picks the legal budget"
     );
-    // An unknown build name normalises to the cut (`game_build_name`/`game_build_one`), not a third law.
-    assert_eq!(point(&mut p, "1463"), point(&mut p, "14512"));
-    // The default is the cut.
+    // An unknown build name normalises to the live build (`game_build_name`/`game_build_one`), not a third law.
+    let live = point(&mut p, "14631");
+    assert_eq!(point(&mut p, "1463"), live);
+    assert_ne!(
+        live,
+        point(&mut p, "14512"),
+        "and the cut is not the live build"
+    );
+    // The default is the live build.
     let plain = p
         .legal_gear(&Num(118.0), &obj([]))
         .expect("the default frontier");
@@ -526,18 +532,18 @@ fn the_build_moves_the_legal_budget_and_the_default_is_the_cut() {
             plain.get("cs").to_number(),
             plain.get("dmg").to_number()
         ),
-        point(&mut p, "14512")
+        live
     );
     let _ = p
         .max_character(&Num(118.0), &obj([]))
-        .expect("the default is the cut");
+        .expect("the default is the live build");
 }
 
 /// A LOCAL INVARIANT: `real_weapon_loadouts` normalises its build argument the one way (`game_build_name`), so a caller
 /// holding the CLI's raw flag value cannot invent a third law. The JS `realWeaponLoadouts({ gameBuild })` compares the
 /// string in `gameBuildOf`, which this pins without needing a whole universe per spelling.
 #[test]
-fn a_bogus_build_argument_prices_the_universe_as_the_cut() {
+fn a_bogus_build_argument_prices_the_universe_as_the_live_build() {
     let book = stock_book();
     let mut profiles = Profiles::new(&book);
     let row = |build: &str, profiles: &mut Profiles<'_>| {
@@ -549,9 +555,17 @@ fn a_bogus_build_argument_prices_the_universe_as_the_cut() {
             .map(|r| r.get("totalDps").to_number())
             .expect("the Broadsword row")
     };
-    let cut = row("14512", &mut profiles);
-    // One bogus spelling is enough: `game_build_name` has two arms (`14631`, everything else), and the arm this pins is
+    let live = row("14631", &mut profiles);
+    // One bogus spelling is enough: `game_build_name` has two arms (`14512`, everything else), and the arm this pins is
     // the `else`. A third universe would only re-read it.
-    assert_eq!(row("1463", &mut profiles), cut, "a bogus build is the cut");
-    assert_ne!(row("14631", &mut profiles), cut, "and 14631 is not the cut");
+    assert_eq!(
+        row("1463", &mut profiles),
+        live,
+        "a bogus build is the live build"
+    );
+    assert_ne!(
+        row("14512", &mut profiles),
+        live,
+        "and 14512 is not the live build"
+    );
 }
