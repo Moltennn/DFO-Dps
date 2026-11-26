@@ -98,10 +98,14 @@ fn scenario(target: Value, game_build: &Value) -> Value {
         ("rri", Bool(true)),
         ("healthShare", Num(1.0)),
         ("passiveOn", Bool(true)),
-        // mutation: equivalent - all scenario readers of stacks use Blademaster's clamp to [0, 5], including both attack paths.
+        // mutation: equivalent - all scenario readers of stacks use Blademaster's clamp: the only reader is
+        // `model_blow.rs:787`, `clamp(num("stacks", 5), 0, 5)`, so 5 and 6 both clamp to 5. Raising the default past the
+        // clamp cannot move a card.
         ("stacks", Num(5.0)),
     ]);
-    if !matches!(game_build, Undefined) && !game_build.is_nullish() {
+    // `Undefined` and `Null` are the two no-opinion values `is_nullish` covers, so one test is the whole guard (the
+    // `!matches!(game_build, Undefined) && !game_build.is_nullish()` form it replaces had a redundant conjunct).
+    if !game_build.is_nullish() {
         args.set("gameBuild", game_build.clone());
     }
     args
