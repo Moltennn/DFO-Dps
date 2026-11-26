@@ -443,7 +443,7 @@ fn help_lists_the_graph_command() {
     assert_eq!(got.status.code(), Some(0));
     let text = String::from_utf8_lossy(&got.stdout);
     for flag in [
-        "dfo-cli graph",
+        "dfo-forge graph",
         "--series <spec,...>",
         "--uncapped",
         "--step <n>",

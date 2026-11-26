@@ -113,9 +113,11 @@ fn same(args: &[&str], root: &Path) {
         "rust {args:?}: {}",
         String::from_utf8_lossy(&got.stderr)
     );
+    // The one designed difference: the product name. `product_name` rewrites exactly the `doctor` pin's program token
+    // and nothing else, so every other byte still has to match.
     assert_eq!(
-        String::from_utf8_lossy(&got.stdout),
-        String::from_utf8_lossy(&want.stdout),
+        common::product_name(&String::from_utf8_lossy(&got.stdout)),
+        common::product_name(&String::from_utf8_lossy(&want.stdout)),
         "stdout differs for {args:?}"
     );
 }
@@ -241,11 +243,17 @@ fn doctor_prints_a_missing_or_bad_save_as_one_line() {
         "the rust line explains itself: {got_text}"
     );
     // The pin and the listing still print before the failed load.
-    assert_eq!(
-        want_text.lines().take(2).collect::<Vec<_>>(),
-        got_text.lines().take(2).collect::<Vec<_>>(),
-        "the header and the saves line match"
-    );
+    let want_head: Vec<String> = common::product_name(&want_text)
+        .lines()
+        .take(2)
+        .map(str::to_owned)
+        .collect();
+    let got_head: Vec<String> = common::product_name(&got_text)
+        .lines()
+        .take(2)
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(want_head, got_head, "the header and the saves line match");
 
     // A JSON array is an object to both guards (the JS `typeof raw === 'object'`); `null` is refused by both.
     write(&dir.join("SaveData.txt"), "[1, 2]");
@@ -289,5 +297,64 @@ fn doctor_ignores_a_missing_saveinfo_and_refuses_extra_positionals() {
     assert!(String::from_utf8_lossy(&got.stderr).contains("unexpected positional argument"));
     assert!(got.stdout.is_empty());
 
+    fs::remove_dir_all(&root).expect("cleanup");
+}
+
+/// The program-name normalisation in `common::product_name` rewrites ONLY the two name positions, so a difference
+/// anywhere else still fails. This is what keeps it from hiding a real drift (pinned here, not only in the comment).
+#[test]
+fn the_program_name_normalisation_cannot_hide_another_difference() {
+    // The one line the two CLIs spell differently, normalised to the same text...
+    assert_eq!(
+        common::product_name(
+            "dfo-forge  |  model repo @ abc1234 (date)  |  live-checked 0.1.14631"
+        ),
+        common::product_name("dfo-dps  |  model repo @ abc1234 (date)  |  live-checked 0.1.14631"),
+    );
+    // ...and the report footer, likewise.
+    assert_eq!(
+        common::product_name("dfo-forge - model from repo @ abc (date) · live check v"),
+        common::product_name("dfo-dps - model from repo @ abc (date) · live check v"),
+    );
+    // Every other kind of difference survives it: the name elsewhere, a moved number, a changed word, the page name.
+    for (a, b) in [
+        (
+            "dfo-forge  |  model repo @ abc1234 (date)  |  live-checked 0.1.14631",
+            "dfo-forge  |  model repo @ abc1234 (date)  |  live-checked 0.1.14512",
+        ),
+        (
+            "dfo-forge  |  model repo @ abc1234 (date)  |  live-checked 0.1.14631",
+            "dfo-forge  |  model other @ abc1234 (date)  |  live-checked 0.1.14631",
+        ),
+        (
+            "dfo-forge  |  model repo @ abc1234 (date)  |  live-checked 0.1.14631",
+            "dfoxforgex  |  model repo @ abc1234 (date)  |  live-checked 0.1.14631",
+        ),
+        (
+            "dfo-forge - model from repo @ abc (date) · live check v",
+            "dfo-forge - model from repo @ abd (date) · live check v",
+        ),
+        // The default page path still contains the old name on both sides; normalising it would hide a real path change.
+        ("dfo-dps-report.html", "dfo-forge-report.html"),
+    ] {
+        assert_ne!(
+            common::product_name(a),
+            common::product_name(b),
+            "normalisation hid a difference: {a:?} vs {b:?}"
+        );
+    }
+    // And the doctor line a run really prints differs from the JS's before normalisation, so the test above is not
+    // vacuous: run both over an empty root and confirm the substitution is what makes them equal.
+    let root = temp_root("normalise");
+    let want = js(&["doctor"], &root);
+    let got = rust(&["doctor"], &root);
+    let want_text = String::from_utf8_lossy(&want.stdout);
+    let got_text = String::from_utf8_lossy(&got.stdout);
+    assert_ne!(want_text, got_text, "the two CLIs do print different names");
+    assert_eq!(
+        common::product_name(&got_text),
+        common::product_name(&want_text),
+        "and only the name differs"
+    );
     fs::remove_dir_all(&root).expect("cleanup");
 }

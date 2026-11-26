@@ -1,5 +1,5 @@
 //! The dependency-free report rendering primitives of `src/graph.js` (R8): `lineChart`, `graphPage`,
-//! `multiGraphPage` and `barChart`, ready for the `graph`, `probe` and report commands of `dfo-cli`.
+//! `multiGraphPage` and `barChart`, ready for the `graph`, `probe` and report commands of `dfo-forge`.
 //!
 //! Only rendering lives here: plain data in, one HTML/SVG string out, no file I/O, no clock, no randomness, and no
 //! decision that changes a DPS number. The JS module (`src/graph.js:4-113`) is the source of truth;

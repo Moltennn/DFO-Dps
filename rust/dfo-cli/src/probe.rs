@@ -1,4 +1,4 @@
-//! `dfo-cli probe`: the capture discovery, terminal card, HTML page and `--json` output of `src/cli.js:1266-1386`.
+//! `dfo-forge probe`: the capture discovery, terminal card, HTML page and `--json` output of `src/cli.js:1266-1386`.
 //!
 //! The rules are all in `dfo_core::probe` (`src/probe.js`); this module owns only the I/O the core refuses: the newest
 //! capture under `~/.local/share/dfo-tools/probe-mod/captures` (or its `old/` folder with `--old`), `JSON.parse`, the

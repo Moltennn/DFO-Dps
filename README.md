@@ -1,4 +1,4 @@
-# DFO DPS Lab
+# DFO Forge
 
 A standalone, read-only combat DPS and build lab for **DFO Online**. It reads a
 normal save or a live character snapshot, models the game's combat core against
@@ -18,7 +18,9 @@ It prints tables and writes standalone HTML/JSON files.
 
 ## Requirements and installation
 
-- **Node.js 18 or newer**. There are no runtime dependencies.
+- **Rust 1.88 or newer** to build the CLI (`cargo install`). The built
+  `dfo-forge` is a single binary with no runtime dependencies; **Node is not
+  needed to use it**.
 - A DFO save is optional for demoing: without `--save`, the newest save under
   the client's user-data folder is used.
 - Spell commands need the client's `ARENA2/SPELLS.STD`, found through the
@@ -26,22 +28,78 @@ It prints tables and writes standalone HTML/JSON files.
 - `probe` reads captures from the separate Combat Probe mod; the mod is not in
   this repository.
 
-From a checkout:
+Install the CLI:
 
 ```bash
 git clone https://github.com/Moltennn/DFO-Dps.git
 cd DFO-Dps
-node --version                 # 18+
-./dfo-dps --help
+cargo install --locked --path rust/dfo-cli
+dfo-forge --help
 ```
 
-There is no build or `npm install` step. `./dfo-dps` is a small wrapper around
-`node bin/dfo-dps.js`; both forms work:
+`cargo install --locked` reads the committed `rust/Cargo.lock`, so the build is
+reproducible; it compiles `dfo-core` and `dfo-cli` and puts `dfo-forge` in
+`~/.cargo/bin`. Nothing is downloaded at run time and no data files are read
+from the checkout: the tables are compiled into the binary. The build and its
+dependencies are MIT; see `LICENSE` and `NOTICE` (they must travel with any
+binary you redistribute).
+
+From a checkout, `./dfo-forge` is a wrapper that runs
+`cargo build --release` when the binary is missing or stale, then executes
+`rust/target/release/dfo-forge` in your current directory (so a relative `--out`
+stays relative to where you ran it). Quiet unless it builds or fails; exit
+codes are the CLI's.
 
 ```bash
-./dfo-dps doctor
-node bin/dfo-dps.js doctor
+./dfo-forge doctor
 ```
+
+The JavaScript CLI (`node bin/dfo-dps.js`) still runs from a checkout, but it is
+kept as the **test reference** for the Rust port, not as the everyday command.
+`package.json`'s `bin` still maps the name `dfo-dps` to `bin/dfo-dps.js`: that
+is the least surprising option, because the file is the npm package's own entry
+point and it names the JavaScript CLI, which is exactly what it now is. It does
+not collide with `dfo-forge`, so neither install shadows the other.
+
+### Behaviour differences from the JavaScript CLI
+
+The Rust CLI is a deliberate, stricter reimplementation. A user will notice:
+
+- **Pages are create-only.** Every page command (`probe`, `graph`, `report`,
+  `firmament`, `imprints`, `enchant-plan`/`gear-plan`, `spells`,
+  `weapons`/`skills`, `loadout`/`real-dps`) refuses an existing output path
+  with exit 2 and leaves the file untouched; the JavaScript truncates it.
+  Delete the old page or pass a new `--out`.
+- **Stricter flags.** Extra positional arguments and flags a command never
+  reads are refused by name with exit 2; the JavaScript ignores them. An
+  invalid `--core`, `--target`, `--star-stat` or `--star-skill` is refused even
+  by a command that does not use it.
+- **`--data` is read only by `probe`, `spell` and `spells`.**
+- **No Firmament disk cache.** Plans are recomputed every run, so the card says
+  `Firmament plans` (the JavaScript prints `Firmament plans (N cached, M
+  computed)`), and `--refresh` changes nothing.
+- **`theory` on a reference foe exits 2** with one message; the JavaScript
+  card crashes on that path.
+- **Number grouping is always en-US** (commas), where the JavaScript follows
+  the host locale.
+- **The report/doctor program name is `dfo-forge`**, where the unrenamed
+  JavaScript reference says `dfo-dps`; every other line matches. The default
+  report page keeps the historical file name `dfo-dps-report.html` in both.
+- **Save/config parsing uses `serde_json`**, so a malformed document's message
+  is not V8's; a number past f64 (`1e400`) is a parse error where
+  `JSON.parse` gives `Infinity`. Exit codes match.
+- **Probe pages escape capture-derived text** the JavaScript inserts raw.
+
+Paths that keep the old name (renaming them would break existing users; they
+are left alone):
+
+- The default report page stays `dfo-dps-report.html`.
+- The probe mod's capture folder is `~/.local/share/dfo-tools/probe-mod` (the
+  mod is not part of this repository).
+- The JavaScript reference's Firmament cache is `.cache/firmament-plans.json`;
+  the Rust CLI keeps no cache.
+- The benchmark schema id stays `dfo-dps-benchmark/1` in
+  `docs/benchmark/results.json`.
 
 `--save` accepts a slot (`SAVE4`), a save folder, or a path to `SaveData.txt`.
 Save discovery honours `DAGGER_USER_DATA`; otherwise it uses the client's
@@ -50,11 +108,11 @@ platform user-data location.
 ## Quick start
 
 ```bash
-./dfo-dps saves
-./dfo-dps doctor --save SAVE4
-./dfo-dps build --save SAVE4
-./dfo-dps rank weapons --save SAVE4 --target boss --traits curbing --health 5000
-./dfo-dps report --save SAVE4 --target breach --out build.html
+./dfo-forge saves
+./dfo-forge doctor --save SAVE4
+./dfo-forge build --save SAVE4
+./dfo-forge rank weapons --save SAVE4 --target boss --traits curbing --health 5000
+./dfo-forge report --save SAVE4 --target breach --out build.html
 ```
 
 - `saves` lists the saves the client can see.
@@ -96,7 +154,7 @@ with the health, armour and traits you pass.
 | `saves` | List saves under the client's user-data folder. |
 | `doctor` | Show save, build, ruleset and model information. |
 
-Use `./dfo-dps --help` for every flag, or see
+Use `./dfo-forge --help` for every flag, or see
 [`docs/USAGE.md`](docs/USAGE.md) for complete workflows and output defaults.
 
 ## What is supported
@@ -123,6 +181,11 @@ Use `./dfo-dps --help` for every flag, or see
   long-run mean: the percentage lines (mastery, slayer/loot powers, the martial
   path, the Firmament) carry their fraction between blows, so pricing reads the
   exact share rather than the card's per-blow floor.
+
+The JavaScript library APIs below are the **test reference** for the Rust port:
+they describe the oracle the differential tests run, and they are not part of
+the supported user interface. Use the `dfo-forge` command instead.
+
 - The Stage 3.1 seeded RNG and exact per-blow distribution library
   (`src/rng.js`, `src/blowOutcomes.js`); these are library APIs, not CLI pages.
 - The Stage 3.2 seeded blow-by-blow fight simulation (`src/simulateFight.js`):
@@ -288,7 +351,12 @@ suites cover it.
 
 ## Development
 
+The Rust CLI is the product; the JavaScript tree is its differential oracle and
+test reference, so development still needs Node 18+.
+
 ```bash
+node tools/gate.mjs rust    # the Rust gate: data check, vectors, fmt, clippy, cargo test
+node tools/gate.mjs js      # the JavaScript suite and vendor hash check
 npm test
 node tools/test-fast.mjs   # quick iteration pass: the suite minus the heavy files
 npm run benchmark
@@ -303,7 +371,9 @@ npm run vendor:parity -- --from <upstream-checkout>
 The suite covers the combat model, the per-blow distribution, the seeded RNG,
 the differential/golden/vendor checks, and the Stage 3 distribution and fight
 oracles. The vendored tree is hash-checked; vendor parity compares the vendored
-subset with the full pinned checkout.
+subset with the full pinned checkout. The Rust differential tests spawn
+`node bin/dfo-dps.js` as the oracle, so `node` must be on PATH for
+`cargo test`/the Rust gate.
 
 `node tools/test-fast.mjs` is a quick iteration pass only: it runs every test
 file except the heavy ones listed in `tools/test-fast.mjs` (about 20 s on the
@@ -313,6 +383,8 @@ everything.
 ## Documentation map
 
 - [`docs/USAGE.md`](docs/USAGE.md) — complete command workflows and examples.
+- [`rust/README.md`](rust/README.md) — the Rust port, its milestones and its
+  known differences from the JavaScript CLI.
 - [`METHOD.md`](METHOD.md) — combat formulas, cadence, planners and theory.
 - [`docs/SOURCES.md`](docs/SOURCES.md) — the upstream pin and provenance.
 - [`docs/LOADOUT-BENCHMARK.md`](docs/LOADOUT-BENCHMARK.md) — the reproducible
@@ -323,4 +395,6 @@ everything.
 
 MIT. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE). The combat model follows
 the open-source DFO Online client by Lattymoy and Daggerfall Unity's
-`FormulaHelper` (MIT, Daggerfall Workshop).
+`FormulaHelper` (MIT, Daggerfall Workshop). Installing the CLI from source needs
+nothing beyond Rust and the crate's MIT dependencies; if you redistribute a
+built `dfo-forge` binary, ship `LICENSE` and `NOTICE` with it.

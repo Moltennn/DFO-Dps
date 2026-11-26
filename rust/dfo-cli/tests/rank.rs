@@ -309,7 +309,7 @@ fn unsupported_and_unknown_options_fail_explicitly() {
     }
     // A bare `rank` really does need a save. `--save` names a slot that cannot exist in a fresh root, so this case
     // does not depend on the player's real saves (tests/saves.rs prices the save-backed card).
-    let root = std::env::temp_dir().join(format!("dfo-cli-rank-nosave-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("dfo-dps-rank-nosave-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("Saves")).expect("temp root");
     let got = rust_env(&["rank", "--save", "SAVE-cli-test-none"], &root);

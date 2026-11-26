@@ -371,7 +371,7 @@ fn help_lists_the_enchant_command() {
     assert_eq!(got.status.code(), Some(0));
     let text = String::from_utf8_lossy(&got.stdout);
     for flag in [
-        "dfo-cli enchant",
+        "dfo-forge enchant",
         "enchantment rows",
         "No weapon equipped",
         "--json",

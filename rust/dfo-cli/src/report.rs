@@ -925,7 +925,7 @@ const PAGE: &str = r#"<!doctype html>
     <tr><td class="k">Armor</td><td class="d">damage is shown before the foe's worn/natural armor reduction; the game's Combat Stats card does the same</td></tr>
   </tbody></table>
 
-  <footer><div class="foot"><span>dfo-dps - model from \u{1}REPO\u{1} @ \u{1}COMMIT\u{1} (\u{1}DATE\u{1}) · live check \u{1}VERIFIED\u{1}</span><span>not affiliated with Bethesda Softworks or ZeniMax Media</span></div></footer>
+  <footer><div class="foot"><span>dfo-forge - model from \u{1}REPO\u{1} @ \u{1}COMMIT\u{1} (\u{1}DATE\u{1}) · live check \u{1}VERIFIED\u{1}</span><span>not affiliated with Bethesda Softworks or ZeniMax Media</span></div></footer>
 </main></body></html>"#;
 
 /// `buildReport(ch, opts)` (`src/report.js:142-303`): the whole single-file page.

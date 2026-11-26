@@ -277,8 +277,8 @@ fn help_lists_the_weapons_command() {
     assert_eq!(got.status.code(), Some(0));
     let text = String::from_utf8_lossy(&got.stdout);
     for flag in [
-        "dfo-cli weapons",
-        "dfo-cli skills",
+        "dfo-forge weapons",
+        "dfo-forge skills",
         "--categories",
         "weapons page written:",
     ] {

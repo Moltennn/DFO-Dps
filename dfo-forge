@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# `dfo-forge` from a checkout: cargo builds the Rust binary when it is missing or stale, then the binary runs in your
+# cwd (so a relative --out path lands where you are). `node bin/dfo-dps.js` is the JavaScript test reference.
+set -uo pipefail
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+bin="$root/rust/target/release/dfo-forge"
+if command -v cargo >/dev/null 2>&1; then
+  if ! cargo build --release --quiet --manifest-path "$root/rust/Cargo.toml"; then
+    echo "dfo-forge: cargo build --release failed; the CLI was not run" >&2
+    exit 1
+  fi
+elif [ ! -x "$bin" ]; then
+  echo "dfo-forge: cargo not found; install Rust (https://rustup.rs) or run node bin/dfo-dps.js" >&2
+  exit 127
+fi
+exec "$bin" "$@"

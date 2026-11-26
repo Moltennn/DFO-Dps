@@ -1,6 +1,6 @@
-//! `dfo-cli`: the thin command line over `dfo-core` (R8; the `saves`, `build`, `objective`, `rank`, `compare`, `scale`,
+//! `dfo-forge`: the command line over `dfo-core` (R8; the `saves`, `build`, `objective`, `rank`, `compare`, `scale`,
 //! `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`, `enchant-plan`/`gear-plan`, `tradeoff`,
-//! `spell`, `spells`, `theory`, `weapons`/`skills` and `loadout`/`real-dps` slice).
+//! `spell`, `spells`, `theory`, `weapons`/`skills` and `loadout`/`real-dps` commands).
 //!
 //! This is the JS `src/cli.js` `build` card, `objective` command, `rank` card, `compare` card, `scale` curve, `saves`
 //! listing, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`, `enchant-plan`/`gear-plan`,
@@ -79,8 +79,8 @@
 //! invalidate); a plan's numbers are identical either way.
 //!
 //! The save is imported READ-ONLY by [`saves`]: discovery and parsing live there, the character normalisation is
-//! `dfo_core::save::character_from_save`, and nothing is retained or written (AGENTS.md rule 11). Every flag this
-//! slice does not price, and every other command, is refused by name instead of being accepted and ignored.
+//! `dfo_core::save::character_from_save`, and nothing is retained or written (AGENTS.md rule 11). Every flag a command
+//! does not price is refused by name instead of being accepted and ignored.
 //!
 //! Every rule lives in `dfo-core`; this file owns argument text, the two output formats and exit codes (a usage
 //! error is 2, as `bin/dfo-dps.js` does).
@@ -128,37 +128,37 @@ use dfo_core::theory::theory_character;
 use dfo_core::value::{number_to_string, obj_table_get, string_to_number, Value, Value::*};
 
 const HELP: &str = "\
-dfo-cli - the saves, build, objective, rank, compare, doctor, probe, graph, report, firmament, imprints, enchant, enchant-plan, gear-plan, tradeoff, spell, spells, theory, weapons/skills and loadout/real-dps slice of dfo-dps (Rust core)
+dfo-forge - DFO Forge: DFO Online combat DPS and build lab
 
 Usage:
-  dfo-cli saves
-  dfo-cli doctor [--save <slot|folder|path>] [--offline]
-  dfo-cli build [--save <slot|folder|path>] [options]
-  dfo-cli build --theory [options]
-  dfo-cli objective [--save <slot|folder|path>] [options]
-  dfo-cli objective --theory [options]
-  dfo-cli rank [weapons] [--save <slot|folder|path>] [options]
-  dfo-cli rank [weapons] --theory [options]
-  dfo-cli compare [--save <slot|folder|path>] --stat <name=value> [--weapon <template:material>]
-  dfo-cli compare --theory --stat <name=value> [--weapon <template:material>]
-  dfo-cli scale [--save <slot|folder|path>] (--stat <name> | --skill <id> | --gear-skill <id> | --all) [--from <n>] [--to <n>] [--step <n>] [--json]
-  dfo-cli scale --theory (--stat <name> | --skill <id> | --gear-skill <id> | --all) [--from <n>] [--to <n>] [--step <n>] [--json]
-  dfo-cli probe [capture.json] [--old] [--level <n>] [--players <n>] [--json] [--out <file>]
-  dfo-cli graph [--theory] [--series <spec,...>] [--from <n>] [--to <n>] [--step <n>] [--uncapped] [--json] [--out <file>]
-  dfo-cli report [--theory] [--save <slot|folder|path>] [options] [--out <file>]
-  dfo-cli firmament [--build <id,...>] [--stars <n>] [--refresh] [--json] [--out <file>]
-  dfo-cli imprints [--family <key>] [--sort <boss|uncapped|conditional>] [--uncapped] [--cap-aware] [--vampire] [--firmament] [--json] [--out <file>]
-  dfo-cli enchant-plan [--theory] [--weapon <template[:material]>] [--shield <template|none|auto>] [--soul-gem] [--group <undead|daedra|humanoid|animal>] [--repairs <n>] [--regen <n>] [--uncapped | --cap-aware | --all] [--json] [--out <file>]
-  dfo-cli gear-plan [same flags as enchant-plan]
-  dfo-cli enchant [--theory] [--save <slot|folder|path>] [options] [--json]
-  dfo-cli spell [--list | --all-spells | --spell <index|name>] [--theory] [--save <slot|folder|path>] [--data <dir>] [--standard] [options] [--json]
-  dfo-cli spells [--theory] [--save <slot|folder|path>] [--data <dir>] [options] [--json] [--out <file>]
-  dfo-cli tradeoff [--theory] [--save <slot|folder|path>] [options] [--json]
-  dfo-cli theory [--theory] [options] [--json]
-  dfo-cli weapons [--categories] [--firmament] [--vampire] [--race <name>] [--level <n>] [--json] [--out <file>]
-  dfo-cli skills  [same flags as weapons]
-  dfo-cli loadout [--uncapped | --cap-aware] [--encounter <id>] [--all-encounters] [--shortlist <K>] [--json] [--out <file>]
-  dfo-cli real-dps [same flags as loadout]
+  dfo-forge saves
+  dfo-forge doctor [--save <slot|folder|path>] [--offline]
+  dfo-forge build [--save <slot|folder|path>] [options]
+  dfo-forge build --theory [options]
+  dfo-forge objective [--save <slot|folder|path>] [options]
+  dfo-forge objective --theory [options]
+  dfo-forge rank [weapons] [--save <slot|folder|path>] [options]
+  dfo-forge rank [weapons] --theory [options]
+  dfo-forge compare [--save <slot|folder|path>] --stat <name=value> [--weapon <template:material>]
+  dfo-forge compare --theory --stat <name=value> [--weapon <template:material>]
+  dfo-forge scale [--save <slot|folder|path>] (--stat <name> | --skill <id> | --gear-skill <id> | --all) [--from <n>] [--to <n>] [--step <n>] [--json]
+  dfo-forge scale --theory (--stat <name> | --skill <id> | --gear-skill <id> | --all) [--from <n>] [--to <n>] [--step <n>] [--json]
+  dfo-forge probe [capture.json] [--old] [--level <n>] [--players <n>] [--json] [--out <file>]
+  dfo-forge graph [--theory] [--series <spec,...>] [--from <n>] [--to <n>] [--step <n>] [--uncapped] [--json] [--out <file>]
+  dfo-forge report [--theory] [--save <slot|folder|path>] [options] [--out <file>]
+  dfo-forge firmament [--build <id,...>] [--stars <n>] [--refresh] [--json] [--out <file>]
+  dfo-forge imprints [--family <key>] [--sort <boss|uncapped|conditional>] [--uncapped] [--cap-aware] [--vampire] [--firmament] [--json] [--out <file>]
+  dfo-forge enchant-plan [--theory] [--weapon <template[:material]>] [--shield <template|none|auto>] [--soul-gem] [--group <undead|daedra|humanoid|animal>] [--repairs <n>] [--regen <n>] [--uncapped | --cap-aware | --all] [--json] [--out <file>]
+  dfo-forge gear-plan [same flags as enchant-plan]
+  dfo-forge enchant [--theory] [--save <slot|folder|path>] [options] [--json]
+  dfo-forge spell [--list | --all-spells | --spell <index|name>] [--theory] [--save <slot|folder|path>] [--data <dir>] [--standard] [options] [--json]
+  dfo-forge spells [--theory] [--save <slot|folder|path>] [--data <dir>] [options] [--json] [--out <file>]
+  dfo-forge tradeoff [--theory] [--save <slot|folder|path>] [options] [--json]
+  dfo-forge theory [--theory] [options] [--json]
+  dfo-forge weapons [--categories] [--firmament] [--vampire] [--race <name>] [--level <n>] [--json] [--out <file>]
+  dfo-forge skills  [same flags as weapons]
+  dfo-forge loadout [--uncapped | --cap-aware] [--encounter <id>] [--all-encounters] [--shortlist <K>] [--json] [--out <file>]
+  dfo-forge real-dps [same flags as loadout]
 
 `saves` lists the save folders under the DFO user-data folder (newest first). `doctor` prints the model pin, the
 save folders and the imported character's build/ruleset summary. `build` prices one build against one target: with
@@ -415,8 +415,8 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
         return compare(&values);
     }
     if command == "probe" {
-        // The JS takes at most one positional (`capture.json`) and ignores the rest; this slice refuses extras, as the
-        // other ported commands do. `--out` is read (`probe.html`, or the given path) through the create-only writer.
+        // The JS takes at most one positional (`capture.json`) and ignores the rest; this CLI refuses extras, as the
+        // other commands do. `--out` is read (`probe.html`, or the given path) through the create-only writer.
         if let Some(extra) = parsed.positionals.get(2) {
             return Err(usage(format!("unexpected positional argument \"{extra}\"")));
         }
@@ -530,7 +530,7 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
     if let Some(extra) = parsed.positionals.get(1) {
         if extra != "weapons" {
             return Err(usage(format!(
-                "unknown rank target \"{extra}\" (this slice supports `rank` and `rank weapons`)"
+                "unknown rank target \"{extra}\" (only `rank` and `rank weapons` are supported)"
             )));
         }
     }
@@ -542,10 +542,8 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
 }
 
 /// `checkOutputFlags` (`src/cli.js:885-898`): reject a flag the command would ignore instead of accepting it silently.
-/// The commands of this slice (`build`, `rank`, `compare`, `scale`, `saves`, `doctor`, `probe`, `graph`, `report`,
-/// `firmament`, `imprints`, `enchant`, `tradeoff`): `probe`, `graph`, `report`, `firmament` and `imprints` write a page,
-/// and `build`, `rank`, `objective`, `scale`, `probe`, `graph`, `firmament`, `imprints`, `enchant` and `tradeoff` read
-/// `--json`.
+/// `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant-plan`/`gear-plan`, `spells`, `weapons`/`skills` and
+/// `loadout`/`real-dps` write a page; every command with a JSON form is in `JSON_COMMANDS` below.
 fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
     const FILE_COMMANDS: &str = concat!(
         "report, spells, weapons, skills, firmament, imprints, probe, enchant-plan, gear-plan, loadout, ",
@@ -761,7 +759,7 @@ fn check_output_flags(command: &str, parsed: &Parsed) -> Result<(), CliError> {
     Ok(())
 }
 
-/// `dfo-dps saves` (`src/cli.js:934-939`): the whole card, or `No saves found.` with an empty folder.
+/// `dfo-forge saves` (`src/cli.js:934-939`): the whole card, or `No saves found.` with an empty folder.
 fn saves_command() -> Result<String, CliError> {
     let saves = saves::list_saves().map_err(usage)?;
     if saves.is_empty() {
@@ -788,12 +786,12 @@ fn saves_command() -> Result<String, CliError> {
     ))
 }
 
-/// `dfo-dps doctor` (`src/cli.js:941-959`): the model pin, the save folders, then the imported character's build and
+/// `dfo-forge doctor` (`src/cli.js:941-959`): the model pin, the save folders, then the imported character's build and
 /// ruleset summary. A missing or unreadable save is one `save: <message>` line, not an error: the command still exits
 /// 0 (the JS catches it around the whole load-and-print block).
 fn doctor_command(values: &Values) -> Result<String, CliError> {
     let mut out = format!(
-        "dfo-dps  |  model {} @ {} ({})  |  live-checked {}\n",
+        "dfo-forge  |  model {} @ {} ({})  |  live-checked {}\n",
         SOURCE.repo,
         SOURCE.commit.get(..7).unwrap_or(SOURCE.commit),
         SOURCE.date,
@@ -914,7 +912,7 @@ fn obj<const N: usize>(pairs: [(&str, Value); N]) -> Value {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// argument parsing: node's `parseArgs` shape for the flags this slice knows
+// argument parsing: node's `parseArgs` shape for the known flags
 // ---------------------------------------------------------------------------------------------------------------
 
 struct Parsed {
@@ -1165,7 +1163,7 @@ struct Values {
     samples: bool,
     /// `--stat` as typed, in order: `compare` parses each one (the JS validates them inside the branch).
     stat: Vec<String>,
-    /// `--data`: the probe capture file (the JS also uses it for ARENA2, which this slice does not port).
+    /// `--data`: the probe capture file (on the other commands it is the ARENA2 directory).
     data: Option<String>,
     /// `--old`: the probe reads `captures/old` instead of the live folder.
     old: bool,
@@ -1707,7 +1705,7 @@ fn rank(values: &Values) -> Result<String, CliError> {
     }
 }
 
-/// `dfo-dps build` (`src/cli.js:2306-2314`): the `summary()` object with `--json`, `printBuild` otherwise.
+/// `dfo-forge build` (`src/cli.js:2306-2314`): the `summary()` object with `--json`, `printBuild` otherwise.
 fn build(values: &Values) -> Result<String, CliError> {
     // `standardSpells()` (`src/spells.js:82-93`): the launcher's `SPELLS.STD`, empty when absent.
     let book = saves::load_spellbook();
@@ -1817,7 +1815,7 @@ struct GraphSeries {
     points: Vec<(f64, f64)>,
 }
 
-/// `dfo-dps graph` (`src/cli.js:2057-2127`): one curve per `--series`, the JS page, and the `--json` series document.
+/// `dfo-forge graph` (`src/cli.js:2057-2127`): one curve per `--series`, the JS page, and the `--json` series document.
 /// The page goes through `probe`'s create-only writer: an existing `graph.html` (or `--out`) is refused, never truncated.
 fn graph_command(values: &Values, out_flag: Option<&str>) -> Result<String, CliError> {
     let book = saves::load_spellbook();
@@ -2048,7 +2046,7 @@ fn graph_command(values: &Values, out_flag: Option<&str>) -> Result<String, CliE
     Ok(format!("graph written: {}\n", out.display()))
 }
 
-/// `dfo-dps scale` (`src/cli.js:2128-2203`): one channel's DPS curve (text `printScale` or the `--json` rows), or
+/// `dfo-forge scale` (`src/cli.js:2128-2203`): one channel's DPS curve (text `printScale` or the `--json` rows), or
 /// `--all`'s current-to-cap summary. Every point comes from `analyze` over a JSON copy of the character with the one
 /// field set, exactly as the JS does; nothing here is a second reading of a rule.
 fn scale_command(values: &Values) -> Result<String, CliError> {
@@ -2348,7 +2346,7 @@ fn apply_scale(c: &mut Value, kind: &str, id: &Value, value: f64) {
     }
 }
 
-/// `dfo-dps report` (`src/cli.js:2263-2275`): the single-file page from [`report::build_report`] at the scenario the
+/// `dfo-forge report` (`src/cli.js:2263-2275`): the single-file page from [`report::build_report`] at the scenario the
 /// other page commands share, written through `probe`'s create-only writer. The JS `writeFileSync` truncates an
 /// existing path; this refuses it with exit 2 and leaves it untouched (the same deliberate deviation `probe`/`graph`
 /// pin). stdout is the JS `report written: <file>` line in both modes - `report` has no `--json` branch.
@@ -2408,7 +2406,7 @@ fn report_command(values: &Values, out_flag: Option<&str>) -> Result<String, Cli
     Ok(format!("report written: {}\n", out.display()))
 }
 
-/// `dfo-dps firmament` (`src/cli.js:1390-1441`): plan each `--build` at `--stars`, print the JS card (or the `--json`
+/// `dfo-forge firmament` (`src/cli.js:1390-1441`): plan each `--build` at `--stars`, print the JS card (or the `--json`
 /// document), and write the multi-section page from [`firmament::firmament_section`] through the shared renderer.
 ///
 /// The JS also keeps a disk cache (`.cache/firmament-plans.json`) and prints `Firmament plans (N cached, M computed)`;
@@ -2520,7 +2518,7 @@ fn firmament_command(values: &Values, out_flag: Option<&str>) -> Result<String, 
     Ok(out)
 }
 
-/// `dfo-dps imprints` (`src/cli.js:1219-1263`): rank every imprint family (or the one `--family` names) through
+/// `dfo-forge imprints` (`src/cli.js:1219-1263`): rank every imprint family (or the one `--family` names) through
 /// `dfo_core::imprints::rank_all`, print the JS card or the `--json` rows, and write the page from [`imprints`].
 ///
 /// The order is resolved exactly as the JS nested ternary: `--uncapped`, then `--cap-aware` (boss), then `--sort`. The
@@ -2586,7 +2584,7 @@ fn imprints_command(values: &Values, out_flag: Option<&str>) -> Result<String, C
     ))
 }
 
-/// `dfo-dps enchant` (`src/cli.js:1449-1477`): the equipped weapon's enchantment procs, text or `--json`. The card and
+/// `dfo-forge enchant` (`src/cli.js:1449-1477`): the equipped weapon's enchantment procs, text or `--json`. The card and
 /// `--json` document are `enchant::text`/`enchant::document`; this owns the target/scenario the JS branch rebuilds and
 /// the Cast When Strikes payload's spellbook.
 ///
@@ -2595,7 +2593,7 @@ fn imprints_command(values: &Values, out_flag: Option<&str>) -> Result<String, C
 /// the JS default `standardSpells()` (the launcher's `SPELLS.STD`) prices the procs, exactly as [`saves::load_spellbook`]
 /// does here. A save with no weapon prints the JS line and exits 0.
 ///
-/// `dfo-dps enchant-plan` / `dfo-dps gear-plan` (`src/cli.js:1084-1217`): the per-piece enchant priority plan, one
+/// `dfo-forge enchant-plan` / `dfo-forge gear-plan` (`src/cli.js:1084-1217`): the per-piece enchant priority plan, one
 /// weapon (text, `--json` or its page), or both modes' matrices with `--all` (text, `--json` or the plans page). The
 /// plan is `dfo_core::enchant_plan::plan_enchants`/`plan_matrix`; this function owns the branch's flag resolution, the
 /// mode select, the create-only page write and the two `... page written:` lines.
@@ -2768,7 +2766,7 @@ fn enchant_command(values: &Values) -> Result<String, CliError> {
     Ok(enchant::text(&ch, item, &strike, &card))
 }
 
-/// `dfo-dps spell` (`src/cli.js:1516-1599`): one spell's rotation card, the `--list` spellbook table, or the
+/// `dfo-forge spell` (`src/cli.js:1516-1599`): one spell's rotation card, the `--list` spellbook table, or the
 /// `--all-spells` price table, text or `--json`. The renderers own the strings and documents; this owns the branch's
 /// pool resolution, pricing, selection, empty-book line and the theory caster tweak.
 ///
@@ -2925,7 +2923,7 @@ fn spell_target_and_opts(values: &Values, ch: &Value) -> Result<(Value, Value), 
     Ok((spell_target, opts))
 }
 
-/// `dfo-dps spells` (`src/cli.js:1480-1514`): every standard damage spell as the `DFO spell ceiling` page, or its
+/// `dfo-forge spells` (`src/cli.js:1480-1514`): every standard damage spell as the `DFO spell ceiling` page, or its
 /// `--json` list. The renderer is [`spells_report`]; this owns the branch's pool merge, empty-list line, page name and
 /// the create-only write.
 ///
@@ -2997,7 +2995,7 @@ fn theory_caster(mut ch: Value) -> Value {
     ch
 }
 
-/// `dfo-dps tradeoff` (`src/cli.js:2204-2252`): speed vs damage over the Breach gate and five Curbing pools, text or
+/// `dfo-forge tradeoff` (`src/cli.js:2204-2252`): speed vs damage over the Breach gate and five Curbing pools, text or
 /// `--json`. The pools, the verdict text and the crossover are [`tradeoff`]'s; this owns the character, the base
 /// scenario and the two flags the gate carries.
 ///
@@ -3224,13 +3222,13 @@ fn rendered_damage(rendered: &theory::Rendered) -> f64 {
     rendered.document.get("character").get("damage").to_number()
 }
 
-/// `dfo-dps weapons` / `dfo-dps skills` (`src/cli.js:1601-1804`): the weapon ceiling page from [`weapons::render`].
+/// `dfo-forge weapons` / `dfo-forge skills` (`src/cli.js:1601-1804`): the weapon ceiling page from [`weapons::render`].
 ///
 /// `--categories` condenses the rows to one winner per type per slot and drops the family/Critical Strike curves; the
 /// default shows every row and every curve. The page is create-only (the same deliberate deviation `probe`/`graph`/
 /// `report` pin), the default name is `weapons.html` for `weapons` and `skills.html` for the alias, and the JS renames
 /// only the untouched report default. text mode prints `weapons page written:`; either mode prints the `--json` document.
-/// `dfo-dps loadout` / `dfo-dps real-dps` (`src/cli.js:961-1082`): the shortlist card or the full real-loadout report.
+/// `dfo-forge loadout` / `dfo-forge real-dps` (`src/cli.js:961-1082`): the shortlist card or the full real-loadout report.
 ///
 /// `--shortlist K` reranks the top K eligible deterministic loadouts per target through
 /// [`dfo_core::loadout_shortlist`]; without it the command prices every weapon template and hold configuration
@@ -3448,7 +3446,7 @@ fn shortlist_error(message: String) -> CliError {
     }
 }
 
-/// `dfo-dps weapons` / `dfo-dps skills` (`src/cli.js:1638-1803`): the weapon ceiling page.
+/// `dfo-forge weapons` / `dfo-forge skills` (`src/cli.js:1638-1803`): the weapon ceiling page.
 fn weapons_command(
     command: &str,
     values: &Values,
@@ -3484,7 +3482,7 @@ fn weapons_command(
     Ok(format!("weapons page written: {}\n", out.display()))
 }
 
-/// `dfo-dps compare` (`src/cli.js:2277-2304`): the same build before and after `--stat`/`--weapon`, as a four-column
+/// `dfo-forge compare` (`src/cli.js:2277-2304`): the same build before and after `--stat`/`--weapon`, as a four-column
 /// table. The base run drops the scenario's weapon override (it prices the equipped weapon), the changed run applies it.
 fn compare(values: &Values) -> Result<String, CliError> {
     let book = saves::load_spellbook();
@@ -3705,7 +3703,7 @@ fn objective_error(message: String) -> CliError {
     }
 }
 
-/// `dfo-dps objective` (`src/cli.js:579-634`): one build on one named objective, text or `--json`.
+/// `dfo-forge objective` (`src/cli.js:579-634`): one build on one named objective, text or `--json`.
 fn objective(values: &Values) -> Result<String, CliError> {
     let name = values.objective.as_deref().unwrap_or("snapshot");
     let known: Vec<&str> = OBJECTIVE_IDS

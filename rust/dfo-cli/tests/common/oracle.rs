@@ -90,10 +90,36 @@ pub fn home_root() -> &'static Path {
 }
 
 /// The page's bytes after a run, then the file is removed so the next CLI can write the same path.
+///
+/// The product name is normalised here (see [`product_name`]): a page's only name-dependent text is the report footer,
+/// and both answers still fail on every other byte.
 pub fn take_page(path: &Path) -> Vec<u8> {
     let bytes = fs::read(path).expect("the CLI wrote its page");
     fs::remove_file(path).expect("cleanup the page");
-    bytes
+    product_name_bytes(&bytes)
+}
+
+/// The ONE text the two CLIs print differently by design: the product name. DFO Forge's CLI says `dfo-forge`; the JS
+/// reference, which is not renamed, says `dfo-dps`. Tests rewrite that exact token in BOTH answers to one canonical
+/// marker so a comparison still catches every other byte. Only the program-name positions are rewritten - the `doctor`
+/// pin line and the report footer - never a path such as `dfo-dps-report.html` (both CLIs still write that name).
+///
+/// `the_program_name_normalisation_cannot_hide_another_difference` in `tests/doctor.rs` proves a difference elsewhere
+/// still fails.
+pub fn product_name(text: &str) -> String {
+    text.replace("dfo-dps  |  model ", "PROGRAM  |  model ")
+        .replace("dfo-forge  |  model ", "PROGRAM  |  model ")
+        .replace("dfo-dps - model from ", "PROGRAM - model from ")
+        .replace("dfo-forge - model from ", "PROGRAM - model from ")
+}
+
+/// [`product_name`] over a page's bytes; a non-UTF-8 page is returned untouched (no page is, but lossy decoding would
+/// hide a real difference).
+pub fn product_name_bytes(bytes: &[u8]) -> Vec<u8> {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => product_name(text).into_bytes(),
+        Err(_) => bytes.to_vec(),
+    }
 }
 
 /// The JS CLI at the repository root with a fixture root as `DAGGER_USER_DATA`.
@@ -195,7 +221,7 @@ pub fn rust_cwd(args: &[&str], cwd: &Path) -> Output {
 
 /// The Rust CLI in `cwd` with the caller's own env.
 pub fn rust_at(cwd: &Path, args: &[&str], env: &[(&str, &OsStr)]) -> Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_dfo-cli"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_dfo-forge"));
     command.args(args).current_dir(cwd);
     apply_env(&mut command, env);
     command.output().expect("the Rust CLI binary runs")

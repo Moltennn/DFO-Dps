@@ -1,14 +1,28 @@
 # Usage
 
-This is the long-form workflow guide. The README is the quick start; `--help`
-is the complete flag list.
+This is the long-form workflow guide for **DFO Forge**. The README is the quick
+start; `--help` is the complete flag list.
+
+Install once with Rust 1.88+ (no Node needed to use the CLI):
+
+```bash
+cargo install --locked --path rust/dfo-cli
+dfo-forge --help
+```
+
+From a checkout, `./dfo-forge` does the same through the wrapper (it runs
+`cargo build --release` first when the binary is missing or stale). The
+`node bin/dfo-dps.js` form is the JavaScript **test reference** for the Rust
+port; the `import ... from './src/...'` library examples in sections 11-13 are
+that reference too, not a supported API. Differences a user notices are listed
+in the README (`Pages are create-only`, stricter flags, no Firmament cache).
 
 ## 1. Saves and character input
 
 ```bash
-./dfo-dps saves
-./dfo-dps doctor
-./dfo-dps doctor --save SAVE4
+./dfo-forge saves
+./dfo-forge doctor
+./dfo-forge doctor --save SAVE4
 ```
 
 `--save` takes a slot (`SAVE4`, `4`), a save folder, or a `SaveData.txt` path.
@@ -23,7 +37,7 @@ A save is a snapshot. If the character's gear or gems changed in game, export a
 live snapshot from the debug client and pass it as a JSON file:
 
 ```bash
-./dfo-dps build --save /tmp/live.json --first-blow
+./dfo-forge build --save /tmp/live.json --first-blow
 ```
 
 The live shape the importer understands uses `equipSlots` and `_enchantMods`.
@@ -35,10 +49,10 @@ separate Assassin/Opening Strike scenario).
 ## 2. Rules and targets
 
 ```bash
-./dfo-dps build --save SAVE4
-./dfo-dps build --save SAVE4 --target tough
-./dfo-dps build --save SAVE4 --target breach
-./dfo-dps build --save SAVE4 --target boss --health 20000 --armor 60 --traits curbing,warded
+./dfo-forge build --save SAVE4
+./dfo-forge build --save SAVE4 --target tough
+./dfo-forge build --save SAVE4 --target breach
+./dfo-forge build --save SAVE4 --target boss --health 20000 --armor 60 --traits curbing,warded
 ```
 
 - `soft`, `tough`, `armoured`, `human` are reference foes.
@@ -56,14 +70,14 @@ separate Assassin/Opening Strike scenario).
 Common combat switches:
 
 ```bash
-./dfo-dps build --save SAVE4 --core classic
-./dfo-dps build --save SAVE4 --offline
-./dfo-dps build --save SAVE4 --no-rri
-./dfo-dps build --save SAVE4 --swing StrikeUp
-./dfo-dps build --save SAVE4 --behind
-./dfo-dps build --save SAVE4 --backstab 0.5
-./dfo-dps build --save SAVE4 --health-share 0.4
-./dfo-dps build --save SAVE4 --self-health-share 0.4
+./dfo-forge build --save SAVE4 --core classic
+./dfo-forge build --save SAVE4 --offline
+./dfo-forge build --save SAVE4 --no-rri
+./dfo-forge build --save SAVE4 --swing StrikeUp
+./dfo-forge build --save SAVE4 --behind
+./dfo-forge build --save SAVE4 --backstab 0.5
+./dfo-forge build --save SAVE4 --health-share 0.4
+./dfo-forge build --save SAVE4 --self-health-share 0.4
 ```
 
 `--swing` defaults to the game's six-way click/hold draw; a single direction
@@ -93,12 +107,12 @@ CLI. `--build` is a different flag (the firmament build id). Pass
 ## 3. Build, rank, report, compare
 
 ```bash
-./dfo-dps build --save SAVE4 --target breach
-./dfo-dps build --save SAVE4 --target breach --json
-./dfo-dps rank weapons --save SAVE4 --target breach --top 10
-./dfo-dps report --save SAVE4 --target breach --out breach.html
-./dfo-dps compare --save SAVE4 --stat strength=110
-./dfo-dps compare --save SAVE4 --weapon 121:9
+./dfo-forge build --save SAVE4 --target breach
+./dfo-forge build --save SAVE4 --target breach --json
+./dfo-forge rank weapons --save SAVE4 --target breach --top 10
+./dfo-forge report --save SAVE4 --target breach --out breach.html
+./dfo-forge compare --save SAVE4 --stat strength=110
+./dfo-forge compare --save SAVE4 --weapon 121:9
 ```
 
 `build` prints the per-hit card, hit/crit, damage range, per-swing, DPS,
@@ -110,10 +124,10 @@ change against the same scenario.
 ## 4. Scale and tradeoff
 
 ```bash
-./dfo-dps scale --save SAVE4 --stat strength
-./dfo-dps scale --save SAVE4 --skill 29 --from 100 --to 200 --step 10
-./dfo-dps scale --save SAVE4 --all
-./dfo-dps tradeoff --save SAVE4
+./dfo-forge scale --save SAVE4 --stat strength
+./dfo-forge scale --save SAVE4 --skill 29 --from 100 --to 200 --step 10
+./dfo-forge scale --save SAVE4 --all
+./dfo-forge tradeoff --save SAVE4
 ```
 
 `scale` walks one channel from its current value to its cap, or summarizes
@@ -124,12 +138,12 @@ target-dependent; keep the same target when comparing runs.
 ## 5. Theory and the legal gear frontier
 
 ```bash
-./dfo-dps theory
-./dfo-dps theory --blade 121 --race redguard
-./dfo-dps theory --vampire
-./dfo-dps theory --firmament
-./dfo-dps theory --gear-lb 250 --gear-cs 370 --blade 123
-./dfo-dps theory --json
+./dfo-forge theory
+./dfo-forge theory --blade 121 --race redguard
+./dfo-forge theory --vampire
+./dfo-forge theory --firmament
+./dfo-forge theory --gear-lb 250 --gear-cs 370 --blade 123
+./dfo-forge theory --json
 ```
 
 `theory` is a level-45 long-blade ceiling: attributes 100, raw weapon skill and
@@ -154,11 +168,11 @@ proof of the global optimum.
 ## 6. Weapon ceiling page
 
 ```bash
-./dfo-dps weapons
-./dfo-dps weapons --categories
-./dfo-dps weapons --vampire --firmament
-./dfo-dps weapons --out /tmp/weapons.html
-./dfo-dps skills                     # alias for the same page
+./dfo-forge weapons
+./dfo-forge weapons --categories
+./dfo-forge weapons --vampire --firmament
+./dfo-forge weapons --out /tmp/weapons.html
+./dfo-forge skills                     # alias for the same page
 ```
 
 The page compares every weapon template at the legal max profile, then shows
@@ -171,15 +185,15 @@ assumptions are visible in the columns and in `METHOD.md`.
 ## 7. Imprints and enchant planning
 
 ```bash
-./dfo-dps imprints
-./dfo-dps imprints --family LongBlade
-./dfo-dps imprints --sort uncapped
-./dfo-dps imprints --out /tmp/imprints.html
+./dfo-forge imprints
+./dfo-forge imprints --family LongBlade
+./dfo-forge imprints --sort uncapped
+./dfo-forge imprints --out /tmp/imprints.html
 
-./dfo-dps enchant-plan --weapon 123
-./dfo-dps enchant-plan --weapon 121 --soul-gem --out /tmp/enchant.html
-./dfo-dps enchant-plan --all --cap-aware --soul-gem
-./dfo-dps enchant-plan --all --uncapped --soul-gem
+./dfo-forge enchant-plan --weapon 123
+./dfo-forge enchant-plan --weapon 121 --soul-gem --out /tmp/enchant.html
+./dfo-forge enchant-plan --all --cap-aware --soul-gem
+./dfo-forge enchant-plan --all --uncapped --soul-gem
 ```
 
 `imprints` ranks the Reforge's Rare imprint powers per weapon family. An
@@ -206,23 +220,24 @@ long-run mean (the line's exact share); the plain card floors each blow.
 ## 8. Firmament and real loadouts
 
 ```bash
-./dfo-dps firmament
-./dfo-dps firmament --build longblade
-./dfo-dps firmament --build bow,destruction --stars 60 --out /tmp/plans.html
-./dfo-dps firmament --refresh
+./dfo-forge firmament
+./dfo-forge firmament --build longblade
+./dfo-forge firmament --build bow,destruction --stars 60 --out /tmp/plans.html
+./dfo-forge firmament --refresh
 
-./dfo-dps loadout --uncapped
-./dfo-dps loadout --cap-aware
-./dfo-dps loadout --cap-aware --encounter skyketch
-./dfo-dps loadout --cap-aware --all-encounters
-./dfo-dps loadout --uncapped --shortlist 5 --trials 1000 --seed 0
-./dfo-dps loadout --cap-aware --encounter breach --shortlist 5 --json
+./dfo-forge loadout --uncapped
+./dfo-forge loadout --cap-aware
+./dfo-forge loadout --cap-aware --encounter skyketch
+./dfo-forge loadout --cap-aware --all-encounters
+./dfo-forge loadout --uncapped --shortlist 5 --trials 1000 --seed 0
+./dfo-forge loadout --cap-aware --encounter breach --shortlist 5 --json
 ```
 
 `firmament` plans the real star tree for `longblade`, `shortblade`, `axe`,
-`blunt`, `bow`, `fists`, `destruction` and `tank`. Plans are cached in
-`.cache/firmament-plans.json` keyed by a source fingerprint; `--refresh`
-recomputes.
+`blunt`, `bow`, `fists`, `destruction` and `tank`. The Rust CLI keeps no
+disk cache: every run recomputes (the card starts `Firmament plans`, not the
+JavaScript's `N cached, M computed`), and `--refresh` is accepted but changes
+nothing. The JavaScript reference caches in `.cache/firmament-plans.json`.
 
 `loadout` chains the real tree, the enchant plan and the best eligible
 imprint. The capped side applies the encounter purse: depth `15 × ref`, refill
@@ -260,13 +275,13 @@ not a prediction of sampled kill rate.
 ## 9. Spells and weapon enchantments
 
 ```bash
-./dfo-dps spell --save SAVE4 --spell Fireball
-./dfo-dps spell --save SAVE4 --spell Wildfire --seconds 60
-./dfo-dps spell --save SAVE4 --list
-./dfo-dps spell --save SAVE4 --all-spells
-./dfo-dps spells --save SAVE4 --out /tmp/spells.html
-./dfo-dps spells --theory --potency 30 --pierce 10 --cast-speed 15
-./dfo-dps enchant --save SAVE4
+./dfo-forge spell --save SAVE4 --spell Fireball
+./dfo-forge spell --save SAVE4 --spell Wildfire --seconds 60
+./dfo-forge spell --save SAVE4 --list
+./dfo-forge spell --save SAVE4 --all-spells
+./dfo-forge spells --save SAVE4 --out /tmp/spells.html
+./dfo-forge spells --theory --potency 30 --pierce 10 --cast-speed 15
+./dfo-forge enchant --save SAVE4
 ```
 
 Spell records come from `ARENA2/SPELLS.STD` through the launcher's
@@ -282,15 +297,15 @@ limitations in the README and the `W-PROC-BUDGET` waiver.
 ## 10. Graphs and the Combat Probe
 
 ```bash
-./dfo-dps graph --save SAVE4 --target breach \
+./dfo-forge graph --save SAVE4 --target breach \
   --series stat:strength,stat:speed --from 50 --to 100 --step 5 \
   --out /tmp/stats.html
 
-./dfo-dps graph --theory --series star:strength --from 0 --to 15 --step 1
+./dfo-forge graph --theory --series star:strength --from 0 --to 15 --step 1
 
-./dfo-dps probe
-./dfo-dps probe some-capture.json
-./dfo-dps probe --old
+./dfo-forge probe
+./dfo-forge probe some-capture.json
+./dfo-forge probe --old
 ```
 
 `graph` writes a standalone SVG chart (default `graph.html`). Series syntax is
@@ -305,9 +320,9 @@ See `METHOD.md` for the capture fields and the estimate rules.
 ## 11. Score one build with `objective`
 
 ```bash
-./dfo-dps objective --theory --target soft
-./dfo-dps objective --theory --target soft --health 12000 --objective stochastic-ttk --seed 7 --trials 1000
-./dfo-dps objective --theory --target breach --players 3 --health 36000 --objective stochastic-relay --json --samples
+./dfo-forge objective --theory --target soft
+./dfo-forge objective --theory --target soft --health 12000 --objective stochastic-ttk --seed 7 --trials 1000
+./dfo-forge objective --theory --target breach --players 3 --health 36000 --objective stochastic-relay --json --samples
 ```
 
 Choose `snapshot` (default), `fight`, `relay`, `relay-ceiling`,
@@ -338,7 +353,7 @@ Carry is on by default; `--no-carry` selects the stateless floor sampler. The
 shortlist (`loadout --shortlist`) always samples with carry, so `--no-carry`
 there exits with status 2. Deterministic objectives print `Carry: n/a`.
 
-### Stochastic fight simulation (library)
+### Stochastic fight simulation (test reference)
 
 The library API also exposes the seeded, blow-by-blow simulation over the
 Stage 3.1 per-blow distribution.
@@ -398,7 +413,7 @@ const paired = simulatePairedFights([{ id: 'a', ch: a }, { id: 'b', ch: b }], { 
   the relay bucket/ward and incoming damage are outside this simulator.
 - 1,000 fights at a 12,000 pool take about 3 seconds in Node 22.
 
-## 12. Relay claim engine (library)
+## 12. Relay claim engine (test reference)
 
 Stage 3.3 adds a streaming implementation of the relay's per-player claim law. It consumes one claim at a time; it
 does not precompute a DPS approximation and keeps no claim history.
@@ -440,7 +455,7 @@ fight.time; fight.claimTime; fight.lastAttackAt; fight.termination; fight.censor
   saturation, elapsed time and termination counts across seeded trials. `offered = dealt + clipped + refusedDamage`; a refused
   claim's damage is not in `clipped` because the game never reached the purse.
 
-## 13. Flow and Many Endings in relay fights (library)
+## 13. Flow and Many Endings in relay fights (test reference)
 
 Stage 3.4 adds the two loot mechanics to `simulateRelayFight`; the claim engine is unchanged.
 
@@ -489,7 +504,10 @@ HTML pages default to the current directory:
 | `graph` | `graph.html` |
 | `probe` | `probe.html` |
 
-Use `--out <file>` to override. Many table commands accept `--json`; use
+Use `--out <file>` to override. The Rust CLI's page writes are **create-only**:
+an existing path is refused with exit 2 and left untouched (the JavaScript
+reference truncates it), so delete the old page or choose a new name. Many table
+commands accept `--json`; use
 `--help` for the exact command. With `--json` stdout is exactly one JSON document
 (no text card before it). `enchant`, `scale`, `spell` and `tradeoff` used to print the
 text table first and then the JSON; parse their stdout directly now. A command that
@@ -513,6 +531,10 @@ Without an allowance the row is labelled `Time to kill (per-hit-capped ceiling)`
 
 ## 15. First-run troubleshooting
 
+- **`cannot write <file>`**: page writes are create-only. Delete the old page
+  or pass a new `--out`; the Rust CLI never truncates an existing file.
+- **`cargo: command not found`**: install Rust 1.88+ (`https://rustup.rs`) to
+  build the CLI. The JavaScript reference still runs with Node 18+.
 - **No saves found**: set `DAGGER_USER_DATA` or pass `--save` explicitly;
   `doctor` prints the path it used.
 - **Spell page is empty**: `ARENA2/SPELLS.STD` is not configured; set

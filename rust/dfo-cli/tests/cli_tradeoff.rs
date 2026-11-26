@@ -356,7 +356,7 @@ fn help_lists_the_tradeoff_command() {
     let got = rust(&["--help"], &root);
     assert_eq!(got.status.code(), Some(0));
     let text = String::from_utf8_lossy(&got.stdout);
-    for flag in ["dfo-cli tradeoff", "speed/damage", "--json"] {
+    for flag in ["dfo-forge tradeoff", "speed/damage", "--json"] {
         assert!(text.contains(flag), "help names {flag}");
     }
     fs::remove_dir_all(&root).expect("cleanup");

@@ -104,7 +104,7 @@ deterministic ranking objectives; these keep their own metrics. In particular
 not the card's proc-inclusive totals. Pricing/loadout card baselines and the
 benchmark's `cardDps` selector keep the pre-budget ceiling. The separate
 loadout purse summary (including its weapon-TTK fallback) is unchanged.
-`dfo-dps objective` scores one build on any of these objectives or on
+`dfo-forge objective` scores one build on any of these objectives or on
 `stochastic-ttk`, `kill-probability` or `stochastic-relay`. An explicit
 `--health` is the total pool, not multiplied by `--players`.
 The sampled objectives start at 1,000 trials, the only

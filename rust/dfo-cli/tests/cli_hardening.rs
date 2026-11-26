@@ -197,7 +197,7 @@ fn an_invalid_utf8_argument_is_a_usage_error() {
     // Node decodes argv as UTF-8 and replaces an invalid byte with U+FFFD; `std::env::args` would panic on it. Both
     // CLIs refuse the unknown option and exit 2.
     let bad = std::ffi::OsStr::from_bytes(b"--st\xfft");
-    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_dfo-cli"));
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_dfo-forge"));
     command.arg(bad).current_dir(&root);
     command.env("HOME", common::home_root());
     command.env("DAGGER_USER_DATA", &root);
@@ -307,7 +307,7 @@ fn a_closed_stdout_keeps_the_js_exit_status() {
     // broken pipe. Both CLIs answer 0 here.
     let root = temp_root("pipe");
     let js = common::repo_root().join("bin").join("dfo-dps.js");
-    let rust = env!("CARGO_BIN_EXE_dfo-cli");
+    let rust = env!("CARGO_BIN_EXE_dfo-forge");
     for command in [
         format!("node {} rank", js.display()),
         format!("{rust} rank"),
@@ -343,7 +343,7 @@ fn a_closed_stdout_keeps_the_js_exit_status() {
 fn home_unset_is_the_os_user_database() {
     let root = temp_root("home");
     let js = common::repo_root().join("bin").join("dfo-dps.js");
-    let rust = env!("CARGO_BIN_EXE_dfo-cli");
+    let rust = env!("CARGO_BIN_EXE_dfo-forge");
     let run = |js_side: bool, home: Option<&str>| {
         let (program, prefix) = if js_side {
             ("node", Some(js.clone()))

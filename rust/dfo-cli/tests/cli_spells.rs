@@ -597,7 +597,7 @@ fn help_lists_the_spells_command() {
     assert_eq!(got.status.code(), Some(0));
     let text = String::from_utf8_lossy(&got.stdout);
     for line in [
-        "dfo-cli spells",
+        "dfo-forge spells",
         "spells page written:",
         "No standard damage spells found",
         "--data <dir>",

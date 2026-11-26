@@ -1,12 +1,18 @@
 [package]
+# The package is the crate; the installed command is `dfo-forge`, the product name (DFO Forge).
 name = "dfo-cli"
 version = "0.1.0"
 edition = "2021"
 # `slice::as_chunks` (dfo-core's SPELLS.STD reader) is the newest std call in the workspace: 1.88.
 rust-version = "1.88"
-description = "Thin CLI over dfo-core (milestone R8)"
+description = "DFO Forge: DFO Online combat DPS and build lab, the command line over dfo-core"
 license = "MIT"
 publish = false
+
+# `cargo install --path rust/dfo-cli` puts this name on PATH.
+[[bin]]
+name = "dfo-forge"
+path = "src/main.rs"
 
 [dependencies]
 dfo-core = { path = "../dfo-core" }

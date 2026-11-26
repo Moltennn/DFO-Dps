@@ -1,5 +1,11 @@
 # dfo-core (Rust), milestones R1 and R2
 
+The everyday command is the Rust CLI: `cargo install --locked --path rust/dfo-cli` installs `dfo-forge` (the product is
+DFO Forge; the crate is `dfo-cli`). `./dfo-forge` in the repository root builds it with `cargo build --release` when
+needed and runs it. The JS CLI (`node bin/dfo-dps.js`) is kept as the differential test reference only; every CLI test
+below spawns it as the oracle, so `node` is needed to run the tests, not to use the tool. Section "R8" below lists the
+known differences from the JS CLI.
+
 ## The Forge API (`forge`, `forge_gear`)
 
 `dfo_core::forge` is the GUI-facing surface described in `rust/FORGE-API.md`: the Firmament previews, application and
@@ -22,10 +28,10 @@ turned into 0. The floor and the Firmament's share read the PERMANENT stats, as 
 tested: `tests/sidebar.rs` drives `tests/sidebar_oracle.mjs` over the public composition, and the script's header lists
 what this repository cannot execute.
 
-## R8: the CLI, the `build`, `saves`, `rank`, `doctor`, `probe`, `graph`, `report`, `firmament`, `imprints`, `enchant`,
-`enchant-plan`/`gear-plan`, `tradeoff`, `spell`, `spells`, `theory`, `weapons`/`skills` and `loadout`/`real-dps` slice
+## R8: the CLI — `dfo-forge`
 
-`dfo-cli` (`rust/dfo-cli`) is the R8 CLI slice: the JS `src/cli.js` `build` card, `saves` listing, `doctor` summary,
+The installed command is `dfo-forge` (`cargo install --locked --path rust/dfo-cli`); the crate is `dfo-cli` in
+`rust/dfo-cli`. It covers the JS `src/cli.js` `build` card, `saves` listing, `doctor` summary,
 `rank` path, `compare` table, Combat Probe `probe` page, `graph` page, `src/report.js` `report` page, the
 `src/firmament.js` `firmament` plans page, the `imprints` rankings page, the `enchant` weapon card, the
 `enchant-plan`/`gear-plan` per-piece plan (single and `--all`), the `tradeoff` speed-vs-damage card, the singular `spell`
@@ -68,6 +74,10 @@ bullets below and in the per-command notes.
   "The JSON parser" below).
 - **Number grouping is en-US, pinned.** `grouped_number` always groups with commas; the JS `toLocaleString()` follows the
   host locale.
+- **The program name is `dfo-forge`.** The `doctor` pin line and the report footer say `dfo-forge`; the unrenamed JS
+  reference says `dfo-dps`. The CLI tests normalise exactly that token (`common::product_name`) and compare every other
+  byte; `tests/doctor.rs::the_program_name_normalisation_cannot_hide_another_difference` proves another difference still
+  fails. The default report page name stays `dfo-dps-report.html` on both sides.
 - **Probe page escaping.** The page escapes capture-derived text that the JS inserts raw. A safe capture's page is
   byte-identical.
 - **`theory` on a reference foe exits 2.** `theory --target tough|soft|human` crashes the JS card on
@@ -147,21 +157,21 @@ Figures as reported at the 23 Nov audit. The docs edit that adds this section ra
   - Windows and macOS paths;
   - the live-client Stage 3.9.
 
-- **What runs.** `dfo-cli saves` (the `src/cli.js:934-939` table, newest first, `No saves found.` when empty),
-  `dfo-cli doctor` (`src/cli.js:941-959`: the `SOURCE` pin, the save slots, then the imported character's label,
+- **What runs.** `dfo-forge saves` (the `src/cli.js:934-939` table, newest first, `No saves found.` when empty),
+  `dfo-forge doctor` (`src/cli.js:941-959`: the `SOURCE` pin, the save slots, then the imported character's label,
   ruleset, level/reflexes/mastery, weapon, live stats and weapon/crit skill; a missing or unreadable save is one
-  `save: <message>` line and still exit 0), `dfo-cli build [--save ...] [--theory ...]`, text or `--json` (the JS
+  `save: <message>` line and still exit 0), `dfo-forge build [--save ...] [--theory ...]`, text or `--json` (the JS
   `printBuild` card vs `summary()`; text is the default, as `build` is the default command),
-  `dfo-cli rank [weapons] [--save ...] [--theory ...]`, text or `--json`, with the theory target remap (`armoured` is
+  `dfo-forge rank [weapons] [--save ...] [--theory ...]`, text or `--json`, with the theory target remap (`armoured` is
   the gate for the theory character only; a save keeps it as the reference foe, `src/cli.js:505`),
-  `dfo-cli compare ... --stat name=value [--weapon ...]` (`src/cli.js:2277-2304`, the four-column before/after table),
-  `dfo-cli scale` (`src/cli.js:2128-2203`: one channel's `scaleRange` curve over a JSON copy of the character through
+  `dfo-forge compare ... --stat name=value [--weapon ...]` (`src/cli.js:2277-2304`, the four-column before/after table),
+  `dfo-forge scale` (`src/cli.js:2128-2203`: one channel's `scaleRange` curve over a JSON copy of the character through
   `analyze`, text `printScale` or the `--json` rows, or `--all`'s current-to-cap summary; `--all --json` is refused as
-  the JS does), `dfo-cli graph` (`src/cli.js:2057-2127`, one SVG line per `--series` over `--from`..`--to`), `dfo-cli report`
-  (`src/cli.js:2263-2275`, the single-file `buildReport` page), `dfo-cli spells` (`src/cli.js:1480-1514`, the spell
-  ceiling page), `dfo-cli spell` (`src/cli.js:1516-1599`, the rotation card, the resolved spellbook table and the
-  `--all-spells` price table), `dfo-cli weapons`/`skills` (`src/cli.js:1601-1804`, the weapon ceiling page) and
-  `dfo-cli loadout`/`real-dps` (`src/cli.js:961-1082`, the every-template report with its page, or the `--shortlist`
+  the JS does), `dfo-forge graph` (`src/cli.js:2057-2127`, one SVG line per `--series` over `--from`..`--to`), `dfo-forge report`
+  (`src/cli.js:2263-2275`, the single-file `buildReport` page), `dfo-forge spells` (`src/cli.js:1480-1514`, the spell
+  ceiling page), `dfo-forge spell` (`src/cli.js:1516-1599`, the rotation card, the resolved spellbook table and the
+  `--all-spells` price table), `dfo-forge weapons`/`skills` (`src/cli.js:1601-1804`, the weapon ceiling page) and
+  `dfo-forge loadout`/`real-dps` (`src/cli.js:961-1082`, the every-template report with its page, or the `--shortlist`
   sampled ranking card), plus every documented validation message of
   `validateFlags`, the `starOptions`/`--weapon` checks, and
   `--offline`/`--passive`/`--bare`/`--no-effects`/`--base-stats` on the imported character. `--json`/`--out` are
@@ -172,18 +182,18 @@ Figures as reported at the 23 Nov audit. The docs edit that adds this section ra
   `SAVE<n>` slot or a number) and `loadSave`. The document is opened once for reading, parsed and dropped; the character
   is `dfo_core::save::character_from_save`, so the core keeps doing no file I/O and nothing writes, exports or retains
   a save (AGENTS.md rule 11).
-- **The probe page.** `dfo-cli probe` reads a Combat Probe capture read-only, prints the JS card or `--json`, and
+- **The probe page.** `dfo-forge probe` reads a Combat Probe capture read-only, prints the JS card or `--json`, and
   writes the report page the JS does (`probe.html`, or `--out <file>`), assembled from the `src/graph.js` port in
   `src/graph.rs`. The write is create-only (`O_CREAT|O_EXCL`): an existing file is refused with exit 2 and left
   untouched - the capture, an unrelated save or report, a hard/symlink/dangling alias - where the JS `writeFileSync`
   truncates. Reports must target a new path; that is the one intentional CLI difference on this path. The page's other
   deviation is escaping capture-derived text the JS inserts raw; a safe capture's page is byte-identical.
-- **The graph and report pages.** `dfo-cli graph` prices one `--series` channel over `--from`..`--to` and writes
-  `graph.html` (or `--out`) from the `src/graph.js` port; `dfo-cli report` renders `src/report.js` `buildReport` at the
+- **The graph and report pages.** `dfo-forge graph` prices one `--series` channel over `--from`..`--to` and writes
+  `graph.html` (or `--out`) from the `src/graph.js` port; `dfo-forge report` renders `src/report.js` `buildReport` at the
   scenario the other page commands share and writes `dfo-dps-report.html` (or `--out`). Both pages go through the
   same create-only writer as `probe` (`O_CREAT|O_EXCL`): an existing file is refused with exit 2 and left untouched,
   where the JS `writeFileSync` truncates. `report` inserts only what the JS escapes, so a safe page is byte-identical.
-- **The firmament page.** `dfo-cli firmament [--build <id,...>] [--stars <n>] [--refresh] [--json] [--out <file>]`
+- **The firmament page.** `dfo-forge firmament [--build <id,...>] [--stars <n>] [--refresh] [--json] [--out <file>]`
   (`src/cli.js:1390-1441`) plans each preset at the purse through `dfo_core::firmament::plan_build`, prints the JS
   `Firmament plans` card (or its `{ build, name, start, startName, stars, budget, freeStars, keys, totals }` document),
   and writes `firmament.html` (or `--out`) from `src/firmament.rs`'s sections through the same create-only writer.
@@ -191,7 +201,7 @@ Figures as reported at the 23 Nov audit. The docs edit that adds this section ra
   and its first line reads `Firmament plans (N cached, M computed)`. This CLI keeps no disk cache - a plan is a pure function
   of build and purse - so it replans every run, `--refresh` changes nothing, and the line is the bare `Firmament plans`;
   the plans and page are byte-identical. `dfo-cli/tests/cli_firmament.rs` pins that against the JS CLI.
-- **The imprints page.** `dfo-cli imprints [--family <key>] [--sort <boss|uncapped|conditional>] [--uncapped]
+- **The imprints page.** `dfo-forge imprints [--family <key>] [--sort <boss|uncapped|conditional>] [--uncapped]
   [--cap-aware] [--vampire] [--firmament] [--json] [--out <file>]` (`src/cli.js:1219-1263`) ranks every Weapon
   Legendary's power on each family's best max-profile weapon through `dfo_core::imprints::rank_all`, prints the JS card
   (or the JS `--json` document), and writes `imprints.html` (or `--out`, renaming the `--out` default as `probe`/`graph`
@@ -200,7 +210,7 @@ Figures as reported at the 23 Nov audit. The docs edit that adds this section ra
   `--family` is the JS stderr line and exit 2, and `--family ''` keeps every family (falsy in the JS `?`). No save is
   read. `dfo-cli/tests/cli_imprints.rs` pins the whole command against the JS CLI and `dfo-cli/tests/imprints.rs` the
   renderer.
-- **The enchant card.** `dfo-cli enchant [--theory] [--save ...] [options] [--json]` (`src/cli.js:1449-1477`) prints the
+- **The enchant card.** `dfo-forge enchant [--theory] [--save ...] [options] [--json]` (`src/cli.js:1449-1477`) prints the
   equipped weapon's enchantment rows and its Cast When Strikes price (the card is `src/enchant.rs` `enchant::text`, the
   `--json` object `enchant::document`; both are pure data in and strings out and are pinned by `tests/enchant.rs`). The
   procs come from `dfo_core::enchants::strike_enchantments` over the launcher's `SPELLS.STD` (`saves::load_spellbook`),
@@ -211,7 +221,7 @@ Figures as reported at the 23 Nov audit. The docs edit that adds this section ra
   written. `dfo-cli/tests/cli_enchant.rs` pins the whole command against the JS CLI (theory variants, text and `--json`,
   a save with no weapon, an armed save with and without a book, a nonzero Cast When Strikes price over a synthetic temp
   `SPELLS.STD`, and the flag refusals).
-- **The enchant plan.** `dfo-cli enchant-plan [--theory] [--weapon ...] [--shield <template|none|auto>] [--soul-gem]
+- **The enchant plan.** `dfo-forge enchant-plan [--theory] [--weapon ...] [--shield <template|none|auto>] [--soul-gem]
   [--group <undead|daedra|humanoid|animal>] [--repairs <n>] [--regen <n>] [--uncapped | --cap-aware | --all] [--json]
   [--out <file>]`, with `gear-plan` as the same branch, plans the per-piece enchantment priority fill from
   `dfo_core::enchant_plan::plan_enchants` (and `plan_matrix` for `--all`) and renders it through `src/enchant_plan.rs`
@@ -227,7 +237,7 @@ Figures as reported at the 23 Nov audit. The docs edit that adds this section ra
   read or written. `dfo-cli/tests/cli_enchant_plan.rs` pins the command against the JS CLI (text, `--json` and page for
   both modes, a synthetic `SPELLS.STD`, the default output names, the alias parity, the refusals and the create-only
   writer with a hard link and a symlink).
-- **The tradeoff card.** `dfo-cli tradeoff [--theory] [--save ...] [options] [--json]` (`src/cli.js:2204-2252`) prices
+- **The tradeoff card.** `dfo-forge tradeoff [--theory] [--save ...] [options] [--json]` (`src/cli.js:2204-2252`) prices
   `+5%` attack speed against `+5%` weapon damage over the Breach gate and five Curbing reference pools, then the top
   five weapons at the gate and at 1,000 HP, then the best weapon at twelve Curbing healths (the speed/damage crossover).
   The rows are `src/tradeoff.rs` `tradeoff::text`/`tradeoff::document` (pure data in and strings out, pinned by
@@ -238,7 +248,7 @@ Figures as reported at the 23 Nov audit. The docs edit that adds this section ra
   still rides the scenario. `dfo-cli/tests/cli_tradeoff.rs` pins the whole command against the JS CLI (theory text and
   `--json`, that override assertion, the shared scenario flags, an offline save, a live save with and without a
   synthetic `SPELLS.STD`, and the refusals).
-- **The singular `spell` cards.** `dfo-cli spell [--list | --all-spells | --spell <index|name>] [--theory]
+- **The singular `spell` cards.** `dfo-forge spell [--list | --all-spells | --spell <index|name>] [--theory]
   [--save ...] [--data <dir>] [--standard] [options] [--json]` (`src/cli.js:1516-1599`) prints one spell's rotation
   card, the resolved spellbook table (`--list`) or the priced table (`--all-spells`), text or `--json`, all rendered by
   `src/spell.rs` (pure data in and strings out, pinned by `tests/spell.rs`): the JS `characterLabel`, `cost` from
@@ -262,7 +272,7 @@ Figures as reported at the 23 Nov audit. The docs edit that adds this section ra
   and `--all-spells`, targets/level/potency/pierce/cast-speed/magicka/mana-limit/traits, `--spell` selection, the theory
   caster, a synthetic save whose `spells` mix stock indices and a custom record, the empty book (no config, a missing
   `--data`, a short `SPELLS.STD`, a debug-name-only book), and the refusals.
-- **The plural `spells` page.** `dfo-cli spells [--theory] [--save ...] [--data <dir>] [options] [--json] [--out
+- **The plural `spells` page.** `dfo-forge spells [--theory] [--save ...] [--data <dir>] [options] [--json] [--out
   <file>]` (`src/cli.js:1480-1514`) prices every standard damage spell plus the save's custom records with
   `dfo_core::spells::spell_rotation` at the requested window, ranks them by window DPS, and writes the `DFO spell
   ceiling` page (`spells.html`, or `--out`, through the same create-only writer) from `src/spells_report.rs` (pure data
@@ -353,7 +363,7 @@ Figures as reported at the 23 Nov audit. The docs edit that adds this section ra
   empty book in text and `--json`, the create-only writer, and the refusals. `dfo-cli/tests/weapons.rs` runs the whole
   `weapons`/`skills` command against the JS the same way over its own empty temp root: both page variants, both aliases,
   `--firmament`/`--vampire`/`--race`/`--level`, text and `--json`, both default page names and the create-only writer.
-- **The `theory` ceiling card.** `dfo-cli theory [options] [--json]` (`src/cli.js:1806-2054`) is the level-45
+- **The `theory` ceiling card.** `dfo-forge theory [options] [--json]` (`src/cli.js:1806-2054`) is the level-45
   long-blade ceiling card: the target/gear header, the five push stages, the `THEORY_CAPS` sheet, the attribute and
   skill/gear curves, the three Firmament tables, the legal gear frontier, the long-blade table and the result card,
   text or `--json`, all rendered by `src/theory.rs` (pure data in and strings out) from `dfo_core::theory`'s characters
@@ -368,7 +378,7 @@ Figures as reported at the 23 Nov audit. The docs edit that adds this section ra
   pair's stdout/stderr/exit 0); `tests/theory.rs`
   pins the stage overrides, the generated cap order and the reference-foe refusal without `node`.
   A missing `node` fails the tests rather than skipping them.
-- **The `weapons`/`skills` ceiling page.** `dfo-cli weapons [--categories] [--firmament] [--vampire] [--race <name>]
+- **The `weapons`/`skills` ceiling page.** `dfo-forge weapons [--categories] [--firmament] [--vampire] [--race <name>]
   [--level <n>] [--json] [--out <file>]`, with `skills` as the same branch under its own default page name
   (`src/cli.js:1601-1804`), is the level-45 weapon ceiling. [`weapons::render`] (`rust/dfo-cli/src/weapons.rs`, pure
   data in and HTML/JSON out) prices every melee template and the ten dual pairs through `analyze` at the real Firmament
@@ -381,7 +391,7 @@ Figures as reported at the 23 Nov audit. The docs edit that adds this section ra
   is create-only (an existing file is refused and left untouched, where the JS truncates). No save is read.
   `dfo-cli/tests/weapons.rs` pins the whole command byte for byte against the JS CLI: both variants, both aliases,
   `--firmament`/`--vampire`/`--race`/`--level`, text and `--json`, both default page names, and the create-only refusal.
-- **The `loadout`/`real-dps` report and shortlist.** `dfo-cli loadout [--uncapped | --cap-aware] [--encounter <id>]
+- **The `loadout`/`real-dps` report and shortlist.** `dfo-forge loadout [--uncapped | --cap-aware] [--encounter <id>]
   [--all-encounters] [--shortlist <K>] [--vampire] [sampling flags] [--json] [--out <file>]`, with `real-dps` as the
   same branch (`src/cli.js:961-1082`). Without `--shortlist` it prices every weapon template and hold configuration with
   `dfo_core::real_build::real_weapon_loadouts`, prints the two terminal cards ([`loadout::report_text`]), writes
@@ -1768,7 +1778,7 @@ Order chosen by dependency; each step ships only with vectors (or the upstream g
 7. **R8, CLI and reports** (`src/cli.js`, `src/report.js`, `src/graph.js`): I/O last, once the
    core is proven; keep it a thin layer over the library.
 
-Steps 2-7 are done; the sections above are the record of each, and the top of this file is the current `dfo-cli` state.
+Steps 2-7 are done; the sections above are the record of each, and the top of this file is the current `dfo-forge` state.
 
 Open choices for the maintainer: whether the (6.8 MB) vector files are committed or regenerated in
 CI, and whether `rust/` gets its own CI job (`cargo test`, `fmt --check`, `clippy -D warnings`).

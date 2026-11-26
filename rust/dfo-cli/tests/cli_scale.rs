@@ -626,7 +626,7 @@ fn help_lists_the_scale_command() {
     assert_eq!(got.status.code(), Some(0));
     let text = String::from_utf8_lossy(&got.stdout);
     for flag in [
-        "dfo-cli scale",
+        "dfo-forge scale",
         "--skill <id>",
         "--gear-skill <id>",
         "--stat <name>",

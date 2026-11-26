@@ -228,8 +228,10 @@ fn renders_the_report_page_like_the_js() {
     assert_eq!(cases.len(), js.len(), "the oracle answered every case");
     for (i, (case, want)) in cases.iter().zip(js).enumerate() {
         let got = scenario(case);
+        // Only the footer's program name is normalised (`common::product_name`); every other byte is compared as-is.
         assert_eq!(
-            got, want,
+            common::product_name(&got),
+            common::product_name(&want),
             "case {i} ({}) differs from src/report.js",
             case.name
         );

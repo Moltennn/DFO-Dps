@@ -575,8 +575,8 @@ fn help_lists_both_plan_commands() {
     assert_eq!(got.status.code(), Some(0));
     let text = String::from_utf8_lossy(&got.stdout);
     for flag in [
-        "dfo-cli enchant-plan",
-        "dfo-cli gear-plan",
+        "dfo-forge enchant-plan",
+        "dfo-forge gear-plan",
         "--shield <template|none|auto>",
         "--soul-gem",
         "--group <undead|daedra|humanoid|animal>",

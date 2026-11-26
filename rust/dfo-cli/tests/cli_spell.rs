@@ -838,7 +838,7 @@ fn help_lists_the_spell_modes() {
     assert_eq!(got.status.code(), Some(0));
     let text = String::from_utf8_lossy(&got.stdout);
     for line in [
-        "dfo-cli spell [--list | --all-spells | --spell <index|name>]",
+        "dfo-forge spell [--list | --all-spells | --spell <index|name>]",
         "--list",
         "--all-spells",
         "--spell <index|name>",

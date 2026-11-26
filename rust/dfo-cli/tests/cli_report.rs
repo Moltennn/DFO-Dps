@@ -493,7 +493,7 @@ fn help_lists_the_report_command() {
     let got = rust(&["--help"], &root);
     assert_eq!(got.status.code(), Some(0));
     let text = String::from_utf8_lossy(&got.stdout);
-    assert!(text.contains("dfo-cli report"), "help names the report");
+    assert!(text.contains("dfo-forge report"), "help names the report");
     assert!(text.contains("report written:"), "help describes the line");
     fs::remove_dir_all(&root).expect("cleanup");
 }
