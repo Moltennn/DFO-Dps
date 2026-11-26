@@ -590,6 +590,10 @@ pub fn real_weapon_loadouts_with(
     game_build: &str,
     profiles: &mut Profiles<'_>,
 ) -> Result<Vec<Value>, String> {
+    // mutation: equivalent - dropping this normalisation (`let game_build = game_build.to_owned();`) leaves every price
+    // unchanged: the value only ever reaches a scenario as `gameBuild`, and `model_blow::game_build` re-reads it with
+    // `is_str("14631")` (`model_blow.rs:807`), so `"1463"`/`""` already price as the cut. It is kept because
+    // `StageOpts::to_value` is a public shape that should carry the one name, not a caller's spelling.
     let game_build = crate::model_blow::game_build_name(game_build).to_owned();
     let mut out = Vec::new();
     for mode in modes {
