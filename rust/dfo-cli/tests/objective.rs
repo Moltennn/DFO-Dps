@@ -419,15 +419,22 @@ fn the_shipped_build_reaches_the_objective_scenarios() {
             "14631 must move this gear-heavy card: {args:?}"
         );
     }
-    // And the default is the cut: no flag prices the same bytes as an explicit 14512 run.
+    // And the default is the live build: no flag prices the same bytes as an explicit 14631 run, and differs from 14512.
     let mut plain: Vec<&str> = cases[0].to_vec();
     plain.extend_from_slice(&gear);
     let mut explicit: Vec<&str> = plain.clone();
-    explicit.extend_from_slice(&["--game-build", "14512"]);
+    explicit.extend_from_slice(&["--game-build", "14631"]);
     assert_eq!(
         String::from_utf8_lossy(&js_env(&plain, &root).stdout),
         String::from_utf8_lossy(&js_env(&explicit, &root).stdout),
-        "no --game-build is 14512"
+        "no --game-build is 14631"
+    );
+    let mut cut: Vec<&str> = plain.clone();
+    cut.extend_from_slice(&["--game-build", "14512"]);
+    assert_ne!(
+        String::from_utf8_lossy(&js_env(&plain, &root).stdout),
+        String::from_utf8_lossy(&js_env(&cut, &root).stdout),
+        "14512 still selects the cut"
     );
     let _ = fs::remove_dir_all(&root);
 }

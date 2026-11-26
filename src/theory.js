@@ -3,8 +3,8 @@
  *
  * Everything here is the game's own arithmetic:
  *   pcaao.js          /10 Strength, two-handed x2
- *   weaponMastery.js  past-100 climb, gear skill 0.44%/point capped at 320% ('14512');
- *                     from 0.1.14631 the gear is a flat add on the roll, not a percent ('14631', opt-in)
+ *   weaponMastery.js  past-100 climb, gear skill 0.44%/point capped at 320% ('14512', the vendored cut);
+ *                     from 0.1.14631 the gear is a flat add on the roll, not a percent ('14631', the default)
  *   combatStats.js    the hit and critical model
  *   swingLaw.js       cadence
  *   lootRarity.js     the affix bands and the skill-line maximum
@@ -21,6 +21,7 @@
  * formula reads 155 while the skill screen prints raw 200 + 15 = 215.
  */
 import { SKILLS, WEAPONS } from './data.js';
+import { DEFAULT_GAME_BUILD } from './model.js';
 import { characterFromSave } from './save.js';
 import { perfectSockets } from './sockets.js';
 import { UsageError } from './usageError.js';
@@ -50,7 +51,7 @@ export const DAMAGE_AFFIX_MAX = 40;
 export const GEAR_MASTERY_CAP = 320;
 export const GEAR_MASTERY_POINTS = Math.ceil(GEAR_MASTERY_CAP / 0.44);
 /** The points the gear's percent cap needs on this shipped build, or null when it has no percent cap. */
-export const gearMasteryPoints = (gameBuild = '14512') => (gameBuild === '14631' ? null : GEAR_MASTERY_POINTS);
+export const gearMasteryPoints = (gameBuild = DEFAULT_GAME_BUILD) => (gameBuild === '14512' ? GEAR_MASTERY_POINTS : null);
 
 /** The gear-mastery row of the cap sheet, per shipped build: '14512' is the min(320, gear x 0.44) percent,
  *  '14631' the flat roll add with no cap. The rest of the sheet is build-independent. */
@@ -64,8 +65,9 @@ const GEAR_CAPS = Object.freeze({
     formula: 'flat uniform[floor(s/10), floor(s/5)] on the roll; no cap',
   },
 });
-export function theoryCaps(gameBuild = '14512') {
-  const gear = GEAR_CAPS[gameBuild] ?? GEAR_CAPS[14512];
+export function theoryCaps(gameBuild = DEFAULT_GAME_BUILD) {
+  // An unknown string prices the LIVE build (the CLI refuses one before it gets here), so the fall-back is `14631`.
+  const gear = GEAR_CAPS[gameBuild] ?? GEAR_CAPS[DEFAULT_GAME_BUILD];
   return THEORY_CAPS.map((c) => (c.channel === 'Gear Long Blade' ? { ...c, ...gear } : c));
 }
 

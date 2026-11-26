@@ -39,7 +39,7 @@ import { LEVEL_CAP } from '../vendor/upstream/a3eb1605/src/systems/levelCap.js';
 import { legalFrontier, legalGear } from './maxprofile.js';
 import { AFFIX_DAMAGE_TOP, maxPointTotal, maxSingleSkill } from './gearProfile.js';
 import {
-  analyze, bossTarget, currentWeaponRow, gateTarget, GAME_BUILDS, marginals, rankAffixes, rankWeapons, referenceFoe,
+  analyze, bossTarget, currentWeaponRow, DEFAULT_GAME_BUILD, gateTarget, GAME_BUILDS, marginals, rankAffixes, rankWeapons, referenceFoe,
   syntheticWeapon, weaponOf,
 } from './model.js';
 import {
@@ -98,7 +98,7 @@ Common options:
   --blow-x <n>                        gate relayBlowX (Elite/Vestiges cap multiplier; default 1)
   --categories                        condense the weapons page to the best of each type, sorted by DPS
   --build <id,...>                    firmament build(s): longblade, shortblade, axe, blunt, bow, fists, destruction, tank
-  --game-build <14512|14631>          shipped build a card or plan is priced under (default: 14512)
+  --game-build <14512|14631>          shipped build a card or plan is priced under (default: 14631, the live game)
   --stars <n>                         firmament stars to spend (default 98)
   --refresh                           recompute firmament plans instead of using the cache
   --all                               enchant-plan: both matrices (--uncapped or --cap-aware picks one instead)
@@ -543,9 +543,9 @@ function scenarioOf(ch, values, traits, target) {
   return {
     target,
     core,
-    // The shipped build a card is priced under (CHANGELOG-MECHANICS.md GEAR-14631 / BRAND-14631). '14512' is the
-    // vendored cut and the default; '14631' opts into the drift finding and changes no default output.
-    gameBuild: String(values['game-build'] ?? '14512'),
+    // The shipped build a card is priced under (CHANGELOG-MECHANICS.md GEAR-14631 / BRAND-14631): '14631' is the
+    // live default, and only an explicit '14512' selects the vendored cut.
+    gameBuild: String(values['game-build'] ?? DEFAULT_GAME_BUILD),
     rri: !values['no-rri'],
     // `--traits` overrides; with none the target's own traits (a relay boss's) apply.
     traits: traits.length ? traits : null,
@@ -807,7 +807,7 @@ function printBuild(ch, r, targetPreset, values) {
     passiveOn: !values['no-passive'], stacks: n(values.stacks, 5), rhythm: values.rhythm,
     unaware: values.unaware, firstBlow: values['first-blow'], healthShare: n(values['health-share'], 1),
     backstabUptime: values.behind ? 1 : n(values.backstab, 0), critDamage: !values['no-crit-damage'], weapon: undefined,
-    rri: !values['no-rri'], gameBuild: String(values['game-build'] ?? '14512'),
+    rri: !values['no-rri'], gameBuild: String(values['game-build'] ?? DEFAULT_GAME_BUILD),
   });
   console.log(`\nWhat matters (${r.cap ? 'capped DPS' : 'DPS'})`);
   console.log(table(ms.map((m) => [m.label, `${m.delta >= 0 ? '+' : ''}${fmt(m.delta)}`, `${m.delta >= 0 ? '+' : ''}${fmt(m.pct)}%`]), ['Change', r.cap ? 'Capped DPS' : 'DPS', '%'], ['left', 'right', 'right']));
@@ -816,7 +816,7 @@ function printBuild(ch, r, targetPreset, values) {
     passiveOn: !values['no-passive'], stacks: n(values.stacks, 5), rhythm: values.rhythm,
     unaware: values.unaware, firstBlow: values['first-blow'], healthShare: n(values['health-share'], 1),
     backstabUptime: values.behind ? 1 : n(values.backstab, 0), critDamage: !values['no-crit-damage'],
-    rri: !values['no-rri'], gameBuild: String(values['game-build'] ?? '14512'),
+    rri: !values['no-rri'], gameBuild: String(values['game-build'] ?? DEFAULT_GAME_BUILD),
   });
   console.log(`\nAffixes / enchants (${r.cap ? 'capped DPS' : 'DPS'})`);
   console.log(table(affixes.map((m) => [m.label, `${m.delta >= 0 ? '+' : ''}${fmt(m.delta)}`, `${m.delta >= 0 ? '+' : ''}${fmt(m.pct)}%`]), ['Change', r.cap ? 'Capped DPS' : 'DPS', '%'], ['left', 'right', 'right']));
@@ -825,7 +825,7 @@ function printBuild(ch, r, targetPreset, values) {
     passiveOn: !values['no-passive'], stacks: n(values.stacks, 5), rhythm: values.rhythm,
     unaware: values.unaware, firstBlow: values['first-blow'], healthShare: n(values['health-share'], 1),
     backstabUptime: values.behind ? 1 : n(values.backstab, 0), critDamage: !values['no-crit-damage'],
-    rri: !values['no-rri'], gameBuild: String(values['game-build'] ?? '14512'),
+    rri: !values['no-rri'], gameBuild: String(values['game-build'] ?? DEFAULT_GAME_BUILD),
   }, { top: 8 });
   console.log('\nTop melee weapons');
   console.log(table(ranking.map((x) => [`${x.materialName} ${x.name}`, x.twoHanded ? '2H' : '1H', fmt(x.dps), fmt(x.cappedDps), fmt(x.perSwing), fmt2(x.aps)]), ['Weapon', 'Hands', 'DPS', 'Capped', 'Per swing', 'APS'], ['left', 'left', 'right', 'right', 'right', 'right']));
@@ -1979,7 +1979,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
 
     console.log('\nSkill and gear scaling');
     console.log(table(skillRows.map((x) => [x.label, x.value, fmt(x.dps), fmt(x.cappedDps), fmt(x.behind), fmt(x.perSwing), x.ttk ? `${fmt(x.ttk)} s` : '-']), ['Channel', 'Value', 'DPS', 'Capped', 'Behind', 'Per swing', 'TTK'], ['left', 'right', 'right', 'right', 'right', 'right', 'right']));
-    console.log(`The "formula cap" row is hypothetical: the legal single-skill maximum is 535 points (the weapon record + 17 Exalted slots); ${values['game-build'] === '14631' ? '0.1.14631 drops the 320% cap (the gear is flat, no percent)' : `the 320% mastery cap would need ${GEAR_MASTERY_POINTS} points`}.`);
+    console.log(`The "formula cap" row is hypothetical: the legal single-skill maximum is 535 points (the weapon record + 17 Exalted slots); ${values['game-build'] !== '14512' ? 'the live build drops the 320% cap (the gear is flat, no percent)' : `the 320% mastery cap would need ${GEAR_MASTERY_POINTS} points`}.`);
 
     // Firmament: the star tree's channels, 0..+15. The tree's stat gain also lifts the live
     // ceiling; its skill gain sits on top of effectiveSkill(raw).
@@ -2006,7 +2006,7 @@ Enchant plans by weapon type  |  ${r.label}  |  ${values['soul-gem'] ? `soul gem
     console.log('Speed is clamped to 98/100 by the swing law, so Speed past 100 does nothing for cadence. Luck\'s critical divisor steps at 125, so +15 Luck from 100 is dead for critical chance. Strength is the one that keeps paying: it adds damage and RRI swing speed.');
     console.log('\nFirmament skills (the +15 sits on top of effectiveSkill(raw); the sheet prints raw + mods)');
     console.log(table(skillFirmRows.map((x) => [x.name, ...x.cells.map((c) => fmt(c.r.dps)), ...x.cells.map((c) => fmt(c.r.cappedDps)), x.cells[x.cells.length - 1].sheet, x.cells[x.cells.length - 1].formula]), ['Skill', '+0 DPS', '+5 DPS', '+10 DPS', '+15 DPS', '+0 cap', '+5 cap', '+10 cap', '+15 cap', 'Sheet +15', 'Formula +15'], ['left', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right', 'right']));
-    console.log(`The sheet showing 215 is raw 200 + 15; the formula reads 155 (effectiveSkill(200)=140 + 15). Gear skill adds on top of both, and for Long Blade it converts at 0.44% per point${values['game-build'] === '14631' ? ', and on 0.1.14631 that percent is gone: the gear is a flat add on the roll, no cap' : ', capped at +320%'}.`);
+    console.log(`The sheet showing 215 is raw 200 + 15; the formula reads 155 (effectiveSkill(200)=140 + 15). Gear skill adds on top of both, and for Long Blade it converts at 0.44% per point${values['game-build'] !== '14512' ? ', and on the live build that percent is gone: the gear is a flat add on the roll, no cap' : ', capped at +320%'}.`);
 
     const firmDmgValues = [0, 10, 20, 30];
     const firmDmgCells = firmDmgValues.map((v) => run(make({ ...firmBase, starDamage: v })));

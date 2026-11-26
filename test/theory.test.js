@@ -29,7 +29,7 @@ test('the theory character is level 45, at the live stat and skill ceilings', ()
 
 test('at raw 200 and no gear: /10 Strength doubled for two hands, 70% crit x2.4', () => {
   const ch = theoryCharacter();
-  const r = analyze(ch, { target: gateTarget(45), core: 'overhaul', rri: true });
+  const r = analyze(ch, { target: gateTarget(45), core: 'overhaul', rri: true, gameBuild: '14512' });
   assert.equal(r.damage.parts.strMod, 10);
   assert.equal(r.damage.parts.matMod, 6);
   assert.equal(r.damage.parts.prof, 9);
@@ -52,11 +52,11 @@ test('the rolled-line slot counts are not a point budget; the legal single-skill
   assert.ok(!frontier.some((p) => p.lb >= 240 && p.cs >= 540), 'the old profile is not on the frontier');
   assert.ok(!frontier.some((p) => p.cs > 535), 'Critical Strike cannot pass 535');
 
-  const g = legalGear(123);
+  const g = legalGear(123, { gameBuild: '14512' });
   assert.deepEqual([g.lb, g.cs, g.dmg], [250, 370, 25]);
   assert.deepEqual(g.violations, []);
   const ch = theoryCharacter({ gearLB: g.lb, gearCS: g.cs, damagePct: g.dmg });
-  const r = analyze(ch, { target: gateTarget(45), core: 'overhaul', rri: true });
+  const r = analyze(ch, { target: gateTarget(45), core: 'overhaul', rri: true, gameBuild: '14512' });
   // 40% raw climb + 250 gear points x 0.44 = 150% mastery.
   assert.ok(near(r.damage.parts.mastery, 150));
   assert.equal(r.hit.crit.chance, 1);
@@ -82,7 +82,7 @@ test('the Firmament lifts the live attribute ceiling and adds to the formula ski
   assert.equal(skillValue(ch, 29), 155); // effectiveSkill(200)=140 + 15
   assert.equal(skillValue(ch, 34), 155);
   assert.equal(ch.skills[29] + ch._mods.skills[29], 215); // the sheet's raw + mods
-  const r = analyze(ch, { target: gateTarget(45), core: 'overhaul', rri: true });
+  const r = analyze(ch, { target: gateTarget(45), core: 'overhaul', rri: true, gameBuild: '14512' });
   assert.equal(r.damage.parts.strMod, 12); // 115 Strength, two-handed
 });
 

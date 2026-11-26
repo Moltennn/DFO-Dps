@@ -82,10 +82,10 @@ test('the plan names the carried baseline beside the card plan figures', () => {
   // reader adds a metric jump to the plan's worth. The names are the contract: carried on the weapon baseline,
   // card on the plan totals (`applyPlanDps` re-runs the card).
   const gate = gateTarget(THEORY_LEVEL);
-  const plan = planEnchants({ weapon: 123, soulGem: true });
-  const ch = maxCharacter(123, {});
+  const plan = planEnchants({ weapon: 123, soulGem: true, gameBuild: '14512' });
+  const ch = maxCharacter(123, { gameBuild: '14512' });
   ch._template = 123;
-  const base = maxRun(ch, { target: gate });
+  const base = maxRun(ch, { target: gate, gameBuild: '14512' });
   assert.equal(plan.carriedBaseDps, base.carriedCappedDps);
   assert.ok(plan.carriedBaseDps !== base.cappedDps, 'the card baseline differs on this fixture');
   assert.ok(Object.hasOwn(plan, 'carriedUncappedDps'), 'carried uncapped baseline is named');

@@ -23,9 +23,10 @@ import {
 import { referenceFoe } from '../src/model.js';
 import { maxCharacter } from '../src/maxprofile.js';
 
-const OPTS = { core: 'overhaul', rri: true, passiveOn: true, stacks: 5 };
+// The recorded sampled rows are a3eb1605's, so the scenario and every character name the cut.
+const OPTS = { core: 'overhaul', rri: true, passiveOn: true, stacks: 5, gameBuild: '14512' };
 const foe = () => referenceFoe(45, 'tough');
-const max = (id) => ({ id, ch: maxCharacter(id) });
+const max = (id) => ({ id, ch: maxCharacter(id, { gameBuild: '14512' }) });
 const strip = ({ id, rank, ttkSeparated, censoringDiffers, paired, pairedKill, ...row }) => row;
 
 // One shared 1,000-seed fight ranking at a 0.63 s horizon: 126 nearly always kills, 127 kills about a third of the

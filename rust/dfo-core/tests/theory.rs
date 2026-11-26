@@ -81,8 +81,8 @@ fn the_cap_sheet_follows_the_shipped_build() {
             .filter(|c| c.channel != "Gear Long Blade")
             .collect::<Vec<_>>()
     );
-    // An unknown build prices as the cut, the one normalisation point.
-    assert_eq!(t::theory_caps("14513"), cut);
+    // An unknown build prices the live build, the one normalisation point (only 14512 selects the cut).
+    assert_eq!(t::theory_caps("14513"), drifted);
     // And the formula-cap row itself: 14512 still needs 728 points, 14631 has no such cap at all.
     assert_eq!(
         t::gear_mastery_points("14512"),

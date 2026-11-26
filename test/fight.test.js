@@ -47,10 +47,10 @@ test('1. axe and blunt mastery across the half line equal upstream\'s own weapon
     Object.assign(ent, { isPlayer: true, masterSkills: true, masteredSkills: [skill], _online: true });
     for (const share of SHARES) {
       const up = weaponPastPct(upstreamWeapon(weapon(tpl, { material: 9 })), ent, { isPlayer: false, health: share * 100, maxHealth: 100 }, { online: true });
-      assert.equal(masteryPct(ch, w, {}, { healthShare: share }), up, `${label} at ${share}`);
+      assert.equal(masteryPct(ch, w, {}, { healthShare: share, gameBuild: '14512' }), up, `${label} at ${share}`);
     }
     // the halves: paid below 0.5 for the axe, at and above for the blunt (the boundary itself included)
-    const at = (share) => masteryPct(ch, w, {}, { healthShare: share });
+    const at = (share) => masteryPct(ch, w, {}, { healthShare: share, gameBuild: '14512' });
     if (skill === 31) assert.ok(at(0.49) > 0 && at(0.5) === 0, 'axe pays only under half');
     else assert.ok(at(0.5) > 0 && at(0.49) === 0, 'blunt pays at and above half');
   }

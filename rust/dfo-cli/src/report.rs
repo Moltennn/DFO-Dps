@@ -966,7 +966,16 @@ pub fn build_report(ch: &Value, opts: &Value, book: &Spellbook) -> String {
         ("bowSpam", opt(opts, "bowSpam", Bool(false))),
         ("potencyPct", opt(opts, "potencyPct", Num(0.0))),
         ("pierce", opt(opts, "pierce", Num(0.0))),
-        ("gameBuild", opt(opts, "gameBuild", Str("14512".to_owned()))),
+        // A direct caller that leaves the key out prices the LIVE build, as `src/report.js:146` does (its destructured
+        // default is `DEFAULT_GAME_BUILD`).
+        (
+            "gameBuild",
+            opt(
+                opts,
+                "gameBuild",
+                Str(dfo_core::model_blow::DEFAULT_GAME_BUILD.to_owned()),
+            ),
+        ),
     ]);
     let players = opt(opts, "players", Num(1.0)).to_number();
     let blow_x = opt(opts, "blowX", Num(1.0)).to_number();

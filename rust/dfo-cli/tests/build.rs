@@ -211,8 +211,8 @@ fn build_theory_json_matches_the_js_cli() {
         "--star-damage",
         "12",
     ]);
-    // The shipped build (`--game-build`, CHANGELOG-MECHANICS.md GEAR-14631 / BRAND-14631): `14631` is the opt-in drift
-    // finding, `14512` the default. The gear-heavy row is the one that moves; the JSON must carry `terms.gearAdd`.
+    // The shipped build (`--game-build`, CHANGELOG-MECHANICS.md GEAR-14631 / BRAND-14631): `14631` is the live default,
+    // `14512` the vendored cut. The gear-heavy row is the one that moves; the JSON carries `terms.gearAdd` under 14631.
     same(&[
         "build",
         "--theory",

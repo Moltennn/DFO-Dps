@@ -354,7 +354,7 @@ pub struct Input {
     pub race: Option<String>,
     /// `--categories`: the per-slot winners instead of the whole list, and no family curves.
     pub categories: bool,
-    /// `values['game-build'] ?? '14512'`: the shipped build every card and frontier this page prices is read at.
+    /// `values['game-build'] ?? DEFAULT_GAME_BUILD`: the shipped build every card and frontier this page prices is read at.
     pub game_build: String,
 }
 

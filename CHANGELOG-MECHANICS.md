@@ -6,6 +6,52 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## The default build flips to the live game (0.1.14631); `14512` is now the explicit cut (2026-11-26)
+
+**Source.** Stage JS-1 recorded the 0.1.14631 gear law and `brand` as a drift finding behind `--game-build 14631`,
+with `14512` the vendored cut as the default. That is now the wrong way round for a tool that answers "what does my
+character do in the game I have installed": the installed game IS 0.1.14631. `src/model.js:66` and
+`rust/dfo-core/src/model_blow.rs` change `DEFAULT_GAME_BUILD` to `"14631"`, and nothing else about either law moves.
+
+**Normalisation is the half that had to be inverted, not just the constant.** `buildOf`/`game_build` used to ask
+"is this `14631`?" and fall back to the cut; they now ask "is this exactly `14512`?" and fall back to the live build,
+so the cut stays reachable and an unknown string prices the live build. `game_build_name`/`game_build_one`, the JS
+`theoryCaps` fallback and the report page's default were each checked for a hardcoded `14512`; the only real hit was
+`rust/dfo-cli/src/report.rs:969`, which priced the report page at the cut regardless of the flag. The theory captions
+("320%", "formula cap at 728") are keyed on the raw flag, so they were inverted with it and now say `14631` by default.
+
+**Outputs moved: the default is the live law, and the cut is byte-identical to the pre-flip default.** Nineteen
+command lines (build/objective/rank/report/compare/scale/tradeoff/theory/graph/enchant plus the seven planners, some
+as JSON and some as pages) were captured on both CLIs BEFORE the flip, then re-run after it at default and at explicit
+`14512`: the explicit `14512` run matches the old default on **38 of 38 files, 0 differ** (only the echoed `--out` path
+is normalised), while the new default differs from the cut on all 38. Both CLIs agree with each other at both builds.
+Measured drift, gear-heavy Dai-katana card at `250/370/25` on the level-45 theory character: capped DPS `784.3` ->
+`813.9`, per swing `608.9` -> `679.1`, damage `75..142` -> `81..161`, `terms.mastery` `150` -> `40`, and
+`terms.gearAdd {lo 25, hi 50, mean 37.5}` appears only under the live build. The theory sheet's legal-gear stage picks
+`250/370/25` at the cut and `320/282/38` at the live build (capped `813.5` -> `821.0`), and its best split by capped
+DPS moves `250/370/25` (`815.4`) -> `200/402/38` (`821.2`) - the frontier re-pick Stage JS-2 warned about, now on the
+other side. The `imprints` family baselines move with it: LongBlade `855.5` -> `891.7`, ShortBlade `949.2` -> `1194.0`,
+Axe `652.3` -> `782.4`, Blunt `481.2` -> `643.6`.
+
+**Tests.** The historical suites that compare against `vendor/upstream/a3eb1605` or against recorded figures are
+pinned to `14512` explicitly (their assertions are unchanged): `bossTraits`, `imprints`, `gearProfile`,
+`equippedBuild`, `enchantPlan`, `integration`, `manyEndings`, `objectives`, `stochasticObjectives`, `swingDirection`,
+`theory`, `loadoutShortlist`, `pricing` (the Stage 2.9 audit figures), `objectiveCli` (a recorded stdout digest), and
+the Rust `gear_14631`/`planners`/`theory` cases. New:
+`test/defaultBuild.test.js` pins the contract itself - no flag equals an explicit `14631` for every reader, an
+explicit `14512` reproduces the recorded pre-flip digests (`test/fixtures/defaultFlip14512.json`, written by
+`tools/capture-default-build.mjs`), and the two builds really differ - so a future flip has something to fail against.
+The Rust vector generators replay the deliberate cut landmarks (`apply_plan_dps`, `best_weapon_for_family`), so
+`tools/rust-planner-vectors.mjs` passes `14512` to its copy of those functions rather than the module default; the
+vectors are unchanged and prove the cut path still matches.
+
+**Public Rust API: three changes are NOT additive.** `real_build::real_weapon_loadouts(_with)` gained a required
+`game_build: &str`; `StageOpts` gained `game_build: String` and its `Default`/`..Default::default()` is now the LIVE
+build (it was the cut); and `enchant_plan::apply_plan_dps`/`best_weapon_for_family(_with)` keep their old arities but
+stay pinned to `CUT_GAME_BUILD`, so a caller wanting current numbers must use `_at`/`_with_build`. `CUT_GAME_BUILD` is
+new and names `"14512"`. Everything else is additive (`opts.gameBuild`, `ShortlistOpts::game_build`). GUI and
+integration notes in `rust/FORGE-API.md` section 8.
+
 ## Stage JS-2: the planners take the shipped build, in both languages (2026-11-25)
 
 `--game-build` reached only the per-card commands (`src/cli.js:546` `scenarioOf`); the planners forge their own

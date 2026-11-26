@@ -73,20 +73,22 @@ share for Axe/Blunt mastery and venom/execute; `--self-health-share` is the
 wielder's share for Berserker/Orc Rage.
 
 `--game-build <14512|14631>` selects the shipped build a weapon card or plan
-is priced under (default `14512`, the vendored cut). It is read by `build`,
+is priced under (default `14631`, the live game). It is read by `build`,
 `objective`, `rank`, `report`, `compare`, `scale`, `tradeoff`, `theory`, `graph`
 and `enchant`, and by the PLANNERS that forge their own scenario: `imprints`,
 `weapons`, `skills`, `enchant-plan`, `gear-plan`, `loadout` and `real-dps`.
 Every other command (`firmament`, `probe`, `spells`, `spell`, `saves`,
-`doctor`) rejects it rather than ignoring it. `14631` is the drift finding in
-CHANGELOG-MECHANICS.md: the weapon gear becomes a flat add on the roll instead
-of a mastery percent, Axe/Blunt lose their half-line branch, and the `brand`
-loot power adds flat elemental damage. Because that law re-prices every point,
-the legal-gear frontier can pick a DIFFERENT split at `14631` (a flat add
-favours weapon-skill points over Critical Strike), and the planner tables,
-imprint ratings and loadout rows move with it. `--build` is a different flag
-(the firmament build id); there is no output change without
-`--game-build 14631`.
+`doctor`) rejects it rather than ignoring it. `14512` is the vendored cut the
+port was first proved against: the weapon gear is a mastery percent, Axe/Blunt
+keep their half-line branch, and the `brand` loot power adds nothing. `14631`,
+the drift finding in CHANGELOG-MECHANICS.md, replaces that percent with a flat
+add on the roll and gives `brand` flat elemental damage. Because that law
+re-prices every point, the legal-gear frontier can pick a DIFFERENT split at
+either build (a flat add favours weapon-skill points over Critical Strike),
+and the planner tables, imprint ratings and loadout rows move with it. Only
+the exact string `14512` selects the cut; any other value is refused by the
+CLI. `--build` is a different flag (the firmament build id). Pass
+`--game-build 14512` to reproduce an older report or a recorded figure.
 
 ## 3. Build, rank, report, compare
 

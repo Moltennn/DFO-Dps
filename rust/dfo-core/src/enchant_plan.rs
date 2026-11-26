@@ -23,6 +23,7 @@ use crate::generated::data::{SKILLS, WEAPONS};
 use crate::generated::firmament::{ARMOR, GROUP_PARAM, JEWELRY, SLOT_NAMES, SOUL_GEM_POINTS};
 use crate::imprints::{imprint_families, imprints_for, power_dps};
 use crate::maxprofile::{max_run, run_args, Profiles};
+use crate::model_blow::CUT_GAME_BUILD;
 use crate::round::math_round;
 use crate::spells::Spellbook;
 use crate::theory::{obj, s, THEORY_LEVEL};
@@ -585,16 +586,12 @@ fn item_enchant_id(kind: &str) -> Option<f64> {
     }
 }
 
-/// `applyPlanDps` at the cut: the pre-14631 signature. A plan is `{rows}`; exposed for the vectors, which feed it
-/// hand-built plans (the `maxCondition || 800` line is a real JS default a plan may hit).
+/// `applyPlanDps` at the CUT: the pre-14631 signature, kept so an old caller that never named a build keeps its old
+/// numbers. A plan is `{rows}`; exposed for the vectors, which feed it hand-built plans (the `maxCondition || 800` line
+/// is a real JS default a plan may hit). New callers should use [`apply_plan_dps_at`], whose `game_build` is the live
+/// default.
 pub fn apply_plan_dps(ch: &Value, plan: &Value, target: &Value, book: &Spellbook) -> Value {
-    apply_plan_dps_at(
-        ch,
-        plan,
-        target,
-        crate::model_blow::DEFAULT_GAME_BUILD,
-        book,
-    )
+    apply_plan_dps_at(ch, plan, target, CUT_GAME_BUILD, book)
 }
 
 /// [`apply_plan_dps`] at an explicit shipped build.
@@ -1325,13 +1322,14 @@ pub fn plan_enchants_with(opts: &Value, profiles: &mut Profiles<'_>) -> Result<V
     ]))
 }
 
-/// `bestWeaponForFamily` at the cut: the pre-14631 signature, kept for callers (and the vectors) that pass no build.
+/// `bestWeaponForFamily` at the CUT: the pre-14631 signature, kept for callers (and the vectors) that never named a
+/// build. New callers should use [`best_weapon_for_family_at`], whose `game_build` is the live default.
 pub fn best_weapon_for_family(
     family: &Value,
     target: &Value,
     book: &Spellbook,
 ) -> Result<Value, String> {
-    best_weapon_for_family_at(family, target, crate::model_blow::DEFAULT_GAME_BUILD, book)
+    best_weapon_for_family_at(family, target, CUT_GAME_BUILD, book)
 }
 
 /// [`best_weapon_for_family`] at an explicit shipped build.
@@ -1355,18 +1353,13 @@ pub fn best_weapon_for_family_at_with(
     best_weapon_for_family_with_build(family, target, &s(game_build), profiles)
 }
 
-/// `bestWeaponForFamily` on a caller-owned frontier cache, at the cut: the pre-14631 signature (the vectors pass it).
+/// `bestWeaponForFamily` on a caller-owned frontier cache, at the CUT: the pre-14631 signature (the vectors pass it).
 pub fn best_weapon_for_family_with(
     family: &Value,
     target: &Value,
     profiles: &mut Profiles<'_>,
 ) -> Result<Value, String> {
-    best_weapon_for_family_with_build(
-        family,
-        target,
-        &s(crate::model_blow::DEFAULT_GAME_BUILD),
-        profiles,
-    )
+    best_weapon_for_family_with_build(family, target, &s(CUT_GAME_BUILD), profiles)
 }
 
 /// [`best_weapon_for_family_with`] at an explicit shipped build (a scenario-ready `Value`).

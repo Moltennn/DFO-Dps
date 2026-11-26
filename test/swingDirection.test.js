@@ -30,7 +30,8 @@ import { character, simCharacter, upstreamEntity, weapon, upstreamWeapon, fresh 
 import { generator, summarize } from './harness/prng.mjs';
 import { compareSample } from './harness/differential.mjs';
 
-const OPTS = { core: 'overhaul', rri: false, passiveOn: true, stacks: 5 };
+// Every comparison here is against the vendored game's own draw, so the scenario names the cut.
+const OPTS = { core: 'overhaul', rri: false, passiveOn: true, stacks: 5, gameBuild: '14512' };
 const DRAW = (u) => u.playerWeapon.CLICK_ATTACK_DIRECTIONS.map((d) => u.anims.DIRECTION_TO_STRIKE[d]);
 const DESC = () => character({
   level: 30, raceId: 1,
@@ -153,8 +154,8 @@ test('3. the full draw: the default is the equal mixture, and the neutral defaul
 
   // (c) the old unconditional neutral is a different card, and the gate's endgame katana shows it
   const rri = { ...OPTS, rri: true };
-  const neutral = analyze(maxCharacter(121), { target: gateTarget(45), health: gateTarget(45).maxHealth, ...rri });
-  const old = analyze(maxCharacter(121), { target: gateTarget(45), health: gateTarget(45).maxHealth, ...rri, swing: 'StrikeLeft' });
+  const neutral = analyze(maxCharacter(121, { gameBuild: '14512' }), { target: gateTarget(45), health: gateTarget(45).maxHealth, ...rri });
+  const old = analyze(maxCharacter(121, { gameBuild: '14512' }), { target: gateTarget(45), health: gateTarget(45).maxHealth, ...rri, swing: 'StrikeLeft' });
   assert.ok(neutral.cappedDps < old.cappedDps * 0.999, `the neutral card (${old.cappedDps.toFixed(2)}) is not the draw (${neutral.cappedDps.toFixed(2)})`);
   assert.ok(Math.abs(old.cappedDps - 857.19) < 0.01 && Math.abs(neutral.cappedDps - 853.49) < 0.01);
   // and for a weak build the neutral row is further out: the hit clamp makes the average nonlinear
@@ -247,7 +248,7 @@ test('5. a whole fight under the draw, against seeded upstream fights that draw 
 
 test('6. a ranking whose order the draw changes, with the objective and target named', () => {
   const target = simReferenceFoe(45, 'tough');
-  const entries = [{ id: 117, ch: maxCharacter(117) }, { id: 120, ch: maxCharacter(120) }];
+  const entries = [{ id: 117, ch: maxCharacter(117, { gameBuild: '14512' }) }, { id: 120, ch: maxCharacter(120, { gameBuild: '14512' }) }];
   const old = rankBuilds(entries, { ...OPTS, rri: true, objective: 'snapshot', target, swing: 'StrikeLeft' });
   const draw = rankBuilds(entries, { ...OPTS, rri: true, objective: 'snapshot', target });
   const order = (r) => r.rows.map((x) => x.id).join(',');
@@ -261,6 +262,6 @@ test('6. a ranking whose order the draw changes, with the objective and target n
     assert.equal(row.assumptions.objective, 'snapshot');
   }
   // and the draw's values are the analyze() cards, not a separate calculation
-  const r117 = analyze(maxCharacter(117), { ...OPTS, rri: true, target });
+  const r117 = analyze(maxCharacter(117, { gameBuild: '14512' }), { ...OPTS, rri: true, target });
   assert.equal(draw.rows.find((x) => x.id === 117).value, r117.dps);
 });

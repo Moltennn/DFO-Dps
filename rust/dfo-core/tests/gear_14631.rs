@@ -2,7 +2,7 @@
 //! (weak evidence: `CHANGELOG-MECHANICS.md` GEAR-14631 / BRAND-14631, `test/build14631.test.js`).
 //!
 //! These pin the port's own guards and ranges, not the game: parity with the JS (`tests/model_blow.rs` and the
-//! `gameBuild` cases `tools/rust-blow-vectors.mjs` appends) is what proves the port. The default build is `14512`, so
+//! `gameBuild` cases `tools/rust-blow-vectors.mjs` appends) is what proves the port. The default build is `14631`, so
 //! every case here also states that the cut's behaviour is untouched when the option is absent.
 
 use dfo_core::model_blow::{
@@ -91,7 +91,7 @@ fn opts(pairs: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
 #[test]
 fn the_accepted_builds_and_default_are_the_js_list() {
     assert_eq!(GAME_BUILDS, ["14512", "14631"]);
-    assert_eq!(DEFAULT_GAME_BUILD, "14512", "the default stays the cut");
+    assert_eq!(DEFAULT_GAME_BUILD, "14631", "the default is the live build");
 }
 
 #[test]
@@ -123,27 +123,39 @@ fn every_guard_turns_the_add_off() {
         &weapon(29.0, 1.0, 1.0),
         Some(&foe())
     ));
-    // The build gate: anything that is not exactly 14631 prices as the cut.
-    for build in ["14512", "14513", "1463", ""] {
-        let cut = opts([("gameBuild", Str(build.into()))]);
+    // The build gate: only an explicit 14512 selects the cut, so only it refuses the add; the live default and an
+    // unknown string (which the CLI refuses before a formula) price it.
+    for build in ["14513", "1463", ""] {
+        let live = opts([("gameBuild", Str(build.into()))]);
         assert!(
             gear_blow_add(
                 &attacker(29.0, 700.0),
                 &weapon(29.0, 1.0, 1.0),
                 Some(&foe()),
-                &cut
+                &live
             )
-            .is_none(),
-            "{build} prices as 14512"
+            .is_some(),
+            "{build} prices the live build"
         );
     }
+    assert!(
+        gear_blow_add(
+            &attacker(29.0, 700.0),
+            &weapon(29.0, 1.0, 1.0),
+            Some(&foe()),
+            &opts([("gameBuild", Str("14512".into()))])
+        )
+        .is_none(),
+        "only 14512 refuses the add"
+    );
+    // An absent key is the live build, which enables the add (only an explicit 14512 runs the blocked arm).
     assert!(gear_blow_add(
         &attacker(29.0, 700.0),
         &weapon(29.0, 1.0, 1.0),
         Some(&foe()),
         &opts([])
     )
-    .is_none());
+    .is_some());
     // The attacker's guards.
     for key in ["peer", "_mentor", "isInBeastForm"] {
         let mut ch = attacker(29.0, 700.0);
@@ -321,7 +333,11 @@ fn the_card_enumerates_the_add_and_reports_its_range() {
         "and so is the high add"
     );
     // The cut prices the same roll alone (the gear is a percent there, not an add), so its band is one blow wide.
-    let cut = obj([("core", Str("classic".into()))]);
+    // The cut names the vendored build explicitly: a bare `core` is now the live default.
+    let cut = obj([
+        ("core", Str("classic".into())),
+        ("gameBuild", Str("14512".into())),
+    ]);
     let base = damage_model(
         &ch,
         &w,
@@ -362,7 +378,10 @@ fn the_mastery_percent_is_the_climb_only_under_14631() {
         mastery_pct(&ch, &w, &opts([("gameBuild", Str("14631".into()))])),
         40.0
     );
-    assert_eq!(mastery_pct(&ch, &w, &opts([])), 348.0);
+    assert_eq!(
+        mastery_pct(&ch, &w, &opts([("gameBuild", Str("14512".into()))])),
+        348.0
+    );
     // Axe/Blunt lose the half line: both read the sword's single climb under 14631, and the cut's x2 / 0 under it.
     for (skill, cut_low, cut_high) in [(31.0, 80.0, 0.0), (32.0, 0.0, 80.0)] {
         let ch = attacker(skill, 0.0);
@@ -375,8 +394,14 @@ fn the_mastery_percent_is_the_climb_only_under_14631() {
             let got = mastery_pct(&ch, &w, &o);
             assert_eq!(got, 40.0, "skill {skill} at {share}");
         }
-        let low = opts([("healthShare", Num(0.49))]);
-        let high = opts([("healthShare", Num(0.9))]);
+        let low = opts([
+            ("healthShare", Num(0.49)),
+            ("gameBuild", Str("14512".into())),
+        ]);
+        let high = opts([
+            ("healthShare", Num(0.9)),
+            ("gameBuild", Str("14512".into())),
+        ]);
         assert_eq!(mastery_pct(&ch, &w, &low), cut_low, "cut, low share");
         assert_eq!(mastery_pct(&ch, &w, &high), cut_high, "cut, high share");
     }
@@ -417,9 +442,17 @@ fn brand_adds_flat_elemental_damage_only_under_14631() {
         &opts([("gameBuild", Str("14631".into()))]),
     );
     assert_eq!(flat, 8.0);
-    // '14512' has no brand power: the vendored switch's default arm adds nothing.
+    // An absent key is the live build, so the power still adds; only an explicit '14512' has no brand arm.
     assert_eq!(
         loot_power_terms(&powers, Some(&foe()), &opts([])),
+        (0.0, 8.0)
+    );
+    assert_eq!(
+        loot_power_terms(
+            &powers,
+            Some(&foe()),
+            &opts([("gameBuild", Str("14512".into()))])
+        ),
         (0.0, 0.0)
     );
     // A null target is no immunity: it still adds, as `elementShare` shares 1.

@@ -6,7 +6,7 @@
  */
 import { BOSS_TRAITS, BOSS_TRAIT_TEXT, MARTIAL_PATHS, SOURCE, gateHealth, gateHitCap } from './data.js';
 import { characterLabel, liveStat } from './save.js';
-import { analyze, bossTarget, currentWeaponRow, gateTarget, marginals, rankAffixes, rankWeapons, referenceFoe } from './model.js';
+import { analyze, bossTarget, currentWeaponRow, DEFAULT_GAME_BUILD, gateTarget, marginals, rankAffixes, rankWeapons, referenceFoe } from './model.js';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const n1 = (n) => (Number.isFinite(n) ? (Math.round(n * 10) / 10).toFixed(1) : '-');
@@ -143,7 +143,7 @@ function capTable(ch, scenario) {
 export function buildReport(ch, {
   target, core = 'overhaul', traits = [], health = 0, swing = 'StrikeLeft',
   passiveOn = true, stacks = 5, rhythm = false, unaware = false, firstBlow = false,
-  healthShare = 1, attackerHealthShare = 1, backstabUptime = 0, players = 1, blowX = 1, rri = true, pair = false, bowSpam = false, potencyPct = 0, pierce = 0, weapon = null, gameBuild = '14512',
+  healthShare = 1, attackerHealthShare = 1, backstabUptime = 0, players = 1, blowX = 1, rri = true, pair = false, bowSpam = false, potencyPct = 0, pierce = 0, weapon = null, gameBuild = DEFAULT_GAME_BUILD,
 } = {}) {
   const baseCh = weapon?.item ? { ...ch, weapon: weapon.item } : ch;
   // No override means the target's own traits (a relay boss's), the same rule analyze() uses.

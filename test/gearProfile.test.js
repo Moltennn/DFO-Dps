@@ -200,7 +200,7 @@ test('validatePlan rejects illegal allocations clearly', () => {
 
 test('a generated max profile is legal, complete and the best uncapped point (pre-fix: it used 240/540/40)', () => {
   for (const template of [113, 117, 121, 123, 126, 127, 129, 563]) {
-    const g = legalGear(template);
+    const g = legalGear(template, { gameBuild: '14512' });
     const lbCap = maxSingleSkill({ weaponTemplate: template });
     const csCap = maxSingleSkill({ weaponTemplate: template, skill: SKILLS.CriticalStrike });
     assert.ok(g.lb <= lbCap, `${template}: LB ${g.lb} is above the legal ${lbCap}`);
@@ -211,25 +211,25 @@ test('a generated max profile is legal, complete and the best uncapped point (pr
     assert.equal(g.plan.reduce((n, p) => n + p.lb, 0), g.lb, `${template} LB sum`);
     assert.equal(g.plan.reduce((n, p) => n + p.cs, 0), g.cs, `${template} CS sum`);
     assert.equal(Math.max(...g.plan.map((p) => p.dmg)), g.dmg, `${template} damage`);
-    const frontier = legalFrontier(template);
+    const frontier = legalFrontier(template, { gameBuild: '14512' });
     assert.ok(frontier.some((p) => p.lb === g.lb && p.cs === g.cs && p.dmg === g.dmg), `${template} on the frontier`);
     assert.ok(frontier.every((p) => p.dps <= g.dps + 1e-9), `${template} not the best`);
     // Every piece is one of the slots, and a shield was not silently added.
     assert.deepEqual(g.plan.map((p) => p.template), slotsFor({ weaponTemplate: template }).map((s) => s.template));
   }
   // The two-hand long blade's legal best is 250 / 370 / 25%, not 240 / 540 / 40%.
-  const g = legalGear(123);
+  const g = legalGear(123, { gameBuild: '14512' });
   assert.deepEqual([g.lb, g.cs, g.dmg], [250, 370, 25]);
   const old = analyze(buildMax(123, { gearSkill: 240, gearCrit: 540, damagePct: 40 }), { target: TOUGH(), core: 'overhaul', rri: true, stacks: 5 });
-  const now = analyze(maxCharacter(123), { target: TOUGH(), core: 'overhaul', rri: true, stacks: 5 });
+  const now = analyze(maxCharacter(123, { gameBuild: '14512' }), { target: TOUGH(), core: 'overhaul', rri: true, stacks: 5 });
   assert.ok(now.dps < old.dps, `legal ${now.dps} should be below the illegal ${old.dps}`);
   assert.ok(Math.abs(now.dps / old.dps - 1) > 0.15, 'the audit\'s double-digit gap must reproduce');
 });
 
 test('scenario maxima remain legal; the allowance split is distinct', () => {
-  const uncapped = legalGear(123, { metric: 'uncapped' });
-  const capped = legalGear(123, { metric: 'capped' });
-  const allowance = legalGear(123, { metric: 'allowance' });
+  const uncapped = legalGear(123, { metric: 'uncapped', gameBuild: '14512' });
+  const capped = legalGear(123, { metric: 'capped', gameBuild: '14512' });
+  const allowance = legalGear(123, { metric: 'allowance', gameBuild: '14512' });
   for (const g of [uncapped, capped, allowance]) assert.deepEqual(g.violations, []);
   assert.ok(capped.cappedDps >= uncapped.cappedDps - 1e-9);
   assert.ok(uncapped.dps >= capped.dps);
@@ -239,8 +239,8 @@ test('scenario maxima remain legal; the allowance split is distinct', () => {
 });
 
 test('a shield is a distinct legal scenario: one more armour slot', () => {
-  const noShield = legalGear(117);
-  const shield = legalGear(117, { shield: 111 });
+  const noShield = legalGear(117, { gameBuild: '14512' });
+  const shield = legalGear(117, { shield: 111, gameBuild: '14512' });
   assert.equal(noShield.plan.length, 18);
   assert.equal(shield.plan.length, 19);
   assert.deepEqual(shield.violations, []);
@@ -251,23 +251,23 @@ test('a shield is a distinct legal scenario: one more armour slot', () => {
 test('single-weapon, dual-wield and fist builds keep the legal budget (C3/C1 unchanged)', () => {
   // Two-handed and one-handed singles.
   for (const template of [123, 121]) {
-    const ch = maxCharacter(template);
-    const g = legalGear(template);
+    const ch = maxCharacter(template, { gameBuild: '14512' });
+    const g = legalGear(template, { gameBuild: '14512' });
     assert.equal(ch._mods.skills[weaponSkillOf(template)], g.lb);
     assert.equal(ch._mods.skills[SKILLS.CriticalStrike], g.cs);
     assert.equal(ch.weapon.affixes.find((a) => a.id === 'damage').value, g.dmg);
   }
   // Dual wield: the off hand is the same weapon, and the gear budget stays the single-weapon one (the
   // simulator does not fold a second weapon's affixes; that limitation is documented, not hidden).
-  const single = maxCharacter(121);
-  const dual = maxCharacter(121);
+  const single = maxCharacter(121, { gameBuild: '14512' });
+  const dual = maxCharacter(121, { gameBuild: '14512' });
   dual.offWeapon = { ...dual.weapon, equipSlot: 21 };
   dual._dual = true;
   assert.deepEqual(dual._mods.skills, single._mods.skills);
   const r = analyze(dual, { target: TOUGH(), core: 'overhaul', rri: true, stacks: 5, dual: true });
   assert.ok(r.dps > 0 && r.dps > analyze(single, { target: TOUGH(), core: 'overhaul', rri: true, stacks: 5 }).dps);
   // Fists: Hand Wraps are a weapon slot, and the six other non-weapon slots can Exalt Hand-to-Hand.
-  const fists = legalGear(563);
+  const fists = legalGear(563, { gameBuild: '14512' });
   assert.equal(fists.plan.length, 18);
   assert.deepEqual(fists.violations, []);
   assert.equal(maxSingleSkill({ weaponTemplate: 563 }), 530);
@@ -275,9 +275,9 @@ test('single-weapon, dual-wield and fist builds keep the legal budget (C3/C1 unc
 });
 
 test('the damage mechanics are untouched: only the budget changed', () => {
-  const g = legalGear(123);
+  const g = legalGear(123, { gameBuild: '14512' });
   const built = buildMax(123, { gearSkill: g.lb, gearCrit: g.cs, damagePct: g.dmg });
-  const max = maxCharacter(123);
+  const max = maxCharacter(123, { gameBuild: '14512' });
   // Same stats, same raw skills, same sockets, same weapon; the one difference is the budget.
   assert.deepEqual(max.stats, built.stats);
   assert.deepEqual(max.skills, built.skills);
@@ -295,7 +295,7 @@ test('the damage mechanics are untouched: only the budget changed', () => {
 });
 
 test('the gate still sits on the relay allowance, not the uncapped profile (C1)', () => {
-  const ch = maxCharacter(123);
+  const ch = maxCharacter(123, { gameBuild: '14512' });
   const r = analyze(ch, { target: GATE(), health: GATE().maxHealth, core: 'overhaul', rri: true, stacks: 5 });
   const a = r.allowance;
   assert.ok(a);

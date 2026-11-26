@@ -19,11 +19,12 @@ import { maxCharacter } from '../src/maxprofile.js';
 
 const gate = () => gateTarget(45);
 const foe = () => referenceFoe(45, 'tough');
-const OPTS = { core: 'overhaul', rri: true, passiveOn: true, stacks: 5 };
-const max = (t) => ({ id: t, ch: maxCharacter(t) });
+// The recorded orders in this file are a3eb1605's, so the scenario and every character name the cut.
+const OPTS = { core: 'overhaul', rri: true, passiveOn: true, stacks: 5, gameBuild: '14512' };
+const max = (t) => ({ id: t, ch: maxCharacter(t, { gameBuild: '14512' }) });
 
 test('1. metric semantics: kill rate, output rate and the expected blow are distinct and consistent', () => {
-  const f = fight(maxCharacter(127), { ...OPTS, target: foe(), health: 12000 });
+  const f = fight(maxCharacter(127, { gameBuild: '14512' }), { ...OPTS, target: foe(), health: 12000 });
   assert.ok(f);
   // the kill rate is health / ttk; the output rate is the damage actually dealt / ttk, which is larger by the overkill
   assert.equal(f.killDps, f.dps, 'killDps is the 2.12a `dps`');
@@ -33,7 +34,7 @@ test('1. metric semantics: kill rate, output rate and the expected blow are dist
   assert.ok(Math.abs(f.outputDps / f.killDps - (1 + f.overkill / f.health)) < 1e-9, 'exactly the overkill share');
   assert.ok(f.overkill > 0 && f.overkill < f.expectedPerSwing * 2, 'the overshoot is a blow or two, never more');
   // a bigger pool: the same blow, less relative overkill - the two rates converge
-  const big = fight(maxCharacter(127), { ...OPTS, target: foe(), health: 120000 });
+  const big = fight(maxCharacter(127, { gameBuild: '14512' }), { ...OPTS, target: foe(), health: 120000 });
   assert.ok(big.overkill / big.health < f.overkill / f.health / 5);
   assert.ok(big.outputDps / big.killDps < 1.01);
 });
@@ -41,7 +42,7 @@ test('1. metric semantics: kill rate, output rate and the expected blow are dist
 test('2. every objective is named, and every result says which target it was computed against', () => {
   const target = gate();
   for (const objective of OBJECTIVE_IDS) {
-    const r = evaluateObjective(maxCharacter(121), { ...OPTS, objective, target, health: target.maxHealth });
+    const r = evaluateObjective(maxCharacter(121, { gameBuild: '14512' }), { ...OPTS, objective, target, health: target.maxHealth });
     assert.equal(r.objective, objective);
     assert.equal(r.direction, 'max');
     assert.equal(r.unit, 'dps');
@@ -56,9 +57,9 @@ test('2. every objective is named, and every result says which target it was com
   assert.equal(targetAssumptions(foe()).kind, 'foe');
   assert.equal(targetAssumptions(gate()).kind, 'relay');
   // a name that is not an objective is refused, and so is a relay objective on a body that has no allowance
-  assert.throws(() => evaluateObjective(maxCharacter(121), { objective: 'boss-dps', target }), /unknown objective/);
-  assert.throws(() => evaluateObjective(maxCharacter(121), { objective: 'relay', target: foe() }), /not a relay body/);
-  assert.throws(() => evaluateObjective(maxCharacter(121), { objective: 'snapshot' }), /a declared target is required/);
+  assert.throws(() => evaluateObjective(maxCharacter(121, { gameBuild: '14512' }), { objective: 'boss-dps', target }), /unknown objective/);
+  assert.throws(() => evaluateObjective(maxCharacter(121, { gameBuild: '14512' }), { objective: 'relay', target: foe() }), /not a relay body/);
+  assert.throws(() => evaluateObjective(maxCharacter(121, { gameBuild: '14512' }), { objective: 'snapshot' }), /a declared target is required/);
 
 });
 

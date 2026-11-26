@@ -229,7 +229,7 @@ pub struct Input {
     pub target_name: String,
     /// `!values['no-rri']`.
     pub rri: bool,
-    /// `values['game-build'] ?? '14512'` (`src/cli.js:1918,1963,1971,1998,2063`): the cap sheet and the
+    /// `values['game-build'] ?? DEFAULT_GAME_BUILD` (`src/cli.js:1918,1963,1971,1998,2063`): the cap sheet and the
     /// formula-cap row follow it. The scenario carries it too, so the numbers do.
     pub game_build: String,
 }
@@ -1227,10 +1227,10 @@ fn text(c: &Computed) -> String {
     out.push('\n');
     out.push_str(&format!(
         "The \"formula cap\" row is hypothetical: the legal single-skill maximum is 535 points (the weapon record + 17 Exalted slots); {}.\n",
-        if c.input.game_build == "14631" {
-            "0.1.14631 drops the 320% cap (the gear is flat, no percent)".to_owned()
-        } else {
+        if c.input.game_build == "14512" {
             format!("the 320% mastery cap would need {} points", n(GEAR_MASTERY_POINTS))
+        } else {
+            "the live build drops the 320% cap (the gear is flat, no percent)".to_owned()
         }
     ));
 
@@ -1297,10 +1297,10 @@ fn text(c: &Computed) -> String {
     out.push('\n');
     out.push_str(&format!(
         "The sheet showing 215 is raw 200 + 15; the formula reads 155 (effectiveSkill(200)=140 + 15). Gear skill adds on top of both, and for Long Blade it converts at 0.44% per point{}.\n",
-        if c.input.game_build == "14631" {
-            ", and on 0.1.14631 that percent is gone: the gear is a flat add on the roll, no cap"
-        } else {
+        if c.input.game_build == "14512" {
             ", capped at +320%"
+        } else {
+            ", and on the live build that percent is gone: the gear is a flat add on the roll, no cap"
         }
     ));
 

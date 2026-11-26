@@ -1,8 +1,9 @@
 /*
- * test/build14631.test.js - the 0.1.14631 drift finding, as an OPT-IN scenario (`gameBuild: '14631'`).
+ * test/build14631.test.js - the 0.1.14631 drift finding, which is now the DEFAULT build.
  *
- * The default `gameBuild` stays '14512' (the vendored cut at a3eb1605) and every case below also pins that the
- * default output is byte-identical to an explicit '14512' run. '14631' is a fact readable only in the shipped
+ * `gameBuild: '14631'` is the default (`src/model.js` DEFAULT_GAME_BUILD) and every case below also pins that the
+ * no-flag output is byte-identical to an explicit '14631' run, while an explicit '14512' still selects the vendored
+ * cut at a3eb1605. '14631' is a fact readable only in the shipped
  * build, so these are LOCAL INVARIANTS cited from `dist:` (rule 10, weak evidence), never oracle checks:
  *
  *   GEAR-14631 (dist:weaponMastery-AR4ipaqT.js:9f201d8ae37fa0b8:1384@0.1.14631 `b()` and :835 `g()`, and
@@ -41,7 +42,9 @@ const PLAIN = (gear, { online = true } = {}) => {
 /** A steel longsword with its roll pinned at 100, so every number below is the formula's own. */
 const ROLL_100 = () => ({ ...weaponOf(weapon(120, { material: 1 })), min: 100, max: 100 });
 const STRUCK = () => referenceFoe(5, 'tough');
-const card = (ch, build, target = STRUCK()) => analyze(ch, {
+/** A card at an explicit build. The default is the VENDORED CUT here: these fixtures pin a3eb1605's numbers, so they must
+ *  name it (the live default no longer is the cut). */
+const card = (ch, build = '14512', target = STRUCK()) => analyze(ch, {
   ...(build ? { gameBuild: build } : {}), swing: 'StrikeLeft', target, weapon: ROLL_100(),
 });
 
@@ -193,31 +196,34 @@ test('14631 gear: a bow and the off hand keep the widened band', () => {
 
 test('14512 regression: the cut\'s card numbers still hold (roll 100, NPC target)', () => {
   // Local invariant: the 14512 column of the same 100-roll card - gear 250 -> 210, gear 700 -> 408 at a 100 roll,
-  // 100 + floor(100 x min(320, gear x 0.44) / 100). Adding the option must not move these.
-  assert.equal(card(PLAIN(0), undefined).damage.avg, 100);
-  assert.equal(card(PLAIN(250), undefined).damage.avg, 210);
-  assert.equal(card(PLAIN(700), undefined).damage.avg, 408);
-  assert.equal(card(PLAIN(728), undefined).damage.avg, 320 + 100, 'capped at +320% (728 points: 320.32 -> 320)');
-  assert.equal(card(PLAIN(727), undefined).damage.avg, 419, '319.88 is floored, not rounded');
+  // 100 + floor(100 x min(320, gear x 0.44) / 100). `--game-build 14512` must reproduce them.
+  assert.equal(card(PLAIN(0)).damage.avg, 100);
+  assert.equal(card(PLAIN(250)).damage.avg, 210);
+  assert.equal(card(PLAIN(700)).damage.avg, 408);
+  assert.equal(card(PLAIN(728)).damage.avg, 320 + 100, 'capped at +320% (728 points: 320.32 -> 320)');
+  assert.equal(card(PLAIN(727)).damage.avg, 419, '319.88 is floored, not rounded');
 });
 
-test('14512 stays byte-identical: the default gameBuild is an explicit 14512 run', () => {
-  // Local invariant: the default is a pin, not an oracle check - adding the option moves no existing number.
+test('the default is the live build; only an explicit 14512 selects the cut', () => {
+  // Local invariant: `buildOf`/`gameBuildOf` resolve '14512' and nothing else to the cut, so an ABSENT key is the live
+  // build - the flip - while `--game-build 14512` still prices a3eb1605's numbers exactly.
   const ch = theoryCharacter({ gearLB: 250, gearCS: 370, damagePct: 25 });
-  const plain = analyze(ch, { target: referenceFoe(45, 'tough'), core: 'overhaul', rri: true });
-  const explicit = analyze(ch, { target: referenceFoe(45, 'tough'), core: 'overhaul', rri: true, gameBuild: '14512' });
-  assert.deepEqual(plain, explicit, 'no --game-build is 14512');
-  assert.equal(plain.damage.parts.gearAdd, undefined, '14512 has no flat-add field at all');
-  assert.equal(plain.damage.parts.mastery, 150, 'the 14512 gear percent is untouched (40 climb + 110 gear)');
-  // The same build under 14631: the percent is the climb alone and the flat add is on the roll.
-  const drifted = analyze(ch, { target: referenceFoe(45, 'tough'), core: 'overhaul', rri: true, gameBuild: '14631' });
-  assert.equal(drifted.damage.parts.mastery, 40);
-  assert.deepEqual(drifted.damage.parts.gearAdd, { lo: 25, hi: 50, mean: 37.5 });
+  const args = { target: referenceFoe(45, 'tough'), core: 'overhaul', rri: true };
+  const plain = analyze(ch, args);
+  const live = analyze(ch, { ...args, gameBuild: '14631' });
+  const cut = analyze(ch, { ...args, gameBuild: '14512' });
+  assert.deepEqual(plain, live, 'no --game-build is the live build');
+  assert.notDeepEqual(plain, cut, 'and it is not the cut');
+  assert.equal(cut.damage.parts.gearAdd, undefined, '14512 has no flat-add field at all');
+  assert.equal(cut.damage.parts.mastery, 150, 'the 14512 gear percent is untouched (40 climb + 110 gear)');
+  // The live build: the percent is the climb alone and the flat add is on the roll.
+  assert.equal(live.damage.parts.mastery, 40);
+  assert.deepEqual(live.damage.parts.gearAdd, { lo: 25, hi: 50, mean: 37.5 });
 });
 
-test('14631 brand: flat elemental damage by the power\'s element, no doubling', () => {
-  // Local invariant, cited from the shipped dist: build 0.1.14631 (weak evidence): case`brand` adds
-  // floor(flat x elementShare(target, power.element)) to the flat accumulator, after venom.
+test('the brand power prices only on the live build, and an unknown string normalises to it', () => {
+  // Local invariant: `buildOf` resolves only an explicit '14512' to the cut, so '14631', an absent key and a typo all
+  // price the live law (the CLI refuses a typo before it reaches a formula).
   const retribution = { kind: 'brand', element: 'fire', flat: 8 };
   const normal = { career: {} };
   assert.deepEqual(lootPowerTerms([retribution], normal, { gameBuild: '14631' }), { pct: 0, flat: 8 });
@@ -225,8 +231,10 @@ test('14631 brand: flat elemental damage by the power\'s element, no doubling', 
   assert.deepEqual(lootPowerTerms([retribution], { career: { immunityFlags: 8 } }, { gameBuild: '14631' }), { pct: 0, flat: 0 }, 'immune: none');
   // The under-half-health doubling is venom's, not brand's.
   assert.deepEqual(lootPowerTerms([retribution], normal, { gameBuild: '14631', healthShare: 0.1 }), { pct: 0, flat: 8 });
+  // An absent key is the live build too.
+  assert.deepEqual(lootPowerTerms([retribution], normal, {}), { pct: 0, flat: 8 });
   // '14512' has no brand power: the vendored switch's default arm adds nothing.
-  assert.deepEqual(lootPowerTerms([retribution], normal, {}), { pct: 0, flat: 0 });
+  assert.deepEqual(lootPowerTerms([retribution], normal, { gameBuild: '14512' }), { pct: 0, flat: 0 });
 });
 
 test('the 14631 cap sheet drops the gear percent, the 14512 sheet is byte-identical', async () => {
@@ -244,14 +252,16 @@ test('the 14631 cap sheet drops the gear percent, the 14512 sheet is byte-identi
   assert.equal(gearMasteryPoints('14631'), null);
 });
 
-test('an unknown gameBuild prices as the cut (one normalisation point)', () => {
-  // Local invariant: `buildOf` returns '14631' only for exactly that string, so a typo cannot silently opt in.
-  const a = card(PLAIN(700), '14512');
-  for (const bogus of ['14630', '1463', '', '14731', '14631']) {
+test('an unknown gameBuild prices as the live build (one normalisation point)', () => {
+  // Local invariant: `buildOf` resolves only '14512' to the cut, so a typo cannot silently select a3eb1605's numbers -
+  // it prices the live build, exactly as an absent key does.
+  const live = card(PLAIN(700), '14631');
+  for (const bogus of ['14630', '1463', '', '14731', '14631', '14513']) {
     const r = bogus === '14631' ? card(PLAIN(700), bogus) : analyze(PLAIN(700), { gameBuild: bogus, swing: 'StrikeLeft', target: STRUCK(), weapon: ROLL_100() });
-    if (bogus === '14631') assert.notDeepEqual(r, a, 'the real drift string opts in');
-    else assert.deepEqual(r, a, `${JSON.stringify(bogus)} prices as 14512`);
+    assert.deepEqual(r, live, `${JSON.stringify(bogus)} prices as the live build`);
   }
+  // And only the exact cut string is different.
+  assert.notDeepEqual(card(PLAIN(700), '14512'), live, 'the cut string is the only one that opts out');
 });
 
 test('the dist: citations in this file are pinned (rule 1, pin first)', () => {

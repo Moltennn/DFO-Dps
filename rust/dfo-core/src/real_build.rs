@@ -267,7 +267,8 @@ fn family_tree(family_key: &str) -> Result<Value, String> {
 }
 
 /// The options `realBuildStages` reads, as the JS destructured defaults leave them. `game_build` is additive: an
-/// `..Default::default()` caller keeps the cut, and `StageOpts::from_value` reads `gameBuild`.
+/// `..Default::default()` caller leaves the key out, which prices the LIVE build (as a JS caller with no `gameBuild`
+/// does); name `"14512"` to reproduce the vendored cut. `StageOpts::from_value` reads `gameBuild`.
 pub struct StageOpts {
     pub mode: String,
     pub vampire: bool,

@@ -796,16 +796,20 @@ pub fn martial_blow_pct(ch: &Value, t: Option<&target::Target>, opts: &Value) ->
     }
 }
 
-/// The shipped builds a card can be priced under (`model.js:63-66`): `14512` is the vendored cut
-/// (`a3eb1605`), `14631` the drift finding (CHANGELOG-MECHANICS.md GEAR-14631 / BRAND-14631). Opt-in:
-/// anything that is not exactly `14631` prices as the cut. Flip [`DEFAULT_GAME_BUILD`] in one line.
+/// The shipped builds a card can be priced under (`model.js:63-70`): `14631` is the live game (a drift finding vs
+/// the vendored cut, CHANGELOG-MECHANICS.md GEAR-14631 / BRAND-14631), `14512` the vendored cut (`a3eb1605`). The
+/// default is the live game; only an explicit `14512` selects the cut, so a caller with no scenario key (a GUI's
+/// `..Default::default()`, an old caller) prices the live game.
 pub const GAME_BUILDS: [&str; 2] = ["14512", "14631"];
-pub const DEFAULT_GAME_BUILD: &str = GAME_BUILDS[0];
+pub const DEFAULT_GAME_BUILD: &str = "14631";
+/// The vendored cut, by name: the pre-flip signature wrappers and the vector replay select it explicitly, so their
+/// numbers stay the ones a3eb1605 produced.
+pub const CUT_GAME_BUILD: &str = "14512";
 
-/// `buildOf(opts)` (`model.js:66`).
+/// `buildOf(opts)` (`model.js:66`): only an explicit `14512` selects the cut.
 pub fn game_build(opts: &Value) -> &'static str {
-    if opts.get("gameBuild").is_str("14631") {
-        "14631"
+    if opts.get("gameBuild").is_str("14512") {
+        "14512"
     } else {
         DEFAULT_GAME_BUILD
     }
@@ -814,8 +818,8 @@ pub fn game_build(opts: &Value) -> &'static str {
 /// Normalize a build string a caller already holds (the CLI's `--game-build`, a `StageOpts` field): `game_build`'s
 /// one normalisation point for a bare value instead of a scenario key.
 pub fn game_build_name(build: &str) -> &'static str {
-    if build == "14631" {
-        "14631"
+    if build == "14512" {
+        "14512"
     } else {
         DEFAULT_GAME_BUILD
     }

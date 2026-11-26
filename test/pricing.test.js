@@ -37,24 +37,28 @@ import { generator } from './harness/prng.mjs';
 import { WAIVERS, expectKnownDiscrepancy } from './harness/waivers.mjs';
 
 const GATE = () => gateTarget(45);
-const OPTS = { core: 'overhaul', rri: true, healthShare: 1, passiveOn: true, stacks: 5, swing: 'StrikeLeft' };
+// The audited figures below (547.37, 499.89, 1016.39, 891.74) are the VENDORED CUT's, recorded before the default
+// flipped, so the scenario and every character name the cut (CHANGELOG-MECHANICS.md, the default-flip entry).
+const OPTS = { core: 'overhaul', rri: true, healthShare: 1, passiveOn: true, stacks: 5, swing: 'StrikeLeft', gameBuild: '14512' };
 
 /** The supported weapon configurations, as the pricing code sees them. */
 function configs() {
   const gate = GATE();
   const run = (ch, extra = {}) => analyze(ch, { ...OPTS, target: gate, health: gate.maxHealth, pair: !!ch._pair, dual: !!ch._dual, ...extra });
-  const dual = maxCharacter(121);
+  // The CHARACTER carries the build as well as the scenario (the gear points it is built with follow the law).
+  const cut = { gameBuild: '14512' };
+  const dual = maxCharacter(121, cut);
   dual._dual = true;
   dual.offWeapon = { ...dual.weapon, equipSlot: 21 };
   return [
-    { id: 'one-handed (katana)', run: () => run(maxCharacter(121)) },
-    { id: 'two-handed (dai-katana)', run: () => run(maxCharacter(123)) },
-    { id: 'paired weapons (Pistolet)', run: () => run(maxCharacter(562)), pair: true },
+    { id: 'one-handed (katana)', run: () => run(maxCharacter(121, cut)) },
+    { id: 'two-handed (dai-katana)', run: () => run(maxCharacter(123, cut)) },
+    { id: 'paired weapons (Pistolet)', run: () => run(maxCharacter(562, cut)), pair: true },
     { id: 'dual wield (katana + katana)', run: () => run(dual), dual: true },
-    { id: 'backstab on (katana, uptime 1)', run: () => run(maxCharacter(121), { backstabUptime: 1 }) },
-    { id: 'backstab off (katana)', run: () => run(maxCharacter(121), { backstabUptime: 0 }) },
-    { id: 'hand wraps', run: () => run(maxCharacter(563)) },
-    { id: 'long bow', run: () => run(maxCharacter(130)) },
+    { id: 'backstab on (katana, uptime 1)', run: () => run(maxCharacter(121, cut), { backstabUptime: 1 }) },
+    { id: 'backstab off (katana)', run: () => run(maxCharacter(121, cut), { backstabUptime: 0 }) },
+    { id: 'hand wraps', run: () => run(maxCharacter(563, cut)) },
+    { id: 'long bow', run: () => run(maxCharacter(130, cut)) },
   ];
 }
 
@@ -99,7 +103,7 @@ test('2. a what-if is the same line on the item: pct = a slayer line, flat = an 
   assert.equal(gate.group, 'daedra');
   for (const c of configs().filter((x) => !x.dual && !x.pair)) {
     const base = c.run();
-    const ch = maxCharacter(c.id.includes('dai') ? 123 : c.id.includes('wraps') ? 563 : c.id.includes('bow') ? 130 : 121);
+    const ch = maxCharacter(c.id.includes('dai') ? 123 : c.id.includes('wraps') ? 563 : c.id.includes('bow') ? 130 : 121, { gameBuild: '14512' });
     const lineItem = (affixes) => ({ ...ch.weapon, affixes: [...(ch.weapon.affixes ?? []), ...affixes] });
     const real = (affixes, extra = {}) => analyze({ ...ch, weapon: lineItem(affixes) }, { ...OPTS, target: gate, health: gate.maxHealth, ...extra });
     const extra = c.id.includes('backstab on') ? { backstabUptime: 1 } : {};
@@ -128,7 +132,7 @@ test('2b. in a dual build the what-if rides the main-hand item; a pair is one it
   const pp = p.with({ potentVs: 5 });
   // a pair is one item: both guns carry it - the pair's swing is the mean of the two hands' blows, so its
   // gain is the main hand's plus the off hand's (at 0.8), each read from the hand's own card
-  const hand = (offHand) => analyze(maxCharacter(562), { ...OPTS, target: GATE(), health: GATE().maxHealth, pair: false, offHand });
+  const hand = (offHand) => analyze(maxCharacter(562, { gameBuild: '14512' }), { ...OPTS, target: GATE(), health: GATE().maxHealth, pair: false, offHand });
   const [m0, o0] = [hand(false), hand(true)];
   const [m1, o1] = [m0.with({ potentVs: 5 }), o0.with({ potentVs: 5 })];
   assert.ok(m1.cappedPerSwing > m0.cappedPerSwing && o1.cappedPerSwing > o0.cappedPerSwing, 'both hands move');

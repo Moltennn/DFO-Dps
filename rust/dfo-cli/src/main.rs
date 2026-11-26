@@ -221,7 +221,7 @@ Flags:
   --core <overhaul|classic> --swing <random|StrikeLeft|...> --stacks <0-5> --rhythm --unaware --first-blow
   --behind --backstab <0..1> --health-share <0..1> --self-health-share <0..1>
   --weapon <template[:material]>      theory blade/material override
-  --game-build <14512|14631>          shipped build a card is priced under (default: 14512)
+  --game-build <14512|14631>          shipped build a card or plan is priced under (default: 14631, the live game)
   --race <breton|redguard|nord|darkelf|highelf|woodelf|khajiit|argonian>
   --blade <template>                  theory long blade (default 123, Dai-katana)
   --gear-lb <n> --gear-cs <n>         gear points on weapon skill / Critical Strike (default: legal max)
@@ -1079,7 +1079,8 @@ const NUMERIC_FLAGS: [(&str, f64, Range); 30] = [
 struct Values {
     theory: bool,
     json: bool,
-    /// `--game-build`: the shipped build a card is priced under (`model.js:63-66`); default `14512`.
+    /// `--game-build`: the shipped build a card is priced under (`model.js:63-70`); default the live build, and
+    /// only an explicit `14512` selects the vendored cut.
     game_build: String,
     vampire: bool,
     firmament: bool,
@@ -4269,7 +4270,7 @@ fn scenario_of(ch: &Value, values: &Values, traits: &[String], target: &Value) -
         ("target", target.clone()),
         ("core", Str(values.core.to_lowercase())),
         // The shipped build a card is priced under (`src/cli.js:541-546`, CHANGELOG-MECHANICS.md GEAR-14631 /
-        // BRAND-14631). `14512` is the vendored cut and the default; `14631` opts into the drift finding.
+        // BRAND-14631). `14631` is the live default; only an explicit `14512` selects the vendored cut.
         ("gameBuild", Str(values.game_build.clone())),
         ("rri", Bool(values.rri)),
         (

@@ -108,7 +108,9 @@ test('objective CLI refuses a boss, gate or trait target for sampled non-relay o
 });
 
 test('existing build text is unchanged', () => {
-  const result = cli('build', '--theory', '--target', 'soft');
+  // The recorded digest is the VENDORED CUT's text (a3eb1605), so the cut is named explicitly: the live default
+  // re-prices the gear and its text moves (CHANGELOG-MECHANICS.md, the default-flip entry).
+  const result = cli('build', '--theory', '--target', 'soft', '--game-build', '14512');
   assert.equal(result.status, 0, result.stderr);
   // SHA-256 of the complete stdout captured before adding the objective command.
   assert.equal(createHash('sha256').update(result.stdout).digest('hex'), '271f99f448303a74ee9230743ca1684caa4a657598aa27f896e453359da8489c');

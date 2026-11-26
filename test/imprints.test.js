@@ -22,7 +22,7 @@ test('imprint eligibility is the Weapons group, then the power\'s own fit', () =
 });
 
 test('a power is priced both unconditionally and under its trigger', () => {
-  const base = maxRun(maxCharacter(123));
+  const base = maxRun(maxCharacter(123, { gameBuild: '14512' }), { gameBuild: '14512' });
   const flow = { kind: 'flow', pct: 6, max: 5 };
   // Stage 2.9: a power is the same card re-run with its percentage in lootBlow's step (analyze's `with`). Pricing
   // reads the CARRIED metric (W-LOOT-CARRY, M41): the held item's long-run mean is the exact share, so the figure
@@ -39,7 +39,7 @@ test('a power is priced both unconditionally and under its trigger', () => {
 });
 
 test('the long-blade ranking keeps every weapon power, read on a long blade', () => {
-  const r = rankFamily(family('LongBlade'));
+  const r = rankFamily(family('LongBlade'), { gameBuild: '14512' });
   const names = r.rows.map((x) => x.power.name);
   assert.ok(names.includes('Way of the Sword'));
   assert.ok(names.includes('Dragonsbane'));
@@ -50,20 +50,20 @@ test('the long-blade ranking keeps every weapon power, read on a long blade', ()
 });
 
 test('Silent Death is a double only away from the gate, where its trigger can occur', () => {
-  const base = maxRun(maxCharacter(117));
+  const base = maxRun(maxCharacter(117, { gameBuild: '14512' }), { gameBuild: '14512' });
   const silent = { kind: 'unaware', pct: 100 };
   const silentCard = base.with({ loot: { pct: 100, flat: 0 } });
   assert.equal(powerDps(silent, base, true), silentCard.carriedDps);
   assert.ok(Math.abs(silentCard.dps - 1980.021481481482) < 1e-9, `silent card ${silentCard.dps}`);
   assert.ok(Math.abs(powerDps(silent, base, true) / base.carriedDps - 2) < 0.02, `${powerDps(silent, base, true) / base.carriedDps}`); // +100% is exact before the crit, condition and defence round it
-  const r = rankFamily(family('ShortBlade'));
+  const r = rankFamily(family('ShortBlade'), { gameBuild: '14512' });
   const row = r.rows.find((x) => x.power.name === 'Silent Death');
   assert.equal(row.conditionalDps, row.baseDps);
   assert.match(row.trigger, /not at the gate/);
 });
 
 test('the boss ranking reflects the gate cap, not the uncapped ceiling', () => {
-  const r = rankFamily(family('LongBlade'));
+  const r = rankFamily(family('LongBlade'), { gameBuild: '14512' });
   const flow = r.rows.find((x) => x.power.name === 'Way of the Sword');
   // The legal profile is no longer saturated far above the cap, but the cap still absorbs most of the
   // power's +6%/stack (30% at five stacks): the uncapped gain is far larger than the capped one.
@@ -77,7 +77,7 @@ test('the carried metric keeps the card\'s imprint order on every family fixture
   // fixtures that order is the order the plain card delta gives. If a future carried change reorders a family, this
   // fails and the reorder has to be argued (and the changelog updated), not slipped in with the metric switch.
   const order = (list) => list.map((r) => r.id);
-  for (const f of rankAll()) {
+  for (const f of rankAll({ gameBuild: '14512' })) {
     if (!f.base) continue;
     const card = (r) => ({
       id: r.id,
@@ -103,7 +103,7 @@ test('every family returns rows and a base weapon', () => {
 
 test('the gate boss is a daedra, and Serpent\'s Kiss is flat poison before the cap', () => {
   assert.equal(gateTarget(45).group, 'daedra');
-  const base = maxRun(maxCharacter(117), { target: gateTarget(45) });
+  const base = maxRun(maxCharacter(117, { gameBuild: '14512' }), { target: gateTarget(45), gameBuild: '14512' });
   const venom = { kind: 'venom', flat: 8 };
   assert.ok(powerDps(venom, base, false, { capped: true }) > base.cappedDps);
   assert.ok(powerDps(venom, base, true, { capped: true }) >= powerDps(venom, base, false, { capped: true }));
@@ -121,19 +121,19 @@ test('Many Endings rides the blow\'s claim on a relay body, and is its own hit o
   // Stage 2.11b: upstream owes the echo into the blow's own claim (lootPowers.js:444-454, dungeonContext.js:4528-4531),
   // so a relay cap clips the blow and its echo together - it is not a second, independently capped hit.
   const gate = gateTarget(45);
-  const base = maxRun(maxCharacter(123), { target: gate });
+  const base = maxRun(maxCharacter(123, { gameBuild: '14512' }), { target: gate, gameBuild: '14512' });
   const echo = { kind: 'echo', chance: 10 };
   const boss = powerDps(echo, base, false, { capped: true });
   assert.ok(boss > base.carriedCappedDps, 'still worth something');
   assert.ok(boss < base.carriedCappedDps * 1.1 - 1e-6, 'not a whole second capped hit: the claim (mean 598 of 600) clips it');
   // on an ordinary foe there is no relay claim: the echo is a second hit on the foe's health, uncapped
-  const raw = maxRun(maxCharacter(123), { target: referenceFoe(45, 'tough') });
+  const raw = maxRun(maxCharacter(123, { gameBuild: '14512' }), { target: referenceFoe(45, 'tough'), gameBuild: '14512' });
   assert.ok(Math.abs(powerDps(echo, raw, false) / raw.carriedDps - 1.1) < 0.002, `${(powerDps(echo, raw, false) / raw.carriedDps).toFixed(4)}`);
 });
 
 
 test('moon adds both night and animal shares, and chain/quake are other-target only', () => {
-  const base = maxRun(maxCharacter(123));
+  const base = maxRun(maxCharacter(123, { gameBuild: '14512' }), { gameBuild: '14512' });
   const moon = powerDps({ kind: 'moon', pct: 35, beast: 35 }, base, true);
   const moonCard = base.with({ loot: { pct: 70, flat: 0 } });
   assert.equal(moon, moonCard.carriedDps);

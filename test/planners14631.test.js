@@ -29,10 +29,10 @@ const json = (args) => {
 };
 
 test('the planner modules price the shipped build a caller names', () => {
-  // A max-profile card: the gear percent vs the flat add, straight from `maxRun`'s scenario.
+  // A max-profile card: the gear percent (the cut, named explicitly) vs the flat add (the default/live build).
   const ch = maxCharacter(118, {});
-  const cut = maxRun(ch);
-  const drift = maxRun(ch, { gameBuild: '14631' });
+  const cut = maxRun(ch, { gameBuild: '14512' });
+  const drift = maxRun(ch);
   assert.notEqual(cut.damage.parts.mastery, drift.damage.parts.mastery, 'the mastery percent moves');
   assert.equal(cut.damage.parts.gearAdd, undefined);
   assert.ok(drift.damage.parts.gearAdd.lo > 0);
@@ -42,8 +42,8 @@ test('the planner modules price the shipped build a caller names', () => {
   // point vs a percent), so the point that maximises DPS MOVES. That is the planner assumption the ticket warned
   // about: the search is still right (it re-prices every point), but anything that cached or hard-coded the 14512
   // winner would serve the wrong split. Measured on 118: 250/370/25% -> 350/252/38%.
-  const planCut = legalGear(118, {});
-  const planDrift = legalGear(118, { gameBuild: '14631' });
+  const planCut = legalGear(118, { gameBuild: '14512' });
+  const planDrift = legalGear(118);
   assert.notDeepEqual(
     { lb: planCut.lb, cs: planCut.cs, dmg: planCut.dmg },
     { lb: planDrift.lb, cs: planDrift.cs, dmg: planDrift.dmg },
@@ -54,15 +54,15 @@ test('the planner modules price the shipped build a caller names', () => {
   assert.deepEqual(planCut.violations, []);
   assert.deepEqual(planDrift.violations, []);
   // The cache must key on the build: asking again in the other order returns each build's own winner.
-  assert.equal(legalGear(118, { gameBuild: '14631' }).lb, planDrift.lb);
-  assert.equal(legalGear(118).lb, planCut.lb);
+  assert.equal(legalGear(118).lb, planDrift.lb);
+  assert.equal(legalGear(118, { gameBuild: '14512' }).lb, planCut.lb);
 
   // The imprint ranking and the enchant plan both ride the same card. The ranked base moves, and so does the delta
   // each power buys - under 14631 the larger blows hit the Breach's per-hit cap, so the percentage powers' gains
   // collapse and the ORDER re-sorts. Nothing is hard-coded: the rows are sorted by the price they were measured at.
   const family = { key: 'LongBlade', name: 'Long Blade', templates: [118, 119, 120, 121, 122, 123] };
-  const rankCut = rankFamily(family, {});
-  const rankDrift = rankFamily(family, { gameBuild: '14631' });
+  const rankCut = rankFamily(family, { gameBuild: '14512' });
+  const rankDrift = rankFamily(family, {});
   assert.notEqual(rankCut.base.cappedDps, rankDrift.base.cappedDps, 'the ranked base moves');
   assert.notDeepEqual(
     rankCut.rows.map((r) => r.delta),
@@ -75,16 +75,16 @@ test('the planner modules price the shipped build a caller names', () => {
   assert.ok(desc(rankCut.rows) && desc(rankDrift.rows), 'sorted by the price at its own build');
 
   const enchCut = planEnchants({ weapon: 118, gameBuild: '14512' });
-  const enchDrift = planEnchants({ weapon: 118, gameBuild: '14631' });
+  const enchDrift = planEnchants({ weapon: 118 });
   assert.notEqual(enchCut.carriedBaseDps, enchDrift.carriedBaseDps, 'the enchant baseline moves');
 
   // The real-loadout chain, and one row of it.
-  const rowCut = realTemplate(118, family, {});
-  const rowDrift = realTemplate(118, family, { gameBuild: '14631' });
+  const rowCut = realTemplate(118, family, { gameBuild: '14512' });
+  const rowDrift = realTemplate(118, family, {});
   assert.notEqual(rowCut.totalDps, rowDrift.totalDps, 'the loadout total moves');
 });
 
-test('every planner command accepts --game-build and the default stays 14512', () => {
+test('every planner command accepts --game-build and the default is the live build', () => {
   for (const args of [['imprints', '--json'], ['enchant-plan', '--json']]) {
     const plain = cli(...args);
     const cut = cli(...args, '--game-build', '14512');
@@ -92,15 +92,15 @@ test('every planner command accepts --game-build and the default stays 14512', (
     assert.equal(plain.status, 0, plain.stderr);
     assert.equal(cut.status, 0, cut.stderr);
     assert.equal(drift.status, 0, drift.stderr);
-    assert.equal(plain.stdout, cut.stdout, `${args[0]}: no --game-build is 14512`);
-    assert.notEqual(plain.stdout, drift.stdout, `${args[0]}: 14631 moves the plan`);
+    assert.equal(plain.stdout, drift.stdout, `${args[0]}: no --game-build is the live build`);
+    assert.notEqual(plain.stdout, cut.stdout, `${args[0]}: 14512 moves the plan to the cut`);
   }
   // The loadout chain is the slow one; pin that it accepts the flag and that its build tier moves.
-  const uncapped = json(['loadout', '--json', '--uncapped', '--game-build', '14631']);
-  const pinned = json(['loadout', '--json', '--uncapped', '--game-build', '14512']);
+  const drift = json(['loadout', '--json', '--uncapped', '--game-build', '14631']);
+  const cut = json(['loadout', '--json', '--uncapped', '--game-build', '14512']);
   const plain = json(['loadout', '--json', '--uncapped']);
-  assert.deepEqual(plain, pinned, 'no --game-build is 14512');
-  assert.notDeepEqual(plain, uncapped, '14631 moves the loadout rows');
+  assert.deepEqual(plain, drift, 'no --game-build is the live build');
+  assert.notDeepEqual(plain, cut, '14512 moves the loadout rows to the cut');
 });
 
 test('a refused command still refuses, and a command that is not a planner is unchanged', () => {

@@ -209,8 +209,9 @@ fn the_shipped_build_moves_the_cap_sheet_and_the_formula_cap_row() {
             args.extend_from_slice(extra);
             same(&args, &root);
         }
-        // The default is an explicit 14512 run.
+        // No flag is an explicit 14631 run, so the default is the live sheet.
         same(&["theory"], &root);
+        same(&["theory", "--game-build", "14631"], &root);
     }
     fs::remove_dir_all(&root).expect("cleanup");
 }

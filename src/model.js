@@ -11,10 +11,10 @@
  *   systems/weaponMastery.js  (online skill past 100)
  *   systems/loot/lootRarity.js (affixes)
  *
- * `gameBuild` (scenario option, default '14512') selects the shipped build a card is priced under. '14512' is
- * the vendored cut above. '14631' is a drift finding (CHANGELOG-MECHANICS.md, GEAR-14631 / BRAND-14631): the
- * weapon gear is a flat add on the roll, not a mastery percent, and the brand loot power adds flat elemental
- * damage. '14631' is opt-in and changes no default output.
+ * `gameBuild` (scenario option, default the live build) selects the shipped build a card is priced under. '14631'
+ * is the live game: the weapon gear is a flat add on the roll, not a mastery percent, and the brand loot power adds
+ * flat elemental damage (CHANGELOG-MECHANICS.md, GEAR-14631 / BRAND-14631; a drift finding vs the vendored cut).
+ * '14512' is the vendored cut above and reproduces its numbers exactly; only that explicit value selects it.
  * See NOTICE for the source and its MIT / Daggerfall Unity attribution.
  */
 import {
@@ -58,16 +58,16 @@ const fround = Math.fround;
 const mean = (a) => a.reduce((s, x) => s + x, 0) / a.length;
 const num = (v, d = 0) => (Number.isFinite(v) ? v : d);
 
-/** The shipped builds a card can be priced under. '14512' is the vendored cut (a3eb1605); '14631' is the drift
- *  finding in CHANGELOG-MECHANICS.md (GEAR-14631, BRAND-14631). Opt-in, default '14512'; anything that is not
- *  exactly '14631' prices as the cut. */
+/** The shipped builds a card can be priced under. '14631' is the live game (a drift finding vs the vendored cut);
+ *  '14512' is the vendored cut (a3eb1605), kept so `--game-build 14512` reproduces the old numbers exactly. */
 export const GAME_BUILDS = Object.freeze(['14512', '14631']);
-/** The default build: the vendored cut. Flipping 14631 to default is a one-line change here (and in the Rust twin). */
-export const DEFAULT_GAME_BUILD = '14512';
-const buildOf = (opts) => (opts?.gameBuild === '14631' ? '14631' : DEFAULT_GAME_BUILD);
+/** The default build. The one-line flip: `buildOf`/`gameBuildOf` resolve only an explicit `14512` to the cut, so an
+ *  absent key (and any string the CLI would refuse) prices the live game. */
+export const DEFAULT_GAME_BUILD = '14631';
+const buildOf = (opts) => (opts?.gameBuild === '14512' ? '14512' : DEFAULT_GAME_BUILD);
 
 /** Normalize a caller's build once, as `buildOf` does for a scenario key (`model.js:66`). */
-export const gameBuildOf = (gameBuild) => (gameBuild === '14631' ? '14631' : DEFAULT_GAME_BUILD);
+export const gameBuildOf = (gameBuild) => (gameBuild === '14512' ? '14512' : DEFAULT_GAME_BUILD);
 
 /** Unity's Mathf.Round: half to even (pcaao.js unityRound). */
 export function unityRound(x) {

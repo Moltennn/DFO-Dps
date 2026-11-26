@@ -1,0 +1,81 @@
+{
+  "version": "pre-flip default (0.1.14512)",
+  "note": "frozen from a capture of the pre-flip commit (c621ad3) default CLI output; an absolute *.html path in stdout is <OUT>",
+  "cases": [
+    {
+      "name": "build",
+      "sha256": "49ae4cecb8c66a3022605b0e971d864ce3ba95a82d109689377baded6097a513",
+      "bytes": 16190
+    },
+    {
+      "name": "build-text",
+      "sha256": "2cba1a17b0b0c7b1514be2bb81a458567f5bc49796f1271aa938ac1762a8cf7d",
+      "bytes": 3918
+    },
+    {
+      "name": "objective",
+      "sha256": "cc7b17f6b07a52da8cc3874daa461381e2357c965b4faed7960df5f8e7889203",
+      "bytes": 834
+    },
+    {
+      "name": "rank",
+      "sha256": "91b821c0a345d06a727f9183bb1e7d344314e6c093a7d83ae9d52de999c267f0",
+      "bytes": 12366
+    },
+    {
+      "name": "compare",
+      "sha256": "c0c4e01530f5463e8ea56f040a725793ba901bd3f14b674813e5dc3961092d79",
+      "bytes": 332
+    },
+    {
+      "name": "scale",
+      "sha256": "859771c4ca70ecc9385d92e64f9c44c6a10af45355bdd9e7923df561175c030e",
+      "bytes": 335
+    },
+    {
+      "name": "tradeoff",
+      "sha256": "b81f68b09aa8ae1c9c3fd53c1a10e371b27f666610e821ef7ce654552430f717",
+      "bytes": 4224
+    },
+    {
+      "name": "theory",
+      "sha256": "f2bc98cd3192e88dbd00c6759d58052c5467cab9373f2976db2f79f1abeacc19",
+      "bytes": 47888
+    },
+    {
+      "name": "theory-text",
+      "sha256": "8bc9a88f240647218c9d520ede24fe73d63084e88fa0a46c5793769214760f0b",
+      "bytes": 16349
+    },
+    {
+      "name": "imprints",
+      "sha256": "5664d64148010eb0a96e5962d2fcbb9b3e9fdeca25a62d8cd8b48ff86bae037e",
+      "bytes": 124194
+    },
+    {
+      "name": "enchant-plan",
+      "sha256": "6d267fffbc97c9fe7f3d94f1249726364270bb7112e19966b1fd6788cec6d24e",
+      "bytes": 21894
+    },
+    {
+      "name": "weapons",
+      "sha256": "b0219ad7159f3e606c359ddb1b2081f8f22435a67e5246d44fb7801eabcb4c21",
+      "bytes": 140960
+    },
+    {
+      "name": "skills",
+      "sha256": "b0219ad7159f3e606c359ddb1b2081f8f22435a67e5246d44fb7801eabcb4c21",
+      "bytes": 140960
+    },
+    {
+      "name": "report",
+      "sha256": "2bbd7c0c551c13dc840494af4bb752dde9c3885be6212ec993b12e074baf4619",
+      "bytes": 24083
+    },
+    {
+      "name": "graph",
+      "sha256": "6f3cdd1a1aed5a9343bc6eeb773d0389eb202772529c6f4b63e520b9a9dbe025",
+      "bytes": 3783
+    }
+  ]
+}

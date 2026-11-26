@@ -66,11 +66,11 @@ fn the_legal_frontier_winner_moves_with_the_build() {
         .legal_gear(&Num(118.0), &opts("14631"))
         .expect("cached");
     assert_eq!(point(&again), point(&drift));
-    // An unknown build prices as the cut (`game_build_name`'s one normalisation point).
+    // An unknown build prices the LIVE build (`game_build_name`'s one normalisation point): only `14512` cuts.
     let bogus = profiles
         .legal_gear(&Num(118.0), &opts("1463"))
-        .expect("the cut");
-    assert_eq!(point(&bogus), point(&cut));
+        .expect("the live frontier");
+    assert_eq!(point(&bogus), point(&drift));
 }
 
 /// A LOCAL INVARIANT: `max_run` reads the scenario key, so the shipped build reaches the card.
@@ -87,9 +87,9 @@ fn a_max_run_card_moves_with_the_build() {
         cut.card.fields.capped_dps, drift.card.fields.capped_dps,
         "the carried figure moves"
     );
-    // An unset key is the cut.
+    // An unset key is the LIVE build.
     let plain = max_run(&ch, &obj([]), &book);
-    assert_eq!(plain.card.fields.capped_dps, cut.card.fields.capped_dps);
+    assert_eq!(plain.card.fields.capped_dps, drift.card.fields.capped_dps);
 }
 
 /// A LOCAL INVARIANT: the imprint ranking and the enchant plan ride the same card.
@@ -146,21 +146,20 @@ fn the_real_loadout_chain_takes_the_build() {
             .expect("the row")
     };
     assert_ne!(row(&cut, 118.0), row(&drift, 118.0), "the tree stage moves");
-    // An unknown build name normalises to the cut rather than inventing a third law.
+    // An unknown build name normalises to the LIVE build rather than inventing a third law.
     let bogus = universe("1463");
-    assert_eq!(row(&bogus, 118.0), row(&cut, 118.0));
-    // `StageOpts::from_value` reads the key; a default struct is the cut.
-    assert_eq!(StageOpts::from_value(&opts("14631")).game_build, "14631");
-    let mut drift_opts = StageOpts::default();
-    assert_eq!(drift_opts.game_build, "14512");
-    let cut_stage = real_build_stages(&Num(118.0), family("LongBlade"), &drift_opts, &book)
+    assert_eq!(row(&bogus, 118.0), row(&drift, 118.0));
+    // `StageOpts::from_value` reads the key; a default struct is the LIVE build.
+    assert_eq!(StageOpts::from_value(&opts("14512")).game_build, "14512");
+    let mut live_opts = StageOpts::default();
+    assert_eq!(live_opts.game_build, "14631");
+    let live_stage = real_build_stages(&Num(118.0), family("LongBlade"), &live_opts, &book)
+        .expect("the live stage");
+    live_opts.game_build = "14512".to_owned();
+    let cut_stage = real_build_stages(&Num(118.0), family("LongBlade"), &live_opts, &book)
         .expect("the cut stage");
-    drift_opts.game_build = "14631".to_owned();
-    let drift_stage = real_build_stages(&Num(118.0), family("LongBlade"), &drift_opts, &book)
-        .expect("the drift stage");
     assert_ne!(
-        cut_stage.tree_run.totals.carried_capped_dps,
-        drift_stage.tree_run.totals.carried_capped_dps,
+        live_stage.tree_run.totals.carried_capped_dps, cut_stage.tree_run.totals.carried_capped_dps,
         "the stage's tree run moves"
     );
 }

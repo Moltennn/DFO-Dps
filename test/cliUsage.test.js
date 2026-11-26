@@ -54,17 +54,17 @@ test('an unknown core exits 2', () => {
 
 test('--game-build validates and selects the shipped build', () => {
   usageError(['build', '--theory', '--game-build', '14513'], /--game-build must be one of 14512, 14631/);
-  // The default and an explicit 14512 are the same card; 14631 is the opt-in drift finding.
+  // The default and an explicit 14631 are the same card; 14512 is the vendored cut a picker asks for by name.
   const plain = cli('build', '--theory', '--json');
   const cut = cli('build', '--theory', '--game-build', '14512', '--json');
   const drift = cli('build', '--theory', '--game-build', '14631', '--json');
   assert.equal(plain.status, 0, plain.stderr);
   assert.equal(cut.status, 0, cut.stderr);
   assert.equal(drift.status, 0, drift.stderr);
-  assert.equal(plain.stdout, cut.stdout, 'no --game-build is 14512');
-  assert.notEqual(plain.stdout, drift.stdout, '14631 moves the card');
-  assert.ok(JSON.parse(plain.stdout).result.terms.gearAdd === undefined);
-  assert.ok(JSON.parse(drift.stdout).result.terms.gearAdd.lo > 0);
+  assert.equal(plain.stdout, drift.stdout, 'no --game-build is the live build');
+  assert.notEqual(plain.stdout, cut.stdout, '14512 moves the card back to the cut');
+  assert.ok(JSON.parse(plain.stdout).result.terms.gearAdd.lo > 0, 'the live card carries the flat add');
+  assert.ok(JSON.parse(cut.stdout).result.terms.gearAdd === undefined, 'and the cut has no such field');
 });
 
 test('--game-build is rejected by every command that does not read it', () => {
@@ -84,17 +84,18 @@ test('report threads --game-build into the page', () => {
   const out = tmpOut();
   const cut = tmpOut();
   const drift = tmpOut();
-  const a = cli('report', '--theory', '--out', cut);
-  const b = cli('report', '--theory', '--out', drift, '--game-build', '14631');
+  const a = cli('report', '--theory', '--out', cut, '--game-build', '14512');
+  const b = cli('report', '--theory', '--out', drift);
   assert.equal(a.status, 0, a.stderr);
   assert.equal(b.status, 0, b.stderr);
   const page = (f) => fs.readFileSync(f, 'utf8');
-  assert.notEqual(page(cut), page(drift), 'the report page moves under 14631');
-  assert.match(page(drift), /Gear add \(flat\)/, 'the page carries the gear add');
-  // the default is the cut
+  assert.notEqual(page(cut), page(drift), 'the report page moves back to the cut under 14512');
+  assert.match(page(drift), /Gear add \(flat\)/, 'the live page carries the gear add');
+  assert.doesNotMatch(page(cut), /Gear add \(flat\)/, 'and the cut page has no such row');
+  // the default is the live build
   const plain = cli('report', '--theory', '--out', out);
   assert.equal(plain.status, 0, plain.stderr);
-  assert.equal(page(out), page(cut), 'no --game-build is 14512');
+  assert.equal(page(out), page(drift), 'no --game-build is the live build');
 });
 
 test('--trials above 1,000,000 exits 2 in objective and loadout --shortlist', () => {

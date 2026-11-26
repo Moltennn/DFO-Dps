@@ -78,16 +78,16 @@ bullets below and in the per-command notes.
   rows price through the launcher's `SPELLS.STD` (`src/cws.js`), as in the JS.
 - **Read-only saves.** There is no game-save writer. `import` is read-only and keeps no copy of the save bytes after
   the character is built.
-- **The model is the 14512 snapshot.** It is the vendored upstream `vendor/upstream/a3eb1605`. The live game is build
-  0.1.14631, which changed:
+- **The model is the live game, with the vendored cut selectable.** The default is build 0.1.14631 (the live game);
+  `--game-build 14512` is the vendored upstream `vendor/upstream/a3eb1605`, kept byte for byte. 0.1.14631 changed:
   - the weapon gear law: a flat add with uniform range `[floor(g/10), floor(g/5)]`, replacing `min(320, gear*0.44)%`;
   - the axe/blunt half line, which is removed;
   - a brand loot power and a defender sigil set, which are added.
-  The JS has an opt-in `--game-build 14631` on branch `model-14631` (not merged to `main`); the Rust port models it
-  the same way, behind `--game-build`.
+  Both the JS and the Rust port now default to 14631 and reach the cut only through an explicit `14512`.
 
 - **`--game-build` (the shipped-build selector).** `--game-build <14512|14631>` selects the shipped build a weapon
-  card or a planner's numbers are priced under; the default stays `14512` (the vendored cut). It is refused by name on
+  card or a planner's numbers are priced under; the default is `14631` (the live game), and `14512` is the vendored
+  cut. It is refused by name on
   every command that prices neither a card nor a plan (`firmament`, `probe`, `spells`, `spell`, `saves`, `doctor`);
   the per-card commands (`build`, `objective`, `rank`, `report`, `compare`, `scale`, `tradeoff`, `theory`, `graph`,
   `enchant`) and the planners (`imprints`, `weapons`/`skills`, `enchant-plan`/`gear-plan`, `loadout`/`real-dps`) read
@@ -102,11 +102,15 @@ bullets below and in the per-command notes.
   - the legal-gear frontier's WINNER, because that frontier is a search over priced points: a flat add per weapon
     skill point against no mastery percent moves the best split (`250/370/25%` -> `350/252/38%` on the Dai-katana).
     The frontier cache keys on the build for this reason.
-  The public planner API takes the build additively: `Profiles::legal_gear`/`max_character`/`max_run` read
-  `opts.gameBuild`; `real_weapon_loadouts(_with)` take `game_build: &str` and `StageOpts` gained a `game_build` field
-  (`..Default::default()` is the cut); `ShortlistOpts` gained `game_build`; `enchant_plan::apply_plan_dps` and
-  `best_weapon_for_family(_with)` keep their old arities as cut wrappers, with `_at`/`_with_build` taking the build.
-  `model_blow::game_build_name`/`game_build_one` normalise a bare string.
+  `model_blow::game_build`/`game_build_name`/`game_build_one` normalise a value: only the exact string `14512` selects
+  the cut, everything else is the live build. `CUT_GAME_BUILD` names the cut for the pre-flip wrappers (below).
+  **Signature changes a GUI must adapt to** (they are NOT purely additive; see `FORGE-API.md` section 8):
+  `real_build::real_weapon_loadouts(_with)` gained a required `game_build: &str`; `StageOpts` gained a `game_build`
+  field whose `Default`/`..Default::default()` is now the LIVE build (was the cut); and
+  `enchant_plan::apply_plan_dps`, `best_weapon_for_family(_with)` keep their old arities but are deliberately pinned
+  to the cut, so a caller wanting current numbers must use `_at`/`_with_build`. The rest is additive:
+  `Profiles::legal_gear`/`max_character`/`max_run` and `imprints::rank_*`, `enchant_plan::plan_*` read
+  `opts.gameBuild`; `ShortlistOpts` gained `game_build`.
   `14631` behaviour rests on `dist:` evidence from the shipped build, cited in `CHANGELOG-MECHANICS.md`
   (GEAR-14631 / BRAND-14631) and in `test/build14631.test.js`; the Rust vectors only prove the port matches the JS
   (`tools/rust-blow-vectors.mjs` appends the `14631` cards last, so every earlier vector byte is unchanged). A
@@ -116,8 +120,8 @@ bullets below and in the per-command notes.
   Only a card built from a scenario that carries `gameBuild` moves - which now includes the planners: `src/maxprofile.js`,
   `src/imprints.js`, `src/enchantPlan.js` and `src/realBuild.js` (Rust `dfo_core::maxprofile`/`imprints`/`enchant_plan`/
   `real_build`) take the key from their caller, so `imprints`, `weapons`/`skills`, `enchant-plan`/`gear-plan`,
-  `loadout`/`real-dps` are priced at the shipped build too. Two consequences worth knowing: (a) the legal-gear
-  frontier is a SEARCH over priced points, and 14631's flat add can pick a different winner (`250/370/25%` ->
+  `loadout`/`real-dps` are priced at the selected build too. Two consequences worth knowing: (a) the legal-gear
+  frontier is a SEARCH over priced points, and either build's law can pick a different winner (`250/370/25%` ->
   `350/252/38%` on the Dai-katana), so the frontier cache keys on the build; (b) the historical command list grew from
   ten to seventeen readers, and `firmament`/`probe`/`spells`/`spell`/`saves`/`doctor` still refuse the flag by name.
   A hypothetical `--gear-lb` past V8's spread limit crashes the JS with a `RangeError` (exit 1); the port raises the
@@ -1668,6 +1672,7 @@ the model boundary.
 ```
 node tools/rust-data.mjs
 node tools/gate.mjs rust
+node tools/gate.mjs rust --full          # plus the opt-in slow tier (PLANNERS_SLOW=1: sampled loadout/real-dps)
 node tools/gate.mjs mutate spells.rs --tests spells --count 1000 --seed 1 --timeout 120
 node tools/gate.mjs mutate enchants.rs --tests spells --count 1000 --seed 1 --timeout 120
 node tools/gate.mjs mutate boss_traits.rs --tests spells --count 1000 --seed 1 --timeout 120

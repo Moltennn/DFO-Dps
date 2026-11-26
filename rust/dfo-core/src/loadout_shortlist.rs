@@ -36,8 +36,8 @@ pub struct ShortlistOpts {
     pub max_seconds: f64,
     pub max_blows: f64,
     pub health: Value,
-    /// The shipped build (`--game-build`); additive, defaulting to the cut. The universe is priced per build, so a
-    /// shortlist's cache key carries it (a 14631 shortlist cannot reuse a 14512 one).
+    /// The shipped build (`--game-build`); additive, defaulting to the live build. The universe is priced per build,
+    /// so a shortlist's cache key carries it (a 14631 shortlist cannot reuse a 14512 one).
     pub game_build: String,
 }
 

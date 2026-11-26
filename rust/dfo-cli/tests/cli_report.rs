@@ -225,8 +225,13 @@ fn report_threads_the_shipped_build_into_the_page() {
         &root,
         &page,
     );
-    // The default is an explicit 14512 run: same page bytes.
+    // No flag is an explicit 14631 run: same page bytes.
     same(&["report", "--theory", "--out", out], &root, &page);
+    same(
+        &["report", "--theory", "--game-build", "14631", "--out", out],
+        &root,
+        &page,
+    );
     // A command that does not read it refuses it by name, as `checkOutputFlags` does.
     let refusal = root.join("refused.html");
     same_usage(

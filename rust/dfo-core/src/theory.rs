@@ -13,12 +13,12 @@ pub(crate) fn s(text: &str) -> Value {
 }
 
 /// The points the gear's percent cap needs on this shipped build, or `None` when it has no percent cap
-/// (`theory.js:50-53`).
+/// (`theory.js:50-53`). Only an explicit `14512` has the percent.
 pub fn gear_mastery_points(game_build: &str) -> Option<f64> {
-    if game_build == "14631" {
-        None
-    } else {
+    if game_build == "14512" {
         Some(GEAR_MASTERY_POINTS)
+    } else {
+        None
     }
 }
 
@@ -26,9 +26,9 @@ pub fn gear_mastery_points(game_build: &str) -> Option<f64> {
 /// `min(320, gear x 0.44)` percent, `14631` the flat roll add with no cap. The rest of the sheet is
 /// build-independent.
 pub fn theory_caps(game_build: &str) -> Vec<TheoryCapsItem> {
-    // `14631` swaps the gear row for the shipped build's; every other string is the frozen `14512` table
-    // (`theory.js:56-70`, whose `GEAR_CAPS[14512]` row is that table's own).
-    if game_build != "14631" {
+    // `14512` is the frozen table's own gear row; every other string (the live default, and an unknown one, which the
+    // CLI refuses) is the shipped build's flat-add row.
+    if game_build == "14512" {
         return THEORY_CAPS.to_vec();
     }
     let Some((_, gear)) = GEAR_CAPS.iter().find(|(id, _)| *id == 14631) else {

@@ -144,7 +144,7 @@ test('2. the same with the natural 10% (the oracle\'s dice seeded), and the old 
 
 test('3. the cap clips the blow and its echo together; a build without the power is untouched', async () => {
   const gate = gateTarget(45);
-  const base = maxRun(maxCharacter(121), { target: gate });
+  const base = maxRun(maxCharacter(121, { gameBuild: '14512' }), { target: gate, gameBuild: '14512' });
   const echo = base.with({ imprint: { kind: 'echo', chance: 100 } });
   // with chance 100 every blow repeats: the claim can never exceed the cap
   assert.ok(echo.cappedPerSwing <= base.cap + 1e-9);
@@ -156,7 +156,7 @@ test('3. the cap clips the blow and its echo together; a build without the power
   assert.equal(base.with({}).cappedPerSwing, base.cappedPerSwing);
   // the echo is not laid on an ordinary foe's card through the claim either: it is a second hit there
   const plain = referenceFoe(45, 'tough');
-  const raw = maxRun(maxCharacter(121), { target: plain });
+  const raw = maxRun(maxCharacter(121, { gameBuild: '14512' }), { target: plain, gameBuild: '14512' });
   const on = raw.with({ imprint: WARP });
   assert.ok(Math.abs(on.dps / raw.dps - 1.1) < 0.002, `ordinary foe: the echo is its own hit (${(on.dps / raw.dps).toFixed(4)})`);
 });

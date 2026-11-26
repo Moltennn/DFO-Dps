@@ -145,10 +145,10 @@ function applyPlanDps(ch, plan, target) {
   const end = text.indexOf('\n}\n', at);
   if (end < 0) throw new Error('rust-planner-vectors: no close for applyPlanDps');
   const itemEnchantId = { CastWhenStrikes: ENCHANTMENT_TYPES.CastWhenStrikes, PotentVs: ENCHANTMENT_TYPES.PotentVs };
-  // `DEFAULT_GAME_BUILD` is a module constant the cut function reads; the vectors price the cut unless they name a
-  // build, so it is injected here rather than reinvented.
+  // The vectors replay the Rust's `apply_plan_dps`, which is the deliberate CUT landmark (`CUT_GAME_BUILD`). So the JS
+  // copy is handed the cut, not the live `DEFAULT_GAME_BUILD`: the vectors must not follow the default flip.
   const fn = new Function('ITEM_ENCHANT_ID', 'maxRun', 'DEFAULT_GAME_BUILD', `${text.slice(at, end + 3)}\nreturn applyPlanDps;`);
-  return fn(itemEnchantId, maxRun, DEFAULT_GAME_BUILD)(ch, plan, target);
+  return fn(itemEnchantId, maxRun, '14512')(ch, plan, target);
 }
 
 /**
@@ -208,8 +208,10 @@ export function genPlannerFamilies(Out) {
   put('gear', [[]], E.gearPieces());
 
   // ---- bestWeaponForFamily: every family x both targets ----------------------------------------------
+  // The Rust `best_weapon_for_family` is a deliberate CUT landmark (`CUT_GAME_BUILD`), so the JS copy of the row is
+  // priced at the cut too: the vector replay must not follow the default flip.
   for (const family of IMPRINT_FAMILIES) {
-    for (const target of [gate(), tough()]) put('best', [family, target], E.bestWeaponForFamily(family, target));
+    for (const target of [gate(), tough()]) put('best', [family, target], E.bestWeaponForFamily(family, target, '14512'));
   }
 
   // ---- planMatrix: the option grid (4 whole matrices) -------------------------------------------------

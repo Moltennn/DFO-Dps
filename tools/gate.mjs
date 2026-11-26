@@ -30,6 +30,8 @@
  *   --record-timings  rust: write each test binary's measured seconds to tools/gate-timings.json, which orders
  *                  later queues longest-first (never required: without it the build order is kept)
  *   --keep-going   do not stop at the first failing step
+ *   --full         rust: also run the opt-in slow tier (PLANNERS_SLOW=1: the sampled loadout/real-dps planner cases,
+ *                  minutes each); the pre-push hook passes it, the default gate does not
  *   --no-game      js only: run with a HOME that has no launcher config, i.e. as a machine without the game's
  *                  SPELLS.STD (tests that need it are reported as skipped; see test/harness/spellbook.mjs)
  *   --lines N      how many lines of a failure to show (default 25)
@@ -303,7 +305,7 @@ async function gateRust() {
   if (!stop()) stepCargo('cargo fmt --check', ['fmt', '--check']);
   if (!stop()) stepCargo('cargo clippy', ['clippy', '--all-targets', '--', '-D', 'warnings']);
   const oracle = oraclePlan();
-  if (!stop()) await stepCargoTestParallel(oracle.env);
+  if (!stop()) await stepCargoTestParallel(flag('full') ? { ...oracle.env, PLANNERS_SLOW: '1' } : oracle.env);
   // The line comes after the cargo test step even when it did not run, so a floor of `0` is visible too.
   const s = oracleSummary(oracle.stats);
   if (s) {

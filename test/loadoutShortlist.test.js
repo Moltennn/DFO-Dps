@@ -111,10 +111,12 @@ test('capped CLI shortlist uses the relay target and keeps its sampling metadata
 });
 
 test('--health sets the sampled pool; the default 100-point foe kills in one blow and ties', NEEDS_SPELLBOOK, () => {
-  const tied = cli('--uncapped', '--shortlist', '5', '--trials', '1000', '--seed', '0');
+  // The recorded pairing (both dual short swords tie at 100 points, separate at 40000) is a3eb1605's price order: the
+  // live build re-prices the universe and this top-5 list no longer contains those two rows, so the cut is named.
+  const tied = cli('--uncapped', '--shortlist', '5', '--trials', '1000', '--seed', '0', '--game-build', '14512');
   assert.equal(tied.status, 0, tied.stderr);
   assert.match(tied.stdout, /pool 100\b/);
-  const pooled = cli('--uncapped', '--shortlist', '5', '--trials', '1000', '--seed', '0', '--health', '40000');
+  const pooled = cli('--uncapped', '--shortlist', '5', '--trials', '1000', '--seed', '0', '--health', '40000', '--game-build', '14512');
   assert.equal(pooled.status, 0, pooled.stderr);
   assert.match(pooled.stdout, /pool 40000/);
   // Kill rate is the third number in a row (Det. DPS, Proc DPS, Kill rate). At 100 points both dual-wield rows are the

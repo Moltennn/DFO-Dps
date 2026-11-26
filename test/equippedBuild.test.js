@@ -37,7 +37,8 @@ import { _resetLootPowersForTests, _setLootPowersClockForTests } from '../vendor
 const PV = (param) => ({ type: 4, param }); // PotentVs (ENCHANTMENT_TYPES, formats/magicDef.js)
 const LV = (param) => ({ type: 20, param }); // LowDamageVs
 const DAEDRA = 1; // AFFINITY_PARAM.Daedra (enchantments.js:414)
-const OPTS = { core: 'overhaul', rri: true, healthShare: 1, passiveOn: true, stacks: 5 };
+// The vendored cut's own figures throughout this file, so the scenario names it.
+const OPTS = { core: 'overhaul', rri: true, healthShare: 1, passiveOn: true, stacks: 5, gameBuild: '14512' };
 const KEYS = ['perSwing', 'cappedPerSwing', 'dps', 'cappedDps', 'cappedDpsMin', 'cappedDpsMax', 'perSwingMin', 'perSwingMax'];
 const same = (a, b, label) => { for (const k of KEYS) assert.equal(a[k], b[k], `${label}: ${k}`); };
 const carry = (item, fields) => ({ ...item, ...fields });
@@ -94,7 +95,7 @@ test('2b. equipped == with(edit) across the supported hold configurations', () =
   const gate = gateTarget(45);
   const power = powerOf('anseis-edge');
   const venom = powerOf('tsaesci-fang');
-  const build = (t) => { const ch = maxCharacter(t); return ch; };
+  const build = (t) => { const ch = maxCharacter(t, { gameBuild: '14512' }); return ch; };
   const withItem = (ch, fields) => ({ ...ch, weapon: { ...ch.weapon, ...fields } });
   const go = (ch, extra = {}) => analyze(ch, { ...OPTS, target: gate, health: gate.maxHealth, pair: !!ch._pair, dual: !!ch._dual, ...extra });
   const configs = [
@@ -111,7 +112,7 @@ test('2b. equipped == with(edit) across the supported hold configurations', () =
     }
   }
   // dual: the imprint lives on the MAIN-HAND item; the off-hand item is its own
-  const dual = maxCharacter(121);
+  const dual = maxCharacter(121, { gameBuild: '14512' });
   dual._dual = true;
   dual.offWeapon = { ...dual.weapon, equipSlot: 21 };
   const main = go({ ...dual, weapon: { ...dual.weapon, ...imprinted('anseis-edge') } });
@@ -315,7 +316,7 @@ test('7. there is no second damage formula for an imprint: the allowance reads t
   assert.ok(!fs.readFileSync(new URL('../src/maxprofile.js', import.meta.url), 'utf8').includes('cappedDpsWith'));
   // a purse is run on whatever card it is handed; extra scaling options are not read
   const gate = gateTarget(45);
-  const base = maxRun(maxCharacter(121), { target: gate });
+  const base = maxRun(maxCharacter(121, { gameBuild: '14512' }), { target: gate, gameBuild: '14512' });
   const a = simulatePurse(base, 'breach', { level: 45 });
   const b = simulatePurse(base, 'breach', { level: 45, mult: 3, flat: 500 });
   assert.deepEqual(b, a);

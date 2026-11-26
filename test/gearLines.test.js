@@ -218,15 +218,17 @@ test('6. representative builds through the whole blow match upstream\'s worn-ite
 
 test('7. the max profile reads its three diamonds through the cap', () => {
   const g = gateTarget(45);
-  const ch = maxCharacter(123);
+  // The vendored cut's split and its own `upstreamPct`: both are a3eb1605 numbers, so the fixture names 14512 (the
+  // live default re-picks the legal point and would compare two different allocations).
+  const ch = maxCharacter(123, { gameBuild: '14512' });
   assert.equal(ch.weapon.sockets.length, 3);
   assert.equal(weaponOf(ch.weapon).damagePct, 25 + 25, 'a legal gear plan\'s 25% line + 25 from three diamonds');
   // and every three-socket weapon: the reading equals upstream's
   for (const t of Object.keys(WEAPONS).map(Number).filter((x) => socketsFor(x) === 3)) {
-    const c = maxCharacter(t);
+    const c = maxCharacter(t, { gameBuild: '14512' });
     const up = { ...upstreamWeapon(c.weapon), rarity: 'legendary', affixes: [...(c.weapon.affixes ?? [])], sockets: c.weapon.sockets.map(() => 'empty') };
     c.weapon.sockets.forEach((gm, i) => R.setGem(up, gm, i));
     assert.equal(weaponOf(c.weapon).damagePct, upstreamPct(up), `template ${t}`);
   }
-  assert.ok(maxRun(ch, { target: g }).cappedDps > 0);
+  assert.ok(maxRun(ch, { target: g, gameBuild: '14512' }).cappedDps > 0);
 });

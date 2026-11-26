@@ -300,22 +300,26 @@ A GUI that shows damage numbers must pick the game build it prices under. `dfo_c
 card's own scenario, as the CLI's `--game-build` does:
 
 ```rust
-use dfo_core::model_blow::{DEFAULT_GAME_BUILD, GAME_BUILDS};   // ["14512", "14631"]; the default is GAME_BUILDS[0]
+use dfo_core::model_blow::{DEFAULT_GAME_BUILD, GAME_BUILDS};   // ["14512", "14631"]; the default is 14631
 
 let mut scenario = /* the scenario you would pass to analyze */;
 scenario.set("gameBuild", Value::Str(build.clone()));   // "14512" | "14631"
 let card = dfo_core::analyze::analyze(&ch, &scenario, &book);
 ```
 
-- **`14512`** is the vendored cut (`vendor/upstream/a3eb1605`) and the default: anything that is not exactly `14631`
-  prices as it. It is `DEFAULT_GAME_BUILD`, so the GUI does not have to set the key at all.
-- **`14631`** is the shipped build's drift finding (`CHANGELOG-MECHANICS.md` GEAR-14631 / BRAND-14631): the weapon gear
-  becomes a flat integer add on the roll (`damage.parts.gearAdd = { lo, hi, mean }`, the card enumerates every integer),
-  Axe/Blunt lose their half line, and the `brand` loot power adds flat elemental damage. `model_blow::game_build`
-  normalizes the value once; `GAME_BUILDS` is the accepted list, for a picker.
+- **`14631`** is the live game and `DEFAULT_GAME_BUILD`: a scenario with no `gameBuild` key prices it, while the
+  accepted list is still `GAME_BUILDS`. It is the drift finding (`CHANGELOG-MECHANICS.md` GEAR-14631 / BRAND-14631):
+  the weapon gear becomes a flat integer add on the roll (`damage.parts.gearAdd = { lo, hi, mean }`, the card
+  enumerates every integer), Axe/Blunt lose their half line, and the `brand` loot power adds flat elemental damage.
+  `model_blow::game_build` normalizes the value once; only that check selects the cut.
+- **`14512`** is the vendored cut (`vendor/upstream/a3eb1605`) and reproduces the port's pre-flip output byte for
+  byte. Only the exact string reaches it: `game_build`/`game_build_name`/`game_build_one` send every other string to
+  the live build (the CLI refuses an unknown value before a formula). `CUT_GAME_BUILD` names it for the deliberate
+  cut landmarks below.
 - **What changes for the reader**: `damage.parts.mastery` is the climb only under `14631`, `damage.parts.gearAdd` is
   present only there, and the add widens `damage.min..max` and `perSwing` (so a cap, a fight tier or an off hand reads
-  the true spread). It is opt-in next to `scenario`'s other keys and changes no `14512` number.
+  the true spread). The same key also moves the theory cap sheet (`dfo_core::theory::theory_caps`,
+  `gear_mastery_points`) and the `brand` term.
 - **The evidence is weaker than a `path:line`.** `14631` is only readable in the shipped build (`dist:` citations in
   `CHANGELOG-MECHANICS.md` and `test/build14631.test.js`), so parity with the JS validates the port, not the game. The
   carried-chain ratio, `duelGearAdd`, the `sigilDueling()` gate, the Gilded item that carries `brand` and the defender
@@ -325,16 +329,33 @@ let card = dfo_core::analyze::analyze(&ch, &scenario, &book);
   (`imprints`, `weapons`/`skills`, `enchant-plan`/`gear-plan`, `loadout`/`real-dps`). In Rust, a planner call takes
   it from the options record it already reads:
   - `dfo_core::maxprofile::Profiles::legal_gear` / `legal_frontier` / `max_character` and `max_run` read
-    `opts.gameBuild`; pass `{"gameBuild": "14631"}` to price the frontier and its winner at the shipped build.
-  - `dfo_core::real_build::real_weapon_loadouts(_with)` take a `game_build: &str`, and `StageOpts` carries
-    `game_build: String` (an additive field: `..Default::default()` is the cut). `StageOpts::from_value` reads
-    `gameBuild`.
+    `opts.gameBuild`; pass `{"gameBuild": "14631"}` or omit it (the live build is the default).
   - `dfo_core::imprints::rank_family`/`rank_all` read `opts.gameBuild`; `dfo_core::enchant_plan::plan_enchants(_with)`
-    and `plan_matrix(_with)` read it too, and `apply_plan_dps_at`/`best_weapon_for_family_at(_with)` take it explicitly
-    (the old arities remain as cut wrappers).
+    and `plan_matrix(_with)` read it too.
   - `dfo_core::loadout_shortlist::ShortlistOpts` carries `game_build`, so the sampled shortlist draws at it.
-  `model_blow::game_build_name`/`game_build_one` normalise a bare string. A GUI that leaves the key out gets the
-  `14512` cut everywhere, which is what every existing caller does.
+  `model_blow::game_build_name`/`game_build_one` normalise a bare string.
+
+### Signature changes a GUI must adapt to
+
+The default moved to the live build, so three things are NOT purely additive. A caller that compiles unchanged still
+gets different *numbers*, and one of them no longer compiles at all:
+
+1. **`real_build::real_weapon_loadouts` / `real_weapon_loadouts_with` gained a required `game_build: &str`** (4th and
+   5th argument, before the book/cache). Pass `DEFAULT_GAME_BUILD` for the live universe or `CUT_GAME_BUILD` to keep
+   pre-flip rows. This is the one breaking *signature* change; rename-driven fixes are the intended migration.
+2. **`StageOpts` gained `game_build: String`, and its `Default` and its `..Default::default()` callers are now the
+   LIVE build** (before the flip a default struct was the cut). A struct literal that lists every field must add the
+   field; a GUI that relied on `Default` for old numbers must now set `game_build: CUT_GAME_BUILD.to_owned()`.
+   `StageOpts::from_value` reads `gameBuild` from the options record.
+3. **`enchant_plan::apply_plan_dps` and `best_weapon_for_family(_with)` keep their old arities but are deliberately
+   pinned to the CUT** (`CUT_GAME_BUILD`), because the golden vectors replay exactly those functions. A GUI showing
+   *current* numbers must call `apply_plan_dps_at` / `best_weapon_for_family_with_build` (or
+   `best_weapon_for_family_at`) with `DEFAULT_GAME_BUILD`. This is the one place where "no key" and "old wrapper"
+   mean different things on purpose.
+
+`dfo_cli::report`'s page default, the CLI help caption and every documented figure moved with the same constant;
+a GUI that hard-coded `"14512"` anywhere is showing cut numbers and should switch to `DEFAULT_GAME_BUILD`.
+
 - **One planner assumption this exposed.** `legalGear` picks the frontier point by DPS, so it is a *search over
   prices*, not a fixed allocation: at `14631` the flat add makes weapon-skill points beat Critical Strike and the
   winner moves (`250/370/25%` -> `350/252/38%` on the Dai-katana). The frontier cache keys on the build for exactly
@@ -452,10 +473,11 @@ active rows, so the saved base is trusted to reflect the current condition (`sid
 Points as "unknown until re-read"; never the pre-edit number. Closes with: the condition's inputs in the save, or a
 game reading of the maximum before and after an edit on a known date.
 
-**7. The 0.1.14631 live game.** Returns: the 14512 weapon law, `js_min(320, gear * 0.44)` (`dfo-core/src/model_blow.rs:821`),
-matching the vendored `weaponMastery.js:87` and `powerBlows.js:48`. Unverified: the 14631 law is not in this checkout.
-The drift is recorded only in `rust/README.md:79-85`. The branch `model-14631` exists locally, not merged; its
-`src/cli.js:1971,1998` says the gear is a flat add with no percent, and `src/model.js:651` says the same. I did not
-confirm the `[floor(g/10), floor(g/5)]` range. GUI: label every weapon-gear figure "build 14512 (vendored)"; the Forge
-has no 14631 option. Closes with: the branch's `CHANGELOG-MECHANICS.md` GEAR-14631 entry and `test/build14631.test.js`
-read against the range, then a user-run re-pin before any port.
+**7. The 0.1.14631 live game.** Closed for the DEFAULT: the live build is now `DEFAULT_GAME_BUILD` and is what a
+caller with no `gameBuild` key prices (`dfo-core/src/model_blow.rs:803-807`). The evidence is still `dist:` citations
+(`CHANGELOG-MECHANICS.md` GEAR-14631 / BRAND-14631, `test/build14631.test.js`), not a `path:line`, so it rests on the
+shipped bundle being read correctly; the port's parity proves it matches the JS, not the game. `14512` remains the
+vendored cut (`vendor/upstream/a3eb1605`) and reproduces the pre-flip bytes exactly. Unverified on the 14631 side:
+the carried-chain ratio `e/(1+e+a)`, `duelGearAdd`, the `sigilDueling()` gate, the Gilded item carrying `brand` and
+the defender sigil set are unmodelled, so a GUI must not present them as priced. Closes for those with a user-run
+real-save diff on the live client (section 8's signature changes are already in).

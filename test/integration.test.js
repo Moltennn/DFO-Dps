@@ -198,8 +198,8 @@ test('3. the ordinary-foe arm of Many Endings: with a foe record the echo is its
 test('4. no regression in the Stage 2.9 corrections the composition touches', () => {
   const gate = gateTarget(45);
   // the saturated gate build is still exactly what Stage 2.9/2.8 reported, now on Stage 2.13's six-way draw (the
-  // neutral StrikeLeft is 857.19; the click draw's expectation is 853.49)
-  const max = maxRun(maxCharacter(121), { target: gate });
+  // neutral StrikeLeft is 857.19; the click draw's expectation is 853.49). Those are a3eb1605 figures, so 14512.
+  const max = maxRun(maxCharacter(121, { gameBuild: '14512' }), { target: gate, gameBuild: '14512' });
   assert.equal(max.cappedDps.toFixed(2), '853.49');
   assert.ok(max.ttk > 75 && max.ttk < 77);
   // a build with no gems and no powers is untouched by either stage

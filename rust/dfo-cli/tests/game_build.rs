@@ -255,8 +255,12 @@ fn the_commands_that_price_a_card_read_it() {
             same(&args, &root);
         }
     }
-    // The default is an explicit 14512 run.
+    // No flag is an explicit 14631 run (the live default).
     same(&["build", "--theory", "--json"], &root);
+    same(
+        &["build", "--theory", "--json", "--game-build", "14631"],
+        &root,
+    );
     fs::remove_dir_all(&root).expect("cleanup");
 }
 
@@ -277,8 +281,9 @@ fn the_theory_card_moves_with_the_build() {
     same(&["theory", "--game-build", "14631", "--json"], &root);
     same(&["theory", "--game-build", "14512", "--json"], &root);
     same(&["theory", "--game-build", "14631"], &root);
-    // The formula-cap row and the 320% captions follow the build, so the default card is the 14512 one.
+    // The formula-cap row and the 320% captions follow the build, so the default card is the 14631 one.
     same(&["theory", "--json"], &root);
+    same(&["theory", "--json", "--game-build", "14631"], &root);
     same(&["theory"], &root);
     fs::remove_dir_all(&root).expect("cleanup");
 }
@@ -324,15 +329,17 @@ fn the_gear_heavy_card_moves_and_carries_the_add() {
     let plain: Vec<&str> = plain.iter().map(String::as_str).collect();
     same(&drift, &root);
     same(&cut, &root);
-    // The default card equals the explicit 14512 card, and the add is absent there.
+    // The default card equals the explicit 14631 card and carries the add; only an explicit 14512 lacks it.
     let plain_card = rust(&plain, &root);
+    let live = rust(&drift, &root);
     let pinned = rust(&cut, &root);
     assert_eq!(
         String::from_utf8_lossy(&plain_card.stdout),
-        String::from_utf8_lossy(&pinned.stdout),
-        "no --game-build is 14512"
+        String::from_utf8_lossy(&live.stdout),
+        "no --game-build is 14631"
     );
-    assert!(!String::from_utf8_lossy(&plain_card.stdout).contains("gearAdd"));
+    assert!(String::from_utf8_lossy(&plain_card.stdout).contains("gearAdd"));
+    assert!(!String::from_utf8_lossy(&pinned.stdout).contains("gearAdd"));
     assert!(String::from_utf8_lossy(&rust(&drift, &root).stdout).contains("gearAdd"));
     fs::remove_dir_all(&root).expect("cleanup");
 }

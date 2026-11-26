@@ -155,7 +155,8 @@ const FISTS = () => {
   const c = simCharacter(character({ level: 45, stats: { strength: 100, agility: 100, speed: 100, luck: 50 }, skillOverride: { 30: 200, 34: 200 } }));
   return c;
 };
-const at = (ch, target, extra = {}) => analyze(ch, { target, health: target.maxHealth, rri: true, ...extra });
+/** The vendored cut's gate maths: these are a3eb1605 numbers, so every case prices 14512 explicitly. */
+const at = (ch, target, extra = {}) => analyze(ch, { target, health: target.maxHealth, rri: true, gameBuild: '14512', ...extra });
 
 test('stoneskin: blunt weapons and fists are halved at the Breach, a blade is not', () => {
   const gate = gateTarget(45);
