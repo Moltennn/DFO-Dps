@@ -41,12 +41,19 @@ pub struct SaveEntry {
     pub character: String,
 }
 
-/// `os.homedir()`: `HOME`, then `USERPROFILE`.
+/// `os.homedir()`: `HOME` as Node's libuv reads it (an empty value is that empty path, not a fallback), else the OS
+/// user database; on Windows `USERPROFILE` is the variable. The fallback matters because a relative path would make
+/// save discovery read the working directory - `HOME` unset on Linux must not turn `<cwd>/.config` into the user data.
 fn home() -> PathBuf {
-    non_empty_env("HOME")
-        .or_else(|| non_empty_env("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_default()
+    let var = if cfg!(target_os = "windows") {
+        "USERPROFILE"
+    } else {
+        "HOME"
+    };
+    if let Some(value) = std::env::var_os(var) {
+        return PathBuf::from(value);
+    }
+    std::env::home_dir().unwrap_or_default()
 }
 
 /// A set, non-empty environment variable. `process.env.X` is falsy for both, so neither counts.

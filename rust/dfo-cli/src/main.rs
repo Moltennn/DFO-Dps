@@ -289,22 +289,50 @@ Every JS `COMMANDS` entry is handled. A flag a command does not read is refused 
 ignored, as the JS `parseArgs`/`validateFlags` do.";
 
 fn main() -> ExitCode {
-    // A `dfo_core::model_blow::JsRangeError` is the JS `RangeError` the enumeration raises (`model.js:1024,1076`).
-    // V8 prints its stack and exits 1; the CLI prints the message line only, as it does for every other JS crash.
+    // A JS crash is a message line and exit 1 (`bin/dfo-dps.js` prints `e.stack`; this CLI prints the line only). Two
+    // paths reach here as a panic: the `JsRangeError` a JS `RangeError` raises, and the core's "not representable"
+    // refusals (a corrupt save naming an inherited property, or writing a property onto a primitive, which the JS
+    // would silently succeed at or throw a `TypeError` on). Both print one line and exit 1 instead of a panic report.
     let default_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| match info
-        .payload()
-        .downcast_ref::<dfo_core::model_blow::JsRangeError>()
-    {
-        Some(e) => std::process::exit({
-            eprintln!("{}", e.0);
-            1
-        }),
-        None => default_hook(info),
+    std::panic::set_hook(Box::new(move |info| {
+        let payload = info.payload();
+        let line = payload
+            .downcast_ref::<dfo_core::model_blow::JsRangeError>()
+            .map(|e| e.0.clone())
+            .or_else(|| {
+                // A corrupt save naming an inherited property (`templateIndex: "constructor"`) makes a read the JS
+                // answers with a function, and a save whose `_mods.statMax` is a primitive makes the JS `TypeError`
+                // on the write. Neither is a port bug: the JS crashes (or prices nonsense), this prints the line and
+                // exits 1 like every other JS crash. Any other panic keeps its report, because that IS a port bug.
+                let text = payload
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+                    .or_else(|| payload.downcast_ref::<&str>().copied());
+                text.filter(|t| {
+                    t.starts_with("not representable")
+                        || t.starts_with("Value::set on a non-object")
+                })
+                .map(str::to_owned)
+            });
+        match line {
+            Some(line) => std::process::exit({
+                eprintln!("{line}");
+                1
+            }),
+            None => default_hook(info),
+        }
     }));
-    match run(std::env::args().skip(1).collect()) {
+    // `process.argv`: Node decodes an argument as UTF-8 and replaces an invalid byte with U+FFFD, where
+    // `std::env::args` panics. The lossy read keeps the JS refusal (an unknown option, exit 2) instead of a panic.
+    let args: Vec<String> = std::env::args_os()
+        .skip(1)
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    match run(args) {
         Ok(out) => {
-            print!("{out}");
+            // Node's `console.log` swallows a stdout write error (`| head -c1`, a full disk) and keeps the command's
+            // own exit status; `print!` would panic on the broken pipe instead.
+            let _ = std::io::Write::write_all(&mut std::io::stdout(), out.as_bytes());
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -1734,7 +1762,11 @@ const FIRM_CHANNEL_MAX: f64 = 15.0;
 
 /// `scaleRange` (`src/cli.js:713-722`): `from..=to` in `step` (at least 1) increments, each rounded to two decimals,
 /// with the exact `to` appended when the last rounded point did not land on it (a strict `!==`, as the JS does).
-fn scale_range(values: &Values, current: f64, cap: f64) -> Vec<f64> {
+///
+/// A range the JS cannot price is refused before any point is priced, instead of looping to an OOM: the JS
+/// `for (... v += step)` never moves once `v + step == v` (a bound past 2^53) and appends forever, and a
+/// legal-looking range can still ask for billions of points.
+fn scale_range(values: &Values, current: f64, cap: f64) -> Result<Vec<f64>, CliError> {
     let from = values.nums.get("from").copied().unwrap_or(current);
     let to = values.nums.get("to").copied().unwrap_or(cap);
     let step = js_max(1.0, values.nums.get("step").copied().unwrap_or(10.0));
@@ -1744,18 +1776,40 @@ fn scale_range(values: &Values, current: f64, cap: f64) -> Vec<f64> {
         to.partial_cmp(&from),
         Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
     ) {
-        return out;
+        return Ok(out);
     }
     let mut v = from;
     while v <= to + 1e-9 {
+        if out.len() as u64 >= MAX_SCALE_POINTS {
+            return Err(usage(format!(
+                "the range {}..{} step {} asks for more than {MAX_SCALE_POINTS} points",
+                number_to_string(from),
+                number_to_string(to),
+                number_to_string(step)
+            )));
+        }
         out.push(math_round(v * 100.0) / 100.0);
-        v += step;
+        let next = v + step;
+        // `v += step` with a step below v's ulp leaves `v` unchanged: the JS appends the same value forever.
+        if next == v {
+            return Err(usage(format!(
+                "the range {}..{} step {} has no next value (the step is below the bound's precision)",
+                number_to_string(from),
+                number_to_string(to),
+                number_to_string(step)
+            )));
+        }
+        v = next;
     }
     if out.last().copied() != Some(to) {
         out.push(to);
     }
-    out
+    Ok(out)
 }
+
+/// The most curve points this prices. A port guard (the JS loops until it runs out of memory); every real curve is
+/// several orders of magnitude below it, and one analyze per point keeps a full run bounded in time and memory.
+const MAX_SCALE_POINTS: u64 = 1_000_000;
 
 /// One `graph` series as the command builds it: its label and the priced `{ x, y }` points.
 struct GraphSeries {
@@ -1899,7 +1953,7 @@ fn graph_command(values: &Values, out_flag: Option<&str>) -> Result<String, CliE
             }
         };
         let mut points = Vec::new();
-        for value in scale_range(values, from, to) {
+        for value in scale_range(values, from, to)? {
             let mut c = dfo_core::analyze::json_clone(&ch);
             apply(&mut c, &id, value);
             let r = analyze(&c, &scenario, &book);
@@ -2026,9 +2080,14 @@ fn scale_command(values: &Values) -> Result<String, CliError> {
         _ => 30.0,
     };
     // `one(label, kind, id, current, cap)`: the curve, one row per `scaleRange` point.
-    let one = |label: &str, kind: &str, id: &Value, current: f64, cap: f64| -> Vec<ScaleRow> {
+    let one = |label: &str,
+               kind: &str,
+               id: &Value,
+               current: f64,
+               cap: f64|
+     -> Result<Vec<ScaleRow>, CliError> {
         let mut rows = Vec::new();
-        for value in scale_range(values, current, cap) {
+        for value in scale_range(values, current, cap)? {
             let mut c = dfo_core::analyze::json_clone(&ch);
             apply_scale(&mut c, kind, id, value);
             let rr = analyze(&c, &scenario, &book);
@@ -2045,7 +2104,7 @@ fn scale_command(values: &Values) -> Result<String, CliError> {
                 capped_dps_max: rr.capped_dps_max,
             });
         }
-        rows
+        Ok(rows)
     };
     if values.all {
         // `addSummary`: price the current and the cap as two whole runs, so the row's DPS pair is the delta.
@@ -2165,7 +2224,7 @@ fn scale_command(values: &Values) -> Result<String, CliError> {
             &Str(k.clone()),
             live_stat(&ch, &k),
             100.0,
-        ));
+        )?);
     } else if let Some(&id) = values.nums.get("skill") {
         if !(0.0..35.0).contains(&id) {
             return Err(usage("--skill expects a skill id 0..34"));
@@ -2177,7 +2236,7 @@ fn scale_command(values: &Values) -> Result<String, CliError> {
             &Num(id),
             cur,
             200.0,
-        ));
+        )?);
     } else if let Some(&id) = values.nums.get("gear-skill") {
         if !(0.0..35.0).contains(&id) {
             return Err(usage("--gear-skill expects a skill id 0..34"));
@@ -2189,7 +2248,7 @@ fn scale_command(values: &Values) -> Result<String, CliError> {
             &Num(id),
             cur,
             cur + 100.0,
-        ));
+        )?);
     } else {
         return Err(usage(
             "scale needs --stat <name>, --skill <id>, --gear-skill <id>, or --all",

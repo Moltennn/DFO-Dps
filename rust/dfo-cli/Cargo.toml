@@ -2,6 +2,8 @@
 name = "dfo-cli"
 version = "0.1.0"
 edition = "2021"
+# `slice::as_chunks` (dfo-core's SPELLS.STD reader) is the newest std call in the workspace: 1.88.
+rust-version = "1.88"
 description = "Thin CLI over dfo-core (milestone R8)"
 license = "MIT"
 publish = false

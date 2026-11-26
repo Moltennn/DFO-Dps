@@ -166,6 +166,11 @@ pub fn gate_outcome(gate: &Value, samples: &[Value]) -> &'static str {
     }
 }
 
+/// The most filled players this prices (`Array(Math.max(0, count - known.length)).fill(fill)`). A port guard: the JS
+/// allocates until V8 throws or the process dies, and a real capture lists a handful of players, so every card the JS
+/// prices still prices. A count past it raises the JS `RangeError` (the CLI prints it as its crash line, exit 1).
+const MAX_PROBE_PLAYERS: f64 = 1_000_000.0;
+
 /// `fightSummary(samples, opts)` (`:52-191`): the capture's damage figures for one fight.
 pub fn fight_summary(samples: &[Value], opts: &Value) -> Value {
     let first = samples.first().expect("a fight holds samples");
@@ -228,7 +233,16 @@ pub fn fight_summary(samples: &[Value], opts: &Value) -> Value {
         Num(sorted[sorted.len() / 2])
     };
     // ASSUMPTION: the JS `Array(count - known.length)` throws on a non-integer count; this port truncates it.
-    let filled = (count - known.len() as f64).max(0.0).trunc() as usize;
+    let fill_count = (count - known.len() as f64).max(0.0).trunc();
+    // `Array(...)` cannot hold this many players: the JS throws a `RangeError` (or dies of OOM), so a crafted capture
+    // or `--players 1e15` is that same crash line and exit 1, not a multi-gigabyte fill. Every group the JS prices is
+    // far below the guard, so no card moves.
+    if fill_count > MAX_PROBE_PLAYERS {
+        std::panic::panic_any(crate::model_blow::JsRangeError(
+            "RangeError: Invalid array length".to_owned(),
+        ));
+    }
+    let filled = fill_count as usize;
     let max_hp_estimated = gate_max.is_none() && count > 1.0 && count > known.len() as f64;
     let max_hp = match (gate_max, boss) {
         (Some(gm), _) => Some(gm),

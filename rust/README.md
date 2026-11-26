@@ -294,8 +294,10 @@ Figures as reported at the 23 Nov audit. The docs edit that adds this section ra
   grouping: the JS `toLocaleString()` follows the host locale, so a non-en-US host would format its own way - a
   documented, deliberate limitation (no locale dependency is added).
 - **What does not run, explicitly.** Every flag a command does not read (`--encounter` outside `loadout`, `--shortlist`
-  outside `loadout`, `--objective`, ...) fails with exit 2 instead of being accepted and ignored; an unknown command or
-  option also exits 2, and extra positionals are refused (the JS ignores them). `--help` lists every command and flag.
+  outside `loadout`, `--from` outside `scale`/`graph`, ...) fails with exit 2 instead of being accepted and ignored; an
+  unknown command or option also exits 2, and extra positionals are refused (the JS ignores them). `--help` lists every
+  command and flag. `--objective` is the exception: it is read by `objective` and by `loadout --shortlist`, and the JS
+  accepts and ignores it everywhere else, so this CLI does too (a `build --objective ...` is the same card as `build`).
 - **The JSON parser.** Discovery parses a user-supplied document, so the slice uses `serde_json` (`preserve_order` for
   object keys and `float_roundtrip` for decimal rounding). It is the parser the workbench import
   already uses; the writer is still `JSON.stringify(v, null, 2)` in this file. Two documented edges: a number too large
@@ -303,6 +305,12 @@ Figures as reported at the 23 Nov audit. The docs edit that adds this section ra
   `serde_json`'s, not V8's (both exit 2 for `build`/`rank`, one `save:` line and exit 0 for `doctor`).
 - **Hostile input.** The save read is bounded at 64 MiB and the parser refuses a document past its nesting limit, so a
   runaway or crafted file is an ordinary error. `SaveInfo.txt` is optional: a missing or malformed one is ignored.
+  Four crash paths have a guard instead of an OOM or a panic report: a `scale`/`graph` range whose `v + step` never
+  advances (or asks for more than `MAX_SCALE_POINTS` points), a probe player group past `MAX_PROBE_PLAYERS` filled
+  players (the JS `RangeError`), a closed/full stdout (the JS keeps its exit status), and an argument with an invalid
+  UTF-8 byte (the JS reads `argv` lossily). A panic the core raises for a corrupt save (an inherited property name, a
+  write onto a primitive) prints its one line and exits 1, the JS crash shape, never a panic report.
+  `dfo-cli/tests/cli_hardening.rs` pins all of them.
 - **Differential.** `dfo-cli/tests/build.rs` spawns `node bin/dfo-dps.js build ...` and the Rust binary on the same
   arguments: stdout must match byte for byte for both the text card and `--json`, over theory and save-backed characters,
   the three allowance-note branches, the cap/ward/wrath/shield lines and the what-if tables; the Cast When Strikes cases
