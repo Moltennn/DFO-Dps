@@ -59,7 +59,7 @@ fn fnv1a(bytes: &[u8], mut hash: u64) -> u64 {
 }
 
 /// Every input `tests/planner_oracle.mjs` reads, hashed: the JS modules it imports, the tools they import, its own text
-/// and the game's SPELLS.STD. A change to any of them is a cache miss, so a stale answer cannot outlive an edit.
+/// and the spellbook in force. A change to any of them is a cache miss, so a stale answer cannot outlive an edit.
 fn inputs_key() -> String {
     let root = repo_root();
     let mut hash = 0xcbf29ce484222325u64;
@@ -90,34 +90,9 @@ fn inputs_key() -> String {
             .join("tests")
             .join("planner_oracle.mjs"),
     );
-    fold(&arena2_dir().join("SPELLS.STD"));
+    // The vectors carry the book in force: the real tier's file is outside the folded trees.
+    fold(&common::vector_path("real_build"));
     format!("{hash:016x}")
-}
-
-/// The launcher's ARENA2 directory, read as `src/save.js:28-40` does. A test may do file I/O (the core may not, AGENTS
-/// rule 6), and one field of a small config needs no JSON dependency: the value is a JSON string.
-fn arena2_dir() -> PathBuf {
-    let home = std::env::var_os("HOME").map_or_else(|| PathBuf::from(""), PathBuf::from);
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".config"));
-    let user_data = std::env::var_os("DAGGER_USER_DATA")
-        .map_or_else(|| base.join("Daggerfall JavaScript"), PathBuf::from);
-    let path = user_data.join("config.json");
-    let text = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("{path:?}: {e}\nSPELLS.STD prices every planner: a differential without it proves nothing"));
-    let at = text
-        .find("\"arena2Path\"")
-        .unwrap_or_else(|| panic!("{path:?} names no arena2Path"))
-        + "\"arena2Path\"".len();
-    let rest = &text[at..];
-    let open = rest.find('"').expect("arena2Path is a JSON string");
-    let close = rest[open + 1..]
-        .find('"')
-        .expect("arena2Path is a JSON string");
-    let dir = &rest[open + 1..open + 1 + close];
-    assert!(!dir.is_empty(), "{path:?}: an empty arena2Path");
-    PathBuf::from(dir)
 }
 
 /// The oracle's lines, cached under [`inputs_key`]. A corrupt entry is a miss, never a wrong answer.
@@ -157,12 +132,6 @@ fn oracle_lines() -> Vec<String> {
 
 fn s(text: &str) -> Value {
     Str(text.to_owned())
-}
-
-/// The stock spellbook, read from the launcher's SPELLS.STD as the oracle's `book` row does. Cheap: no Node spawn.
-fn stock_book() -> Spellbook {
-    let bytes = fs::read(arena2_dir().join("SPELLS.STD")).expect("SPELLS.STD is readable");
-    spells_by_index_map(dfo_core::spells::read_spells_std(&bytes))
 }
 
 /// `obj({ k: v, ... })` from pairs, in order (the harness helper is crate-private).
@@ -497,7 +466,7 @@ fn replay(kinds: &[&str]) {
 /// from both replays.
 #[test]
 fn the_build_moves_the_legal_budget_and_the_default_is_the_live_build() {
-    let book = stock_book();
+    let book = common::planning::fixture_book();
     let mut p = Profiles::new(&book);
     let point = |profiles: &mut Profiles<'_>, build: &str| {
         let g = profiles
@@ -544,7 +513,7 @@ fn the_build_moves_the_legal_budget_and_the_default_is_the_live_build() {
 /// string in `gameBuildOf`, which this pins without needing a whole universe per spelling.
 #[test]
 fn a_bogus_build_argument_prices_the_universe_as_the_live_build() {
-    let book = stock_book();
+    let book = common::planning::fixture_book();
     let mut profiles = Profiles::new(&book);
     let row = |build: &str, profiles: &mut Profiles<'_>| {
         let rows =

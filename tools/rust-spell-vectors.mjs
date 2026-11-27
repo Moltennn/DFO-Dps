@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { arena2Dir, configPath } from '../src/save.js';
 import * as S from '../src/spells.js';
 import * as E from '../src/enchants.js';
 import * as D from '../src/enchantData.js';
@@ -11,14 +8,11 @@ import { RACE_KEYS } from '../vendor/upstream/a3eb1605/src/systems/races.js';
 import { eliteRng } from '../vendor/upstream/a3eb1605/src/systems/eliteFoes.js';
 import { fightingClimb } from '../vendor/upstream/a3eb1605/src/systems/spell/spellPower.js';
 import { encodeValue as V } from './rust-codec.mjs';
+import { readSpellBook } from './rust-synth-book.mjs';
 
 export function genSpellFamilies(Out, makeLcg) {
-  const dir = arena2Dir();
-  if (!dir) throw new Error(`rust-spell-vectors: no ARENA2 path in launcher config ${configPath()}; SPELLS.STD is required`);
-  const path = resolve(dir, 'SPELLS.STD');
-  const bytes = readFileSync(path);
-  const stock = S.readSpellsStd(bytes);
-  if (!stock.length || !stock.some(({ cost }) => cost > 255 && cost % 256 !== (cost >> 8))) {
+  const { path, bytes, records: stock } = readSpellBook('rust-spell-vectors');
+  if (!stock.some(({ cost }) => cost > 255 && cost % 256 !== (cost >> 8))) {
     throw new Error(`rust-spell-vectors: ${path} has no readable nontrivial little-endian cost`);
   }
   console.log(`rust-spell-vectors: ${path} (${bytes.length} bytes, ${stock.length} parsed records)`);

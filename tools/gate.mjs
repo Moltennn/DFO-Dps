@@ -37,8 +37,10 @@
  *   --keep-going   do not stop at the first failing step
  *   --full         rust: also run the opt-in slow tier (PLANNERS_SLOW=1: the sampled loadout/real-dps planner cases,
  *                  minutes each); the pre-push hook passes it, the default gate does not
- *   --no-game      js only: run with a HOME that has no launcher config, i.e. as a machine without the game's
- *                  SPELLS.STD (tests that need it are reported as skipped; see test/harness/spellbook.mjs)
+ *   --real-spells  the opt-in local tier: generators and tests read the launcher's real SPELLS.STD instead of the
+ *                  synthetic one (same as DFO_REAL_SPELLS=1; nothing it writes may be committed)
+ *   --no-game      run as a machine without the game's SPELLS.STD (js: an empty HOME; rust, Linux: an empty
+ *                  XDG_CONFIG_HOME). Spell tests use the synthetic book; see test/harness/spellbook.mjs
  *   --lines N      how many lines of a failure to show (default 25)
  */
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
@@ -84,6 +86,8 @@ const opt = (name, def) => {
 };
 const maxLines = Number(opt('lines', 25));
 const keepGoing = flag('keep-going');
+// Every child inherits the tier (tools/rust-synth-book.mjs).
+if (flag('real-spells')) process.env.DFO_REAL_SPELLS = '1';
 
 const HELP = `usage: node tools/gate.mjs <js|rust|all|mutate> [options]   (see the header of tools/gate.mjs)`;
 
@@ -198,7 +202,7 @@ function stepVectors() {
   }
   if (plan.want === null) {
     // The generators that read the spell file fail on their own; say so here rather than after a long run.
-    return report('rust-vectors', false, "no readable SPELLS.STD (the launcher config's ARENA2), so nothing can be reused or stamped");
+    return report('rust-vectors', false, "real tier: no readable SPELLS.STD (the launcher config's ARENA2), so nothing can be reused or stamped");
   }
   if (plan.link) {
     // Writing through the link would regenerate the owning tree's vectors: fail closed, regenerate there instead.
@@ -392,6 +396,13 @@ async function gateRust() {
     console.log('no rust/ directory on this branch (the port lives on rust-rewrite)');
     results.push({ name: 'rust', ok: false });
     return;
+  }
+  if (flag('no-game')) {
+    // Linux user-data base (`src/save.js` userDataDir): an empty one, so no child finds a launcher config. HOME stays,
+    // cargo and rustup live under it.
+    process.env.XDG_CONFIG_HOME = mkdtempSync(join(tmpdir(), 'gate-noconfig-'));
+    delete process.env.DAGGER_USER_DATA;
+    console.log('(rust gate without game data: XDG_CONFIG_HOME is empty, DAGGER_USER_DATA unset)');
   }
   stepNode('rust-data --check', ['tools/rust-data.mjs', '--check']);
   if (!stop()) stepVectors();

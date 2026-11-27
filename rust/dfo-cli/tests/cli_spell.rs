@@ -105,14 +105,14 @@ fn spell_record(
     b
 }
 
-/// A five-record synthetic book: an instant bolt, a DoT, a debug name the list still shows, a non-damage Shield (its
+/// A five-record synthetic book: an instant bolt, a DoT, a debug name the list still shows, a non-damage Warder (its
 /// damage is 0, which is what the `priced` gate sees), and a range-scaled shock bolt.
 fn spells_std() -> Vec<u8> {
     [
         spell_record(1, "Bolt", 4, 0, &[(4, 0, 0, 0, 1, 10, 20, 0, 0, 1)]),
         spell_record(2, "Burn", 4, 0, &[(1, 0, 2, 1, 1, 4, 8, 0, 0, 1)]),
         spell_record(3, "Lvl 1 Probe", 4, 0, &[(4, 0, 0, 0, 1, 1, 3, 0, 0, 1)]),
-        spell_record(4, "Shield", 4, 0, &[(35, -1, 0, 5, 1, 0, 0, 0, 0, 1)]),
+        spell_record(4, "Warder", 4, 0, &[(35, -1, 0, 5, 1, 0, 0, 0, 0, 1)]),
         spell_record(5, "Far Bolt", 0, 2, &[(4, 0, 0, 0, 1, 20, 40, 1, 1, 2)]),
     ]
     .concat()
@@ -124,7 +124,7 @@ fn other_spells_std() -> Vec<u8> {
         spell_record(1, "Other Bolt", 4, 0, &[(4, 0, 0, 0, 1, 10, 20, 0, 0, 1)]),
         spell_record(2, "Other Burn", 4, 0, &[(1, 0, 2, 1, 1, 4, 8, 0, 0, 1)]),
         spell_record(3, "Lvl 1 Other", 4, 0, &[(4, 0, 0, 0, 1, 1, 3, 0, 0, 1)]),
-        spell_record(4, "Other Shield", 4, 0, &[(35, -1, 0, 5, 1, 0, 0, 0, 0, 1)]),
+        spell_record(4, "Other Warder", 4, 0, &[(35, -1, 0, 5, 1, 0, 0, 0, 0, 1)]),
         spell_record(5, "Other Far", 0, 2, &[(4, 0, 0, 0, 1, 20, 40, 1, 1, 2)]),
     ]
     .concat()
@@ -517,7 +517,7 @@ fn a_save_spellbook_frontend_matches_the_js() {
         text.contains("Custom Zap") && text.contains("Bolt") && text.contains("Burn"),
         "{text}"
     );
-    // A save naming only index 4 must print Shield and the custom record, not Bolt/Burn: the indices resolve from the
+    // A save naming only index 4 must print Warder and the custom record, not Bolt/Burn: the indices resolve from the
     // same book the list shows, so the two sources cannot silently disagree. (Here `--data` points at the launcher's own
     // book, so this is the book-cache path of `the_launcher_wins_over_data_because_of_the_js_module_cache`.)
     write_save_with(&root, &[4]);
@@ -530,7 +530,7 @@ fn a_save_spellbook_frontend_matches_the_js() {
     }
     let text = String::from_utf8_lossy(&js(&["spell", "--list", "--save", "SAVE1"], &root).stdout)
         .into_owned();
-    assert!(text.contains("Shield") && !text.contains("Bolt"), "{text}");
+    assert!(text.contains("Warder") && !text.contains("Bolt"), "{text}");
     fs::remove_dir_all(&root).expect("cleanup");
 }
 

@@ -12,6 +12,17 @@ pub fn spellbook(mut line: super::Case) -> Spellbook {
     spells_by_index_map(records.items().iter().cloned())
 }
 
+/// The spellbook in force: the `book` row `tools/rust-vectors.mjs` wrote first into `real_build` (synthetic unless the
+/// gate ran with the real tier). Never read from the game's files here.
+#[allow(dead_code)]
+pub fn fixture_book() -> Spellbook {
+    spellbook(
+        super::stream("real_build")
+            .next()
+            .expect("real_build: the spellbook row comes first"),
+    )
+}
+
 pub fn replay(
     name: &str,
     floors: &[(&str, usize)],

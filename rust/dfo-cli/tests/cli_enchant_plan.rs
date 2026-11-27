@@ -98,12 +98,12 @@ fn spell_record(index: u8, name: &str, element: u8, effects: &[SpellEffect]) -> 
     b
 }
 
-/// `Wizard's Fire` (7) and `Ice Bolt` (16), two of the twelve Cast When Strikes ids, so the weapon's proc row and the
+/// `Tinker's Glow` (7) and `Rime Pip` (16), two of the twelve Cast When Strikes ids, so the weapon's proc row and the
 /// rating table price real spells. An instant DamageHealth and a ContinuousDamageHealth DoT.
 fn spells_std() -> Vec<u8> {
     [
-        spell_record(7, "Wizard's Fire", 4, &[(4, 0, 0, 0, 1, 30, 45, 0, 0, 1)]),
-        spell_record(16, "Ice Bolt", 4, &[(1, 0, 2, 1, 1, 8, 14, 0, 0, 1)]),
+        spell_record(7, "Tinker's Glow", 4, &[(4, 0, 0, 0, 1, 30, 45, 0, 0, 1)]),
+        spell_record(16, "Rime Pip", 4, &[(1, 0, 2, 1, 1, 8, 14, 0, 0, 1)]),
     ]
     .concat()
 }

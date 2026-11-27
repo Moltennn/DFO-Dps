@@ -28,8 +28,7 @@ import { DEFAULT_GAME_BUILD, gateTarget, referenceFoe } from '../src/model.js';
 import { ENCHANTMENT_TYPES } from '../src/enchants.js';
 import { maxCharacter, maxRun } from '../src/maxprofile.js';
 import { THEORY_LEVEL } from '../src/theory.js';
-import { arena2Dir } from '../src/save.js';
-import { readSpellsStd } from '../src/spells.js';
+import { readSpellBook } from './rust-synth-book.mjs';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -164,11 +163,8 @@ function strikeParams() {
 }
 
 export function genPlannerFamilies(Out) {
-  // The stock spellbook is a vector input (`readSpellsStd`); the file is required and fails loudly.
-  const dir = arena2Dir();
-  if (!dir) throw new Error('rust-planner-vectors: no ARENA2 in the launcher config; SPELLS.STD is required');
-  const book = readSpellsStd(readFileSync(resolve(dir, 'SPELLS.STD')));
-  if (!book.length) throw new Error('rust-planner-vectors: empty SPELLS.STD');
+  // The spellbook is a vector input (synthetic unless DFO_REAL_SPELLS=1); it is required and fails loudly.
+  const { records: book } = readSpellBook('rust-planner-vectors');
   const plan = new Out('enchant_plan', 'R5d enchant plan: equip set, priority fill, value/cost sorts and the matrix', true);
   const real = new Out('real_build', 'R5d real-build chain, loadout universe and the sampled shortlist', true);
   const counts = {};

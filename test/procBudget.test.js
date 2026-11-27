@@ -160,7 +160,8 @@ test('pin: a single-hand DoT card and a no-DoT pair price the round once (unchan
   const instantDual = analyze(ch, { target, health: gate.maxHealth, weapon: weaponOf(main), dual: true, standard: instant });
   assert.equal(dotPart(instantDual), 0);
   assert.equal(instantDual.enchantDps, instantDual.enchantPerSwing * instantDual.cadence.aps);
-  const bareDual = analyze(ch, { target, health: gate.maxHealth, weapon: weaponOf(main), dual: true });
+  // An explicit empty book: the row resolves to nothing whichever spellbook this machine reads.
+  const bareDual = analyze(ch, { target, health: gate.maxHealth, weapon: weaponOf(main), dual: true, standard: new Map() });
   assert.equal(dotPart(bareDual), 0);
   assert.equal(bareDual.enchantDps, 0, 'no enchantment, no enchant damage');
 });

@@ -269,7 +269,7 @@ fn synthetic_strike() -> Value {
             "procs",
             Arr(vec![
                 obj([
-                    ("name", Str("Fireball".to_owned())),
+                    ("name", Str("Embergem".to_owned())),
                     ("index", Num(25.0)),
                     ("damage", Num(12.0)),
                     ("min", Num(10.0)),
@@ -278,7 +278,7 @@ fn synthetic_strike() -> Value {
                     ("dotRounds", Num(2.0)),
                 ]),
                 obj([
-                    ("name", Str("Shock".to_owned())),
+                    ("name", Str("Zappy".to_owned())),
                     ("index", Num(33.0)),
                     ("damage", Num(0.0)),
                     ("min", Num(0.0)),
@@ -323,7 +323,7 @@ fn the_rows_and_proc_line_are_the_branchs_text() {
 Fixture - Dark Elf Longblade, level 45  |  Synthetic Katana
 Enchantment      Param  Spell
 -----------      -----  -----
-CastWhenStrikes     25  Fireball
+CastWhenStrikes     25  Embergem
 PotentVs             1  -
 EnhancesSkill       29  -
 VisionProblems       -  -
@@ -337,7 +337,7 @@ Allowance-sustained DPS                150.0
 Time to kill (allowance-sustained)     76.0 s
 Time to kill (per-hit-capped ceiling)  21.2 s
 CWS bills covered (bill-only)          10
-Procs                                  Fireball DoT 1.0/round, Shock 0.0
+Procs                                  Embergem DoT 1.0/round, Zappy 0.0
 ";
     assert_eq!(text, expected);
 }

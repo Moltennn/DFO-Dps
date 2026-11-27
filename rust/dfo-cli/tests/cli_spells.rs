@@ -146,7 +146,7 @@ fn spell_record(
     b
 }
 
-/// The synthetic book: an instant bolt, a DoT, a debug name the list drops, a non-damage Shield (`damage > 0` drops
+/// The synthetic book: an instant bolt, a DoT, a debug name the list drops, a non-damage Warder (`damage > 0` drops
 /// it), a range-scaled fire bolt, and twenty more damaging instants (`Spell 06`..`Spell 25`) so the page's
 /// `slice(0, 20)` truncates and the ranking order is strictly increasing magnitude.
 fn spells_std() -> Vec<u8> {
@@ -154,7 +154,7 @@ fn spells_std() -> Vec<u8> {
         spell_record(1, "Bolt", 4, 0, &[(4, 0, 0, 0, 1, 10, 20, 0, 0, 1)]),
         spell_record(2, "Burn", 4, 0, &[(1, 0, 2, 1, 1, 4, 8, 0, 0, 1)]),
         spell_record(3, "Lvl 1 Probe", 4, 0, &[(4, 0, 0, 0, 1, 1, 3, 0, 0, 1)]),
-        spell_record(4, "Shield", 4, 0, &[(35, -1, 0, 5, 1, 0, 0, 0, 0, 1)]),
+        spell_record(4, "Warder", 4, 0, &[(35, -1, 0, 5, 1, 0, 0, 0, 0, 1)]),
         spell_record(5, "Far Bolt", 0, 2, &[(4, 0, 0, 0, 1, 20, 40, 1, 1, 2)]),
     ];
     for i in 0..20u8 {
@@ -375,14 +375,14 @@ fn the_pool_merges_standard_and_custom_records() {
         .iter()
         .map(|r| r["name"].as_str().expect("a name"))
         .collect();
-    // Every damaging standard record (24 minus the debug name and the Shield) plus the two custom records.
+    // Every damaging standard record (24 minus the debug name and the Warder) plus the two custom records.
     assert_eq!(names.len(), 25, "{names:?}");
     assert!(
         names.contains(&"Custom Zap") && names.contains(&"Custom Burn"),
         "{names:?}"
     );
     assert!(
-        !names.contains(&"Lvl 1 Probe") && !names.contains(&"Shield"),
+        !names.contains(&"Lvl 1 Probe") && !names.contains(&"Warder"),
         "{names:?}"
     );
     // The save's stock indices resolve to the book's records, so neither is listed twice.

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { arena2Dir, configPath } from '../src/save.js';
-import { readSpellsStd, savingChanceOutcome, spellsByIndexMap } from '../src/spells.js';
+import { savingChanceOutcome, spellsByIndexMap } from '../src/spells.js';
+import { readSpellBook } from './rust-synth-book.mjs';
 import * as F from '../src/fight.js';
 import * as C from '../src/cws.js';
 import * as D from '../src/durability.js';
@@ -31,10 +31,7 @@ function edges(k, width) {
 }
 
 export function genFightFamilies(Out, makeLcg) {
-  const dir = arena2Dir();
-  if (!dir) throw new Error(`rust-fight-vectors: no ARENA2 in ${configPath()}; SPELLS.STD is required`);
-  const stock = readSpellsStd(readFileSync(resolve(dir, 'SPELLS.STD')));
-  if (!stock.length) throw new Error('rust-fight-vectors: empty SPELLS.STD');
+  const { records: stock } = readSpellBook('rust-fight-vectors');
   const effect = (type, base, rounds = 0, plus = 0) => ({ type, subType: 0,
     magnitudeBaseLow: base, magnitudeBaseHigh: base + 4, magnitudeLevelBase: plus, magnitudeLevelHigh: plus + 2,
     magnitudePerLevel: 4, durationBase: rounds, durationMod: 0, durationPerLevel: 2 });

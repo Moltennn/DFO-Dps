@@ -5,7 +5,7 @@
  *   vectorInputsHash(root)         the key: content of every input the generators read, portable between copies of the
  *                                  same revision (a worktree, a `git archive` extraction, a symlink or a relative path
  *                                  to the root must all agree; no path outside `root` and no mtime may enter it), or
- *                                  null when SPELLS.STD cannot be read
+ *                                  null when the real tier's SPELLS.STD cannot be read
  *   vectorPlan(root, dir, fresh)   whether the vectors on disk can be kept, and whether writing them would go through
  *                                  a symlink into another tree (then the gate fails closed)
  *
@@ -14,7 +14,8 @@
  *   vendor                                                               content: 8 MB, ~30 ms; mtime was
  *                                 the reason a fresh extraction rebuilt 155 s of vectors for identical bytes
  *   tools/rust-mutate.mjs                                                NOT an input: no generator imports it
- *   SPELLS.STD                                                           content, resolved exactly as the
+ *   spellbook                                                            content: the synthetic builder's bytes, or
+ *                                 with DFO_REAL_SPELLS=1 the real SPELLS.STD, resolved exactly as the
  *                                 generators resolve it (`arena2Dir()` from src/save.js, then `resolve(dir,
  *                                 'SPELLS.STD')` from the repository root). Missing or unreadable yields NO key at
  *                                 all: a key that omits the spell data would claim a provenance the vectors do not
@@ -25,9 +26,12 @@ import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync, statSyn
 import { join, relative, resolve, sep } from 'node:path';
 
 import { arena2Dir } from '../src/save.js';
+import { realSpells, synthSpellsStd } from './rust-synth-book.mjs';
 
-/** The spell file the generators read, or null when the launcher config names none or it cannot be read. */
+/** The spell bytes the generators read: the synthetic book, or (DFO_REAL_SPELLS=1) the launcher's file, null when its
+ *  config names none or it cannot be read. */
 export function spellFile(root) {
+  if (!realSpells()) return synthSpellsStd();
   const dir = arena2Dir();
   if (!dir) return null;
   try { return readFileSync(resolve(root, dir, 'SPELLS.STD')); } catch { return null; }

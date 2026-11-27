@@ -52,12 +52,12 @@ test('a weapon with no enchantments adds nothing', () => {
 
 
 test('a Cast When Strikes DoT is priced per tick, not as its whole duration every hit', NEEDS_SPELLBOOK, () => {
-  const ch = weapon({ enchantments: [{ type: 2, param: 33 }] }); // Wildfire
+  const ch = weapon({ enchantments: [{ type: 2, param: 33 }] }); // a Continuous Damage row in the synthetic book
   const target = bossTarget({ level: 45, health: 12000, traits: [], group: 'daedra' });
   const strike = strikeEnchantments(ch.weapon, ch, target, { level: 45 });
   assert.equal(strike.procDamage, 0);
   assert.ok(strike.procDot > 0);
   const e = enchantDps(ch.weapon, ch, target, { hit: 1, aps: 1.4, level: 45 });
   assert.ok(e.dotDps > 0);
-  assert.ok(e.dps < 100, `Wildfire DPS ${e.dps}`);
+  assert.ok(e.dps < 100, `DoT row DPS ${e.dps}`);
 });

@@ -1,12 +1,12 @@
 // Focused 14631 differential for the planner forwarding sites (`git show 311c991`), against the REAL `src/*.js`.
 //
-// Run by `rust/dfo-core/tests/planner_mutants.rs`. The stock SPELLS.STD is a required input (the Rust side parses the same
+// Run by `rust/dfo-core/tests/planner_mutants.rs`. The spellbook (tools/rust-synth-book.mjs) is a required input (the Rust side parses the same
 // records), and each case is one value-codec token of input and one of expected output; the Rust side compares token for
 // token. `frontier` and `rank` are projected down to the numbers the gear law can move (their whole rows carry a 14 KB
 // item plan each); every other family compares the whole value the JS returns.
 //
 // Line schema: `<kind> <input> => <expected>`
-//   book      (none)                             => readSpellsStd(SPELLS.STD)
+//   book      (none)                             => readSpellBook()
 //   legal     {weapon, opts}                     => legalGear
 //   frontier  {weapon, opts}                     => [lb, cs, dmg, dps, cappedDps, allowanceDps] per row
 //   max       {weapon, opts}                     => maxCharacter
@@ -23,21 +23,15 @@
 // each family is one arm per forwarding site, not a sweep. `shortlistLoadouts` samples 1,000 fights per row and lives in
 // `tests/planner_shortlist.rs`. `rankAll` is `families.map(rankFamily)` and adds no forwarding coverage, so the six
 // `rank` cases carry it.
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import * as M from '../../../src/maxprofile.js';
 import * as I from '../../../src/imprints.js';
 import * as E from '../../../src/enchantPlan.js';
 import * as FB from '../../../src/realBuild.js';
 import { gateTarget, referenceFoe } from '../../../src/model.js';
-import { arena2Dir } from '../../../src/save.js';
-import { readSpellsStd } from '../../../src/spells.js';
+import { readSpellBook } from '../../../tools/rust-synth-book.mjs';
 import { encodeValue as V } from '../../../tools/rust-codec.mjs';
 
-const dir = arena2Dir();
-if (!dir) throw new Error('planner_oracle: no ARENA2 in the launcher config; SPELLS.STD is required');
-const book = readSpellsStd(readFileSync(resolve(dir, 'SPELLS.STD')));
-if (!book.length) throw new Error('planner_oracle: empty SPELLS.STD');
+const { records: book } = readSpellBook('planner_oracle');
 
 const lines = [];
 const put = (kind, input, expected) => lines.push(`${kind} ${V(input)} => ${V(expected)}`);

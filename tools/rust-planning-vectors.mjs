@@ -6,8 +6,7 @@ import * as M from '../src/maxprofile.js';
 import * as I from '../src/imprints.js';
 import { MARTIAL_PATHS, MATERIALS, WEAPONS } from '../src/data.js';
 import { gateTarget, referenceFoe } from '../src/model.js';
-import { arena2Dir, configPath } from '../src/save.js';
-import { readSpellsStd } from '../src/spells.js';
+import { readSpellBook } from './rust-synth-book.mjs';
 import { perfectSockets } from '../src/sockets.js';
 import { AFFIX_KINDS, AFFIX_RANGES } from '../vendor/upstream/a3eb1605/src/systems/loot/lootRarity.js';
 import { encodeValue as V } from './rust-codec.mjs';
@@ -32,10 +31,7 @@ export function genPlanningFamilies(Out, makeLcg) {
   const n = () => pick(edges);
   const paths = [undefined, null, ...Object.keys(MARTIAL_PATHS), 'unknown', false];
   const mats = [...new Set([...Object.keys(MATERIALS).map(Number).filter(Number.isFinite), ...Array.from({ length: 10 }, (_, i) => i)]), undefined, null, '9', -1];
-  const dir = arena2Dir();
-  if (!dir) throw new Error(`rust-planning-vectors: no ARENA2 in ${configPath()}; SPELLS.STD is required`);
-  const book = readSpellsStd(readFileSync(resolve(dir, 'SPELLS.STD')));
-  if (!book.length) throw new Error('rust-planning-vectors: empty SPELLS.STD');
+  const { records: book } = readSpellBook('rust-planning-vectors');
   for (const out of [profiles, imprints]) out.add('book', V(book));
   put(theory, 'constants', [], [T.LONG_BLADES, T.GEAR_LINE_MAX, T.DAMAGE_AFFIX_MAX, T.GEAR_MASTERY_CAP,
     T.GEAR_MASTERY_POINTS, T.GEAR_LB_LINES, T.GEAR_CS_LINES, T.GEAR_SKILL_LINES, T.GEAR_H2H_LINES]);
