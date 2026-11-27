@@ -289,7 +289,9 @@ pub fn summarize(values: &[Value], opts: &Value) -> Value {
     if xs.is_empty() {
         return Null;
     }
-    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    // JS `xs.sort((a, b) => a - b)`: every value here is finite (the filter above), so a difference is never NaN and
+    // `partial_cmp` is total; `total_cmp` would wrongly order `-0` before `+0` (JS ties them), changing `min`'s sign.
+    xs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let n = xs.len() as f64;
     let mean = xs.iter().fold(0.0, |a, x| a + x) / n;
     let sd = if n > 1.0 {
@@ -441,11 +443,17 @@ impl Durability {
         } else {
             args.get("weapon")
         };
+        // The build's own hand entries, read before `ch` is mutated: `worn` is only rewritten for a hand whose item IS the
+        // build's occupant (`src/simulateFight.js:219-226`, `cloneRef`'s identity lookup). An override piece is a fresh
+        // clone the JS never puts in `worn`, so its OWN `equipSlot` (a what-if weapon may carry the slot it was minted
+        // for - the A2 note at `src/cws.js:217-220`) must never move a worn entry: the reported case was an override
+        // with `equipSlot: 4` displacing the ring there and zeroing its potency.
+        let occupants = [ch.get("weapon").clone(), ch.get("offWeapon").clone()];
         let mut items = [
             durability::clone_item(source),
             durability::clone_item(ch.get("offWeapon")),
         ];
-        // Value inputs have no object references; equip slots identify the worn hand entries.
+        // Value inputs have no object references; a worn entry's slot identifies the build's own hand item.
         let worn: Vec<_> = ch
             .get("worn")
             .items()
@@ -454,11 +462,17 @@ impl Durability {
             .cloned()
             .collect();
         let worn_indices = [Hand::Main, Hand::Off].map(|hand| {
-            let item = &items[hand_index(hand)];
-            let orig = item.get("equipSlot");
-            (!orig.is_nullish())
-                .then(|| worn.iter().position(|w| w.get("equipSlot").strict_eq(orig)))
-                .flatten()
+            // The JS maps by identity: only a hand item that IS the occupant (no override for that hand) reaches `worn`.
+            let overridden = explicit && main(hand);
+            if overridden {
+                return None;
+            }
+            let occ = &occupants[hand_index(hand)];
+            let at = occ.get("equipSlot");
+            if !occ.truthy() || at.is_nullish() {
+                return None;
+            }
+            worn.iter().position(|w| w.get("equipSlot").strict_eq(at))
         });
         for hand in [Hand::Main, Hand::Off] {
             let item = &mut items[hand_index(hand)];
@@ -1322,8 +1336,13 @@ pub fn simulate_fight_cached(
             .filter(|(it, start)| !start && weapon_broken(it))
             .count()
     });
-    f.used
-        .sort_by(|a, b| b.share.partial_cmp(&a.share).unwrap());
+    // `[...f.used].sort((a, b) => b.share - a.share)`: every share is a finite threshold midpoint, so a difference is
+    // never NaN; `unwrap_or(Equal)` is JS's tie (and keeps `-0`/`+0` equal, as `total_cmp` would not).
+    f.used.sort_by(|a, b| {
+        b.share
+            .partial_cmp(&a.share)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let mut result = obj([
         ("seed", Num(seed)),
         ("kill", Bool(kill)),

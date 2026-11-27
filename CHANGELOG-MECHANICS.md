@@ -6,6 +6,37 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Rust parity: a Firmament plan keeps its keystone prices (2026-11-27)
+
+**Source.** `vendor/firmament/firmamentLaw.js:544` attaches the prices `treeStats` paid to the totals object under a
+non-enumerable `PRICES` symbol, and `blowPct` (`:299-312`) caps the group's gains at 30 **then subtracts the price**
+(`Math.max(BLOW_FLOOR, Math.min(BLOW_CAP, gain) + price)`), the same for `castCostPct` (`:322-333`). `src/realBuild.js:36-63`
+`applyFirmament` and `src/firmament.js:361-414` `planSummary` both read that object.
+
+**What was wrong.** `firmament::totals_value` writes only the enumerable entries (a `Value` cannot hold the symbol) and
+`firmament_law::totals_from_value` rebuilt `Totals` with `prices: Vec::new()`, so every reader of a **plan** lost the
+price table: `plan_summary`, `tree_blow`, `real_build::apply_firmament` and `forge::apply_tree_to_character` priced a
+priced tree as if the keystone cost nothing. Full sky (`sp.start` plus every non-start star): the long-blade group read
+was `30` where the JS reports `21` (`weaponDmg` gains past the 30 cap, then `sh.k`/`rt.k`'s -5/-4 price), and
+`firmamentDamagePct` was `30` instead of `21` - a real wrong number a GUI build and the `real-build` chain both show.
+
+**Fix.** `firmament::plan_totals(plan)` re-derives `treeStats(plan.tree)`, which IS the JS `plan.totals` with its
+prices (the tree is the persisted half; the JS total is a pure function of it). Every plan reader uses it;
+`totals_from_value` stays for a bare totals object a caller hands in (`total`/`effective` vector kinds). A plan with no
+usable tree still falls back to its serialized entries. Residual: a hand-built plan whose `totals` object disagrees with
+its own `tree` reads the tree here and the object in JS; no Rust caller builds one (`rust/README.md`).
+
+**Outputs moved (JS oracle, `node`):** full-sky `planSummary` blow `30` -> `21` and `castCost` `25` -> `25` (still
+capped), `applyFirmament(...).firmamentDamagePct` `30` -> `21`; the small `sh.k`/`rt.k` trees likewise. A price-FREE tree
+is unchanged.
+
+**Tests.** `tools/rust-firmament-vectors.mjs` appends (so every earlier byte is unchanged) `summary` for each build's
+full-sky and priced small trees, `apply` (the whole `applyFirmament` character) for each build's full-sky plan, and
+`planSummary(planBuild(b, { stars: n }))` for `n` 0..98 (792 cases); `tests/firmament.rs` replays them and asserts an
+`apply` floor. Red before green: the serialized-totals reader gives `30` (`tests` probe, then the vector); the JS gives
+`21`.
+
+
 ## The default build flips to the live game (0.1.14631); `14512` is now the explicit cut (2026-11-26)
 
 **Source.** Stage JS-1 recorded the 0.1.14631 gear law and `brand` as a drift finding behind `--game-build 14631`,

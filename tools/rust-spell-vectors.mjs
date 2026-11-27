@@ -102,6 +102,19 @@ export function genSpellFamilies(Out, makeLcg) {
     }
   }
   card({ effects: [{ ...mk(4, 10), magnitudeLevelBase: 1, magnitudeLevelHigh: 2, magnitudePerLevel: 1 }] }, {}, {}, {});
+  // A save's custom record may carry its effect fields as strings (or omit them): the JS `+`/`-`/`Math.floor` coerce
+  // them, and a missing one is `undefined` (NaN in arithmetic). Both sides must price the same.
+  for (const fields of [
+    { magnitudeBaseLow: '10', magnitudeBaseHigh: '20', magnitudeLevelBase: '1', magnitudeLevelHigh: '2', magnitudePerLevel: '3',
+      durationBase: '2', durationMod: '1', durationPerLevel: '1', chanceBase: '5', chanceMod: '0', chancePerLevel: '1' },
+    { magnitudeBaseLow: 10, magnitudeBaseHigh: 20 },
+    { magnitudeBaseLow: '10', magnitudeBaseHigh: 20, magnitudePerLevel: '2' },
+    { magnitudeBaseLow: true, magnitudeBaseHigh: null, magnitudeLevelBase: 0, magnitudeLevelHigh: 0, magnitudePerLevel: 1 },
+  ]) {
+    const sp = { effects: [{ type: 4, subType: 0, ...fields }] };
+    card(sp, {}, {}, {});
+    card(sp, ch, {}, { seconds: 5 });
+  }
   put('saving', [{ isPlayer: true, raceId: 1 }, {}, 0, 0, 20], [S.savingChanceOutcome({ isPlayer: true, raceId: 1 }), 80, S.spellHasFlags(undefined, 0, 0), S.savingLands(20)]);
   for (const raw of [100, 101, '100', '101', '102', '200']) {
     for (const mentor of [null, { skillFactor: 0.75, skillCeiling: 200 }]) {

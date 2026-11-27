@@ -1765,6 +1765,31 @@ fn row_suffix(r: &Analysis) -> [(&'static str, f64); 5] {
     ]
 }
 
+/// The JS `rows.sort((a, b) => b.cappedDps - a.cappedDps || b.dps - a.dps)` without the panic a non-total order causes.
+/// A row with a NaN `cappedDps` or `dps` cannot be ordered against anything (`a - b` is NaN in JS, which its sort takes
+/// as "equal", and the comparator then violates transitivity). The finite rows are sorted stably, in that exact order,
+/// into the positions they already hold; a NaN row keeps its generated position. No `sort_by` sees two rows it cannot
+/// order, so no panic is possible.
+fn sort_rank_rows(rows: &mut [Value]) {
+    let finite = |r: &Value| {
+        let (a, b) = (number(r, "cappedDps"), number(r, "dps"));
+        !(a.is_nan() || b.is_nan())
+    };
+    let mut slots: Vec<usize> = (0..rows.len()).filter(|i| finite(&rows[*i])).collect();
+    let mut ordered: Vec<Value> = slots.iter().map(|i| rows[*i].clone()).collect();
+    ordered.sort_by(|a, b| {
+        let (ca, cb) = (number(a, "cappedDps"), number(b, "cappedDps"));
+        let (da, db) = (number(a, "dps"), number(b, "dps"));
+        // Both rows are finite, so `partial_cmp` is `Some` and the order is total.
+        cb.partial_cmp(&ca)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal))
+    });
+    for (slot, row) in slots.drain(..).zip(ordered) {
+        rows[slot] = row;
+    }
+}
+
 /// JS:1752. Options use the JS defaults when fields are absent.
 pub fn rank_weapons(ch: &Value, scenario: &Value, opts: &Value, book: &Spellbook) -> Value {
     let mut rows = vec![];
@@ -1817,12 +1842,13 @@ pub fn rank_weapons(ch: &Value, scenario: &Value, opts: &Value, book: &Spellbook
             rows.push(row);
         }
     }
-    let cmp = |a: &Value, b: &Value, k| {
-        (number(b, k) - number(a, k))
-            .partial_cmp(&0.0)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    };
-    rows.sort_by(|a, b| cmp(a, b, "cappedDps").then_with(|| cmp(a, b, "dps")));
+    // JS `rows.sort((a, b) => b.cappedDps - a.cappedDps || b.dps - a.dps)`. `a - b` with a NaN is NaN, which the JS
+    // takes as "equal", so that comparator is NOT a total order and V8's own permutation of NaN rows is
+    // implementation-defined. Rust's `sort_by` would panic ("user-provided comparison function does not correctly
+    // implement a total order"), so the finite rows (the only ones with an order) are sorted stably into the slots they
+    // already occupy and every NaN row keeps its generated position. The finite rows are exactly JS's order; the NaN
+    // rows' positions are the documented residual (rust/README.md, "a NaN rank").
+    sort_rank_rows(&mut rows);
     let top = default(opts.get("top"), Num(20.0)).to_number() as isize;
     rows.truncate(if top < 0 {
         rows.len().saturating_sub(top.unsigned_abs())

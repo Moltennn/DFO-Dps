@@ -146,14 +146,17 @@ fn try_absorption(effect: &Value, range_type: f64, target: &Value, rolls: &mut i
 }
 
 pub fn roll_magnitude(effect: &Value, caster_level: f64, rolls: &mut impl Rolls) -> f64 {
-    let mut range = |lo, hi| {
-        let lo = number(effect, lo, 0.0);
-        let hi = number(effect, hi, 0.0);
-        lo + (rolls.roll() * (hi + 1.0 - lo)).floor()
+    // `systems/spellcast.js:229-236`: `lo + Math.floor(rolls() * (hi + 1 - lo))`. `hi + 1` is a JS `+` (a string `hi`
+    // concatenates with `1` first), and `hi + 1 - lo` a JS `-`; read each as the JS chain does.
+    let mut range = |lo_k: &str, hi_k: &str| {
+        let lo = effect.get(lo_k).num_or(0.0);
+        // `effect.magnitudeBaseHigh ?? 0` first (the JS `?? 0`), then `hi + 1` (a JS `+`, so a string hi concatenates).
+        let hi_plus_one = crate::value::add_num(&Num(effect.get(hi_k).num_or(0.0)), 1.0);
+        lo + (rolls.roll() * (hi_plus_one - lo)).floor()
     };
     let base = range("magnitudeBaseLow", "magnitudeBaseHigh");
     let plus = range("magnitudeLevelBase", "magnitudeLevelHigh");
-    let per = js_max(1.0, number(effect, "magnitudePerLevel", 1.0));
+    let per = js_max(1.0, effect.get("magnitudePerLevel").num_or(1.0));
     base + plus * (caster_level / per).floor()
 }
 
@@ -548,10 +551,16 @@ fn dot_round(
     hurt: &mut Hurt<'_>,
     dead: bool,
 ) -> (f64, bool) {
+    // `magnitudeRoll(entry.effect, ..., entry.element, entry.flag, ...)` (`src/cws.js:486-489`): the stored entry's
+    // OWN element and flag go through untouched. A nullish (or non-numeric) element is not Fire: in the JS every
+    // `spellHasFlags` arm compares with `=== 0..4`, so none matches, and the flag falls back to Magic through
+    // `ELEMENT_FLAG_BY_INDEX[element] ?? ELEMENT_FLAG_BY_INDEX[4]` (`src/spells.js:285`). A nullish flag is not 0
+    // flags either: `Number.isFinite(null)` is false, so the element's own flag is used. NaN models "names no element"
+    // here (`num_or` would turn a JS `null` into Fire's 0 and `to_number` a `null` flag into no flags at all).
     let settings = Magnitude {
         level: entry.get("casterLevel").to_number(),
-        element: entry.get("element").to_number(),
-        flag: entry.get("flag").to_number(),
+        element: entry.get("element").num_or(f64::NAN),
+        flag: entry.get("flag").num_or(f64::NAN),
         save_scaled: entry.get("saveScaled").truthy(),
         pierce: number(entry, "pierce", 0.0),
     };

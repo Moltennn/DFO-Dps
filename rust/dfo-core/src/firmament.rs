@@ -552,11 +552,26 @@ fn tree_value(tree: &Tree) -> Value {
 
 fn totals_value(totals: &Totals) -> Value {
     // The JS totals object is frozen and carries the PRICES symbol, which is not enumerable: only the entries show.
+    // A `Value` cannot hold the hidden price table, so every consumer of a PLAN re-derives its totals from the plan's
+    // tree (`plan_totals`); this shape is what the JS `JSON.stringify` of a plan writes.
     Obj(totals
         .entries
         .iter()
         .map(|(k, v)| (k.clone(), Num(*v)))
         .collect())
+}
+
+/// The `Totals` a plan's readers use: `treeStats(plan.tree)`, which is exactly the JS `plan.totals` (the JS attaches the
+/// price table as a hidden symbol on that same object, so `blowPct(plan.totals)` sees the prices). The plan is rebuilt
+/// from its tree rather than read from the serialized `totals`, which cannot carry the hidden prices; a plan with no
+/// usable tree falls back to the serialized entries (no prices), the shape a hand-built plan has.
+pub fn plan_totals(plan: &Value) -> Totals {
+    let tree = plan_tree(plan);
+    if tree.start.is_some() {
+        law::tree_stats(&tree)
+    } else {
+        law::totals_from_value(plan.get("totals"))
+    }
 }
 
 /// `planFromTree`: rebuild a plan from its persisted tree without running the search.
@@ -641,6 +656,7 @@ fn effective_value_of(totals: &Value, key: &str) -> f64 {
 
 /// `planSummary`: the readable summary of a plan, its tree words, group reads and the stars taken.
 pub fn plan_summary(plan: &Value) -> Value {
+    let law_totals = plan_totals(plan);
     let totals = plan.get("totals");
     let build = plan.get("build");
     let mut rows: Vec<Value> = Vec::new();
@@ -653,13 +669,7 @@ pub fn plan_summary(plan: &Value) -> Value {
     let has_relevant = |k: &str| relevant.iter().any(|x| x == k);
     if let Some(skill) = build.get("skill").as_str() {
         let blow = 30.0f64
-            .min(blow_pct(
-                &totals_of(totals),
-                Some(skill),
-                None,
-                false,
-                false,
-            ))
+            .min(blow_pct(&law_totals, Some(skill), None, false, false))
             .max(0.0);
         let name = build.get("name").to_js_string().to_lowercase();
         rows.push(obj([
@@ -676,9 +686,7 @@ pub fn plan_summary(plan: &Value) -> Value {
         ]));
     }
     if let Some(school) = build.get("school").as_str() {
-        let cost = 25.0f64
-            .min(cast_cost_pct(&totals_of(totals), &[school]))
-            .max(0.0);
+        let cost = 25.0f64.min(cast_cost_pct(&law_totals, &[school])).max(0.0);
         rows.push(obj([
             ("key", s("castCost")),
             ("label", s("Spell cost (group)")),
@@ -825,10 +833,6 @@ pub fn plan_summary(plan: &Value) -> Value {
     ])
 }
 
-fn totals_of(v: &Value) -> Totals {
-    law::totals_from_value(v)
-}
-
 /// A star's own record as the JS returns it (field order, and `text` only when the star has one).
 pub fn node_value(key: &str) -> Option<Value> {
     let n = node(key)?;
@@ -874,11 +878,12 @@ pub fn plan_tree(plan: &Value) -> Tree {
     }
 }
 
-/// `firmamentDamagePct` the tree gives a build: `blowPct(totals, { skill: build.skill })`.
+/// `firmamentDamagePct` the tree gives a build: `blowPct(totals, { skill: build.skill })`. The tree carries the price
+/// channels a serialized `totals` cannot.
 pub fn tree_blow(plan: &Value) -> f64 {
     let skill = plan.get("build").get("skill");
     let skill = skill.as_str();
-    blow_pct(&totals_of(plan.get("totals")), skill, None, false, false)
+    blow_pct(&plan_totals(plan), skill, None, false, false)
 }
 
 // Local invariants of the plan memo (no JS oracle here: the golden vectors pin the plans themselves).

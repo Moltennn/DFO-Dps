@@ -540,7 +540,10 @@ fn run(
             raw = Num(damage);
             let fl = flow.hit(
                 t,
-                whole.truthy(),
+                // `flow.hit(t, { whole: outcome.whole, ... })` (`src/relayFight.js:352`): a DESTRUCTURING default, so an
+                // event outcome with no `whole` key is a whole blow (`flowState.js:24`). A supplied `false`/`null` is
+                // not. `truthy()` would make the missing key a non-whole blow, and a whole blow is what refreshes Flow.
+                whole.is_nullish() || whole.truthy(),
                 formula && (hand.is_str("main") || hand.is_str("off")) && flow_by_hand[hand_index],
             );
             if fl.built {

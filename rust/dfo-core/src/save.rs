@@ -10,10 +10,9 @@
 
 use crate::gear_lines::{valid_item_lines, weapon_damage_pct};
 use crate::generated::data::{RACE_NAMES, SKILL_NAMES};
-use crate::generated::js_prototypes::{ARRAY_PROTOTYPE_KEYS, OBJECT_PROTOTYPE_KEYS};
 use crate::generated::save_tables::{ENHANCE_SKILL_MOD, PROFICIENCY_FLAG, SLOT, WEAPON_SKILL};
 use crate::round::{is_integer, js_max, js_min, to_int32};
-use crate::value::{number_to_string, obj_table_get, refuse_inherited, string_to_number, Value};
+use crate::value::{number_to_string, obj_table_get, string_to_number, Value};
 
 /// `WEAPON_SKILL[template]` (save.js:116-123): the skill a template swings with, or `undefined`.
 pub fn weapon_skill(template: &Value) -> Option<f64> {
@@ -577,8 +576,9 @@ pub fn character_label(ch: &Value) -> String {
 }
 
 /// `skillName(id)` (save.js:315-317): `SKILL_NAMES[id] ?? String(id)`. `SKILL_NAMES` is an array, so an index (an integer, or
-/// a canonical index string) names a skill. `length` is the array's own length (a number, 35); any other inherited array or
-/// object member is a function or an object, which is refused ([`refuse_inherited`]). Anything else is its own string.
+/// a canonical index string) names a skill. `length` is the array's own length (a number, 35). Any other inherited array
+/// or object member is a function or an object in JS, which a `Value` cannot hold: the port falls through to the id's
+/// own string (`"constructor"`), a label-only residual difference documented in `rust/README.md`.
 pub fn skill_name(id: &Value) -> Value {
     if let Some(name) = id.array_index().and_then(|i| SKILL_NAMES.get(i)) {
         return Value::Str((*name).to_owned());
@@ -586,11 +586,5 @@ pub fn skill_name(id: &Value) -> Value {
     if id.is_str("length") {
         return Value::Num(SKILL_NAMES.len() as f64);
     }
-    let k = id.to_js_string();
-    refuse_inherited(
-        &k,
-        "the skill names",
-        &[OBJECT_PROTOTYPE_KEYS, ARRAY_PROTOTYPE_KEYS],
-    );
-    Value::Str(k)
+    Value::Str(id.to_js_string())
 }

@@ -22,7 +22,7 @@ use crate::generated::loot_rarity::{
     GEM_LINE_ROWS, SOCKET_EMPTY, SOCKET_GROUPS, WEAPON_SOCKETS,
 };
 use crate::round::{is_integer, js_max, js_min};
-use crate::value::{map_table_get, obj_table_get, parse, refuse_inherited, Value};
+use crate::value::{inherited, map_table_get, obj_table_get, parse, Value};
 use crate::vendored::enemy_entity_group;
 
 /// `validAffix(a)` (lootRarity.js:839-848): a record of a kind the table knows (an own key of `AFFIX_KINDS`, so
@@ -291,9 +291,11 @@ pub fn power_ids_of(it: &Value) -> Vec<Value> {
 /// 3. `_gilded?.powerOf(id)`: the gilded registry is module-private and unset on this import path, so it is `undefined`
 ///    here, and the answer is `null`. The generator asserts `powerOf` of a made-up id is `null`.
 ///
-/// An inherited name (`constructor`, `toString`, `__proto__`, ...) reads step 1 as the Object.prototype member: JS returns a
-/// function (or the prototype object), which a `Value` cannot hold. The port panics (see [`refuse_inherited`]); the vectors
-/// never pass one, and the test below pins the refusal. Reachable from a save whose legendary item carries such an id.
+/// An inherited name in `LEGENDARY_POWERS` is the Object.prototype member in JS (a function, or the prototype object
+/// for `__proto__`); a `Value` cannot hold one, so it reads as an empty record. That is what every ported read of a
+/// power sees of a function (`p?.kind`, `p.kind`, `p.name`, `p.chance`, ... are all undefined on a function), so no
+/// number moves; see `rust/README.md` ("an inherited name"). Reachable from a save whose legendary item carries such an
+/// id.
 pub fn power_of(id: &Value) -> Value {
     let Some(s) = id.as_str() else {
         return Value::Null;
@@ -301,7 +303,9 @@ pub fn power_of(id: &Value) -> Value {
     if let Some((_, tok)) = LEGENDARY_POWER_TOKENS.iter().find(|(k, _)| *k == s) {
         return parse(tok).unwrap_or_else(|e| panic!("generated power token: {e}"));
     }
-    refuse_inherited(s, "LEGENDARY_POWERS", &[OBJECT_PROTOTYPE_KEYS]);
+    if inherited(s, &[OBJECT_PROTOTYPE_KEYS]) {
+        return Value::Obj(Vec::new());
+    }
     match LEGENDARY_OWN_POWER_TOKENS.iter().find(|(k, _)| *k == s) {
         Some((_, tok)) => parse(tok).unwrap_or_else(|e| panic!("generated power token: {e}")),
         None => Value::Null,
@@ -364,10 +368,13 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "not representable")]
-    fn power_of_refuses_an_inherited_name() {
-        // JS: LEGENDARY_POWERS['constructor'] is the Object function, returned by `??` (not nullish).
-        let _ = power_of(&Value::Str("constructor".into()));
+    fn power_of_reads_an_inherited_name_as_an_empty_record() {
+        // JS: LEGENDARY_POWERS['constructor'] is the Object function, returned by `??` (not nullish). Every ported
+        // read of a power sees undefined on a function, so an empty record is that same answer and cannot crash.
+        let p = power_of(&Value::Str("constructor".into()));
+        assert_eq!(p, Value::Obj(vec![]));
+        assert!(p.get("kind").is_nullish());
+        assert!(p.get("chance").is_nullish());
     }
 
     #[test]

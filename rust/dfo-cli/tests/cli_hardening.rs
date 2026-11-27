@@ -219,8 +219,8 @@ fn an_invalid_utf8_argument_is_a_usage_error() {
 fn a_corrupt_save_is_an_error_not_a_panic() {
     let root = temp_root("corrupt");
     // A save whose weapon `templateIndex` names an inherited property: the JS `WEAPONS["constructor"]` is a function,
-    // so its card reads nonsense (`Infinity--Infinity`) and exits 0; the port cannot represent the read and prints one
-    // line with exit 1 (the JS crash shape) instead of a panic report.
+    // so its card reads nonsense (`Infinity--Infinity`) and exits 0. The port cannot hold a function, so it reads the
+    // table miss and prints its own card with exit 0 (never a panic report; the label/number residual is documented).
     let stats = [
         "strength",
         "agility",
@@ -242,17 +242,17 @@ fn a_corrupt_save_is_an_error_not_a_panic() {
         ),
     );
     let got = rust(&["build"], &root);
-    assert_eq!(got.status.code(), Some(1), "rust build");
-    assert!(
-        String::from_utf8_lossy(&got.stderr).starts_with("not representable:"),
-        "one line: {}",
+    assert_eq!(
+        got.status.code(),
+        Some(0),
+        "rust build: {}",
         String::from_utf8_lossy(&got.stderr)
     );
     assert!(
         !String::from_utf8_lossy(&got.stderr).contains("panicked"),
         "no panic report"
     );
-    assert!(got.stdout.is_empty(), "no partial card");
+    assert!(!got.stdout.is_empty(), "a card is printed");
 
     // `_mods.statMax` is a number: the JS then writes a property onto a primitive and throws a `TypeError` at the graph
     // branch (`c._mods.statMax[id] = ...`). Exit 1 with a line, not a panic report.

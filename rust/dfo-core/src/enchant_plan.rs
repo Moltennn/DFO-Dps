@@ -1522,6 +1522,13 @@ pub fn effect_line(e: &Value) -> String {
 /// `-0` prints `"-0"` (`(-0).toLocaleString('en-US')`), unlike `String(-0)` which is `"0"`; a value that rounds to
 /// zero keeps the sign of the value it came from (`(-0.0004).toLocaleString('en-US')` is `"-0"`).
 fn grouped_number(x: f64) -> String {
+    // `Number.prototype.toLocaleString('en-US')` of the three non-finite values: `∞`, `-∞`, `NaN` (never grouped).
+    if x.is_nan() {
+        return "NaN".to_owned();
+    }
+    if x.is_infinite() {
+        return if x > 0.0 { "∞" } else { "-∞" }.to_owned();
+    }
     if x == 0.0 {
         return if x.is_sign_negative() { "-0" } else { "0" }.to_owned();
     }
@@ -1604,5 +1611,9 @@ mod tests {
         assert_eq!(grouped_number_of(1500.0005), "1,500.001");
         assert_eq!(grouped_number_of(-1234.5678), "-1,234.568");
         assert_eq!(grouped_number_of(1e21), "1,000,000,000,000,000,000,000");
+        // The non-finite values are Intl's own words, never grouped (a `1e308` used to print "In,fin,ity").
+        assert_eq!(grouped_number_of(f64::INFINITY), "∞");
+        assert_eq!(grouped_number_of(f64::NEG_INFINITY), "-∞");
+        assert_eq!(grouped_number_of(f64::NAN), "NaN");
     }
 }

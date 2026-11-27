@@ -724,7 +724,9 @@ fn scaling_table(ch: &Value, scenario: &Value, r: &Value, book: &Spellbook) -> S
         set_array(&mut skills, weapon_id.to_number() as usize, Num(v));
         c.set("skills", skills);
     });
-    let crit = ch.get("skills").prop(&Num(34.0)).to_number();
+    // `ch.skills?.[34] ?? 0` (`src/report.js:127`): a save with fewer than 35 skill entries has no index 34, and the
+    // JS reads 0. `to_number` of a missing entry is NaN, which printed "NaN → 200".
+    let crit = ch.get("skills").prop(&Num(34.0)).num_or(0.0);
     run("Critical Strike".to_owned(), crit, 200.0, &|c, v| {
         let mut skills = c.get("skills").clone();
         set_array(&mut skills, 34, Num(v));
