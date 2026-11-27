@@ -237,21 +237,24 @@ fn imprints_refusals_match_the_js() {
     same_usage(&["imprints", "--sort", "nope", "--out", out], &root, &page);
     same_usage(&["build", "--sort", "nope"], &root, &page);
     // `--family`/`--sort`/`--cap-aware` are refused by name outside `imprints`; the JS accepts and ignores each.
-    for (args, refusal) in [
+    let graph_page = root.join("cap-aware.html");
+    let graph_out = graph_page.to_str().unwrap().to_owned();
+    let cases = [
         (
-            &["report", "--theory", "--family", "bow", "--out", out][..],
+            vec!["report", "--theory", "--family", "bow", "--out", out],
             "--family is not read by report; imprints reads it",
         ),
         (
-            &["build", "--theory", "--sort", "uncapped"][..],
+            vec!["build", "--theory", "--sort", "uncapped"],
             "--sort is not read by build; imprints reads it",
         ),
         (
-            &["graph", "--theory", "--cap-aware"][..],
+            vec!["graph", "--theory", "--cap-aware", "--out", &graph_out],
             "--cap-aware is not read by graph; imprints, enchant-plan, gear-plan, loadout and real-dps read it",
         ),
-    ] {
-        let got = rust(args, &root);
+    ];
+    for (args, refusal) in cases {
+        let got = rust(&args, &root);
         assert_eq!(got.status.code(), Some(2), "rust {args:?}");
         assert!(
             String::from_utf8_lossy(&got.stderr).contains(refusal),
@@ -259,12 +262,17 @@ fn imprints_refusals_match_the_js() {
             String::from_utf8_lossy(&got.stderr)
         );
         assert!(got.stdout.is_empty(), "no card for {args:?}");
-        assert!(!page.exists(), "no page for {args:?}");
-        let want = js(args, &root);
+        assert!(
+            !page.exists() && !graph_page.exists(),
+            "no page for {args:?}"
+        );
+        let want = js(&args, &root);
         assert_eq!(want.status.code(), Some(0), "the JS accepts {args:?}");
         // The JS may still write its page for a command it accepts the flag on (e.g. `report`).
-        if page.exists() {
-            fs::remove_file(&page).expect("cleanup the JS page");
+        for written in [&page, &graph_page] {
+            if written.exists() {
+                fs::remove_file(written).expect("cleanup the JS page");
+            }
         }
     }
     // `--series` stays graph-only, and it is not read by `imprints`.

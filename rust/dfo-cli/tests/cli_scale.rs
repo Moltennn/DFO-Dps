@@ -567,10 +567,6 @@ fn scale_flags_are_refused_elsewhere() {
             &["rank", "--theory", "--gear-skill", "29"][..],
             "--gear-skill is not read by rank; only scale reads it",
         ),
-        (
-            &["graph", "--theory", "--skill", "29"][..],
-            "--skill is not read by graph; only scale reads it",
-        ),
     ] {
         let got = rust(args, &root);
         assert_eq!(got.status.code(), Some(2), "rust {args:?}");
@@ -583,6 +579,24 @@ fn scale_flags_are_refused_elsewhere() {
         let want = js(args, &root);
         assert_eq!(want.status.code(), Some(0), "js accepts {args:?}");
     }
+    // `graph` accepts `--skill` and ignores it, so it writes its page: into the fixture root, never the shared cwd.
+    let page = root.join("graph.html");
+    let out = page.to_str().unwrap();
+    let graph = ["graph", "--theory", "--skill", "29", "--out", out];
+    let got = rust(&graph, &root);
+    assert_eq!(got.status.code(), Some(2), "rust {graph:?}");
+    assert!(
+        String::from_utf8_lossy(&got.stderr)
+            .contains("--skill is not read by graph; only scale reads it"),
+        "rust {graph:?}: {}",
+        String::from_utf8_lossy(&got.stderr)
+    );
+    assert!(got.stdout.is_empty(), "no card for {graph:?}");
+    assert!(!page.exists(), "rust wrote no page for {graph:?}");
+    let want = js(&graph, &root);
+    assert_eq!(want.status.code(), Some(0), "js accepts {graph:?}");
+    assert!(page.exists(), "the JS wrote its page");
+    fs::remove_file(&page).expect("cleanup the JS page");
     // `--from`/`--to`/`--step` now belong to graph and scale; `compare` still refuses them.
     for (args, refusal) in [
         (

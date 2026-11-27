@@ -1807,6 +1807,36 @@ node tools/gate.mjs mutate analyze.rs --tests analyze --count 1000 --seed 1 --ti
 Mutation result (seed 1): 323 candidates, 303 killed, 7 invalid, and 13 equivalent survivors
 with local proofs in `analyze.rs`. The mutation gate reports `FAIL` for equivalent survivors too.
 
+## CLI snapshots: the differential tests without Node
+
+`rust/dfo-cli/tests/snapshots/` holds the JS answers of the CLI differential tests, one `<test binary>.snap` per target
+(gzip -9, read transparently by the harness) and a `MANIFEST` with each file's SHA-256 over those compressed bytes. The
+test code is unchanged: where it asks the JS, the harness (`tests/common/snapshot.rs`) answers from the file. The live
+modes (`DFO_ORACLE=off|use|fresh`, spot checks) stay while the JS exists.
+
+```
+node tools/gate.mjs rust --snapshots     # replay: no `node` on the CLI tests' PATH, and every stored call must be used
+node tools/snapshots.mjs check           # run live against the JS and fail if a stored answer would differ
+node tools/snapshots.mjs record          # regenerate; add --only <targets> to limit it
+node tools/snapshots.mjs record --moved cli_scale,cli_spell::<test> --reason <changelog id>
+```
+
+- `record` writes only after every test of every selected target passed live, so a stored answer agreed with the Rust
+  binary (or with the test's own expectation of a deliberate difference). No test run writes the committed files.
+- A changed or removed answer is refused unless `--moved` names it and `--reason` says why; a name under which nothing
+  moved is refused too. New tests need no declaration. The reason is kept in the `MANIFEST`.
+- A call is identified by test name and call number; its argv, cwd, extra env, stdin and fixture contents must match.
+- Two recordings of the same tree are byte identical. A test whose JS call writes a page must pass `--out` into its own
+  fixture root: a call run from the repository cwd with no `--out` writes `graph.html` (or similar) into the checkout,
+  where every concurrently recording test sees a new file in its writable window and stores it for whichever call was
+  open. That was the one source of drift; `cli_scale` and `cli_imprints` now pin the path.
+- Evidence class: a snapshot proves what the JS answered when recorded (parity), not what the game does.
+- No game data: `record` runs with an empty `XDG_CONFIG_HOME`, no `DAGGER_USER_DATA`, and the synthetic `SPELLS.STD`
+  (`tools/rust-synth-book.mjs`); a recorded answer naming the home directory aborts the run. The snapshots carry only
+  made-up fixture names and spell names.
+- Not covered: the `dfo-core` JS probes (`probe_oracle.mjs`, `sidebar_oracle.mjs`) and the golden vectors; the
+  `HOME`-unset save listing is compared live only, because its answer is the host's own.
+
 ## Plan after R2 (historical: every step shipped, kept as the record)
 
 Order chosen by dependency; each step ships only with vectors (or the upstream goldens) that fail first.

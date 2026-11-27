@@ -308,20 +308,27 @@ fn a_closed_stdout_keeps_the_js_exit_status() {
     let root = temp_root("pipe");
     let js = common::repo_root().join("bin").join("dfo-dps.js");
     let rust = env!("CARGO_BIN_EXE_dfo-forge");
-    for command in [
-        format!("node {} rank", js.display()),
-        format!("{rust} rank"),
+    for (js_side, command) in [
+        (true, format!("node {} rank", js.display())),
+        (false, format!("{rust} rank")),
     ] {
-        let output = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(format!(
-                "{command} --theory --top 1000 --json | head -c1 >/dev/null; exit ${{PIPESTATUS[0]}}"
-            ))
-            .current_dir(&root)
-            .env("HOME", common::home_root())
-            .env("DAGGER_USER_DATA", &root)
-            .output()
-            .expect("the pipeline runs");
+        let run = || {
+            std::process::Command::new("sh")
+                .arg("-c")
+                .arg(format!(
+                    "{command} --theory --top 1000 --json | head -c1 >/dev/null; exit ${{PIPESTATUS[0]}}"
+                ))
+                .current_dir(&root)
+                .env("HOME", common::home_root())
+                .env("DAGGER_USER_DATA", &root)
+                .output()
+                .expect("the pipeline runs")
+        };
+        let output = if js_side {
+            common::js_custom(&root, &root, &["| head -c1", "rank"], &[], &run)
+        } else {
+            run()
+        };
         assert_eq!(
             output.status.code(),
             Some(0),
@@ -373,7 +380,8 @@ fn home_unset_is_the_os_user_database() {
         }
         command
             .env("LC_ALL", "en_US.UTF-8")
-            .env("LANG", "en_US.UTF-8");
+            .env("LANG", "en_US.UTF-8")
+            .env_remove("XDG_CONFIG_HOME");
         match home {
             Some(value) => command.env("HOME", value),
             None => command.env_remove("HOME"),
@@ -381,8 +389,23 @@ fn home_unset_is_the_os_user_database() {
         command.output().expect("the CLI runs")
     };
     for home in [None, Some("")] {
-        let want = run(true, home);
         let got = run(false, home);
+        // With `HOME` unset both sides read the OS user database, so the answer is the host's own save list: it is
+        // never stored in a snapshot, and the replay checks only that the Rust CLI answers.
+        if home.is_none() && (common::replaying() || common::recording()) {
+            assert_eq!(got.status.code(), Some(0), "rust {home:?}");
+            if common::replaying() {
+                continue;
+            }
+        }
+        let want = match home {
+            Some(_) => {
+                common::js_custom(&root, &root, &["saves"], &[("HOME", "".as_ref())], &|| {
+                    run(true, home)
+                })
+            }
+            None => run(true, home),
+        };
         assert_eq!(got.status.code(), Some(0), "rust {home:?}");
         assert_eq!(
             want.status.code(),
