@@ -214,6 +214,64 @@ fn key_covers_every_input(tree: &Path, root: &Path) {
     std::env::set_var("DFO_ORACLE_STATS", root.join("stats.txt"));
 }
 
+/// Part 1b: a second worktree's fixture root keys the same, so one cache directory can be shared by every worktree. The
+/// launcher `config.json` names its own root's `arena2Path`, so this only holds because the fixture bytes are
+/// canonicalised with the root placeholder (a raw hash made every case a permanent miss).
+fn a_copy_of_the_fixture_keys_the_same(base: &Path) {
+    // A root of its own at another path; only the root itself is walked, never its parent.
+    let twin = scratch("twin").join("root");
+    fs::create_dir_all(&twin).expect("twin root");
+    write_pinned(
+        &twin.join("Saves").join("SAVE1").join("SaveData.txt"),
+        r#"{"name":"Key","level":1,"raceId":1,"race":"Breton","health":10,"maxHealth":10,"stats":{"strength":10},"skills":[],"items":[]}"#,
+    );
+    write_pinned(
+        &twin.join("config.json"),
+        format!(r#"{{"arena2Path":{:?}}}"#, twin.join("arena2")),
+    );
+    write_pinned(&twin.join("arena2").join("SPELLS.STD"), "spells-v1");
+
+    // Every entry and mode must match; `config.json` names its own root, so its length follows the path and the key
+    // below is what proves its CONTENT counts as the same.
+    let entries = |root: &Path| {
+        use std::os::unix::fs::PermissionsExt;
+        fn walk(root: &Path, dir: &Path, out: &mut Vec<String>) {
+            for entry in fs::read_dir(dir).expect("read") {
+                let entry = entry.expect("entry");
+                let path = entry.path();
+                let meta = fs::symlink_metadata(&path).expect("meta");
+                let len = if path.file_name().is_some_and(|n| n == "config.json") {
+                    0
+                } else {
+                    meta.len()
+                };
+                out.push(format!(
+                    "{} mode={:o} len={len}",
+                    path.strip_prefix(root).unwrap().to_string_lossy(),
+                    meta.permissions().mode() & 0o777
+                ));
+                if meta.is_dir() {
+                    walk(root, &path, out);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(root, root, &mut out);
+        out.sort();
+        out
+    };
+    assert_eq!(
+        entries(base),
+        entries(&twin),
+        "the two roots must hold the same entries with the same modes"
+    );
+    assert_eq!(
+        base_key(base),
+        base_key(&twin),
+        "a fixture root at another path must key the same (a shared cache depends on it)"
+    );
+}
+
 /// Part 2: the detector. A scratch program's only input is a file outside every hashed tree, so the key cannot see it;
 /// spot 1.0 re-runs the program live, sees the changed answer, panics and deletes the entry.
 fn spot_catches_an_unhashed_input(base: &Path, cache: &Path) {
@@ -345,6 +403,7 @@ fn the_key_covers_its_inputs_and_the_cache_fails_open() {
     std::env::set_var("DFO_ORACLE_SPOT", "0");
 
     key_covers_every_input(&tree, &root);
+    a_copy_of_the_fixture_keys_the_same(&root);
     spot_catches_an_unhashed_input(&base, &base.join("cache-spot"));
     corrupt_entries_and_concurrent_writers(&base, &base.join("cache-corrupt"));
 }

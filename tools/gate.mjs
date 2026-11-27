@@ -19,16 +19,21 @@
  *                  the cache key is content-only and portable between copies of one revision (worktree, `git archive`);
  *                  a vectors directory that is a symlink into another tree is reused but never regenerated through it
  *                  also sets DFO_ORACLE=fresh (skip JS-oracle cache reads, still write entries)
- *   --test-jobs N  rust: test binaries run in parallel, default up to 4; use 1 on memory-constrained hosts
+ *   --test-jobs N  rust: how many tests run at once (default about 1.2 x the core count, since a test mostly blocks
+ *                  on the child CLI it spawns). The unit is the TEST, not the test binary: one process per test, and
+ *                  workers take the next test as each finishes, so the longest suite cannot become the tail.
+ *                  Use 1 on memory-constrained hosts
+ *   --quick        rust: skip the heavy suites by full path (listed below), print each skipped path; the rest runs in
+ *                  full, so this is a fast tier, never a subset of cases within a suite
  *   --no-oracle    rust: DFO_ORACLE=off (no JS-oracle cache; every JS call runs live)
  *   --spot F       rust: fraction of cache hits re-run against real JS and compared (default 0.05; 0.25 before a push, 1.0 nightly;
  *                  a mismatch fails the gate and deletes the entry). Ignored with --no-oracle
  *   --tests a,b    rust: run only these test targets (e.g. `--tests rank,doctor`); the build still compiles all
- *   --oracle-dir D rust: the JS-oracle cache directory (default `<checkout>/.cache/oracle`, gitignored; worktrees do
- *                  not share it unless D points to a shared path)
+ *   --oracle-dir D rust: the JS-oracle cache directory (default the primary checkout's `.cache/oracle`, shared by every
+ *                  worktree: the key is content-only, so each worktree starts warm instead of paying the cold JS cost)
  *   --keep-oracle-stats  rust: keep the per-call stats file the line above is summed from (deleted by default)
  *   --record-timings  rust: write each test binary's measured seconds to tools/gate-timings.json, which orders
- *                  later queues longest-first (never required: without it the build order is kept)
+ *                  later queues longest-first (unknown timings run first; without the file the build order is kept)
  *   --keep-going   do not stop at the first failing step
  *   --full         rust: also run the opt-in slow tier (PLANNERS_SLOW=1: the sampled loadout/real-dps planner cases,
  *                  minutes each); the pre-push hook passes it, the default gate does not
@@ -36,10 +41,10 @@
  *                  SPELLS.STD (tests that need it are reported as skipped; see test/harness/spellbook.mjs)
  *   --lines N      how many lines of a failure to show (default 25)
  */
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { availableParallelism, tmpdir } from 'node:os';
-import { join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
@@ -48,6 +53,30 @@ import { vectorPlan } from './vector-cache.mjs';
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const rustDir = join(root, 'rust');
 const argv = process.argv.slice(2);
+
+/** Parallel work this run may use. `availableParallelism()` counts ALLOWED cpus; a cgroup quota can be lower, and
+ *  starting more work than the quota just adds contention (this host under a game: 8 allowed, quota 6). The quota can be
+ *  set on any ancestor scope, so walk up from this process's own cgroup. */
+function usableCores() {
+  const cpus = availableParallelism();
+  let group = '';
+  try {
+    group = (/^0::(.*)$/m.exec(readFileSync('/proc/self/cgroup', 'utf8')) ?? [])[1] ?? '';
+  } catch {}
+  const parts = group.split('/').filter(Boolean);
+  for (let i = parts.length; i >= 0; i--) {
+    let quota, period;
+    try {
+      [quota, period] = readFileSync(join('/sys/fs/cgroup', ...parts.slice(0, i), 'cpu.max'), 'utf8').trim().split(/\s+/);
+    } catch {
+      continue;
+    }
+    if (quota === 'max') return cpus;
+    const limit = Math.floor(Number(quota) / Number(period));
+    return limit > 0 ? Math.min(cpus, limit) : cpus;
+  }
+  return cpus;
+}
 const flag = (name) => argv.includes(`--${name}`);
 const opt = (name, def) => {
   const i = argv.indexOf(`--${name}`);
@@ -77,6 +106,22 @@ function report(name, ok, summary, detail) {
   if (!ok && detail) console.log(detail.split('\n').map((l) => `       ${l}`).join('\n'));
   return ok;
 }
+
+/** The suites `--quick` skips, by the same full path `cargo test --message-format=json` reports (both crates have a
+ *  `planners.rs`, so a bare name would skip the wrong one). Chosen from `--record-timings` on a warm cache: together they
+ *  are most of the gate's wall time, and each one's cases are still covered by the full gate. */
+const QUICK_SKIP = [
+  'dfo-cli/tests/cli_loadout.rs', // the sampled loadout report + shortlist (42 JS calls)
+  'dfo-cli/tests/loadout.rs', // the shortlist card/document, 1,000-trial sampler per row
+  'dfo-core/tests/real_build.rs', // 7 sampled shortlist vectors, ~17 s each
+  'dfo-core/tests/planner_shortlist.rs', // the eligible-pool boundary at the live build
+  'dfo-cli/tests/planner_shortlist.rs', // loadout --shortlist at both builds
+  'dfo-cli/tests/weapons.rs', // every weapon family priced, page + json
+  'dfo-cli/tests/cli_flag_matrix.rs', // every plan template x mode
+  'dfo-cli/tests/cli_tradeoff.rs', // the whole tradeoff pool per flag case
+  'dfo-cli/tests/cli_imprints.rs', // the full imprint ranking, page + json
+  'dfo-cli/tests/cli_enchant_plan.rs', // the plan matrices, page + json
+];
 
 // ---- parsers ----------------------------------------------------------------------------------------------------
 /** node:test summary lines: "ℹ pass N" etc.; failing test names are lines starting with ✖ (deduplicated). */
@@ -174,12 +219,24 @@ function recordedTimings() {
 }
 
 // ---- JS-oracle cache ----------------------------------------------------------------------------------------------
+/** The one cache directory every worktree of this repository shares, under the PRIMARY checkout's `.cache/`, so each
+ *  worktree starts warm instead of paying the cold JS cost again. The key is content-only (the fixture bytes are
+ *  canonicalised; `tests/oracle_key.rs` proves a fixture root at another path keys the same), so sharing is safe.
+ *  A worktree knows its primary through its git common dir. */
+function sharedOracleDir() {
+  try {
+    const common = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: root, encoding: 'utf8' }).trim();
+    if (common) return join(dirname(common), '.cache', 'oracle');
+  } catch {}
+  return join(root, '.cache', 'oracle');
+}
+
 /** The cache settings the rust gate hands to every test binary (see rust/dfo-cli/tests/common/oracle.rs). `--no-oracle`
  *  runs every JS call live; otherwise `--fresh` writes entries without reading, and the default reuses them at
  *  `--spot` (default 0.05, the push gate 0.25, 1.0 re-runs every hit). */
 function oraclePlan() {
   const off = flag('no-oracle');
-  const dir = opt('oracle-dir', join(root, '.cache', 'oracle'));
+  const dir = opt('oracle-dir', sharedOracleDir());
   const stats = join(dir, `stats-${process.pid}.txt`);
   rmSync(stats, { force: true });
   mkdirSync(dir, { recursive: true });
@@ -194,10 +251,16 @@ function oracleSummary(path) {
   let text = '';
   try { text = readFileSync(path, 'utf8'); } catch { return null; }
   let hit = 0, miss = 0, uncacheable = 0, corrupt = 0, spot = 0, mismatch = 0, saved = 0;
+  const reasons = new Map();
   for (const line of text.split('\n')) {
     if (line.startsWith('hit ')) { hit++; saved += Number(line.slice(4)) || 0; }
     else if (line.startsWith('miss ')) miss++;
-    else if (line.startsWith('uncacheable ')) uncacheable++;
+    else if (line.startsWith('uncacheable ')) {
+      uncacheable++;
+      // `uncacheable <reason> (<secs>)`: the reason is what a slow gate needs to see, so tally it without the timing.
+      const reason = line.slice('uncacheable '.length).replace(/ \([\d.]+s\)$/, '');
+      reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
+    }
     else if (line === 'corrupt') corrupt++;
     else if (line.startsWith('spot ')) {
       spot++;
@@ -207,7 +270,7 @@ function oracleSummary(path) {
       if (Number.isFinite(stored)) saved -= stored;
     }
   }
-  return { hit, miss, uncacheable, corrupt, spot, mismatch, saved: Math.max(saved, 0) };
+  return { hit, miss, uncacheable, corrupt, spot, mismatch, saved: Math.max(saved, 0), reasons };
 }
 
 /** cargo test, with the test binaries run as separate processes in parallel (cargo runs them one after another). */
@@ -232,7 +295,19 @@ async function stepCargoTestParallel(oracleEnv = {}) {
   if (build.status !== 0 || exes.length === 0) {
     return report('cargo test', false, 'build failed', [...diagnostics.slice(0, 6), first(build.out.replace(/^\{.*$/gm, ''), 12)].join('\n'));
   }
-  const jobs = Math.max(1, Number(opt('test-jobs', Math.min(4, availableParallelism()))));
+  const cores = usableCores();
+  // Measured on 16 free cores, warm cache, same workload: a per-BINARY queue at 6 jobs x 3 threads = 224 s, while a
+  // per-TEST queue with ~cores workers = 202 s. The binary queue loses because the queue is longest-first and the
+  // longest suite stays on one worker for its whole run; its shortest tests then sit behind its longest one. A test is
+  // the real unit of work: one process per test, so every worker keeps taking the next test until the queue is empty.
+  const workers = Math.max(1, Number(opt('test-jobs', Math.round(cores * 1.2))));
+  // `--quick` drops whole heavy suites by full path and says which, so a fast tier is never silently narrower.
+  if (flag('quick')) {
+    const before = exes.length;
+    exes.splice(0, exes.length, ...exes.filter((e) => !QUICK_SKIP.includes(e.name)));
+    for (const name of QUICK_SKIP) console.log(`       --quick skips ${name}`);
+    console.log(`       --quick: ${exes.length} of ${before} suites run`);
+  }
   // `--tests` narrows the run to named targets (a cold/warm proof without the whole suite); the build still
   // compiles every test binary, so this only changes what runs.
   const only = opt('tests', undefined)?.split(',').filter(Boolean);
@@ -241,30 +316,48 @@ async function stepCargoTestParallel(oracleEnv = {}) {
   }
   if (exes.length === 0) return report('cargo test', false, 'no test target matched --tests');
   const timings = recordedTimings();
-  // Longest first: the tail of a parallel run is whatever started last, so a former long binary that starts last
-  // can leave every worker idle at the end. Equal or unknown entries keep the build order (sort is stable).
-  const queue = [...exes].sort((a, b) => (timings[b.name] ?? 0) - (timings[a.name] ?? 0));
+  // One `--list` per binary, then one queue of tests. Every binary's own tests are independent, so this loses nothing.
+  const work = [];
+  for (const e of exes) {
+    const listed = run(e.exe, ['--list'], { env: { ...process.env, ...oracleEnv } });
+    const tests = strip(listed.out).split('\n').filter((l) => l.endsWith(': test')).map((l) => l.slice(0, -': test'.length));
+    if (listed.status !== 0 || tests.length === 0) return report('cargo test', false, `no tests listed by ${e.name}`, first(listed.out));
+    // A binary with no record sorts first: it may be the longest. Otherwise split its recorded seconds evenly (that is
+    // the only per-binary number there is); the first recorded run replaces this estimate with real per-test seconds.
+    const known = timings[e.name] !== undefined;
+    const each = known ? timings[e.name] / tests.length : Infinity;
+    for (const test of tests) work.push({ exe: e.exe, name: e.name, test, est: each });
+  }
+  // Longest first: the last test to start must not be the longest one. Equal estimates keep the build order.
+  work.sort((a, b) => b.est - a.est);
   const outputs = [];
-  await Promise.all(Array.from({ length: jobs }, async () => {
+  const queue = [...work];
+  let done = 0;
+  await Promise.all(Array.from({ length: Math.min(workers, queue.length) }, async () => {
     while (queue.length) {
-      const e = queue.shift();
+      const w = queue.shift();
       const started = Date.now();
       const r = await new Promise((res) => {
-        const c = spawn(e.exe, ['-q'], { cwd: join(rustDir, 'dfo-core'), stdio: ['ignore', 'pipe', 'pipe'],
+        const c = spawn(w.exe, ['-q', '--exact', w.test], { cwd: join(rustDir, 'dfo-core'), stdio: ['ignore', 'pipe', 'pipe'],
           env: { ...process.env, ...oracleEnv } });
         let out = '';
         c.stdout.on('data', (d) => { out += d; });
         c.stderr.on('data', (d) => { out += d; });
-        c.on('close', (status) => res({ name: e.name, status, out }));
-        c.on('error', () => res({ name: e.name, status: 127, out }));
+        c.on('close', (status) => res({ name: w.name, test: w.test, status, out }));
+        c.on('error', () => res({ name: w.name, test: w.test, status: 127, out }));
       });
       outputs.push({ ...r, secs: (Date.now() - started) / 1000 });
+      done += 1;
     }
   }));
   const slowest = [...outputs].sort((a, b) => b.secs - a.secs);
   if (flag('record-timings')) {
-    const map = { ...recordedTimings() };
-    for (const o of outputs) map[o.name] = Number(o.secs.toFixed(1));
+    // Per BINARY seconds (sum of its tests), the unit `recordedTimings()` reads. Only binaries that ran are written, so
+    // a `--tests` or `--quick` run never erases the rest; a re-run replaces its own number instead of adding to it.
+    const fresh = new Map();
+    for (const o of outputs) fresh.set(o.name, (fresh.get(o.name) ?? 0) + o.secs);
+    const map = { ...timings };
+    for (const [name, secs] of fresh) map[name] = Number(secs.toFixed(1));
     const sorted = Object.fromEntries(Object.entries(map).sort(([a], [b]) => a.localeCompare(b)));
     writeFileSync(join(root, 'tools', 'gate-timings.json'), `${JSON.stringify(sorted, null, 2)}\n`);
   }
@@ -275,11 +368,11 @@ async function stepCargoTestParallel(oracleEnv = {}) {
     const s = cargoTestSummary(o.out);
     passed += s.passed;
     failed += s.failed;
-    if (o.status !== 0 || s.failed > 0) details.push(`[${o.name}] ${[...s.panics.slice(0, 3), s.panics.length ? '' : first(o.out, 6)].filter(Boolean).join(' | ')}`);
+    if (o.status !== 0 || s.failed > 0) details.push(`[${o.name} ${o.test}] ${[...s.panics.slice(0, 3), s.panics.length ? '' : first(o.out, 6)].filter(Boolean).join(' | ')}`);
   }
   const ok = details.length === 0;
-  console.log(`       slowest: ${slowest.slice(0, 8).map((o) => `${o.name} ${o.secs.toFixed(1)}s`).join(', ')}`);
-  return report('cargo test', ok, `${passed} passed, ${failed} failed in ${outputs.length} suites, ${jobs} parallel (${((Date.now() - t0) / 1000).toFixed(1)}s)`, details.slice(0, 8).join('\n'));
+  console.log(`       slowest: ${slowest.slice(0, 8).map((o) => `${o.test} ${o.secs.toFixed(1)}s`).join(', ')}`);
+  return report('cargo test', ok, `${passed} passed, ${failed} failed in ${done} tests over ${exes.length} suites, ${Math.min(workers, work.length)} workers (${((Date.now() - t0) / 1000).toFixed(1)}s)`, details.slice(0, 8).join('\n'));
 }
 
 const stop = () => !keepGoing && results.some((r) => !r.ok);
@@ -311,6 +404,10 @@ async function gateRust() {
   if (s) {
     console.log(`       oracle: ${s.hit} hit, ${s.miss} miss, ${s.uncacheable} uncacheable, ${s.corrupt} corrupt; ` +
       `spot ${s.spot} checked, ${s.mismatch} mismatch; est. saved ${s.saved.toFixed(1)} s`);
+    // Why a call can never be cached, so a dirty fixture root or an outside path is visible instead of an unexplained
+    // miss count. Sorted by count; the reason text already names the file or the flag.
+    const top = [...s.reasons].sort((a, b) => b[1] - a[1]).slice(0, 6);
+    for (const [reason, n] of top) console.log(`       uncacheable x${n}: ${reason}`);
     if (s.mismatch > 0) report('oracle spot', false, `${s.mismatch} spot mismatch(es); the cache cannot hide JS drift`);
   }
   if (flag('keep-oracle-stats')) console.log(`       oracle stats: ${oracle.stats}`);

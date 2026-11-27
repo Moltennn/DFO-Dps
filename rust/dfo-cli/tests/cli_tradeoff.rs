@@ -228,42 +228,87 @@ fn the_pool_flags_do_not_reach_the_pools() {
     fs::remove_dir_all(&root).expect("cleanup");
 }
 
-#[test]
-fn the_shared_scenario_flags_match_the_js() {
-    let root = temp_root("variants");
-    for args in [
-        &["tradeoff", "--theory", "--level", "30"][..],
-        &["tradeoff", "--theory", "--core", "Classic"][..],
-        &["tradeoff", "--theory", "--players", "3", "--json"][..],
-        &["tradeoff", "--theory", "--blow-x", "2", "--json"][..],
-        &["tradeoff", "--theory", "--core", "classic"][..],
-        &["tradeoff", "--theory", "--core", "classic", "--json"][..],
-        &["tradeoff", "--theory", "--swing", "StrikeUp"][..],
-        &["tradeoff", "--theory", "--stacks", "3", "--rhythm"][..],
-        &["tradeoff", "--theory", "--no-rri"][..],
-        &["tradeoff", "--theory", "--no-passive", "--json"][..],
-        &["tradeoff", "--theory", "--no-crit-damage"][..],
-        &["tradeoff", "--theory", "--behind", "--json"][..],
-        &[
-            "tradeoff",
-            "--theory",
-            "--health-share",
-            "0.5",
-            "--self-health-share",
-            "0.4",
-        ][..],
-        &["tradeoff", "--theory", "--unaware", "--first-blow"][..],
-        &["tradeoff", "--theory", "--weapon", "118:5", "--json"][..],
-        &["tradeoff", "--theory", "--blade", "118", "--race", "nord"][..],
-        &["tradeoff", "--theory", "--gear-lb", "200"][..],
-        &["tradeoff", "--theory", "--vampire", "--firmament"][..],
-        &["tradeoff", "--theory", "--base-stats", "70", "--json"][..],
-        &["tradeoff", "--theory", "--no-effects"][..],
-        &["tradeoff", "--theory", "--bare", "--json"][..],
-    ] {
+/// One group of shared-scenario flags in its own temp root. `same` re-prices the whole pool per case, so the cases are
+/// grouped into a few `#[test]`s and libtest runs the groups side by side (the gate's thread budget bounds the total).
+fn shared_flags(label: &str, cases: &[&[&str]]) {
+    let root = temp_root(label);
+    for args in cases {
         same(args, &root);
     }
     fs::remove_dir_all(&root).expect("cleanup");
+}
+
+#[test]
+fn the_shared_scenario_flags_core_and_level_match_the_js() {
+    shared_flags(
+        "variants-core",
+        &[
+            &["tradeoff", "--theory", "--level", "30"],
+            &["tradeoff", "--theory", "--core", "Classic"],
+            &["tradeoff", "--theory", "--core", "classic"],
+            &["tradeoff", "--theory", "--core", "classic", "--json"],
+        ],
+    );
+}
+
+#[test]
+fn the_shared_scenario_flags_sampling_match_the_js() {
+    shared_flags(
+        "variants-sampling",
+        &[
+            &["tradeoff", "--theory", "--players", "3", "--json"],
+            &["tradeoff", "--theory", "--blow-x", "2", "--json"],
+            &["tradeoff", "--theory", "--swing", "StrikeUp"],
+            &["tradeoff", "--theory", "--stacks", "3", "--rhythm"],
+        ],
+    );
+}
+
+#[test]
+fn the_shared_scenario_flags_toggles_match_the_js() {
+    shared_flags(
+        "variants-toggles",
+        &[
+            &["tradeoff", "--theory", "--no-rri"],
+            &["tradeoff", "--theory", "--no-passive", "--json"],
+            &["tradeoff", "--theory", "--no-crit-damage"],
+            &["tradeoff", "--theory", "--behind", "--json"],
+        ],
+    );
+}
+
+#[test]
+fn the_shared_scenario_flags_shares_and_gear_match_the_js() {
+    shared_flags(
+        "variants-shares",
+        &[
+            &[
+                "tradeoff",
+                "--theory",
+                "--health-share",
+                "0.5",
+                "--self-health-share",
+                "0.4",
+            ],
+            &["tradeoff", "--theory", "--unaware", "--first-blow"],
+            &["tradeoff", "--theory", "--weapon", "118:5", "--json"],
+            &["tradeoff", "--theory", "--blade", "118", "--race", "nord"],
+        ],
+    );
+}
+
+#[test]
+fn the_shared_scenario_flags_gear_and_stats_match_the_js() {
+    shared_flags(
+        "variants-gear",
+        &[
+            &["tradeoff", "--theory", "--gear-lb", "200"],
+            &["tradeoff", "--theory", "--vampire", "--firmament"],
+            &["tradeoff", "--theory", "--base-stats", "70", "--json"],
+            &["tradeoff", "--theory", "--no-effects"],
+            &["tradeoff", "--theory", "--bare", "--json"],
+        ],
+    );
 }
 
 #[test]

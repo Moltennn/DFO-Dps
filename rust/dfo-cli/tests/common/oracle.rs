@@ -998,7 +998,7 @@ fn compute(
     };
     let env_field = env_field(env, &canon);
     let stdin_field = stdin.map_or_else(|| "none".to_owned(), sha256_hex);
-    let fixture = fixture_field(root, &mut uncacheable);
+    let fixture = fixture_field(root, &forms, &mut uncacheable);
     argv_scan(args, cwd, root, &mut uncacheable);
     mode_scan(args, &mut uncacheable);
     launcher_scan(cwd, root, env, &canon, &mut uncacheable);
@@ -1080,12 +1080,20 @@ fn env_field(env: &[(&str, &OsStr)], canon: &dyn Fn(&str) -> String) -> String {
 
 /// `sha256` over every entry under the root: `(relpath, kind, mode, len, sha256, mtime_ns)`. A file whose mtime is
 /// fresh is a fixture written during this run, so the key could never be reused: uncacheable until the case pins it.
-fn fixture_field(root: Option<&Path>, uncacheable: &mut dyn FnMut(String)) -> String {
+///
+/// A file's BYTES are canonicalised with the same root/`HOME`/repository placeholders as argv and stdout. A launcher
+/// `config.json` names its own temp root's `arena2Path`, so without this every run of every case is a fresh key (measured:
+/// 8 of 24 calls in `cli_enchant_plan` never hit) and no worktree could share an entry.
+fn fixture_field(
+    root: Option<&Path>,
+    forms: &[(String, &str)],
+    uncacheable: &mut dyn FnMut(String),
+) -> String {
     let Some(root) = root else {
         return "none".to_owned();
     };
     let mut entries = Vec::new();
-    if let Err(why) = walk_fixture(root, root, &mut entries, uncacheable) {
+    if let Err(why) = walk_fixture(root, root, forms, &mut entries, uncacheable) {
         uncacheable(why);
         return "none".to_owned();
     }
@@ -1106,9 +1114,33 @@ fn fixture_field(root: Option<&Path>, uncacheable: &mut dyn FnMut(String)) -> St
 
 type FixtureEntry = (String, String, u16, u64, [u8; 32], i128);
 
+/// A fixture file's bytes with the root, `HOME` and repository paths replaced by the key's placeholders. A binary file
+/// cannot be canonicalised, so it is hashed as written (the same on every run). A file that already contains a
+/// placeholder is ambiguous, the same check [`stabilise`] makes for stored output.
+fn canonical_fixture(body: &[u8], forms: &[(String, &str)]) -> Result<Vec<u8>, String> {
+    let Ok(text) = std::str::from_utf8(body) else {
+        return Ok(body.to_vec());
+    };
+    if PLACEHOLDERS
+        .iter()
+        .any(|placeholder| text.contains(placeholder))
+    {
+        return Err("fixture text contains a placeholder".to_owned());
+    }
+    let mut out = text.to_owned();
+    for (form, placeholder) in forms {
+        out = out.replace(form, placeholder);
+    }
+    out = out.replace(&home_root().to_string_lossy().into_owned(), "@HOME@");
+    let repo = fs::canonicalize(repo_root()).unwrap_or_else(|_| repo_root());
+    out = out.replace(&repo.to_string_lossy().into_owned(), "@REPO@");
+    Ok(out.into_bytes())
+}
+
 fn walk_fixture(
     root: &Path,
     dir: &Path,
+    forms: &[(String, &str)],
     entries: &mut Vec<FixtureEntry>,
     uncacheable: &mut dyn FnMut(String),
 ) -> Result<(), String> {
@@ -1130,12 +1162,17 @@ fn walk_fixture(
         } else if meta.is_dir() {
             // A directory's own mtime moves whenever an entry is created, so only files carry one into the key.
             entries.push((rel, "dir".to_owned(), mode, 0, [0u8; 32], 0));
-            walk_fixture(root, &path, entries, uncacheable)?;
+            walk_fixture(root, &path, forms, entries, uncacheable)?;
         } else if meta.is_file() {
-            let sha = sha256(
-                &fs::read(&path)
-                    .map_err(|e| format!("fixture unreadable: {}: {e}", path.display()))?,
-            );
+            let body = fs::read(&path)
+                .map_err(|e| format!("fixture unreadable: {}: {e}", path.display()))?;
+            let canon = match canonical_fixture(&body, forms) {
+                Ok(canon) => canon,
+                Err(why) => {
+                    uncacheable(why);
+                    body
+                }
+            };
             if is_fresh(&meta) {
                 uncacheable(format!("fixture mtime not pinned: {rel}"));
             }
@@ -1143,8 +1180,8 @@ fn walk_fixture(
                 rel,
                 "file".to_owned(),
                 mode,
-                meta.len(),
-                sha,
+                canon.len() as u64,
+                sha256(&canon),
                 mtime_ns(&meta),
             ));
         } else {

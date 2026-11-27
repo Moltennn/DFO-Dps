@@ -35,14 +35,15 @@ fn js(args: &[&str], root: &Path) -> Output {
 }
 
 /// One case: the CLI flags, and the modes/encounters the branch resolves from them (`src/cli.js:962-963`).
+#[derive(Clone, Copy)]
 struct Case {
     args: &'static [&'static str],
     modes: &'static [&'static str],
     encounters: &'static [&'static str],
 }
 
-fn cases() -> Vec<Case> {
-    vec![
+fn cases() -> [Case; 4] {
+    [
         // The default: both modes, one Breach ranking each.
         Case {
             args: &["--shortlist", "1", "--max-blows", "20"],
@@ -95,7 +96,6 @@ fn cases() -> Vec<Case> {
         },
     ]
 }
-
 /// The branch's own `opts` (`src/cli.js:642`): `sampledOptions(values)` plus `k`, `objective`, `vampire`, `health`.
 fn opts(values: &Value) -> Value {
     let mut out = Obj(vec![]);
@@ -217,56 +217,97 @@ fn diff(label: &str, got: &str, want: &str) {
     );
 }
 
-#[test]
-fn shortlist_text_matches_the_js() {
+/// One case in its own temp root: every sampled row costs ~20 s, so each case is a `#[test]` and libtest runs them
+/// side by side (the gate's thread budget bounds the total).
+fn run_case(label: &str, case: Case) {
+    let root = temp_root(label);
+    let values = cli_values(case.args);
+    let (trials, max_seconds) = sampled(&values);
+    let want = js(case.args, &root);
+    assert_eq!(
+        want.status.code(),
+        Some(0),
+        "js {:?}: {}",
+        case.args,
+        String::from_utf8_lossy(&want.stderr)
+    );
     let book = Spellbook::default();
-    for case in cases() {
-        let root = temp_root("text");
-        let values = cli_values(case.args);
-        let (trials, max_seconds) = sampled(&values);
-        let want = js(case.args, &root);
-        assert_eq!(
-            want.status.code(),
-            Some(0),
-            "js {:?}: {}",
-            case.args,
-            String::from_utf8_lossy(&want.stderr)
-        );
-        let got = loadout::shortlist_text(&rankings(&case, &values, &book), trials, max_seconds);
-        diff(
-            &format!("text {:?}", case.args),
-            &got,
-            &String::from_utf8_lossy(&want.stdout),
-        );
-        let _ = std::fs::remove_dir_all(&root);
-    }
+    let got = loadout::shortlist_text(&rankings(&case, &values, &book), trials, max_seconds);
+    diff(
+        &format!("text {:?}", case.args),
+        &got,
+        &String::from_utf8_lossy(&want.stdout),
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// One `--json` case in its own temp root.
+fn run_json_case(label: &str, case: Case) {
+    let root = temp_root(label);
+    let values = cli_values(case.args);
+    let mut args = case.args.to_vec();
+    args.push("--json");
+    let want = js(&args, &root);
+    assert_eq!(
+        want.status.code(),
+        Some(0),
+        "js {args:?}: {}",
+        String::from_utf8_lossy(&want.stderr)
+    );
+    let js_doc: serde_json::Value =
+        serde_json::from_slice(&want.stdout).expect("the JS prints JSON");
+    let book = Spellbook::default();
+    let got = loadout::shortlist_document(&rankings(&case, &values, &book), false);
+    diff(
+        &format!("json {:?}", case.args),
+        &dfo_core::value::write(&got),
+        &dfo_core::value::write(&from_json(&js_doc)),
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// The default: both modes, one Breach ranking each.
+#[test]
+fn shortlist_text_default_matches_the_js() {
+    run_case("text", cases()[0]);
+}
+
+// `--uncapped` with the other allowed objective.
+#[test]
+fn shortlist_text_kill_probability_matches_the_js() {
+    run_case("text-probability", cases()[1]);
+}
+
+// `--cap-aware` prices the requested encounter, and its pool is the encounter's.
+#[test]
+fn shortlist_text_cap_aware_skyketch_matches_the_js() {
+    run_case("text-skyketch", cases()[2]);
+}
+
+// A non-default seed and horizon reach both the sampled rows and the header.
+#[test]
+fn shortlist_text_seed_and_horizon_match_the_js() {
+    run_case("text-seed", cases()[3]);
 }
 
 #[test]
-fn json_document_matches_the_js() {
-    let book = Spellbook::default();
-    for case in cases() {
-        let root = temp_root("json");
-        let values = cli_values(case.args);
-        let mut args = case.args.to_vec();
-        args.push("--json");
-        let want = js(&args, &root);
-        assert_eq!(
-            want.status.code(),
-            Some(0),
-            "js {args:?}: {}",
-            String::from_utf8_lossy(&want.stderr)
-        );
-        let js_doc: serde_json::Value =
-            serde_json::from_slice(&want.stdout).expect("the JS prints JSON");
-        let got = loadout::shortlist_document(&rankings(&case, &values, &book), false);
-        diff(
-            &format!("json {:?}", case.args),
-            &dfo_core::value::write(&got),
-            &dfo_core::value::write(&from_json(&js_doc)),
-        );
-        let _ = std::fs::remove_dir_all(&root);
-    }
+fn shortlist_json_default_matches_the_js() {
+    run_json_case("json", cases()[0]);
+}
+
+#[test]
+fn shortlist_json_kill_probability_matches_the_js() {
+    run_json_case("json-probability", cases()[1]);
+}
+
+#[test]
+fn shortlist_json_cap_aware_skyketch_matches_the_js() {
+    run_json_case("json-skyketch", cases()[2]);
+}
+
+#[test]
+fn shortlist_json_seed_and_horizon_match_the_js() {
+    run_json_case("json-seed", cases()[3]);
 }
 
 #[test]

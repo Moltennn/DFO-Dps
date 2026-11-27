@@ -173,18 +173,43 @@ fn same_usage(args: &[&str], root: &Path, page: &Path, js_stderr: Option<&str>) 
     assert!(!page.exists(), "no page for {args:?}");
 }
 
+/// One shortlist case in its own temp root: the sampled rows cost ~15 s each, so each case is a `#[test]` and libtest
+/// runs them side by side (the gate's thread budget bounds the total). Every case here was a call in the one loop before.
+fn text_case(label: &str, args: &[&str]) {
+    let root = temp_root(label);
+    same(args, &root);
+    let _ = fs::remove_dir_all(&root);
+}
+
+fn json_case(label: &str, args: &[&str]) {
+    let root = temp_root(label);
+    same_json(args, &root);
+    let _ = fs::remove_dir_all(&root);
+}
+
+// The default: both modes, one Breach ranking each.
 #[test]
-fn shortlist_text_matches_the_js() {
-    let root = temp_root("shortlist-text");
-    // The default: both modes, one Breach ranking each.
-    same(&["loadout", "--shortlist", "1", "--max-blows", "20"], &root);
-    // The alias is the same branch.
-    same(
-        &["real-dps", "--shortlist", "1", "--max-blows", "20"],
-        &root,
+fn shortlist_text_default_matches_the_js() {
+    text_case(
+        "shortlist-text",
+        &["loadout", "--shortlist", "1", "--max-blows", "20"],
     );
-    // `--uncapped` with the probability objective.
-    same(
+}
+
+// The alias is the same branch.
+#[test]
+fn shortlist_text_alias_matches_the_js() {
+    text_case(
+        "shortlist-text-alias",
+        &["real-dps", "--shortlist", "1", "--max-blows", "20"],
+    );
+}
+
+// `--uncapped` with the probability objective.
+#[test]
+fn shortlist_text_kill_probability_matches_the_js() {
+    text_case(
+        "shortlist-text-probability",
         &[
             "loadout",
             "--shortlist",
@@ -195,10 +220,14 @@ fn shortlist_text_matches_the_js() {
             "--max-blows",
             "20",
         ],
-        &root,
     );
-    // A specific content, two rows, a longer blow budget.
-    same(
+}
+
+// A specific content, two rows, a longer blow budget.
+#[test]
+fn shortlist_text_cap_aware_skyketch_matches_the_js() {
+    text_case(
+        "shortlist-text-skyketch",
         &[
             "loadout",
             "--shortlist",
@@ -209,10 +238,14 @@ fn shortlist_text_matches_the_js() {
             "--max-blows",
             "60",
         ],
-        &root,
     );
-    // A non-default seed and horizon (the header prints both).
-    same(
+}
+
+// A non-default seed and horizon (the header prints both).
+#[test]
+fn shortlist_text_seed_and_horizon_match_the_js() {
+    text_case(
+        "shortlist-text-seed",
         &[
             "loadout",
             "--shortlist",
@@ -225,10 +258,14 @@ fn shortlist_text_matches_the_js() {
             "--max-blows",
             "20",
         ],
-        &root,
     );
-    // `--health` prices a smaller ordinary pool.
-    same(
+}
+
+// `--health` prices a smaller ordinary pool.
+#[test]
+fn shortlist_text_health_matches_the_js() {
+    text_case(
+        "shortlist-text-health",
         &[
             "loadout",
             "--shortlist",
@@ -239,19 +276,21 @@ fn shortlist_text_matches_the_js() {
             "--max-blows",
             "20",
         ],
-        &root,
     );
-    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]
-fn shortlist_json_matches_the_js() {
-    let root = temp_root("shortlist-json");
-    same_json(
+fn shortlist_json_default_matches_the_js() {
+    json_case(
+        "shortlist-json",
         &["loadout", "--shortlist", "1", "--max-blows", "20", "--json"],
-        &root,
     );
-    same_json(
+}
+
+#[test]
+fn shortlist_json_alias_matches_the_js() {
+    json_case(
+        "shortlist-json-alias",
         &[
             "real-dps",
             "--shortlist",
@@ -260,10 +299,14 @@ fn shortlist_json_matches_the_js() {
             "20",
             "--json",
         ],
-        &root,
     );
-    // `--samples` keeps every row's `detail`; off, it is pruned. Both are pinned.
-    same_json(
+}
+
+// `--samples` keeps every row's `detail`; off, it is pruned. Both are pinned.
+#[test]
+fn shortlist_json_samples_match_the_js() {
+    json_case(
+        "shortlist-json-samples",
         &[
             "loadout",
             "--shortlist",
@@ -273,9 +316,13 @@ fn shortlist_json_matches_the_js() {
             "--samples",
             "--json",
         ],
-        &root,
     );
-    same_json(
+}
+
+#[test]
+fn shortlist_json_cap_aware_abyss_matches_the_js() {
+    json_case(
+        "shortlist-json-abyss",
         &[
             "loadout",
             "--shortlist",
@@ -287,9 +334,7 @@ fn shortlist_json_matches_the_js() {
             "20",
             "--json",
         ],
-        &root,
     );
-    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]
@@ -534,36 +579,68 @@ fn usage_refusals_match_the_js() {
     let _ = fs::remove_dir_all(&root);
 }
 
+/// One "the JS accepts it, this CLI refuses it by name" case in its own temp root. Each case costs a full JS loadout
+/// run (minutes on a cold cache), so each is its own `#[test]`: under the gate's per-test queue they run side by side.
+fn refused_but_accepted_by_the_js(label: &str, args: &[&str]) {
+    let root = temp_root(label);
+    let js = js(args, &root);
+    assert_eq!(
+        js.status.code(),
+        Some(0),
+        "the JS accepts {args:?}: {}",
+        String::from_utf8_lossy(&js.stderr)
+    );
+    let _ = fs::remove_file(root.join("loadouts.html"));
+    let got = rust(args, &root);
+    assert_eq!(got.status.code(), Some(2), "this CLI refuses {args:?}");
+    assert!(!got.stderr.is_empty());
+    let _ = fs::remove_dir_all(&root);
+}
+
+// The JS accepts and ignores these here; this CLI names each one, as every unported flag.
 #[test]
-fn deliberate_refusals_and_create_only_writer() {
+fn the_cli_refuses_target_where_the_js_ignores_it() {
+    refused_but_accepted_by_the_js(
+        "refuse-target",
+        &["loadout", "--target", "bogus", "--shortlist", "1"],
+    );
+}
+
+#[test]
+fn the_cli_refuses_series_where_the_js_ignores_it() {
+    refused_but_accepted_by_the_js("refuse-series", &["loadout", "--series", "stat:strength"]);
+}
+
+#[test]
+fn the_cli_refuses_family_where_the_js_ignores_it() {
+    refused_but_accepted_by_the_js("refuse-family", &["loadout", "--family", "Archery"]);
+}
+
+#[test]
+fn the_cli_refuses_stat_where_the_js_ignores_it() {
+    refused_but_accepted_by_the_js("refuse-stat", &["loadout", "--stat", "strength=1"]);
+}
+
+#[test]
+fn the_cli_refuses_build_where_the_js_ignores_it() {
+    refused_but_accepted_by_the_js("refuse-build", &["loadout", "--build", "bow"]);
+}
+
+#[test]
+fn the_cli_refuses_categories_where_the_js_ignores_it() {
+    refused_but_accepted_by_the_js("refuse-categories", &["loadout", "--categories"]);
+}
+
+#[test]
+fn the_cli_refuses_a_positional_extra_where_the_js_ignores_it() {
+    refused_but_accepted_by_the_js("refuse-extra", &["loadout", "--shortlist", "1", "extra"]);
+}
+
+// The create-only writer: an existing path is refused and left untouched, where the JS truncates it.
+#[test]
+fn the_create_only_writer_refuses_an_existing_page() {
     let root = temp_root("refusals");
     let page = root.join("loadouts.html");
-
-    // The JS accepts and ignores these here; this CLI names each one, as every unported flag.
-    let refusals: &[&[&str]] = &[
-        &["loadout", "--target", "bogus", "--shortlist", "1"],
-        &["loadout", "--series", "stat:strength"],
-        &["loadout", "--family", "Archery"],
-        &["loadout", "--stat", "strength=1"],
-        &["loadout", "--build", "bow"],
-        &["loadout", "--categories"],
-        &["loadout", "--shortlist", "1", "extra"],
-    ];
-    for args in refusals {
-        let js = js(args, &root);
-        assert_eq!(
-            js.status.code(),
-            Some(0),
-            "the JS accepts {args:?}: {}",
-            String::from_utf8_lossy(&js.stderr)
-        );
-        let _ = fs::remove_file(root.join("loadouts.html"));
-        let got = rust(args, &root);
-        assert_eq!(got.status.code(), Some(2), "this CLI refuses {args:?}");
-        assert!(!got.stderr.is_empty());
-    }
-
-    // The create-only writer: an existing path is refused and left untouched, where the JS truncates it.
     fs::write(&page, b"keep me").expect("a pre-existing page");
     pin_mtime(&page);
     let got = rust(&["loadout", "--out", page.to_str().unwrap()], &root);

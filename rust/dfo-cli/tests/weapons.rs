@@ -113,46 +113,89 @@ fn same_json(args: &[&str], root: &Path) {
     fs::remove_file(&page).expect("cleanup");
 }
 
-#[test]
-fn weapons_text_and_page_match_the_js() {
-    let root = temp_root("text");
-    for args in [
-        // The default page: every row, six family curves and the Critical Strike curve.
-        &["weapons"][..],
-        // The alias is the same branch with its own default page name.
-        &["skills"][..],
-        // `--categories` drops the curves and keeps one winner per type per slot.
-        &["weapons", "--categories"][..],
-        &["skills", "--categories"][..],
-        // `--firmament` moves the family curves and the Critical Strike curve, not the rows.
-        &["weapons", "--firmament"][..],
-        &["weapons", "--firmament", "--categories"][..],
-        // The vampire suffix and the race override.
-        &["weapons", "--vampire"][..],
-        &["weapons", "--race", "redguard"][..],
-        // `--level` moves the reference foe and the Breach, not the level-45 characters.
-        &["weapons", "--level", "30"][..],
-    ] {
+/// One group of weapons cases in its own temp root: every run prices every family (~5 s each), so the cases are split
+/// into a few `#[test]`s and libtest runs them side by side (the gate's thread budget bounds the total).
+fn text_cases(label: &str, cases: &[&[&str]]) {
+    let root = temp_root(label);
+    for args in cases {
         same(args, &root);
     }
     fs::remove_dir_all(&root).expect("cleanup");
 }
 
-#[test]
-fn weapons_json_matches_the_js() {
-    let root = temp_root("json");
-    for args in [
-        &["weapons"][..],
-        &["skills"][..],
-        &["weapons", "--categories"][..],
-        &["weapons", "--firmament"][..],
-        &["weapons", "--vampire"][..],
-        &["weapons", "--race", "redguard"][..],
-        &["weapons", "--level", "30"][..],
-    ] {
+fn json_cases(label: &str, cases: &[&[&str]]) {
+    let root = temp_root(label);
+    for args in cases {
         same_json(args, &root);
     }
     fs::remove_dir_all(&root).expect("cleanup");
+}
+
+#[test]
+fn weapons_text_and_page_for_both_commands_match_the_js() {
+    // The default page: every row, six family curves and the Critical Strike curve. `skills` is the alias, the same
+    // branch with its own default page name.
+    text_cases("text-default", &[&["weapons"], &["skills"]]);
+}
+
+#[test]
+fn weapons_text_categories_match_the_js() {
+    // `--categories` drops the curves and keeps one winner per type per slot.
+    text_cases(
+        "text-categories",
+        &[&["weapons", "--categories"], &["skills", "--categories"]],
+    );
+}
+
+#[test]
+fn weapons_text_firmament_matches_the_js() {
+    // `--firmament` moves the family curves and the Critical Strike curve, not the rows.
+    text_cases(
+        "text-firmament",
+        &[
+            &["weapons", "--firmament"],
+            &["weapons", "--firmament", "--categories"],
+        ],
+    );
+}
+
+#[test]
+fn weapons_text_vampire_race_and_level_match_the_js() {
+    // The vampire suffix and the race override; `--level` moves the reference foe and the Breach, not the level-45
+    // characters.
+    text_cases(
+        "text-variants",
+        &[
+            &["weapons", "--vampire"],
+            &["weapons", "--race", "redguard"],
+            &["weapons", "--level", "30"],
+        ],
+    );
+}
+
+#[test]
+fn weapons_json_default_and_alias_match_the_js() {
+    json_cases("json-default", &[&["weapons"], &["skills"]]);
+}
+
+#[test]
+fn weapons_json_categories_and_firmament_match_the_js() {
+    json_cases(
+        "json-variants",
+        &[&["weapons", "--categories"], &["weapons", "--firmament"]],
+    );
+}
+
+#[test]
+fn weapons_json_vampire_race_and_level_match_the_js() {
+    json_cases(
+        "json-variants2",
+        &[
+            &["weapons", "--vampire"],
+            &["weapons", "--race", "redguard"],
+            &["weapons", "--level", "30"],
+        ],
+    );
 }
 
 #[test]

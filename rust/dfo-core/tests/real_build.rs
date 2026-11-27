@@ -107,10 +107,13 @@ const KNOWN: &[&str] = &[
     "shortlist-err",
 ];
 
-/// Stream `real_build` for `kinds` only. The fixture `book` row must still come first, and every caller asserts the
-/// floors of its own families: one file, several `#[test]`s, which libtest runs in parallel.
+/// Stream `real_build` for `kinds` only, checking the cases whose index among those kinds falls in `only`. The fixture
+/// `book` row must still come first, and every caller asserts the floors of its own families: one file, several
+/// `#[test]`s, which libtest runs in parallel. A `shortlist` case costs ~17 s, so one `#[test]` per case is what keeps
+/// the suite's wall time near one case rather than seven.
 fn replay(
     kinds: &[&str],
+    only: std::ops::Range<usize>,
     floors: &[(&str, usize)],
     check: impl Fn(&str, &mut dyn FnMut() -> Value, &mut Profiles<'_>) -> Value,
 ) {
@@ -118,6 +121,7 @@ fn replay(
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     let mut book = None;
     let mut profiles: Option<Profiles<'_>> = None;
+    let mut seen = 0usize;
     for mut row in common::stream("real_build") {
         let kind = row.kind.clone();
         if kind == "book" {
@@ -134,6 +138,11 @@ fn replay(
             "unexpected real_build kind {kind}"
         );
         if !kinds.contains(&kind.as_str()) {
+            continue;
+        }
+        let index = seen;
+        seen += 1;
+        if !only.contains(&index) {
             continue;
         }
         let profiles = profiles
@@ -170,6 +179,7 @@ fn replay(
 fn stages_loadouts_sampled_apply() {
     replay(
         &["stage", "loadouts", "sampled", "apply"],
+        0..usize::MAX,
         &[
             ("stage", 24),
             ("loadouts", 4),
@@ -218,25 +228,38 @@ fn stages_loadouts_sampled_apply() {
     );
 }
 
-#[test]
-fn shortlist() {
-    replay(
-        &["shortlist"],
-        &[("shortlist", 7)],
-        |kind, v, profiles| match kind {
-            "shortlist" => {
-                let opts = ShortlistOpts::from_value(&v());
-                shortlist_loadouts_with(&opts, profiles).expect("shortlistLoadouts")
-            }
-            other => panic!("unexpected real_build kind {other}"),
-        },
-    );
+// One `#[test]` per `shortlist` case: each samples 1,000 fights per row (~17 s), so the suite costs one case's wall
+// time under libtest's threads instead of their sum. The family floor is asserted per case, below.
+macro_rules! shortlist_case {
+    ($name:ident, $index:expr) => {
+        #[test]
+        fn $name() {
+            replay(
+                &["shortlist"],
+                $index..$index + 1,
+                &[("shortlist", 1)],
+                |kind, v, profiles| {
+                    assert_eq!(kind, "shortlist");
+                    let opts = ShortlistOpts::from_value(&v());
+                    shortlist_loadouts_with(&opts, profiles).expect("shortlistLoadouts")
+                },
+            );
+        }
+    };
 }
+shortlist_case!(shortlist_0, 0);
+shortlist_case!(shortlist_1, 1);
+shortlist_case!(shortlist_2, 2);
+shortlist_case!(shortlist_3, 3);
+shortlist_case!(shortlist_4, 4);
+shortlist_case!(shortlist_5, 5);
+shortlist_case!(shortlist_6, 6);
 
 #[test]
 fn shortlist_err() {
     replay(
         &["shortlist-err"],
+        0..usize::MAX,
         &[("shortlist-err", 17)],
         |kind, v, profiles| match kind {
             "shortlist-err" => {

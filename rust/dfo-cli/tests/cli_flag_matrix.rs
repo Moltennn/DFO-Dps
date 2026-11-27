@@ -420,28 +420,53 @@ fn save_backed_path_flags_are_priced_like_the_js() {
     fs::remove_dir_all(&root).expect("cleanup");
 }
 
-#[test]
-fn enchant_plan_prices_every_weapon_the_audit_named() {
-    // `--weapon` other than 121: bows (`129`, `130`), fists (`563`), two-handers, the gun (`560`) and the ammo
-    // refusal (`131`). The audit suspected the two `expect`s in `enchant_plan_command` (a plan that cannot be built
-    // panics); every legal template prices and the page is byte-identical.
-    let root = temp_root("plan-weapons");
+/// One template's four modes in its own temp root: every run prices a whole plan, so one `#[test]` per template lets
+/// libtest run the templates side by side (the gate's thread budget bounds the total).
+fn plan_template(tpl: &str) {
+    let root = temp_root("plan-weapon");
     let page = root.join("plan.html");
     let out = page.to_str().unwrap();
-    for tpl in [
-        "113", "115", "122", "127", "129", "130", "560", "562", "563",
+    for mode in [
+        &[][..],
+        &["--uncapped"][..],
+        &["--all"][..],
+        &["--json"][..],
     ] {
-        for mode in [
-            &[][..],
-            &["--uncapped"][..],
-            &["--all"][..],
-            &["--json"][..],
-        ] {
-            let args = vec!["enchant-plan", "--theory", "--weapon", tpl, "--out", out];
-            let args: Vec<&str> = args.into_iter().chain(mode.iter().copied()).collect();
-            same(&args, &root, Some(&page));
-        }
+        let args = vec!["enchant-plan", "--theory", "--weapon", tpl, "--out", out];
+        let args: Vec<&str> = args.into_iter().chain(mode.iter().copied()).collect();
+        same(&args, &root, Some(&page));
     }
+    fs::remove_dir_all(&root).expect("cleanup");
+}
+
+// `--weapon` other than 121: two-handers, a blade, the gun and fists. The audit suspected the two `expect`s in
+// `enchant_plan_command` (a plan that cannot be built panics); every legal template prices and the page is byte-identical.
+#[test]
+fn enchant_plan_prices_the_two_handers_the_audit_named() {
+    for tpl in ["113", "115", "122"] {
+        plan_template(tpl);
+    }
+}
+
+#[test]
+fn enchant_plan_prices_the_bows_the_audit_named() {
+    for tpl in ["127", "129", "130"] {
+        plan_template(tpl);
+    }
+}
+
+#[test]
+fn enchant_plan_prices_the_gun_and_fists_the_audit_named() {
+    for tpl in ["560", "562", "563"] {
+        plan_template(tpl);
+    }
+}
+
+#[test]
+fn enchant_plan_refuses_ammunition_as_a_weapon() {
+    let root = temp_root("plan-ammo");
+    let page = root.join("plan.html");
+    let out = page.to_str().unwrap();
     // Ammunition is not a weapon: both refuse it with the same line.
     let ammo = vec!["enchant-plan", "--theory", "--weapon", "131", "--out", out];
     let want = js(&ammo, &root);

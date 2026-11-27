@@ -199,11 +199,10 @@ fn the_shortlist_option_defaults_are_the_js_defaults() {
     assert_eq!(nan.max_blows, 6000.0, "NaN maxBlows -> 6000");
 }
 
-/// A LOCAL INVARIANT: `--shortlist <K>` refuses one past the eligible pool and accepts exactly the pool (`>` not `>=`,
-/// `loadout_shortlist.rs:201`). The refused case short-circuits before any sampling, so it is cheap; the accepted one needs
-/// the exact eligible count, which is one universe away at the live build.
+/// A LOCAL INVARIANT: `--shortlist <K>` refuses one past the eligible pool (`>` not `>=`,
+/// `loadout_shortlist.rs:201`). The refusal short-circuits before any sampling.
 #[test]
-fn the_k_boundary_is_the_eligible_count() {
+fn the_k_boundary_refuses_one_past_the_pool() {
     let book = stock_book();
     let opts = |k: f64| {
         ShortlistOpts::from_value(&obj([
@@ -230,7 +229,28 @@ fn the_k_boundary_is_the_eligible_count() {
         )),
         "one past the pool refuses"
     );
-    // Exactly the pool is not a refusal (`>=` would reject it); the run is one horizon tick so the sampling is trivial.
+}
+
+/// A LOCAL INVARIANT: exactly the pool is accepted (`>=` would reject it), and every eligible row comes back. This
+/// samples every row once, so it is the expensive half of the boundary and its own `#[test]` (it runs beside the rest).
+#[test]
+fn the_k_boundary_accepts_the_pool() {
+    let book = stock_book();
+    let opts = |k: f64| {
+        ShortlistOpts::from_value(&obj([
+            ("k", Num(k)),
+            ("mode", Str("uncapped".to_owned())),
+            ("trials", Num(1000.0)),
+            ("seed", Num(7.0)),
+            ("maxSeconds", Num(0.001)),
+            ("maxBlows", Num(1.0)),
+        ]))
+    };
+    let mut profiles = dfo_core::maxprofile::Profiles::new(&book);
+    let universe = dfo_core::loadout_shortlist::eligible_universe_with(&opts(1.0), &mut profiles)
+        .expect("the eligible universe");
+    let len = universe.len() as f64;
+    assert!(len > 1.0, "the eligible pool has more than one row");
     let accepted = shortlist_loadouts_with(&opts(len), &mut profiles);
     assert!(
         accepted.is_ok(),
