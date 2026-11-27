@@ -292,10 +292,11 @@ pub fn power_ids_of(it: &Value) -> Vec<Value> {
 ///    here, and the answer is `null`. The generator asserts `powerOf` of a made-up id is `null`.
 ///
 /// An inherited name in `LEGENDARY_POWERS` is the Object.prototype member in JS (a function, or the prototype object
-/// for `__proto__`); a `Value` cannot hold one, so it reads as an empty record. That is what every ported read of a
-/// power sees of a function (`p?.kind`, `p.kind`, `p.name`, `p.chance`, ... are all undefined on a function), so no
-/// number moves; see `rust/README.md` ("an inherited name"). Reachable from a save whose legendary item carries such an
-/// id.
+/// for `__proto__`); a `Value` cannot hold one, so it reads as an empty record. A JS function DOES have a `.name`
+/// (`Object.name` is `'Object'`, `Array.name` is `'Array'`), so `p?.name` reads that string where this port reads
+/// `undefined`; the one label a caller could print differs, but no NUMBER moves (every `.kind`, `.chance`, `.pct`,
+/// `.points` read is `undefined` on a function, the same as on an empty record). See `rust/README.md` ("an inherited
+/// name"). Reachable from a save whose legendary item carries such an id.
 pub fn power_of(id: &Value) -> Value {
     let Some(s) = id.as_str() else {
         return Value::Null;

@@ -1,7 +1,137 @@
 mod common;
+use dfo_core::cws::roll_magnitude;
+use dfo_core::rolls::Rolls;
 use dfo_core::simulate_fight::simulate_fight;
 use dfo_core::spells::{spells_by_index_map, Spellbook};
 use dfo_core::value::Value::{self, Arr, Bool, Null, Num, Obj, Str};
+
+/// A fixed 0.5 roll stream for the magnitude probes.
+struct Half;
+impl Rolls for Half {
+    fn roll(&mut self) -> f64 {
+        0.5
+    }
+}
+
+/// R1: `rollMagnitude` follows the JS chain - `?? 0` on the RAW field, every `+` an ECMAScript `+`, and `-`/`*`/`/`
+/// numeric. A string `magnitudePerLevel` must NOT become NaN (`num_or` did: it is `?? d`, not `Number(x)`).
+/// The expected values are the live JS (`rollMagnitude(e, 10, () => 0.5)`).
+#[test]
+fn roll_magnitude_reads_a_string_or_boolean_field_like_the_js() {
+    let effect = |low: Value, high: Value, per: Value| {
+        Obj(vec![
+            ("type".into(), Num(4.0)),
+            ("subType".into(), Num(0.0)),
+            ("magnitudeBaseLow".into(), low),
+            ("magnitudeBaseHigh".into(), high),
+            ("magnitudeLevelBase".into(), Num(0.0)),
+            ("magnitudeLevelHigh".into(), Num(0.0)),
+            ("magnitudePerLevel".into(), per),
+        ])
+    };
+    // `{10, 20, per:"5"}`: 15 (was NaN after the lost-price commit).
+    assert_eq!(
+        roll_magnitude(
+            &effect(Num(10.0), Num(20.0), Str("5".into())),
+            10.0,
+            &mut Half
+        ),
+        Num(15.0)
+    );
+    // `{10, "20"}`: 105 (`'20' + 1` is `'201'`, minus 10 is 191, half is 95, 10 + 95).
+    assert_eq!(
+        roll_magnitude(
+            &effect(Num(10.0), Str("20".into()), Num(1.0)),
+            10.0,
+            &mut Half
+        ),
+        Num(105.0)
+    );
+    // `{"10", 20}`: the JS yields the STRING `'1050'` (`'105' + 0`), not the number 105.
+    assert_eq!(
+        roll_magnitude(
+            &effect(Str("10".into()), Num(20.0), Num(1.0)),
+            10.0,
+            &mut Half
+        ),
+        Str("1050".into())
+    );
+    // `{10, 20, per:true}`: 1; `{true, 20}`: 11; a null per is 1.
+    assert_eq!(
+        roll_magnitude(&effect(Num(10.0), Num(20.0), Bool(true)), 10.0, &mut Half),
+        Num(15.0)
+    );
+    assert_eq!(
+        roll_magnitude(&effect(Bool(true), Num(20.0), Num(1.0)), 10.0, &mut Half),
+        Num(11.0)
+    );
+    assert_eq!(
+        roll_magnitude(&effect(Num(10.0), Num(20.0), Null), 10.0, &mut Half),
+        Num(15.0)
+    );
+}
+
+/// The numeric reading of a string magnitude (`roll_magnitude_num`) is what the CWS landing's arithmetic sees, so the
+/// string case still bills 1050, not NaN.
+#[test]
+fn a_string_magnitude_still_bills_its_number() {
+    let e = Obj(vec![
+        ("type".into(), Num(4.0)),
+        ("subType".into(), Num(0.0)),
+        ("magnitudeBaseLow".into(), Str("10".into())),
+        ("magnitudeBaseHigh".into(), Num(20.0)),
+        ("magnitudeLevelBase".into(), Num(0.0)),
+        ("magnitudeLevelHigh".into(), Num(0.0)),
+        ("magnitudePerLevel".into(), Num(1.0)),
+    ]);
+    assert_eq!(
+        dfo_core::cws::roll_magnitude_num(&e, 10.0, &mut Half),
+        1050.0
+    );
+}
+
+/// P2: `ShortlistOpts::from_value` keeps `k`/`trials` strict (`Number.isSafeInteger`), while `seed`/`maxSeconds`/
+/// `maxBlows` are the JS `num(v, d)` coercion. `k: "3"` and `trials: "1000"` must NOT become numbers (the JS throws);
+/// `seed: "3"` must be 3 (the JS `num` accepts a numeric string).
+#[test]
+fn shortlist_options_keep_the_js_integer_guards() {
+    use dfo_core::loadout_shortlist::ShortlistOpts;
+    let opts = |pairs: Vec<(&str, Value)>| {
+        ShortlistOpts::from_value(&Obj(pairs
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v))
+            .collect()))
+    };
+    let strict = opts(vec![
+        ("k", Str("3".into())),
+        ("trials", Str("1000".into())),
+        ("seed", Str("7".into())),
+        ("maxSeconds", Str("1".into())),
+        ("maxBlows", Str("1".into())),
+    ]);
+    assert!(strict.k.is_nan(), "a string k is not a safe integer");
+    assert!(
+        strict.trials.is_nan(),
+        "a string trials is not a safe integer"
+    );
+    assert_eq!(strict.seed, 7.0, "seed is the JS num coercion");
+    assert_eq!(strict.max_seconds, 1.0);
+    assert_eq!(strict.max_blows, 1.0);
+    // Missing keys take the JS defaults.
+    let empty = opts(vec![]);
+    assert_eq!(empty.k, 0.0);
+    assert_eq!(
+        empty.trials,
+        dfo_core::objectives::MIN_STOCHASTIC_TRIALS as f64
+    );
+    assert_eq!(empty.seed, 0.0);
+    assert_eq!(empty.max_seconds, 900.0);
+    assert_eq!(empty.max_blows, 6000.0);
+    // A real number keeps its value.
+    let numbers = opts(vec![("k", Num(3.0)), ("trials", Num(1000.0))]);
+    assert_eq!(numbers.k, 3.0);
+    assert_eq!(numbers.trials, 1000.0);
+}
 
 fn s(v: &str) -> Value {
     Str(v.into())

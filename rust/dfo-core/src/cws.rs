@@ -145,19 +145,65 @@ fn try_absorption(effect: &Value, range_type: f64, target: &Value, rolls: &mut i
     }
 }
 
-pub fn roll_magnitude(effect: &Value, caster_level: f64, rolls: &mut impl Rolls) -> f64 {
-    // `systems/spellcast.js:229-236`: `lo + Math.floor(rolls() * (hi + 1 - lo))`. `hi + 1` is a JS `+` (a string `hi`
-    // concatenates with `1` first), and `hi + 1 - lo` a JS `-`; read each as the JS chain does.
-    let mut range = |lo_k: &str, hi_k: &str| {
-        let lo = effect.get(lo_k).num_or(0.0);
-        // `effect.magnitudeBaseHigh ?? 0` first (the JS `?? 0`), then `hi + 1` (a JS `+`, so a string hi concatenates).
-        let hi_plus_one = crate::value::add_num(&Num(effect.get(hi_k).num_or(0.0)), 1.0);
-        lo + (rolls.roll() * (hi_plus_one - lo)).floor()
+/// `systems/spellcast.js:229-236` `rollMagnitude`, expression for expression:
+///
+/// ```text
+/// const range = (lo, hi) => lo + Math.floor(rolls() * (hi + 1 - lo));
+/// const base   = range(effect.magnitudeBaseLow ?? 0, effect.magnitudeBaseHigh ?? 0);
+/// const plus   = range(effect.magnitudeLevelBase ?? 0, effect.magnitudeLevelHigh ?? 0);
+/// const per    = Math.max(1, effect.magnitudePerLevel ?? 1);
+/// return base + plus * Math.floor(casterLevel / per);
+/// ```
+///
+/// Every `+` is ECMAScript `+` (a string operand CONCATENATES, and the later `-`, `*`, `/`, `Math.floor` coerce the
+/// result back), and `?? 0`/`?? 1` read the RAW field, so a `null` is 0 but a string is its own text. The result is
+/// therefore a [`Value`]: `{10, 20, per:"5"}` is the number 15 and `{10, "20"}` the number 105, but `{"10", 20}` is the
+/// string `"1050"` (the JS vector `fight.txt` pins that). [`number`] reads it where a caller's next operator would.
+pub fn roll_magnitude(effect: &Value, caster_level: f64, rolls: &mut impl Rolls) -> Value {
+    let mut range = |lo_k: &str, hi_k: &str| -> Value {
+        let lo = nullish_zero(effect.get(lo_k));
+        let hi = nullish_zero(effect.get(hi_k));
+        // `hi + 1`, then `(hi + 1) - lo` (numeric subtraction coerces the concatenation).
+        let span = crate::value::add_num(&hi, 1.0) - lo.to_number();
+        // `lo + Math.floor(...)` is another `+`.
+        crate::value::js_plus(&lo, &Num((rolls.roll() * span).floor()))
     };
     let base = range("magnitudeBaseLow", "magnitudeBaseHigh");
     let plus = range("magnitudeLevelBase", "magnitudeLevelHigh");
-    let per = js_max(1.0, effect.get("magnitudePerLevel").num_or(1.0));
-    base + plus * (caster_level / per).floor()
+    // `Math.max(1, per ?? 1)` coerces: a string "5" is 5, a `true` is 1.
+    let per = js_max(
+        1.0,
+        nullish_one(effect.get("magnitudePerLevel")).to_number(),
+    );
+    // `base + plus * Math.floor(...)`: the product is numeric, so only `base` can concatenate.
+    let product = plus.to_number() * (caster_level / per).floor();
+    crate::value::js_plus(&base, &Num(product))
+}
+
+/// `roll_magnitude` as the number a caller's next operator reads. `Magnitude::roll` returns numbers (the landing's
+/// fields are numbers in the port; a magnitude the JS leaves as a string is read through its `-`/`*`/`/`, which coerce
+/// it, so every NUMERIC case is exact - `rust/README.md` records the pathological all-string residual).
+pub fn roll_magnitude_num(effect: &Value, caster_level: f64, rolls: &mut impl Rolls) -> f64 {
+    roll_magnitude(effect, caster_level, rolls).to_number()
+}
+
+/// `v ?? 0` for the raw field: a nullish value is `0`, any other value is itself (so a string stays a string for the
+/// `+` that reads it).
+fn nullish_zero(v: &Value) -> Value {
+    if v.is_nullish() {
+        Num(0.0)
+    } else {
+        v.clone()
+    }
+}
+
+/// `v ?? 1` for the raw field.
+fn nullish_one(v: &Value) -> Value {
+    if v.is_nullish() {
+        Num(1.0)
+    } else {
+        v.clone()
+    }
 }
 
 pub fn saving_throw(
@@ -521,7 +567,7 @@ struct Magnitude {
 
 impl Magnitude {
     fn roll(self, e: &Value, target: &Value, rolls: &mut impl Rolls) -> (f64, f64, f64) {
-        let mag = roll_magnitude(e, self.level, rolls);
+        let mag = roll_magnitude_num(e, self.level, rolls);
         if self.save_scaled {
             let percent = saving_throw(self.element, self.flag, target, rolls, self.pierce);
             (mag, percent, (mag * percent / 100.0).trunc())

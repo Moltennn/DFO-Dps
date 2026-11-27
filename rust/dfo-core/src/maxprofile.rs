@@ -236,10 +236,18 @@ impl<'a> Profiles<'a> {
     }
 
     pub fn max_character(&mut self, template: &Value, opts: &Value) -> Result<Value, String> {
-        // The gear budget it wears is picked at the caller's build (`legal_gear` re-prices the frontier), and the card
-        // it returns is priced at it too, so `opts.gameBuild` reaches both.
-        let legal = self.legal_gear(template, opts)?;
-        build_max(template, &gear_options(&legal, opts))
+        // `src/maxprofile.js:122-125 maxCharacter` destructures ONLY `{ firmament, vampire, race, gameBuild }`: a
+        // caller's `shield` or `metric` never reaches the frontier or the builder (JS ignores them), so it must not
+        // reach them here either. The gear budget is picked at the caller's build (`legal_gear` re-prices the
+        // frontier), and the card it returns is priced at it too.
+        let picked = obj([
+            ("firmament", opts.get("firmament").clone()),
+            ("vampire", opts.get("vampire").clone()),
+            ("race", opts.get("race").clone()),
+            ("gameBuild", opts.get("gameBuild").clone()),
+        ]);
+        let legal = self.legal_gear(template, &picked)?;
+        build_max(template, &gear_options(&legal, &picked))
     }
 }
 

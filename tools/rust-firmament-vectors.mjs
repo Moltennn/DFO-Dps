@@ -237,18 +237,35 @@ export function genFirmamentFamilies(Out, makeLcg) {
     }
     for (const start of START_KEYS) put('plan', [build, { start, stars: 40 }], F.planBuild(build, { start, stars: 40 }));
   }
-  // P1: the FULL sky's priced trees through planSummary and applyFirmament. A plan built by planBuild carries its
-  // price table on the totals' PRICES symbol; a serialized plan (what a save or a Value round-trip keeps) does not, so
-  // every reader must re-derive the totals from the tree. JS keeps them, so `blow` is 21 where a price-free rebuild
-  // gives the group cap 30. Each build and its own full-sky tree is the case that catches a lost price table.
-  // (A hand-built plan whose `totals` disagrees with its own `tree` is the residual: Rust reads the tree, JS reads the
-  // object it was given. rust/README.md says so; no Rust caller builds one.)
+  // P1/R2: the FULL sky's priced trees through planSummary and applyFirmament, and the shapes where a plan's
+  // serialized `totals` disagrees with its `tree`. The JS attaches the price table to `plan.totals` as a hidden symbol
+  // and reads the ENTRIES from that object: a lost price table printed 30 where the JS prints 21, and (R2) an empty
+  // `totals` must stay empty even when the tree names a start, while a hand-edited plan whose totals disagree reads the
+  // totals for every channel and the tree only for the prices.
   const FULL_SKY = [...FIRM_NODES.keys()].filter((k) => !START_KEYS.includes(k));
+  const planCh = { name: 'T', level: 45, raceId: 1, stats: {}, skills: {}, career: {}, _mods: { stats: {}, statMax: {}, skills: {} }, _enchantMods: { skillMods: {} } };
   for (const build of F.BUILDS) {
     const plan = F.planFromTree(build, { start: 'sp.start', keys: FULL_SKY });
     put('summary', [plan], F.planSummary(plan));
     // applyFirmament (realBuild.js:36-63) writes `firmamentDamagePct` from blowPct(plan.totals).
-    put('apply', [build, plan], RB.applyFirmament({ name: 'T', level: 45, raceId: 1, stats: {}, skills: {}, career: {}, _mods: { stats: {}, statMax: {}, skills: {} }, _enchantMods: { skillMods: {} } }, plan));
+    put('apply', [build, plan], RB.applyFirmament(structuredClone(planCh), plan));
+    // R2a: an EMPTY totals object, with a live tree: the JS adds nothing.
+    const empty = { build, tree: plan.tree, totals: {}, score: 0, stars: plan.stars, starBudget: plan.starBudget };
+    put('summary', [empty], F.planSummary(empty));
+    put('apply', [build, empty], RB.applyFirmament(structuredClone(planCh), empty));
+    // R2b: totals that DISAGREE with the tree: the JS reads the totals (for both channels and the blow) and takes the
+    // prices off the tree's treeStats.
+    for (const totals of [{ weaponDmg: 7, strength: 3 }, { weaponDmg: 34, longDmg: 12 }, { strength: 9, 'pct.strength': 8, hp: 20 }]) {
+      const hand = { build, tree: plan.tree, totals, score: 0, stars: 0, starBudget: 98 };
+      put('summary', [hand], F.planSummary(hand));
+      put('apply', [build, hand], RB.applyFirmament(structuredClone(planCh), hand));
+    }
+  }
+  // R2c: a bogus start and a build no sign allows store `totals: {}`; the summary and the apply add nothing.
+  for (const start of ['bogus', 'nope.start']) {
+    const plan = F.planBuild(F.BUILDS[0], { start });
+    put('summary', [plan], F.planSummary(plan));
+    put('apply', [F.BUILDS[0], plan], RB.applyFirmament(structuredClone(planCh), plan));
   }
   // The same over a SMALL priced tree (`rt.k`'s weaponDmg -4 and `sh.k`'s -5): a hand arithmetic check with the cap.
   for (const [start, keys] of [['sp.start', ['sh.k']], ['sp.start', ['rt.k']], ['sp.start', ['sh.k', 'rt.k']]]) {

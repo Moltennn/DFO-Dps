@@ -509,16 +509,26 @@ export function genPlannerFamilies(Out) {
   // ---- stage 3: the real-build chain -----------------------------------------------------------------
   // `realBuildStages` costs ~0.1-0.4 s per call (it runs planEnchants and three analyze passes), so the stage family
   // is one template per family at each (mode, encounter, vampire, dual) combination rather than the whole grid:
-  //   2 modes x 3 encounters x 2 vampire x 2 dual x 1 template = 24 stages (~5 s)
-  // The universe families then cover every template in every hold, which is the whole domain of realWeaponLoadouts:
+  //   2 modes x 3 encounters x 2 vampire x 2 dual x 2 templates/family = 48 stages (~10 s)
+  // Two templates per family, so a family's second pick (a ShortBlade dagger as well as a LongBlade sabre, a bow as well
+  // as another) is covered, not only its first. The universe families then cover every template in every hold:
   //   2 modes x 2 vampire x 1 encounter = 4 universes, 31 rows each (~12 s)
   // `applyFirmament`/`applyTree` are cheap (a plan and a fold), so they get every family and both characters:
   //   apply   6 families x 2 characters = 12 (~1 s)
-  const onePerFamily = [123, 118, 127, 124, 130, 563];
+  const onePerFamily = [123, 118, 113, 117, 127, 128, 124, 126, 129, 130, 563];
+  const familyCount = new Map();
+  const perFamilyTemplates = onePerFamily.filter((template) => {
+    const family = IMPRINT_FAMILIES.find((f) => f.templates.includes(template));
+    if (!family) return false;
+    const count = familyCount.get(family.key) ?? 0;
+    if (count >= 2) return false;
+    familyCount.set(family.key, count + 1);
+    return true;
+  });
   for (const [mode, encounter] of [['uncapped', 'breach'], ['cap', 'breach'], ['cap', 'skyketch'], ['cap', 'abyss']]) {
     for (const vampire of [false, true]) {
       for (const dual of [false, true]) {
-        for (const template of onePerFamily) {
+        for (const template of perFamilyTemplates) {
           const family = IMPRINT_FAMILIES.find((f) => f.templates.includes(template));
           if (!family) continue;
           // The JS chain throws on a dual bow/fist row (there is no off-hand item to copy), and `realWeaponLoadouts`
@@ -609,6 +619,38 @@ export function genPlannerFamilies(Out) {
     { k: 2, seed: 7, maxBlows: 20 },
   ]) {
     putReal('shortlist', [opts], S.shortlistLoadouts(opts));
+  }
+  // P3: the shortlist paths the base grid never crossed - a vampire universe (a different fold), the supported `health`
+  // on an uncapped shortlist, the `kill-probability` objective (a different ranking metric), and the explicit `14512`
+  // build (the cut's gear law moves every row). Each is one sampled rerank.
+  for (const opts of [
+    { k: 1, vampire: true, trials: 1000, seed: 7, maxSeconds: 20, maxBlows: 300 },
+    { k: 1, health: 4000, trials: 1000, seed: 7, maxSeconds: 20, maxBlows: 300 },
+    { k: 1, objective: 'kill-probability', trials: 1000, seed: 7, maxSeconds: 20, maxBlows: 300 },
+    { k: 1, gameBuild: '14512', trials: 1000, seed: 7, maxSeconds: 20, maxBlows: 300 },
+  ]) {
+    putReal('shortlist', [opts], S.shortlistLoadouts(opts));
+  }
+  // P3: a DIRECT `realBuildStages` at the ShortBlade family's first template (113), the family the stage grid's
+  // `onePerFamily` list did not name before, at both modes.
+  for (const mode of ['uncapped', 'cap']) {
+    for (const template of [113, 117]) {
+      const family = IMPRINT_FAMILIES.find((f) => f.templates.includes(template));
+      const st = FB.realBuildStages(template, family, { mode, encounter: 'breach' });
+      putReal('stage', [{ template, family: family.key, mode, vampire: false, dual: false, encounter: 'breach' }], {
+        capped: st.capped,
+        target: st.target,
+        treeStars: st.tree.stars,
+        treeFreeStars: st.tree.freeStars,
+        treeBlow: st.treeCh.firmamentDamagePct,
+        treeDps: st.treeRun.carriedCappedDps + st.treeRun.enchantDps,
+        enchDps: st.enchRun.carriedCappedDps + st.enchRun.enchantDps,
+        treeCh: stripCharacter(st.treeCh),
+        enchCh: stripCharacter(st.enchCh),
+        gearCh: stripCharacter(st.gearCh),
+        imprint: st.imprint,
+      });
+    }
   }
   return { enchant_plan: plan.write(), real_build: real.write() };
 }

@@ -6,6 +6,40 @@ reference), what changed, which test proves it, and which outputs moved.
 Format: newest first. A change that only refactors code without moving a number
 does not belong here (use the commit message).
 
+## Rust parity: two fixes on the Firmament/price and spell-field commits (2026-11-27)
+
+**Source.** `src/cws.js:72-78` `rollMagnitude` and `src/firmament.js` `planBuild`/`planFromTree`, both read against the
+live JS in this worktree.
+
+**R1, a field-type magnitude (`cws::roll_magnitude`).** The previous commit routed the bands and `per` through
+`Value::num_or`, which is `v ?? d` and so answers NaN for a STRING or BOOLEAN field (not a number, not nullish). The JS
+writes `?? 0` on the RAW value and then every `+` is an ECMAScript `+`, so a string field CONCATENATES and `-`/`*`/`/`
+coerce back. At level 10, roll 0.5: `{10,20,per:"5"}` is **15** (was NaN), `{10,"20"}` is **105**, `{"10",20}` is the
+string **"1050"**, `{10,20,per:true}` is **15**, `{true,20}` is **11**. The function now returns a `Value` following the
+chain; `roll_magnitude_num` reads it where the landing's arithmetic would (`1050`, not NaN). Every numeric case is exact.
+
+**R2, an empty or hand-built plan's totals (`firmament::plan_totals`).** The previous commit re-derived a plan's totals
+from its tree whenever the tree had a start, so a `planBuild({start:"bogus"})` (which stores `totals:{}`) picked up the
+start sign's stats and priced a blow `0 -> 21` where the JS adds nothing. The JS attaches the price table to
+`plan.totals` as a hidden symbol, so the ENTRIES are always what `totals` holds and the prices exist only when that
+object IS a `treeStats` result. A `planBuild`/`planFromTree` plan is that result (its blow stays 21); an EMPTY `totals`
+adds nothing (`0` / `{}`); a hand-built plan whose `totals` disagree with its tree reads the totals and pays NO price
+(`{weaponDmg:34}` caps at **30**, no -9, where the tree-first read printed 21).
+
+**Tests.** `tools/rust-fight-vectors.mjs` crosses the ten field-type records through `rollMagnitude` and the CWS cast
+(where the JS magnitude is a number); `tools/rust-firmament-vectors.mjs` appends the full-sky/empty/disagreeing/bogus-start
+summaries and applies (the `apply` floor rises from 8 to 40); `tests/audit_regressions.rs` and
+`tests/firmament_prices.rs` pin both without the vector files. Red before green: `{10,20,per:"5"}` printed `NaN`, the
+bogus-start plan printed `21`/a channel where the JS prints `0`/none.
+
+**P2/P3 beside them (no number moves on the default path).** `ShortlistOpts::from_value` now keeps `k`/`trials` as
+`Number.isSafeInteger` sees them (a string `"3"` throws, as the JS does, instead of coercing); `max_character` reads only
+the four keys the JS `maxCharacter` destructures (`shield`/`metric` are ignored, as in JS); `real_build_stages` returns an
+`Err` for a dual stage over the fists (template 563, no weapon) instead of panicking on `Value::set` (the JS
+`{ ...null }` TypeError). The `bow_left_hand` hand law was already pinned at both settings
+(`gear::tests::the_hand_law_over_every_row`) - the vectors run the shipped boot only because the JS setting is a stubbed
+store read here.
+
 ## Rust parity: a Firmament plan keeps its keystone prices (2026-11-27)
 
 **Source.** `vendor/firmament/firmamentLaw.js:544` attaches the prices `treeStats` paid to the totals object under a
@@ -20,11 +54,11 @@ priced tree as if the keystone cost nothing. Full sky (`sp.start` plus every non
 was `30` where the JS reports `21` (`weaponDmg` gains past the 30 cap, then `sh.k`/`rt.k`'s -5/-4 price), and
 `firmamentDamagePct` was `30` instead of `21` - a real wrong number a GUI build and the `real-build` chain both show.
 
-**Fix.** `firmament::plan_totals(plan)` re-derives `treeStats(plan.tree)`, which IS the JS `plan.totals` with its
-prices (the tree is the persisted half; the JS total is a pure function of it). Every plan reader uses it;
-`totals_from_value` stays for a bare totals object a caller hands in (`total`/`effective` vector kinds). A plan with no
-usable tree still falls back to its serialized entries. Residual: a hand-built plan whose `totals` object disagrees with
-its own `tree` reads the tree here and the object in JS; no Rust caller builds one (`rust/README.md`).
+**Fix.** `firmament::plan_totals(plan)` takes the ENTRIES from the plan's serialized `totals` (what the JS readers see)
+and re-derives only the PRICES, from `treeStats(plan.tree)`, when those entries equal that `treeStats` result (a planner
+plan). `totals_from_value` stays for a bare totals object (`total`/`effective` vector kinds). See the R2 entry above for
+the empty and hand-built cases, which that first cut got wrong. One residual: a copied planner totals object that kept
+the entries but lost the symbol would pay prices the JS copy does not (no `Value` can carry a symbol).
 
 **Outputs moved (JS oracle, `node`):** full-sky `planSummary` blow `30` -> `21` and `castCost` `25` -> `25` (still
 capped), `applyFirmament(...).firmamentDamagePct` `30` -> `21`; the small `sh.k`/`rt.k` trees likewise. A price-FREE tree

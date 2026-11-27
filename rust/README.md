@@ -96,6 +96,17 @@ bullets below and in the per-command notes.
   that comparator non-transitive, so V8's own order among the NaN rows is implementation-defined and Rust's `sort_by`
   panicked on it. The port sorts the finite rows stably into the slots they held and leaves each NaN row in its generated
   position: the finite rows are JS's exact order, the NaN rows' positions are the residual. It cannot panic.
+- **A field-type magnitude follows the JS chain exactly.** `cws::roll_magnitude` returns a `Value`: `?? 0` reads the raw
+  field, every `+` is an ECMAScript `+` (so `{10, "20"}` is the number 105, and `{"10", 20}` is the STRING `"1050"`), and
+  `-`/`*`/`/` coerce. The CWS landing's own fields are numbers in the port, so `roll_magnitude_num` reads a string
+  magnitude through its number (1050); the JS leaves `resolveCwsCast(...).damage` a string in that all-string case, which
+  only a synthetic spellbook record can produce. Every numeric case is exact (`fight.txt` crosses it).
+- **A hand-built Firmament plan reads its `totals` and pays the prices only when they ARE the tree's.** In JS the price
+  table rides `plan.totals` as a hidden `PRICES` symbol that only `treeStats` attaches, so a plain `{weaponDmg: 34}`
+  literal caps at 30 with no price, while a planner plan's totals (which ARE `treeStats(tree)`) pay it. The port
+  re-derives the prices whenever the entries equal `treeStats(plan.tree)`; a copied planner totals object that kept the
+  entries but lost the symbol (no `Value` can carry a symbol) would pay prices the JS copy does not - the one residual.
+  An empty `totals: {}` adds nothing on both sides.
 
 - **Number grouping is en-US, pinned.** `grouped_number` always groups with commas; the JS `toLocaleString()` follows the
   host locale. A non-finite value prints Intl's own words (`∞`, `-∞`, `NaN`), never a grouped "In,fin,ity".

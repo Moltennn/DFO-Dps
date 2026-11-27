@@ -700,6 +700,37 @@ mod tests {
         Str(text.to_owned())
     }
 
+    /// P2 (vendor `fillEquipTable`, `systems/equip.js:360-368`): two pieces claiming one `equipSlot` - a stale save can
+    /// carry one - keep the FIRST. The affix fold and `armor_values` both walk the list and skip a claimed slot, so a
+    /// duplicate adds nothing. The vendor `affixFold` sees the same because `rebuildEquipState`'s `fillEquipTable`
+    /// deletes the loser's `equipSlot`. The `armor` differential's slot-conflict layout covers it end to end; this pins
+    /// the rule on the bare fold.
+    #[test]
+    fn a_duplicate_equip_slot_keeps_the_first_piece() {
+        let mut first = raw_item("Armor", 102.0, 0.0, 18.0);
+        first.set(
+            "affixes",
+            Arr(vec![obj([("id", s("armor")), ("value", Num(15.0))])]),
+        );
+        let mut second = raw_item("Armor", 109.0, 0.0, 18.0);
+        second.set(
+            "affixes",
+            Arr(vec![obj([("id", s("armor")), ("value", Num(40.0))])]),
+        );
+        // The first alone is the fold: the second's 40 on the same slot is ignored (a stale duplicate).
+        let alone = armor_fold_parts(std::slice::from_ref(&first), &[0.0; 7]);
+        let both = armor_fold_parts(&[first.clone(), second.clone()], &[0.0; 7]);
+        assert_eq!(
+            both, alone,
+            "the second piece claiming slot 18 adds nothing"
+        );
+        assert_eq!(both[3], 15.0, "the first piece's 15 on the chest");
+        // `armor_values` agrees: the first piece's condition/armour, not the second's template.
+        let one = armor_values(std::slice::from_ref(&first));
+        let two = armor_values(&[first, second]);
+        assert_eq!(two, one);
+    }
+
     fn obj<const N: usize>(pairs: [(&str, Value); N]) -> Value {
         let mut out = Obj(vec![]);
         for (k, v) in pairs {

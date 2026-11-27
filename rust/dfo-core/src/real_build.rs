@@ -381,6 +381,17 @@ pub fn real_build_stages_with(
     )?;
     let mut tree_ch = apply_firmament(&gear_ch, &tree);
     if opts.dual {
+        // `treeCh.offWeapon = { ...treeCh.weapon, equipSlot: 21 }` (`src/realBuild.js:127`): a template with no weapon
+        // (the fists, 563) has `treeCh.weapon === null`, and the JS spread throws `Cannot read properties of null
+        // (reading 'weight')`/reads null: a crash, not a build. Return it as an Err (the CLI prints one line, exit 1) so
+        // a `Value::set` on a non-object cannot panic.
+        let weapon = tree_ch.get("weapon");
+        if !weapon.truthy() || !matches!(weapon, Obj(_)) {
+            return Err(
+                "realBuildStages: a dual stage needs a weapon (template 563's fists have none): JS `{ ...null }` throws"
+                    .to_owned(),
+            );
+        }
         let mut off = tree_ch.get("weapon").clone();
         off.set("equipSlot", Num(21.0));
         tree_ch.set("offWeapon", off);

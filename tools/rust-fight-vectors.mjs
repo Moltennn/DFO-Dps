@@ -226,6 +226,45 @@ export function genFightFamilies(Out, makeLcg) {
     put('bills', [item, t, ch, i % 2 ? 1 : 270, thrown.log], [result, blade]);
   }
 
+  // R1: the cast's magnitude with a STRING or BOOLEAN effect field. `rollMagnitude` and `magnitudeRoll` follow the JS
+  // chain: `?? 0` on the raw field, every `+` is ECMAScript `+` (so `'10' + 20` is `'1020'`). The numeric fields are
+  // the cases that regressed (a string per-level gave NaN); the string-result cases are covered by the local test.
+  const fieldTypes = [
+    ['num', 10, 20, 1],
+    ['per-string', 10, 20, '5'],
+    ['high-string', 10, '20', 1],
+    ['low-string', '10', 20, 1],
+    ['per-bool', 10, 20, true],
+    ['per-null', 10, 20, null],
+    ['low-bool', true, 20, 1],
+    ['level-string', 10, 20, 1, '3', 4],
+    ['missing-level', 10, 20, undefined],
+    ['missing-base', undefined, undefined, 1],
+  ];
+  const fieldEffect = ([, low, high, per, ll, lh]) => {
+    const e = { type: 4, subType: 0, magnitudeBaseLow: low, magnitudeBaseHigh: high, magnitudePerLevel: per,
+      magnitudeLevelBase: ll ?? 0, magnitudeLevelHigh: lh ?? 0 };
+    if (per === undefined) delete e.magnitudePerLevel;
+    if (low === undefined) { delete e.magnitudeBaseLow; delete e.magnitudeBaseHigh; }
+    return e;
+  };
+  for (const fields of fieldTypes) {
+    const e = fieldEffect(fields);
+    for (const [rangeType, element] of [[0, 4], [1, 0], [2, 2]]) {
+      const sp = { index: 245, name: `Fields ${fields[0]}`, element, rangeType, effects: [e] };
+      for (const casterLevel of [1, 10]) {
+        const mag = trace(script());
+        const expected = C.rollMagnitude(e, casterLevel, mag.rolls);
+        put('magnitude', [e, casterLevel, mag.log], [expected, C.isDamageHealth(e), C.isContinuousDamage(e)]);
+        // The CWS path itself, only where the JS magnitude is a NUMBER: the port's landing coerces a string magnitude
+        // through its own arithmetic (rust/README.md, the all-string residual), so a string case is pinned there.
+        if (typeof expected === 'number') {
+          castCase(sp, null, targetFor(20), { casterLevel, hp: 90, casts: 1, ticks: 0, pierce: 0, potencyPct: 0 }, script());
+        }
+      }
+    }
+  }
+
   const ch = mkChar(28);
   ch.weapon = weapon(137, 117);
   const ordinary = referenceFoe(20, 'human');

@@ -119,7 +119,7 @@ fn differential() {
                 let (effect, level, log) = (v(), v(), v());
                 replay(vector, &log, &answers, |mut rolls| {
                     Arr(vec![
-                        Num(c::roll_magnitude(&effect, level.to_number(), &mut rolls)),
+                        c::roll_magnitude(&effect, level.to_number(), &mut rolls),
                         Bool(c::is_damage_health(&effect)),
                         Bool(c::is_continuous_damage(&effect)),
                     ])

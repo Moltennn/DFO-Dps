@@ -99,8 +99,16 @@ fn cases() -> [Case; 4] {
 /// The branch's own `opts` (`src/cli.js:642`): `sampledOptions(values)` plus `k`, `objective`, `vampire`, `health`.
 fn opts(values: &Value) -> Value {
     let mut out = Obj(vec![]);
+    // The CLI resolves these flags numerically before it builds the options (`sampledOptions`), so a test that stands in
+    // for the CLI must pass NUMBERS, not the raw flag strings: `ShortlistOpts::from_value` keeps the JS
+    // `Number.isSafeInteger(trials)` guard, which a string would fail (a string IS a usage error on the JS side too).
     for key in ["trials", "seed", "maxSeconds", "maxBlows"] {
-        out.set(key, values.get(key).clone());
+        let raw = values.get(key);
+        let n = match raw {
+            Str(s) => s.parse::<f64>().expect("a numeric flag"),
+            other => other.to_number(),
+        };
+        out.set(key, Num(n));
     }
     out.set("k", Num(values.get("shortlist").to_number()));
     out.set("objective", values.get("objective").clone());

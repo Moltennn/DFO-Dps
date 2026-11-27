@@ -561,17 +561,44 @@ fn totals_value(totals: &Totals) -> Value {
         .collect())
 }
 
-/// The `Totals` a plan's readers use: `treeStats(plan.tree)`, which is exactly the JS `plan.totals` (the JS attaches the
-/// price table as a hidden symbol on that same object, so `blowPct(plan.totals)` sees the prices). The plan is rebuilt
-/// from its tree rather than read from the serialized `totals`, which cannot carry the hidden prices; a plan with no
-/// usable tree falls back to the serialized entries (no prices), the shape a hand-built plan has.
+/// The `Totals` a plan's readers use.
+///
+/// In JS, `plan.totals` is an object and the price table rides it as a hidden `PRICES` symbol, attached only by
+/// `treeStats` (`firmamentLaw.js:544`). So the ENTRIES are always whatever `plan.totals` holds, and the prices exist
+/// exactly when that object IS a `treeStats` result:
+///
+/// - an EMPTY `totals` object is empty on both sides (`planBuild` with a bogus start, or a custom build no sign allows,
+///   stores `totals: {}` - `apply_firmament` then adds nothing);
+/// - a planner plan (`planBuild`, `planFromTree`) stores `totals: treeStats(tree)`, so its entries equal
+///   `treeStats(plan.tree)` and it carries that tree's prices (the lost-price bug: this is the case that printed 30
+///   where JS prints 21);
+/// - a hand-edited plan whose `totals` disagree with its `tree` was built with a plain object literal, which in JS has
+///   NO `PRICES` symbol, so it pays NO price - its entries are read as they are (`{weaponDmg: 34}` caps at 30, no -9).
+///   A `Value` cannot tell "a copied `treeStats` average missing its symbol" from "a literal" (the symbol is dropped by
+///   every round-trip), so the port re-derives the prices whenever the entries EQUAL `treeStats(tree)`; a copied
+///   totals object that kept the entries but lost the symbol is the one residual (`rust/README.md`).
 pub fn plan_totals(plan: &Value) -> Totals {
-    let tree = plan_tree(plan);
-    if tree.start.is_some() {
-        law::tree_stats(&tree)
-    } else {
-        law::totals_from_value(plan.get("totals"))
+    let entries: Vec<(String, f64)> = plan
+        .get("totals")
+        .entries()
+        .iter()
+        .map(|(k, v)| (k.clone(), v.to_number()))
+        .collect();
+    if entries.is_empty() {
+        return Totals {
+            entries,
+            prices: Vec::new(),
+        };
     }
+    let derived = law::tree_stats(&plan_tree(plan));
+    // `treeStats` writes only nonzero finite channels, in its own key order; equality by key/value (order-insensitive)
+    // is what tells a planner plan from a hand-built one.
+    let same = derived.entries.len() == entries.len()
+        && entries
+            .iter()
+            .all(|(k, v)| derived.get(k).is_some_and(|d| d == *v));
+    let prices = if same { derived.prices } else { Vec::new() };
+    Totals { entries, prices }
 }
 
 /// `planFromTree`: rebuild a plan from its persisted tree without running the search.

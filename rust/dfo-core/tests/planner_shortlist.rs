@@ -11,6 +11,8 @@
 //! The numbers are not oracle-checked in this file and the comments say so.
 
 use dfo_core::loadout_shortlist::{shortlist_loadouts_with, ShortlistOpts};
+use dfo_core::maxprofile::Profiles;
+use dfo_core::real_build::{real_build_stages, StageOpts};
 use dfo_core::spells::Spellbook;
 use dfo_core::value::Value::{self, Bool, Num, Str};
 
@@ -199,6 +201,30 @@ fn the_shortlist_option_defaults_are_the_js_defaults() {
     assert_eq!(nan.max_blows, 6000.0, "NaN maxBlows -> 6000");
 }
 
+/// A LOCAL INVARIANT (`Number.isSafeInteger`, `loadoutShortlist.js:25`): `k` and `trials` must be NUMBERS. A numeric
+/// string (`"3"`, `"1000"`) throws the JS `RangeError`; the port's `from_value` now leaves it NaN so the same guard
+/// fires. `seed`/`maxSeconds`/`maxBlows` are the JS `num(v, d)` coercion, which DOES accept a numeric string.
+#[test]
+fn the_shortlist_integer_guards_reject_a_string() {
+    let stringly = ShortlistOpts::from_value(&obj([
+        ("k", Str("3".to_owned())),
+        ("mode", Str("uncapped".to_owned())),
+        ("trials", Str("1000".to_owned())),
+        ("seed", Str("7".to_owned())),
+        ("maxSeconds", Str("1".to_owned())),
+        ("maxBlows", Str("1".to_owned())),
+    ]));
+    assert!(stringly.k.is_nan(), "a string k is not a safe integer");
+    assert!(
+        stringly.trials.is_nan(),
+        "a string trials is not a safe integer"
+    );
+    // The JS `num()` coercion does read a numeric string for the three sampler knobs.
+    assert_eq!(stringly.seed, 7.0);
+    assert_eq!(stringly.max_seconds, 1.0);
+    assert_eq!(stringly.max_blows, 1.0);
+}
+
 /// A LOCAL INVARIANT: `--shortlist <K>` refuses one past the eligible pool (`>` not `>=`,
 /// `loadout_shortlist.rs:201`). The refusal short-circuits before any sampling.
 #[test]
@@ -301,4 +327,52 @@ fn an_absent_or_unknown_build_is_the_live_build() {
         ("gameBuild", Str("14512".to_owned())),
     ]));
     assert_eq!(cut.game_build, "14512", "only an explicit 14512 is the cut");
+}
+
+/// A LOCAL INVARIANT (`src/maxprofile.js:122-125`): `maxCharacter` reads only `{ firmament, vampire, race, gameBuild }`,
+/// so a caller's `shield`/`metric` never changes the character. Pin it: a shield and a metric on the options produce
+/// exactly the bare call's character.
+#[test]
+fn max_character_ignores_a_shield_or_metric_option() {
+    let book = stock_book();
+    let mut bare = Profiles::new(&book);
+    let mut noisy = Profiles::new(&book);
+    let plain = bare
+        .max_character(&Num(123.0), &obj([]))
+        .expect("the bare max character");
+    let with = noisy
+        .max_character(
+            &Num(123.0),
+            &obj([("shield", Num(112.0)), ("metric", Str("capped".to_owned()))]),
+        )
+        .expect("the max character with ignored options");
+    assert_eq!(
+        dfo_core::value::write(&plain),
+        dfo_core::value::write(&with),
+        "the JS ignores both options"
+    );
+}
+
+/// A LOCAL INVARIANT (`src/realBuild.js:127`): a dual stage over the fists (template 563, which has no weapon) is the
+/// JS `{ ...null }` TypeError - a crash, not a build. The port returns an Err (one CLI line, exit 1) instead of a panic.
+#[test]
+fn a_dual_fist_stage_is_an_error_not_a_panic() {
+    let book = stock_book();
+    let mut fists = Value::Obj(vec![]);
+    fists.set("key", Str("fists".to_owned()));
+    let opts = StageOpts {
+        dual: true,
+        ..StageOpts::default()
+    };
+    let got = real_build_stages(&Num(563.0), &fists, &opts, &book);
+    assert!(
+        got.is_err(),
+        "563 has no weapon, so a dual stage cannot copy it"
+    );
+    // The same template WITHOUT dual is a build (the port does not over-refuse).
+    let single = StageOpts::default();
+    assert!(
+        real_build_stages(&Num(563.0), &fists, &single, &book).is_ok(),
+        "a single fist stage builds"
+    );
 }

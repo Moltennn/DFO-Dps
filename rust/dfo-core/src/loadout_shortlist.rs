@@ -43,6 +43,10 @@ pub struct ShortlistOpts {
 
 impl ShortlistOpts {
     /// Read the options, applying the JS defaults (`objective` from the mode, `trials` from `MIN_STOCHASTIC_TRIALS`).
+    ///
+    /// A NUMERIC option keeps its number; a value that is not a number becomes NaN, never a coerced one. The JS guards
+    /// are `Number.isSafeInteger(k)`/`Number.isSafeInteger(trials)`, which reject a STRING (`"3"`, `"1000"`) and every
+    /// non-integer; `v ?? d` / `Number(v)` would have accepted `"1000"`, where the JS throws. Absent is the default.
     pub fn from_value(opts: &Value) -> Self {
         let mode = opts
             .get("mode")
@@ -58,8 +62,21 @@ impl ShortlistOpts {
                     _ => "stochastic-ttk".to_owned(),
                 })
             });
+        // `Number.isSafeInteger`-faithful for `k` and `trials`, which the JS guards that way: a number is itself, a
+        // missing key is the default, anything else is NaN (so the guard rejects it exactly where the JS does). `seed`,
+        // `maxSeconds` and `maxBlows` are JS `num(v, d)` (`Number.isFinite(Number(v)) ? Number(v) : d`), so a numeric
+        // string IS coerced there - keep the `num_or_default` coercion.
+        let strict_integer = |key: &str, fallback: f64| match opts.get(key) {
+            Value::Undefined => fallback,
+            Value::Num(n) => *n,
+            _ => f64::NAN,
+        };
+        let coerced = |key: &str, fallback: f64| match opts.get(key) {
+            Value::Undefined => fallback,
+            v => v.num_or_default(fallback),
+        };
         Self {
-            k: opts.get("k").finite_or(0.0),
+            k: strict_integer("k", 0.0),
             encounter: opts
                 .get("encounter")
                 .as_str()
@@ -67,22 +84,10 @@ impl ShortlistOpts {
             vampire: opts.get("vampire").truthy(),
             mode,
             objective,
-            trials: match opts.get("trials") {
-                Value::Undefined => MIN_STOCHASTIC_TRIALS as f64,
-                v => v.num_or_default(MIN_STOCHASTIC_TRIALS as f64),
-            },
-            seed: match opts.get("seed") {
-                Value::Undefined => 0.0,
-                v => v.num_or_default(0.0),
-            },
-            max_seconds: match opts.get("maxSeconds") {
-                Value::Undefined => 900.0,
-                v => v.num_or_default(900.0),
-            },
-            max_blows: match opts.get("maxBlows") {
-                Value::Undefined => 6000.0,
-                v => v.num_or_default(6000.0),
-            },
+            trials: strict_integer("trials", MIN_STOCHASTIC_TRIALS as f64),
+            seed: coerced("seed", 0.0),
+            max_seconds: coerced("maxSeconds", 900.0),
+            max_blows: coerced("maxBlows", 6000.0),
             health: match opts.get("health") {
                 Value::Undefined => Null,
                 v => v.clone(),
