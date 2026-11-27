@@ -91,6 +91,7 @@ import { genFightFamilies } from './rust-fight-vectors.mjs';
 import { genPlanningFamilies } from './rust-planning-vectors.mjs';
 import { genFirmamentFamilies } from './rust-firmament-vectors.mjs';
 import { genPlannerFamilies } from './rust-planner-vectors.mjs';
+import { useSpellbook } from './rust-synth-book.mjs';
 import { genForgeFamilies } from './rust-forge-vectors.mjs';
 import { genForgeGearFamilies } from './rust-forge-gear-vectors.mjs';
 
@@ -2893,7 +2894,7 @@ function genSaveFamily() {
       maxMagicka: R.pick([0, 100, undefined, null, NaN]),
       maxSpellPoints: R.pick([0, 100, undefined, null]),
       ...(R.chance(0.4) ? { maxMagickaBase: R.pick([100, 0, undefined, NaN, '150']) } : {}),
-      spells: R.chance(0.2) ? undefined : Array.from({ length: R.int(0, 3) }, () => (R.chance(0.3) ? R.int(0, 40) : { name: 'Fireball', effects: [] })),
+      spells: R.chance(0.2) ? undefined : Array.from({ length: R.int(0, 3) }, () => (R.chance(0.3) ? R.int(0, 40) : { name: 'Embergem', effects: [] })),
       readiedSpellIndex: R.pick([null, undefined, 0, 4, '2']),
       stats: Object.fromEntries(STAT_NAMES.map((s) => [s, R.chance(0.9) ? R.pick(NUM_POOL) : R.pick([undefined, null, '60'])])),
       skills: Array.from({ length: R.chance(0.8) ? 35 : R.int(0, 40) }, () => (
@@ -3398,6 +3399,8 @@ async function runPool(names, size) {
   if (bad.length) throw new Error(`rust-vectors: group(s) failed: ${bad.map((r) => `${r.name} exit ${r.status}`).join(', ')}`);
 }
 
+// Before any family runs: the implicit `standardSpells()` must read the same book the `book` rows carry.
+useSpellbook();
 const names = only.length ? only : GROUPS.map(([name]) => name);
 if (jobs <= 1 || names.length <= 1) await runGroups(names);
 else await runPool(names, jobs);

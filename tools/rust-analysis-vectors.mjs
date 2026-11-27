@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as M from '../src/model.js';
-import { arena2Dir, configPath } from '../src/save.js';
-import { readSpellsStd, spellsByIndexMap } from '../src/spells.js';
+import { spellsByIndexMap } from '../src/spells.js';
+import { readSpellBook } from './rust-synth-book.mjs';
 import { theoryCharacter } from '../src/theory.js';
 import { armourPiece, equipArmour, standInTarget } from '../src/target.js';
 import { allowanceSpec } from '../src/allowance.js';
@@ -19,10 +19,7 @@ function around(x) {
 }
 
 export function genAnalysisFamilies(Out, makeLcg) {
-  const dir = arena2Dir();
-  if (!dir) throw new Error(`rust-analysis-vectors: no ARENA2 in ${configPath()}; SPELLS.STD is required`);
-  const stock = readSpellsStd(readFileSync(resolve(dir, 'SPELLS.STD')));
-  if (!stock.length) throw new Error('rust-analysis-vectors: empty SPELLS.STD');
+  const { records: stock } = readSpellBook('rust-analysis-vectors');
   const effect = (type, mag) => ({ type, subType: 0, magnitudeBaseLow: mag, magnitudeBaseHigh: mag + 4,
     magnitudeLevelBase: 0, magnitudeLevelHigh: 0, magnitudePerLevel: 1, durationBase: 3, durationMod: 0, durationPerLevel: 1 });
   const records = [...stock, ...[[effect(1, 6)], [effect(4, 12)], [effect(1, 3), effect(4, 30)]].map((effects, k) => ({

@@ -14,6 +14,9 @@ import path from 'node:path';
 
 import { linkedStep, spellFile, vectorInputsHash, vectorPlan } from '../tools/vector-cache.mjs';
 
+// These cases pin the real tier's file resolution, over synthetic temp roots.
+process.env.DFO_REAL_SPELLS = '1';
+
 /** A minimal generator-input tree: the directories the key walks, plus a launcher config naming ARENA2. A relative
  *  `arena2` is written inside the root (the generators resolve a relative arena2Path from the repository root). */
 function fixture({ vendor = 'vendor-a', mutate = 'mutate-a', src = 'src-a', spell = 'spell-a', arena2 = 'ARENA2' } = {}) {

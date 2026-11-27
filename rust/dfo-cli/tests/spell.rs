@@ -77,13 +77,13 @@ fn spell_record(
 }
 
 /// The synthetic book: one instant bolt, one DoT, a debug-name record the list still shows (the `priced` filter is
-/// not this branch's), a non-damage Shield, and a range-scaled spell.
+/// not this branch's), a non-damage Warder, and a range-scaled spell.
 fn spells_std() -> Vec<u8> {
     [
         spell_record(1, "Bolt", 4, 0, &[(4, 0, 0, 0, 1, 10, 20, 0, 0, 1)]),
         spell_record(2, "Burn", 4, 0, &[(1, 0, 2, 1, 1, 4, 8, 0, 0, 1)]),
         spell_record(3, "Lvl 1 Probe", 4, 0, &[(4, 0, 0, 0, 1, 1, 3, 0, 0, 1)]),
-        spell_record(4, "Shield", 4, 0, &[(35, -1, 0, 5, 1, 0, 0, 0, 0, 1)]),
+        spell_record(4, "Warder", 4, 0, &[(35, -1, 0, 5, 1, 0, 0, 0, 0, 1)]),
         spell_record(5, "Far Bolt", 0, 2, &[(4, 0, 0, 0, 1, 20, 40, 1, 1, 2)]),
     ]
     .concat()

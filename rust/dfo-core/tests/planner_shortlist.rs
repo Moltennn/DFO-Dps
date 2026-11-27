@@ -10,6 +10,9 @@
 //!
 //! The numbers are not oracle-checked in this file and the comments say so.
 
+mod common;
+
+use common::planning::fixture_book as stock_book;
 use dfo_core::loadout_shortlist::{shortlist_loadouts_with, ShortlistOpts};
 use dfo_core::maxprofile::Profiles;
 use dfo_core::real_build::{real_build_stages, StageOpts};
@@ -22,33 +25,6 @@ fn obj<const N: usize>(pairs: [(&str, Value); N]) -> Value {
         out.set(key, value);
     }
     out
-}
-
-/// The stock spellbook, read from the launcher's `SPELLS.STD` (the samplers price spells; no book is a hard panic).
-fn stock_book() -> Spellbook {
-    let home = std::env::var_os("HOME")
-        .map_or_else(|| std::path::PathBuf::from(""), std::path::PathBuf::from);
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| home.join(".config"));
-    let user_data = std::env::var_os("DAGGER_USER_DATA").map_or_else(
-        || base.join("Daggerfall JavaScript"),
-        std::path::PathBuf::from,
-    );
-    let text = std::fs::read_to_string(user_data.join("config.json"))
-        .expect("the launcher config is required: SPELLS.STD prices the sampled shortlist");
-    let at = text
-        .find("\"arena2Path\"")
-        .expect("the launcher config names no arena2Path")
-        + "\"arena2Path\"".len();
-    let rest = &text[at..];
-    let open = rest.find('"').expect("arena2Path is a JSON string");
-    let close = rest[open + 1..]
-        .find('"')
-        .expect("arena2Path is a JSON string");
-    let dir = std::path::PathBuf::from(&rest[open + 1..open + 1 + close]);
-    let bytes = std::fs::read(dir.join("SPELLS.STD")).expect("SPELLS.STD is readable");
-    dfo_core::spells::spells_by_index_map(dfo_core::spells::read_spells_std(&bytes))
 }
 
 /// A one-row shortlist at a named build, the shape every case below uses.

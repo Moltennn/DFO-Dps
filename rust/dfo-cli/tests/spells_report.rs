@@ -66,12 +66,12 @@ fn spell_record(
     b
 }
 
-/// Four records: an instant bolt, a zero-damage Shield, a debug name and a second bolt the book does not carry (as a
+/// Four records: an instant bolt, a zero-damage Warder, a debug name and a second bolt the book does not carry (as a
 /// save's custom record would not).
 fn book() -> dfo_core::spells::Spellbook {
     let records = [
         spell_record(1, "Bolt", 4, 0, &[(4, 0, 0, 0, 1, 10, 20, 0, 0, 1)]),
-        spell_record(2, "Shield", 4, 0, &[(35, -1, 0, 5, 1, 0, 0, 0, 0, 1)]),
+        spell_record(2, "Warder", 4, 0, &[(35, -1, 0, 5, 1, 0, 0, 0, 0, 1)]),
         spell_record(3, "Lvl 1 Probe", 4, 0, &[(4, 0, 0, 0, 1, 1, 3, 0, 0, 1)]),
         spell_record(4, "Bolt Prime", 4, 0, &[(4, 0, 0, 0, 1, 30, 60, 0, 0, 1)]),
     ]
@@ -165,7 +165,7 @@ fn pool_puts_the_book_first_and_appends_only_custom_records() {
         names,
         [
             "Bolt",
-            "Shield",
+            "Warder",
             "Lvl 1 Probe",
             "Bolt Prime",
             "Custom Zap",
@@ -188,7 +188,7 @@ fn ranked_filters_and_sorts_by_window_dps() {
         .iter()
         .map(|e| e.spell.get("name").to_js_string())
         .collect();
-    // The Shield is the zero-damage record and `Lvl 1 Probe` the debug name; both are filtered.
+    // The Warder is the zero-damage record and `Lvl 1 Probe` the debug name; both are filtered.
     assert_eq!(names, ["Bolt Prime", "Custom Zap", "Bolt"]);
     assert!(list
         .windows(2)
