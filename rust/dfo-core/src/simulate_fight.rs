@@ -274,35 +274,37 @@ pub fn health_segment(bounds: &[f64], share: f64) -> usize {
         .unwrap_or(bounds.len() - 2)
 }
 
-/// The horizon a fight may run to, in seconds. The shipped default is 3,600 and the longest vector is 3e6 (a stress
-/// case with a 1e16 pool); a hand-made scenario's `maxSeconds: 1e300` would otherwise spin the loop (and the rounds after
-/// it) forever, because the JS loop exits only on health, the blow budget or the horizon. 1e7 is about 116 days of fight,
-/// far past the 3e6 vector and any legitimate fight, and bounds the magic rounds to 2,000,000.
-pub const MAX_FIGHT_SECONDS: f64 = 1e7;
-
-/// The blow budget a fight may run to. The shipped default is 1,000,000 and a real fight lands a few thousand; the JS
-/// `while (blows < maxBlows)` would otherwise run a hand-made `maxBlows: 1e18` to the horizon. 100x the default.
+/// The most blows one fight will land. A real fight lands a few thousand and the shipped default budget is 1,000,000;
+/// this is WORK, not a limit on the request: `--max-blows` may be any safe integer and a fight that ends early never
+/// reaches it (so `--max-seconds 100000000` with a kill prices exactly as the JS). A card that is still swinging after
+/// 100 million blows would take the JS minutes to hours, so the port raises the JS-shaped `RangeError` instead.
 pub const MAX_FIGHT_BLOWS: f64 = 100_000_000.0;
 
+/// The most magic rounds one fight will bill (5 s each, so 5e6 s of billed damage: about 58 days). Rounds cost work only
+/// while a continuous effect can still bill; a round with nothing to tick is skipped, so a long horizon alone never
+/// reaches this. A hand-made effect with `roundsRemaining: 1e300` is what it stops.
+pub const MAX_FIGHT_ROUNDS: f64 = 1_000_000.0;
+
+/// The horizon, exactly as the scenario asked: `num(args.maxSeconds, 3600)`. The fight stops on health, on the blow
+/// budget or here; the work is bounded by the two caps above, not by this value, so no legitimate limit is refused.
 pub(crate) fn horizon(args: &Value) -> f64 {
-    let seconds = num(args.get("maxSeconds"), 3600.0);
-    if seconds > MAX_FIGHT_SECONDS {
-        std::panic::panic_any(crate::model_blow::JsRangeError(
-            "RangeError: the fight horizon is past the port's cap".to_owned(),
-        ));
-    }
-    seconds
+    num(args.get("maxSeconds"), 3600.0)
 }
 
-/// The blow budget, capped the same way (`simulateFight`'s `Math.max(1, Math.floor(num(maxBlows, 1e6)))`).
+/// The blow budget (`simulateFight`'s `Math.max(1, Math.floor(num(maxBlows, 1e6)))`). The work is bounded by
+/// [`MAX_FIGHT_BLOWS`] as blows land.
 pub(crate) fn blow_budget(args: &Value) -> f64 {
-    let blows = js_max(1.0, num(args.get("maxBlows"), 1_000_000.0).floor());
-    if blows > MAX_FIGHT_BLOWS {
-        std::panic::panic_any(crate::model_blow::JsRangeError(
-            "RangeError: the blow budget is past the port's cap".to_owned(),
-        ));
-    }
-    blows
+    js_max(1.0, num(args.get("maxBlows"), 1_000_000.0).floor())
+}
+
+/// Raise the work cap of a fight that has run past it. `pub(crate)` consumers are the two fight engines; it is public
+/// only so the work-cap test can prove the message a GUI sees, without running 100 million real blows.
+#[doc(hidden)]
+pub fn past_work_cap(what: &str, cap: f64) -> ! {
+    std::panic::panic_any(crate::model_blow::JsRangeError(format!(
+        "RangeError: the fight ran past the port's {what} cap of {}",
+        Num(cap).to_js_string()
+    )))
 }
 
 pub fn summarize(values: &[Value], opts: &Value) -> Value {
@@ -381,11 +383,11 @@ fn safe_seed(v: &Value) -> Option<f64> {
     }
 }
 
-/// The largest `trials`/`seeds` count the port will generate. A real shortlist uses 1,000-10,000 (`MIN_STOCHASTIC_TRIALS`
-/// is 1,000), and a capture-run is a handful; the JS `Array.from({ length: n }, ...)` would allocate until V8 throws or the
-/// process dies, so this guard raises the JS `RangeError` instead. It sits far above any legitimate count (100x the
-/// biggest sampled plan the CLI ships) and far below an allocation that would hurt.
-pub const MAX_FIGHT_SEEDS: f64 = 100_000.0;
+/// The largest `trials`/`seeds` count the port will generate. It is the CLI's own `--trials` ceiling
+/// (`dfo-cli`'s `MAX_STOCHASTIC_TRIALS`: 1,000,000), so the core never refuses a count the CLI accepts; a GUI may pass
+/// the same. The JS `Array.from({ length: n }, ...)` would allocate until V8 throws or the process dies, so anything
+/// past this raises the JS `RangeError`, and 1,000,000 seeds is far below an allocation that hurts.
+pub const MAX_FIGHT_SEEDS: f64 = 1_000_000.0;
 
 pub fn paired_fight_seeds(count: &Value, seed: &Value) -> Vec<Value> {
     let n = js_max(0.0, num(count, 0.0).floor());
@@ -421,9 +423,9 @@ pub struct TierCache {
 }
 
 /// The most tier distributions one fight keeps. Every blow of one (segment, hand, band) shares an entry, so a legal fight
-/// holds a few dozen; a long durability fight adds one per `(epoch, item, band)` triple, and a hand-made scenario with a
-/// huge blow budget could otherwise grow the map for the whole run. Past this the entries of EARLIER epochs are dropped:
-/// a tier is a pure function of its key, so a dropped entry is recomputed to the same distribution (no result changes).
+/// holds a few dozen; a long durability fight adds one per `(epoch, item, band)` triple. Past this the entries of EARLIER
+/// epochs are dropped inside one fight: a tier is a pure function of its key, so a dropped entry is recomputed to the
+/// same distribution (no result changes). A batch's shared cache is bounded separately, at each fight's start.
 const MAX_TIER_CACHE: usize = 4096;
 
 pub fn create_tier_cache() -> TierCache {
@@ -431,8 +433,16 @@ pub fn create_tier_cache() -> TierCache {
 }
 
 impl TierCache {
+    /// Forget one fight's wear entries. `simulate_fights` shares one cache across every seed, and each fight numbers its
+    /// own items and restarts `epoch` at 0, so the wear keys of the previous fight can never be asked for again (a
+    /// durability clone gets a fresh id) and would only grow the map with the batch. Fixed keys are pure functions of
+    /// the shared scenario, so they stay and the batch keeps its reuse. Called at every fight's start.
+    fn begin_fight(&mut self) {
+        self.tiers.retain(|k, _| !matches!(k, TierKey::Wearing(..)));
+    }
+
     /// Make room for a new tier of `epoch`: past the cap, forget the wear keys of earlier epochs (they cannot be asked
-    /// for again - `epoch` only grows - so this is a pure memory bound).
+    /// for again - `epoch` only grows within one fight - so this is a pure memory bound).
     fn room(&mut self, epoch: u64) {
         if self.tiers.len() < MAX_TIER_CACHE {
             return;
@@ -448,6 +458,12 @@ impl TierCache {
         // mutation: equivalent - item ids are opaque; a stride of two is also injective among the live clones.
         self.next_item += 1;
         Some(self.next_item)
+    }
+
+    /// How many tier distributions the cache holds. Public for the batch-bound test only: the map is private otherwise.
+    #[doc(hidden)]
+    pub fn cached_tiers(&self) -> usize {
+        self.tiers.len()
     }
 }
 
@@ -690,6 +706,7 @@ struct FightState {
     ttk: Option<f64>,
     source: Option<&'static str>,
     last_hand: Hand,
+    rounds: f64,
     used: Vec<Segment>,
     trace: Option<Vec<Value>>,
     cws_trace: Option<Vec<Value>>,
@@ -712,6 +729,7 @@ impl FightState {
             ttk: None,
             source: None,
             last_hand: Hand::Main,
+            rounds: 0.0,
             used: vec![],
             trace: trace.then(Vec::new),
             cws_trace: trace.then(Vec::new),
@@ -736,6 +754,13 @@ impl FightState {
     }
 
     fn tick_round(&mut self, at: f64, target: &mut Value, bounds: &[f64], rolls: &mut impl Rolls) {
+        // A round is work even with nothing to bill: the jump from the clock to the horizon steps 5 s at a time. Bounded
+        // here, so a hand-made `maxSeconds: 1e300` with no effect to tick stops on the first round past the cap and not
+        // after 2e299 iterations.
+        self.rounds += 1.0;
+        if self.rounds > MAX_FIGHT_ROUNDS {
+            past_work_cap("magic round", MAX_FIGHT_ROUNDS);
+        }
         cws::tick_active_effects(
             target,
             Some(&mut |n, info| {
@@ -829,6 +854,12 @@ pub fn simulate_fight_cached(
         return Err("simulateFight: bow and gun builds are not supported on either hand".into());
     }
     let durability = yes(args.get("durability"));
+    // A shared batch cache also holds the PREVIOUS fight's wear entries: each fight numbers its own items and restarts
+    // `epoch` at 0, so those keys can never be asked for again. Drop them before this fight (the fixed keys, pure
+    // functions of the shared scenario, stay), so the batch's map is bounded the way one fight's is.
+    if durability {
+        cache.begin_fight();
+    }
     let mut ch = ch.clone();
     let mut dur = durability.then(|| Durability::prepare(&mut ch, &mut args, cache));
     let Some(mut schedule) = create_attack_schedule(&ch, &args, book)? else {
@@ -1040,6 +1071,11 @@ pub fn simulate_fight_cached(
         let mut echo_damage = Num(outcome.echo_damage).finite_or(0.0);
         f.t = t;
         f.blows += 1.0;
+        // WORK, not the request: a fight that ends first (a kill, a break, the horizon) never reaches this, so every
+        // JS-priced card is unchanged. A card still swinging after 100 million blows is hours of JS.
+        if f.blows > MAX_FIGHT_BLOWS {
+            past_work_cap("blow", MAX_FIGHT_BLOWS);
+        }
         let mut wear = 0.0;
         let mut broke_now = false;
         if let (Some(dur), Some(i)) = (&mut dur, item_index) {
@@ -1362,7 +1398,25 @@ pub fn simulate_fight_cached(
         }
         next = schedule.next().unwrap();
     }
-    while f.hp > 0.0 && next_round <= max_seconds {
+    // The drain to the horizon. A round only changes something while a continuous effect can still bill; once none can,
+    // every remaining round is a no-op except that the FIRST one drops the expired dot entries the JS drops. So the drain
+    // ticks while rounds can bill, then ticks at most once more, and never steps 20 million rounds for a card that reports
+    // none (a legal `--max-seconds 100000000` on a fight that did not kill).
+    let can_bill = |target: &Value| {
+        target.get("activeEffects").items().iter().any(|a| {
+            a.get("kind").is_str("continuousDamage") && a.get("roundsRemaining").to_number() > 0.0
+        })
+    };
+    loop {
+        if !(f.hp > 0.0 && next_round <= max_seconds) {
+            break;
+        }
+        if !can_bill(&target) {
+            if has_dot(&target) {
+                f.tick_round(next_round, &mut target, &bounds_now, &mut cws_rolls);
+            }
+            break;
+        }
         f.tick_round(next_round, &mut target, &bounds_now, &mut cws_rolls);
         next_round += MAGIC_ROUND_SECONDS;
     }

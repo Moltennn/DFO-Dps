@@ -201,7 +201,8 @@ pub fn shortlist_loadouts_with(
         )));
     }
     // A sampled shortlist prices every candidate on this many fights; the JS `Array.from` would allocate until V8 throws.
-    // The cap is 100x the shipped plan's 1,000 and far below an allocation that hurts (`simulate_fight::MAX_FIGHT_SEEDS`).
+    // The cap is the CLI's own `--trials` ceiling (`simulate_fight::MAX_FIGHT_SEEDS`), so the core never refuses a count
+    // the CLI accepts, and it sits far below an allocation that hurts.
     if opts.trials > crate::simulate_fight::MAX_FIGHT_SEEDS {
         return Err(err(format!(
             "--trials: at most {} trials are priced",

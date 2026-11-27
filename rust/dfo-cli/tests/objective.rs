@@ -353,6 +353,47 @@ fn objective_sampled_matches_the_js_cli() {
     same(&sample);
 }
 
+/// The CLI accepts any positive finite `--max-seconds` and any positive safe-integer `--max-blows`
+/// (`sampled_options`), so the port cannot refuse the REQUEST. It bounds the work instead, and a fight that ends first
+/// must price exactly as the JS: here the boss dies in about 0.3 s, so a 100,000,000-second horizon is never reached.
+#[test]
+fn a_horizon_past_the_old_core_cap_prices_the_js_answer() {
+    same(&[
+        "objective",
+        "--theory",
+        "--objective",
+        "stochastic-ttk",
+        "--target",
+        "soft",
+        "--health",
+        "500",
+        "--max-seconds",
+        "100000000",
+        "--max-blows",
+        "12",
+        "--seed",
+        "7",
+    ]);
+    // The blow budget is the same kind of request (`--max-blows` takes any positive safe integer): the kill happens in
+    // a handful of blows, so the huge budget is never reached.
+    same(&[
+        "objective",
+        "--theory",
+        "--objective",
+        "stochastic-ttk",
+        "--target",
+        "soft",
+        "--health",
+        "500",
+        "--max-seconds",
+        "10",
+        "--max-blows",
+        "9007199254740991",
+        "--seed",
+        "7",
+    ]);
+}
+
 #[test]
 fn the_shipped_build_reaches_the_objective_scenarios() {
     // `src/cli.js:611-613` builds the scenario with `scenarioOf`, so `--game-build` must reach every objective that

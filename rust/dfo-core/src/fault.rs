@@ -13,13 +13,20 @@
 //!   `Value`, a `Carry` remainder, a cache entry). After a [`CoreFault`], drop the affected build, fight, [`crate::model_blow::Carry`] and
 //!   `TierCache`; re-import or rebuild rather than reuse. `guard` cannot roll that back.
 //! - **Never copy the CLI's hook.** `dfo_cli` installs a process-wide panic hook that prints one line and calls
-//!   `std::process::exit`. A GUI must not: it would exit the GUI process. `guard` needs no hook; it is additive and
-//!   installs none.
+//!   `std::process::exit`. A GUI must not: it would exit the GUI process.
+//!
+//! How the quieting works: the first [`guard`] installs ONE process-wide hook that delegates to the hook it found in
+//! place, and skips that call only while the *current thread* is inside a guard. So a host's hook is never taken away
+//! or put back, another thread's panics are still reported while this one guards, and `guard` may be called from a
+//! `Drop` during unwinding. Install your own hook before the first `guard` if you want it under the chain; a hook
+//! installed later replaces the chain (a panic is then reported normally, and `guard` still catches it).
 //!
 //! This is the one place the crate catches a panic, and it is the caller's choice to use it: the CLI and the vector tests
 //! still call the plain functions.
 
 use crate::model_blow::JsRangeError;
+use std::cell::Cell;
+use std::sync::Once;
 
 /// What went wrong at a boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,15 +52,46 @@ impl CoreFault {
     }
 }
 
-/// Run `f`, answering its value or the fault a panic stands for. See the module docs for the three rules.
+thread_local! {
+    /// How many `guard` calls this thread is inside. A panic is quiet only where this is non-zero, so the flag is per
+    /// thread and needs no lock.
+    static DEPTH: Cell<u32> = const { Cell::new(0) };
+}
+
+static HOOK: Once = Once::new();
+
+/// Put a hook in place that delegates to the hook it found, quieting only this thread's guarded panics. It never
+/// restores anything, so a later thread's guard sees a chain, not a swap.
+fn chain_hook() {
+    let host = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if DEPTH.with(Cell::get) == 0 {
+            host(info);
+        }
+    }));
+}
+
+/// Put a fresh hook layer in place now. `guard` does this once per process; a test calls it to put a recorder under the
+/// chain, and that is the only reason it is public.
+#[doc(hidden)]
+pub fn chain_hook_for_test() {
+    chain_hook();
+}
+
+/// Run `f`, answering its value or the fault a panic stands for. See the module docs for the rules.
 pub fn guard<T>(f: impl FnOnce() -> T) -> Result<T, CoreFault> {
-    let prev = std::panic::take_hook();
-    // The default hook would print a backtrace to a GUI's stderr; keep the process quiet for the length of the call and
-    // put the caller's hook back afterwards. This is a hook swap, never the CLI's exiting hook.
-    std::panic::set_hook(Box::new(|_| {}));
-    let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
-    std::panic::set_hook(prev);
-    match out {
+    HOOK.call_once(chain_hook);
+    /// Restores the depth on the way out, including when `f` panics (its drop runs during the unwind `catch_unwind`
+    /// catches). `Drop` can be called during an unwind, and it must not panic: it cannot.
+    struct Depth;
+    impl Drop for Depth {
+        fn drop(&mut self) {
+            DEPTH.with(|d| d.set(d.get() - 1));
+        }
+    }
+    DEPTH.with(|d| d.set(d.get() + 1));
+    let _depth = Depth;
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
         Ok(value) => Ok(value),
         Err(payload) => Err(fault_of(payload)),
     }

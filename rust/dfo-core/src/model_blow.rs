@@ -1163,21 +1163,33 @@ pub fn js_range_error_for_test(message: &str) -> ! {
 }
 
 /// The enumeration `damage_model` is about to build, or the JS `RangeError` it would raise (`model.js:1024,1076`).
-fn check_enumeration(adds: f64, rolls: f64) {
-    // A bound the JS's own loop cannot finish: `for (r = lo; r <= hi; r++)` with an infinite `hi` never ends (V8 OOMs),
-    // and a NaN bound never enters it (the JS answers an empty list, which this port reproduces below). Only the
-    // infinite/NaN cases are refused here so a hand-made weapon's `min`/`max` cannot hang the process.
-    if adds.is_nan() || rolls.is_nan() {
-        return;
-    }
-    if adds.is_infinite() || rolls.is_infinite() {
-        js_range_error("RangeError: Maximum call stack size exceeded");
-    }
-    // `Array.from({ length: gear.hi - gear.lo + 1 })`: an array length past 2^32-1 is the JS's own `RangeError`.
+fn check_enumeration(gear: Option<(f64, f64)>, roll_lo: f64, roll_hi: f64) {
+    // The adds `Array.from({ length: hi - lo + 1 })` builds. An infinite end never leaves the loop below (the JS would
+    // OOM there; past 2^32-1 it is the JS's own length `RangeError`), so both are refused. A NaN end answers an empty
+    // list on both sides. This is checked FIRST and on its own, whatever the roll range is: the reported case was a
+    // weapon whose `min` is not a number (so the roll range is NaN) with a ~1e12 gear add, which used to return here and
+    // then loop the adds forever.
+    let adds = match gear {
+        Some((lo, hi)) if lo.is_nan() || hi.is_nan() => 1.0,
+        Some((lo, hi)) if lo.is_infinite() || hi.is_infinite() => {
+            js_range_error("RangeError: Invalid array length")
+        }
+        Some((lo, hi)) => hi - lo + 1.0,
+        None => 1.0,
+    };
     if adds > MAX_ADD_ARRAY_LENGTH {
         js_range_error("RangeError: Invalid array length");
     }
-    if adds * js_max(rolls, 1.0) > MAX_ENUMERATED_BLOWS {
+    // A NaN roll end never enters the roll loop (an empty list on both sides), so it adds no blows of work; an infinite
+    // one never leaves it, and the product below catches that as the spread's stack cap.
+    let rolls = if roll_lo.is_nan() || roll_hi.is_nan() {
+        1.0
+    } else if roll_lo.is_infinite() || roll_hi.is_infinite() {
+        f64::INFINITY
+    } else {
+        roll_hi - roll_lo + 1.0
+    };
+    if js_max(adds, 1.0) * js_max(rolls, 1.0) > MAX_ENUMERATED_BLOWS {
         js_range_error("RangeError: Maximum call stack size exceeded");
     }
 }
@@ -1257,12 +1269,11 @@ pub fn damage_model(
     } else {
         None
     };
-    // The JS's own limits, before anything is allocated: `Array.from`'s length and the spread's stack. A legal card is
-    // ~1.6k blows, so only a hypothetical `--gear-lb` reaches this. The check runs even with no gear: a hand-made weapon
-    // whose `min`/`max` are infinite would otherwise spin the roll loop below forever (the JS would OOM), and a NaN bound
-    // answers an empty list on both sides, which `check_enumeration` lets through.
-    let adds_count = gear.map_or(1.0, |(lo, hi)| hi - lo + 1.0);
-    check_enumeration(adds_count, hi - r0 + 1.0);
+    // The JS's own limits, before anything is allocated: `Array.from({ length: gear.hi - gear.lo + 1 })` and the
+    // spread's stack. A legal card is ~1.6k blows, so only a hypothetical `--gear-lb` reaches this. The check runs even
+    // with no gear: the adds are built first and on their own, so a hand-made weapon whose damage bounds are not numbers
+    // still cannot allocate a trillion entries.
+    check_enumeration(gear, r0, hi);
     let adds: Vec<f64> = match gear {
         Some((lo, hi)) => {
             let mut out = Vec::new();
@@ -1848,4 +1859,28 @@ pub fn blow_distribution(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod enumeration_guards {
+    use super::*;
+
+    /// The private check alone, so no enumeration is ever built: the add count is decided before the roll count, which
+    /// is what stops a NaN roll range from excusing a trillion adds (the review's case).
+    #[test]
+    fn a_nan_roll_count_still_refuses_a_trillion_adds() {
+        assert!(
+            std::panic::catch_unwind(|| check_enumeration(Some((0.0, 1e12)), f64::NAN, 100.0))
+                .is_err(),
+            "the add count is checked first"
+        );
+        assert!(
+            std::panic::catch_unwind(|| check_enumeration(Some((0.0, f64::INFINITY)), 1.0, 1.0))
+                .is_err(),
+            "an infinite add count is the JS's own length RangeError"
+        );
+        // The legal edges still pass: one add and one roll, and a NaN roll with no gear.
+        check_enumeration(None, f64::NAN, 100.0);
+        check_enumeration(Some((0.0, 0.0)), 1.0, 2.0);
+    }
 }

@@ -610,21 +610,39 @@ pub fn armor_rating(values: &[f64; 7]) -> [f64; 7] {
 }
 
 /// The loot-rarity armour affix's points by body part (`systems/loot/lootRarity.js:2386`), over the pieces the vendor's
-/// fold actually counts: `wornItems` keeps the first claim on an `equipSlot` (its `fillEquipTable`) and
-/// [`crate::loot::counted_pieces`] keeps the first copy of one Legendary record, so a stale duplicate slot or a second
-/// Foxglove adds no line. `armor_values` already skips a claimed slot; this is the same rule on the affix side.
+/// fold actually counts, in the vendor's own order (`wornItems`, `lootRarity.js:2356-2362` over `fillEquipTable`,
+/// `equip.js:360-367`):
+///
+/// 1. a second piece claiming an `equipSlot` loses its mark (`fillEquipTable`: the first claim wins);
+/// 2. the survivors are the equip table's, so they are read in SLOT order;
+/// 3. a piece with no affix list is filtered out;
+/// 4. and only then does [`crate::loot::counted_pieces`] keep the first copy of a Legendary record.
+///
+/// The order matters: counting before the slot rule keeps a different copy, and counting before the sort picks the wrong
+/// copy of a Legendary worn on two slots.
 pub fn affix_armor_points(worn: &[Value]) -> [f64; 7] {
     let mut out = [0.0_f64; 7];
     let mut claimed: Vec<f64> = Vec::new();
-    for item in crate::loot::counted_pieces(worn) {
-        let slot = item.get("equipSlot");
-        if !slot.is_nullish() {
-            let at = slot.to_number();
-            if claimed.contains(&at) {
-                continue;
-            }
-            claimed.push(at);
+    let mut kept: Vec<(f64, &Value)> = Vec::new();
+    for item in worn {
+        // The JS starts from the equip table, so a piece with no usable slot is not in it at all.
+        let Some(at) = slot_index(item.get("equipSlot")) else {
+            continue;
+        };
+        if claimed.contains(&at) {
+            continue;
         }
+        claimed.push(at);
+        // `wornItems`' own filter: a piece with no affix list never reaches the fold.
+        if item.get("affixes").items().is_empty() {
+            continue;
+        }
+        kept.push((at, item));
+    }
+    // `fillEquipTable` fills an index array, so the survivors come back in slot order; a tie keeps the list's order.
+    kept.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    let ordered: Vec<Value> = kept.into_iter().map(|(_, item)| item.clone()).collect();
+    for item in crate::loot::counted_pieces(&ordered) {
         for a in crate::gear_lines::valid_item_lines(&item) {
             if !a.get("id").is_str("armor") {
                 continue;
@@ -636,6 +654,16 @@ pub fn affix_armor_points(worn: &[Value]) -> [f64; 7] {
         }
     }
     out
+}
+
+/// The equip table's index for a piece's `equipSlot`, or `None` when the mark cannot be one (absent, not a number, not a
+/// whole number, or outside the 27-slot table the vendor fills).
+fn slot_index(slot: &Value) -> Option<f64> {
+    if slot.is_nullish() {
+        return None;
+    }
+    let at = slot.to_number();
+    (at.is_finite() && at.trunc() == at && (0.0..27.0).contains(&at)).then_some(at)
 }
 
 /// The `armorParts` fold (`systems/entityMods.js:187-204`): the gear affixes plus the Firmament's armour star, summed

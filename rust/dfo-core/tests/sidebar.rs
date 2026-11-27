@@ -248,6 +248,10 @@ fn the_public_composition_matches_the_vendored_numbers() {
                                 Arr(vec![obj([("id", s("armor")), ("value", Num(affix))])]),
                             );
                         }
+                        if f[5] != "-" {
+                            it.set("rarity", s("legendary"));
+                            it.set("legendary", s(f[5]));
+                        }
                         it
                     })
                     .collect();

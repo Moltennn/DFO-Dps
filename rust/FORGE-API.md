@@ -320,7 +320,9 @@ paperdoll's number is `(100 - value) / 5 + Decreased - Increased + fold[part]`, 
 passed **once**. The enchantment-and-fold term is `armor_display_mod` = `entityArmorDisplayMod`
 (`systems/entityMods.js:200-204`); the `(100 - value) / 5` term is a **C# cite** in a vendored comment
 (`systems/equip.js:422-423`), so it is DOCUMENTED, not executable here - `armor_display` composes it as documentation and
-the differential proves only `armor_display_mod`. There is no single "armour" total, because the game has none.
+the differential proves only `armor_display_mod`. There is no single "armour" total, because the game has none. The
+affix fold counts the pieces in the vendor's own order - the equip table's slot rule first, then slot order, then the
+affix filter, then one copy per Legendary record (`lootRarity.js:2356-2362` over `equip.js:360-367`; see (9)).
 
 **What this is not, and what is unknown.** No movement, regeneration, leech or ordered route: those need units and
 triggers and their own verification, and they are deliberately absent rather than stubbed. Renown's own HP/SP per Renown
@@ -446,25 +448,44 @@ match guard(|| analyze(&character, &scenario, &book)) {
 }
 ```
 
-It uses `catch_unwind`, copies the hook for the call, and puts the previous hook back, so a host's own panic hook keeps
-working afterwards. `JsRangeError` payloads arrive as `CoreFault::Range` with their JS message intact.
+It uses `catch_unwind` and installs ONE process-wide hook, once: the hook delegates to whatever hook was in place and
+skips that call only while the **current thread** is inside a `guard` (a thread-local depth). So a host's own panic hook
+is never taken away or put back, another thread's panics are still reported while this thread guards, and `guard` may be
+called from a `Drop` that runs during unwinding. Install your own hook before the first `guard` if you want it under the
+chain; a hook installed later replaces the chain (the panic is then reported normally, and `guard` still catches it). The
+depth is restored on the panic path by an RAII guard, so a caught fault never leaves the thread quiet. `JsRangeError`
+payloads arrive as `CoreFault::Range` with their JS message intact.
 
-**The caps.** Each is checked *before* the loop or allocation it bounds, is far above anything legitimate, and raises
-the JS-shaped `RangeError` (or a typed error) rather than running:
+**The caps.** The CLI accepts any positive finite `--max-seconds` and any positive safe-integer `--max-blows`
+(`dfo-cli`'s `sampled_options`), so the core never refuses the REQUEST: a fight or relay that ends early prices exactly
+as the JS, however large the limit. What is bounded is WORK, and each bound sits far above anything legitimate:
 
 | cap | value | what a hand-made record would otherwise do |
 |---|---|---|
-| `simulate_fight::MAX_FIGHT_SECONDS` | 1e7 s (~116 days) | `maxSeconds: 1e300` spins the loop and the magic rounds forever |
-| `simulate_fight::MAX_FIGHT_BLOWS` | 1e8 | `maxBlows: 1e18` runs to the horizon |
-| `simulate_fight::MAX_FIGHT_SEEDS` | 100,000 | `seeds: 1e12` allocates until the process dies (also `loadout_shortlist`'s `trials`) |
+| `simulate_fight::MAX_FIGHT_BLOWS` | 1e8 blows that LAND | `maxBlows: 1e18` on a pool nothing kills keeps swinging for hours (the request is accepted; the work stops here) |
+| `simulate_fight::MAX_FIGHT_ROUNDS` | 1e6 rounds (5 s each) | a continuous effect with `roundsRemaining: 1e300`, or a horizon whose rounds cannot be stepped |
+| `simulate_fight::MAX_FIGHT_SEEDS` | 1,000,000 (the CLI's own `--trials` ceiling) | `seeds: 1e12` allocates until the process dies (also `loadout_shortlist`'s `trials`) |
 | `analyze::MAX_MATERIAL_ROWS` | 1,000 | `rank_weapons`' `for (m = 0; m < materials; m++)` prices forever |
 | `model_blow::MAX_ECHO_POWERS` | 20 | `after_share` enumerates `2^n` masks |
 | `model_blow::MAX_ENUMERATED_BLOWS` | 124,500 | the `--gear-lb` spread the JS itself throws on |
 | `analyze`'s array growth | 10,000 | a `skillId` of `1e9` would grow an array to a billion slots |
-| `simulate_fight`'s tier cache | 4,096 | a long durability fight grows the map for the whole run |
+| `simulate_fight`'s tier cache | 4,096 entries, one fight's wear keys at a time | a long durability fight, or a shared batch cache, grows the map without bound |
+
+Past a work cap, `simulate_fight::past_work_cap` raises the JS-shaped `RangeError` ("the fight ran past the port's blow
+cap of 100000000"), which `guard` answers as `CoreFault::Range`. The drain to a horizon with no continuous effect left
+to bill is jumped rather than stepped (one round still drops expired effects), so a legal `--max-seconds 100000000` on
+a fight that did not kill costs no rounds at all.
+
+**What moved in this API.** `simulate_fight::MAX_FIGHT_SECONDS` is **gone** (no horizon is refused any more); a GUI that
+referenced it should drop the check. `MAX_FIGHT_BLOWS` now bounds blows that LAND, not the requested budget, and
+`MAX_FIGHT_SEEDS` rose from 100,000 to 1,000,000 (the CLI's `--trials` ceiling), so `loadout_shortlist` accepts what the
+CLI accepts. `MAX_FIGHT_ROUNDS`, `past_work_cap`, `TierCache::cached_tiers` and `fault::chain_hook_for_test` are new;
+the last three are `#[doc(hidden)]` and exist for the tests, not for a GUI.
 
 The last two change nothing observable: a `skillId` that names no index is a no-op (a JS sparse property no reader
-sees), and a dropped tier is recomputed to the same distribution.
+sees), and a dropped tier is recomputed to the same distribution. The batch's per-fight clear only drops wear keys whose
+`(fight, item, epoch)` can never be asked for again (the `Fixed` keys, pure functions of the shared scenario, stay), so a
+batch's numbers are unchanged too.
 
 **A malformed record that the JS itself throws on** is priced by the port where "priced" is well defined, and the
 divergence is limited to that input:
@@ -477,14 +498,24 @@ divergence is limited to that input:
   hand-edited plan.
 - `marginals`/`rank_affixes` treat a fractional or non-numeric `skillId` as "no index" rather than panicking.
 
-**The armour fold counts a piece once.** `sidebar::affix_armor_points` now walks `loot::counted_pieces` and skips a
-claimed `equipSlot` — the vendor's `fillEquipTable`/`countedPieces` rules — so a stale duplicate slot and a second copy
-of one Legendary each add one line, not two. `armor_values` already skipped a claimed slot; this is the same rule on the
-affix side.
+**The armour fold follows the vendor's order.** `sidebar::affix_armor_points` now applies the rules in the order
+`lootRarity.js:2356-2362`'s `wornItems` does over `equip.js:360-367`'s `fillEquipTable`:
 
-`tests/gui_boundaries.rs` and `tests/gui_faults.rs` pin every case above. They are **local invariants**: no vendored JS
-function prices those inputs (the JS throws on most of them), so they pin the guard's shape and the cap's edge, not a
-number the JS produces.
+1. a second piece claiming an `equipSlot` loses its mark (the first claim wins, and an unusable slot is not in the table);
+2. the survivors are the equip table's, so they are read in **slot order** (ties keep the list's order);
+3. a piece with no affix list is filtered out;
+4. and only then does `loot::counted_pieces` keep the **first copy** of one Legendary record.
+
+The order is observable: counting before the slot rule keeps a different piece, and counting before the sort picks the
+wrong copy of a Legendary worn on two slots. `armor_values` already applied the table's slot rule; this is the same
+order on the affix side. `tests/sidebar_oracle.mjs` now carries the review's three layouts (`[plain@18, warden@18,
+warden@26]` -> chest 12 / feet 20; `[warden@26, warden@18]` -> chest 15 / feet 0; a bare warden@18 before warden@26 ->
+chest 0 / feet 20), and `tests/sidebar.rs` replays them against the vendored `fillEquipTable` + `countedPieces`.
+
+`tests/gui_boundaries.rs` and `tests/gui_faults.rs` and `tests/fault_hook.rs` pin every guard above (the hook's thread
+isolation, a `guard` from a `Drop` during unwinding, the work caps' messages, the batch cache's growth, the add-count
+check that a NaN roll cannot excuse). They are **local invariants**: no vendored JS function prices those inputs (the JS
+throws on most of them), so they pin the guard's shape and the cap's edge, not a number the JS produces.
 
 ## How parity is checked
 

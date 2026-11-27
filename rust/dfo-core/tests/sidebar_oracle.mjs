@@ -25,7 +25,7 @@
 //   even   <stored> <h> <level> <endurance>                        => <evenHpOf>
 //   sky    <stored> <h> <level> <end> <hp> <hpPct> <mp> <mpPct>     => <skyHp> <skyMp> <skyEven> <maxHealth>
 //   acc    <intelligence> <bitfield>                               => <careerBase>
-//   armor  <inc> <skyArmor> <count> <A|M|W|X:t:m:slot:affix>...   => <seven display-mod values>
+//   armor  <inc> <skyArmor> <count> <A|M|W|X:t:m:slot:affix:legendary>...   => <seven display-mod values>
 import * as chargenTables from '../../../vendor/upstream/a3eb1605/src/systems/chargen.js';
 import * as renown from '../../../vendor/upstream/a3eb1605/src/systems/renownLayer.js';
 import * as entityMods from '../../../vendor/upstream/a3eb1605/src/systems/entityMods.js';
@@ -114,12 +114,14 @@ for (const intelligence of [77, 100, 200])
 
 // ── Armour: the table plus the display term, with the affix fold and the sky's fold ──────────────────
 const G = { A: 'Armor', M: 'MensClothing', W: 'WomensClothing', X: 'Weapons' };
-const W = (g, t, m, slot, affix = 0) => ({
+// `legendary` is the record id when the piece is one (a `countedPieces` copy).
+const W = (g, t, m, slot, affix = 0, legendary = null) => ({
   group: G[g],
   templateIndex: t,
   material: m,
   equipSlot: slot,
   affixes: affix ? [{ id: 'armor', value: affix }] : [],
+  ...(legendary ? { rarity: 'legendary', legendary } : {}),
 });
 const layouts = [
   [],
@@ -128,6 +130,11 @@ const layouts = [
   [W('M', 148, 0, 26, 4)],
   [W('X', 123, 9, 19, 4)],
   [W('A', 109, 0, 21), W('A', 112, 0, 21)], // a slot conflict: the first wins
+  // The ORDER of `wornItems` (lootRarity.js:2356-2362 over fillEquipTable): slot losers first, then slot order, then the
+  // affix filter, then `countedPieces`. These three layouts are the review's cases.
+  [W('A', 102, 0, 18, 12), W('A', 102, 0, 18, 15, 'the-warden'), W('A', 108, 0, 26, 20, 'the-warden')],
+  [W('A', 108, 0, 26, 20, 'the-warden'), W('A', 102, 0, 18, 15, 'the-warden')],
+  [W('A', 102, 0, 18, 0, 'the-warden'), W('A', 108, 0, 26, 20, 'the-warden')],
 ];
 for (const worn of layouts)
   for (const inc of [0, -5])
@@ -143,7 +150,7 @@ for (const worn of layouts)
       // The display TERM only; the rating is the documented C# cite.
       const display = [0, 1, 2, 3, 4, 5, 6].map((p) => entityMods.entityArmorDisplayMod(ch, p));
       const pieces = worn
-        .map((it) => `${it.group === 'Armor' ? 'A' : it.group === 'MensClothing' ? 'M' : it.group === 'WomensClothing' ? 'W' : 'X'}:${it.templateIndex}:${it.material}:${it.equipSlot}:${it.affixes?.[0]?.value ?? 0}`)
+        .map((it) => `${it.group === 'Armor' ? 'A' : it.group === 'MensClothing' ? 'M' : it.group === 'WomensClothing' ? 'W' : 'X'}:${it.templateIndex}:${it.material}:${it.equipSlot}:${it.affixes?.[0]?.value ?? 0}:${it.legendary ?? '-'}`)
         .join(' ');
       out.push(`armor ${inc} ${skyArmor} ${worn.length}${worn.length ? ' ' + pieces : ''} ${display.map(n).join(' ')}`);
       entityMods.registerEntityFold('sidebar-oracle', null);

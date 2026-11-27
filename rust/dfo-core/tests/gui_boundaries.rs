@@ -228,6 +228,38 @@ fn the_armour_fold_skips_a_duplicate_slot_and_a_duplicate_legendary() {
     );
 }
 
+/// The vendor's order (`equip.js:360-367`, `lootRarity.js:2356-2362`): the equip table drops a slot loser FIRST, the
+/// table is in SLOT order, pieces with no affix list are filtered, and only then does `countedPieces` keep a Legendary's
+/// first copy. A fold that counts before the slot rule, or does not sort first, keeps a different copy.
+#[test]
+fn the_armour_fold_counts_in_the_vendors_order() {
+    let plain = armour_piece(102.0, 18.0, 12.0, None);
+    let warden_at = |slot: f64, template: f64, armour: f64| {
+        armour_piece(template, slot, armour, Some("the-warden"))
+    };
+    // [plain@18, warden@18, warden@26]: the slot loser is the SECOND warden, so the pair that survives is
+    // [plain@18, warden@26] and BOTH lines count (chest 12, feet 20). Every value is inside the `armor` band (top 20), so
+    // no line is dropped by `validAffix` and the case cannot pass by that route.
+    let fold = affix_armor_points(&[
+        plain.clone(),
+        warden_at(18.0, 102.0, 15.0),
+        warden_at(26.0, 108.0, 20.0),
+    ]);
+    assert_eq!(fold[3], 12.0, "the plain cuirass's 12 on the chest");
+    assert_eq!(fold[6], 20.0, "the surviving warden's 20 on the feet");
+    // [warden@26, warden@18]: sorted by slot, the first copy of the record is the one at slot 18, so 15 lands on the
+    // chest and the feet get nothing. Counting before sorting would keep the @26 copy instead.
+    let fold = affix_armor_points(&[warden_at(26.0, 108.0, 20.0), warden_at(18.0, 102.0, 15.0)]);
+    assert_eq!(fold[3], 15.0, "the slot-18 copy is the one that counts");
+    assert_eq!(fold[6], 0.0, "the @26 copy of the same record adds nothing");
+    // A copy with no affix list is filtered BEFORE `countedPieces`, so it does not consume the record: the copy that
+    // carries the line counts. (The fold's rule is `wornItems`' filter, not just `readLines`' fallback.)
+    let mut bare = armour_piece(102.0, 18.0, 0.0, Some("the-warden"));
+    bare.set("affixes", Arr(vec![]));
+    let fold = affix_armor_points(&[bare, warden_at(26.0, 108.0, 20.0)]);
+    assert_eq!(fold[6], 20.0, "the copy that carries the line counts");
+}
+
 // ── the panics a GUI can reach from a malformed record ───────────────
 
 #[test]

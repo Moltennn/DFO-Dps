@@ -14,7 +14,7 @@ use crate::{
     round::{js_max, js_min, math_round, to_uint32},
     simulate_fight::{
         blow_budget, create_attack_schedule, health_segment, horizon, paired_fight_seeds,
-        summarize, wilson_interval,
+        past_work_cap, summarize, wilson_interval, MAX_FIGHT_BLOWS, MAX_FIGHT_ROUNDS,
     },
     spells::{Spellbook, MAGIC_ROUND_SECONDS},
     value::Value::{self, Arr, Bool, Null, Num, Str, Undefined},
@@ -122,6 +122,7 @@ struct Rounds<'a> {
     shield: f64,
     next: f64,
     enabled: bool,
+    rounds: f64,
 }
 
 impl Rounds<'_> {
@@ -137,6 +138,12 @@ impl Rounds<'_> {
             && !ledger.engine.killed()
             && (!drain || live_dot(&self.target))
         {
+            // The jump to a hand-made horizon steps 5 s at a time, so it is work in its own right; bounded exactly as the
+            // ordinary fight's rounds are (see `simulate_fight::MAX_FIGHT_ROUNDS`).
+            self.rounds += 1.0;
+            if self.rounds > MAX_FIGHT_ROUNDS {
+                past_work_cap("magic round", MAX_FIGHT_ROUNDS);
+            }
             let mut total = 0.0;
             cws::tick_active_effects(
                 &mut self.target,
@@ -375,6 +382,7 @@ fn run(
         rolls,
         shield,
         next: MAGIC_ROUND_SECONDS,
+        rounds: 0.0,
     };
     let (
         mut attacks,
@@ -416,6 +424,11 @@ fn run(
             break "kill";
         }
         attacks += 1.0;
+        // WORK, not the request: a relay that kills, or whose schedule runs out, never reaches this. A hand-made
+        // `maxBlows` past the cap would otherwise sample for hours (the JS would too); see `MAX_FIGHT_BLOWS`.
+        if attacks > MAX_FIGHT_BLOWS {
+            past_work_cap("blow", MAX_FIGHT_BLOWS);
+        }
         last_attack = t;
         // mutation: equivalent - positive finite pool is the initial HP and claims never increase HP, so hp / pool cannot exceed 1.
         let share = js_max(0.0, js_min(1.0, ledger.engine.hp() / pool));
