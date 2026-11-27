@@ -459,7 +459,19 @@ impl Default for Sky {
 ///
 /// **Every base is the PERMANENT `entity.stats`** (`firmamentPowers.js:128`, `renownLayer.js:84`), never the live value,
 /// so a fortify effect cannot move the floor or the share. An absent fact yields `Fact::Unknown` for that channel.
+///
+/// **`totals` must be a record.** The vendor reads the live tree's totals object (`firmamentLive`'s), so a missing
+/// `totals` - `undefined`, `null`, a number, a string, an array, i.e. no tree's totals at all - is not "the sky adds
+/// nothing": every channel is `Fact::Unknown`, as this module documents. Only a present object's absent channel reads 0,
+/// and an explicit empty object is the law's own zero sky (a sign with no stars).
 pub fn firmament_layer(facts: &Imported, totals: &Value) -> Sky {
+    if !matches!(totals, Value::Obj(_)) {
+        return Sky {
+            hp: Fact::Unknown,
+            mp: Fact::Unknown,
+            even: Fact::Unknown,
+        };
+    }
     let read = |key: &str| totals.get(key).finite_or(0.0);
     let endurance = facts.endurance.value();
     let end = match endurance {
@@ -597,16 +609,28 @@ pub fn armor_rating(values: &[f64; 7]) -> [f64; 7] {
     out
 }
 
-/// The loot-rarity armour affix's points by body part (`systems/loot/lootRarity.js:2386`).
+/// The loot-rarity armour affix's points by body part (`systems/loot/lootRarity.js:2386`), over the pieces the vendor's
+/// fold actually counts: `wornItems` keeps the first claim on an `equipSlot` (its `fillEquipTable`) and
+/// [`crate::loot::counted_pieces`] keeps the first copy of one Legendary record, so a stale duplicate slot or a second
+/// Foxglove adds no line. `armor_values` already skips a claimed slot; this is the same rule on the affix side.
 pub fn affix_armor_points(worn: &[Value]) -> [f64; 7] {
     let mut out = [0.0_f64; 7];
-    for item in worn {
-        for a in crate::gear_lines::valid_item_lines(item) {
+    let mut claimed: Vec<f64> = Vec::new();
+    for item in crate::loot::counted_pieces(worn) {
+        let slot = item.get("equipSlot");
+        if !slot.is_nullish() {
+            let at = slot.to_number();
+            if claimed.contains(&at) {
+                continue;
+            }
+            claimed.push(at);
+        }
+        for a in crate::gear_lines::valid_item_lines(&item) {
             if !a.get("id").is_str("armor") {
                 continue;
             }
             let v = crate::round::to_int32(a.get("value").to_number());
-            for part in armor_body_parts_of(item) {
+            for part in armor_body_parts_of(&item) {
                 out[part as usize] += f64::from(v);
             }
         }
@@ -704,31 +728,57 @@ mod tests {
     /// carry one - keep the FIRST. The affix fold and `armor_values` both walk the list and skip a claimed slot, so a
     /// duplicate adds nothing. The vendor `affixFold` sees the same because `rebuildEquipState`'s `fillEquipTable`
     /// deletes the loser's `equipSlot`. The `armor` differential's slot-conflict layout covers it end to end; this pins
-    /// the rule on the bare fold.
+    /// the rule on the bare fold. Both values are inside a band (`armor` is legal to 20), so the case cannot pass by the
+    /// validator dropping one of them.
     #[test]
     fn a_duplicate_equip_slot_keeps_the_first_piece() {
         let mut first = raw_item("Armor", 102.0, 0.0, 18.0);
         first.set(
             "affixes",
-            Arr(vec![obj([("id", s("armor")), ("value", Num(15.0))])]),
+            Arr(vec![obj([("id", s("armor")), ("value", Num(12.0))])]),
         );
-        let mut second = raw_item("Armor", 109.0, 0.0, 18.0);
+        let mut second = raw_item("Armor", 102.0, 0.0, 18.0);
         second.set(
             "affixes",
-            Arr(vec![obj([("id", s("armor")), ("value", Num(40.0))])]),
+            Arr(vec![obj([("id", s("armor")), ("value", Num(20.0))])]),
         );
-        // The first alone is the fold: the second's 40 on the same slot is ignored (a stale duplicate).
+        // Both pieces' lines are legal on their own, so a fold that kept both would read 32.
+        assert_eq!(affix_armor_points(std::slice::from_ref(&second))[3], 20.0);
+        // The first alone is the fold: the second's 20 on the same slot is ignored (a stale duplicate).
         let alone = armor_fold_parts(std::slice::from_ref(&first), &[0.0; 7]);
         let both = armor_fold_parts(&[first.clone(), second.clone()], &[0.0; 7]);
         assert_eq!(
             both, alone,
             "the second piece claiming slot 18 adds nothing"
         );
-        assert_eq!(both[3], 15.0, "the first piece's 15 on the chest");
+        assert_eq!(both[3], 12.0, "the first piece's 12 on the chest");
         // `armor_values` agrees: the first piece's condition/armour, not the second's template.
         let one = armor_values(std::slice::from_ref(&first));
         let two = armor_values(&[first, second]);
         assert_eq!(two, one);
+    }
+
+    /// The vendor's `countedPieces` (`lootRarity.js:2348-2357`): a Legendary record counts once, its first copy. Two
+    /// Foxgloves on two slots add one line, not two.
+    #[test]
+    fn a_second_copy_of_one_legendary_adds_no_armour_line() {
+        let mut first = raw_item("Armor", 102.0, 0.0, 18.0);
+        first.set("rarity", s("legendary"));
+        first.set("legendary", s("the-warden"));
+        first.set(
+            "affixes",
+            Arr(vec![obj([("id", s("armor")), ("value", Num(15.0))])]),
+        );
+        let mut second = raw_item("Armor", 108.0, 0.0, 26.0);
+        second.set("rarity", s("legendary"));
+        second.set("legendary", s("the-warden"));
+        second.set(
+            "affixes",
+            Arr(vec![obj([("id", s("armor")), ("value", Num(15.0))])]),
+        );
+        let fold = affix_armor_points(&[first.clone(), second]);
+        assert_eq!(fold[3], 15.0, "one copy's 15 on the chest");
+        assert_eq!(fold[6], 0.0, "the second copy adds none on the feet");
     }
 
     fn obj<const N: usize>(pairs: [(&str, Value); N]) -> Value {

@@ -17,6 +17,7 @@ pub mod durability;
 pub mod enchant_plan;
 pub mod enchants;
 pub mod encounters;
+pub mod fault;
 pub mod fight;
 pub mod firmament;
 pub mod firmament_law;

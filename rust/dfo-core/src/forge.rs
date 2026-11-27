@@ -346,6 +346,12 @@ pub enum ApplyFault {
     UnknownBuild,
     /// The tree is not whole: `treeFault` at its own cost (the point test cannot fire, the purse is not known here).
     InvalidTree(TreeFault),
+    /// The character is not a record (a null, a number, a string): `applyFirmament` folds into an object.
+    NotACharacter,
+    /// The character already carries a Forge tree ([`FORGE_TREE_FIELD`]). [`apply_tree_to_character`] is not
+    /// idempotent and cannot un-fold a tree: a second application would stack the stars on top of the first, so it is
+    /// refused. Apply to the character the GUI imported, or rebuild it, to change the tree.
+    AlreadyCarriesTree,
 }
 
 impl ApplyFault {
@@ -355,9 +361,20 @@ impl ApplyFault {
             ApplyFault::InvalidTree(_) => {
                 "the tree is not whole: its keys are not stars the sky has, or are not joined to the sign".to_owned()
             }
+            ApplyFault::NotACharacter => {
+                "the character is not a record, so a tree cannot be folded into it".to_owned()
+            }
+            ApplyFault::AlreadyCarriesTree => {
+                "the character already carries a tree: apply to the imported character, not to a result".to_owned()
+            }
         }
     }
 }
+
+/// The field [`apply_tree_to_character`] writes onto the character it answers: the `{ start, keys }` record of the tree
+/// it folded in. It is Forge's own mark (no rule module reads it) and it is what makes a second application refuse
+/// rather than stack. A tree with no sign writes no mark, because it folds nothing.
+pub const FORGE_TREE_FIELD: &str = "forgeFirmament";
 
 fn resolve_build(build: &Value) -> Option<&'static Value> {
     match build {
@@ -388,9 +405,16 @@ fn checked(tree: &Tree) -> Result<(), ApplyFault> {
 
 /// The `planFromTree` plan a tree and a build make: `{ build, tree, totals, ... }`, what [`apply_tree_to_character`]
 /// feeds `applyFirmament` and what a GUI can show before applying.
+///
+/// A tree with **no sign** is the law's `EMPTY_TREE`, and the Forge reads it as "no sign" (`Tree.start: None`): its plan
+/// carries `start: null`, an empty `totals` and no channels. The JS `planFromTree` cannot express that — it replaces a
+/// missing start with `START_KEYS[0]`, the Serpent — so this arm is the Forge's own reading of the type, not a JS call.
 pub fn tree_plan(build: &Value, tree: &Tree) -> Result<Value, ApplyFault> {
     checked(tree)?;
     let build = build_value(build)?;
+    if tree.start.is_none() {
+        return Ok(empty_plan(&build, tree));
+    }
     let mut opts = Obj(vec![]);
     opts.set("start", tree.start.as_deref().map_or(Null, s));
     opts.set("keys", Arr(tree.keys.iter().map(|k| s(k)).collect()));
@@ -398,15 +422,51 @@ pub fn tree_plan(build: &Value, tree: &Tree) -> Result<Value, ApplyFault> {
     Ok(plan_from_tree(&build, &opts))
 }
 
+/// The plan of a tree with no sign: `planFromTree`'s own record fields, with the sign, the star list and the totals the
+/// empty sky's. Nothing here is a rule; the JS has no such plan because its `planFromTree` always picks a sign.
+///
+/// shortcut: the empty tree reads as an empty sky here, not the JS `planFromTree`'s Serpent; upgrade if a caller needs
+/// the Serpent's fold for an empty tree (send `start: Some("sp.start")` explicitly instead).
+fn empty_plan(build: &Value, tree: &Tree) -> Value {
+    let mut out = Obj(vec![]);
+    out.set("build", build.clone());
+    out.set("tree", tree_to_value(tree));
+    out.set("totals", Obj(vec![]));
+    out.set("score", Num(0.0));
+    out.set("stars", Num(0.0));
+    out.set("freeStars", Num(crate::firmament_law::FIRMAMENT_STARS));
+    out.set("start", Null);
+    out.set("startName", Null);
+    out.set("starBudget", Num(crate::firmament_law::FIRMAMENT_STARS));
+    out
+}
+
 /// (3) The character a tree makes: the SAME `applyFirmament` the real-build chain uses, so `analyze()` on the result
 /// reads the stars' attribute and blow effects. The input character is not mutated; the result is a new `Value`.
+///
+/// **A tree with no sign folds nothing** (`Tree.start: None` is no sign, as [`FORGE-API`](rust/FORGE-API.md) says), and
+/// the character is answered as it came. **A second application is refused**: `applyFirmament` only adds, so folding a
+/// tree onto a character that already carries one would stack its stats, `statMax` and skills. The result carries the
+/// tree it folded in under [`FORGE_TREE_FIELD`], and this function answers [`ApplyFault::AlreadyCarriesTree`] for a
+/// character that has that mark. A GUI that changes the tree applies the new one to the character it imported.
 pub fn apply_tree_to_character(
     character: &Value,
     build: &Value,
     tree: &Tree,
 ) -> Result<Value, ApplyFault> {
+    if !matches!(character, Obj(_)) {
+        return Err(ApplyFault::NotACharacter);
+    }
+    if character.has(FORGE_TREE_FIELD) {
+        return Err(ApplyFault::AlreadyCarriesTree);
+    }
     let plan = tree_plan(build, tree)?;
-    Ok(apply_firmament(character, &plan))
+    if tree.start.is_none() {
+        return Ok(character.clone());
+    }
+    let mut out = apply_firmament(character, &plan);
+    out.set(FORGE_TREE_FIELD, tree_to_value(tree));
+    Ok(out)
 }
 
 /// The eight attribute totals the tree adds, in the attribute order (`effectiveValue` of each).

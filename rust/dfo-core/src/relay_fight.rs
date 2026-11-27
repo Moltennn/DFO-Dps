@@ -13,7 +13,8 @@ use crate::{
     rolls::Rolls,
     round::{js_max, js_min, math_round, to_uint32},
     simulate_fight::{
-        create_attack_schedule, health_segment, paired_fight_seeds, summarize, wilson_interval,
+        blow_budget, create_attack_schedule, health_segment, horizon, paired_fight_seeds,
+        summarize, wilson_interval,
     },
     spells::{Spellbook, MAGIC_ROUND_SECONDS},
     value::Value::{self, Arr, Bool, Null, Num, Str, Undefined},
@@ -350,8 +351,8 @@ fn run(
     };
     let flow_by_hand = flow_powers.map(|p| p.is_some());
     let bounds = health_thresholds(&[main_powers, off_powers].concat());
-    let max_seconds = num(args.get("maxSeconds"), 3600.0);
-    let max_blows = js_max(1.0, num(args.get("maxBlows"), 1_000_000.0).floor());
+    let max_seconds = horizon(&args);
+    let max_blows = blow_budget(&args);
     let mut trace = yes(args.get("trace")).then(Vec::new);
     let mut trace_all = yes(args.get("traceAll")).then(Vec::new);
     let provided = match args.get("events") {

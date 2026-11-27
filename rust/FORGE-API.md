@@ -98,7 +98,27 @@ let card = dfo_core::analyze::analyze(&applied, &scenario, &book);              
 (`dfo_core::real_build::apply_firmament`), so `analyze` on the result reflects the stars' attribute, skill and
 weapon-blow effects exactly as the planner's own trees do. `build` is a preset id (`"longblade"`, `"bow"`,
 `"destruction"`, …) or a preset-shaped `Value`. The character is untouched; only the returned value carries the tree.
-`ApplyFault` is `UnknownBuild` or `InvalidTree(TreeFault)`.
+`ApplyFault` is `UnknownBuild`, `InvalidTree(TreeFault)`, `NotACharacter` or `AlreadyCarriesTree`.
+
+**The empty tree is no sign, and applying is once.** Two behaviours here are deliberately NOT the JS's, because the JS
+has no equivalent call and folding twice destroys the character's own numbers:
+
+- `Tree { start: None, .. }` is the law's `EMPTY_TREE`. Its `tree_plan` carries `start: null`, `totals: {}` and no
+  channels, and `apply_tree_to_character` answers the character **unchanged**. The JS `planFromTree`
+  (`src/realBuild.js`) cannot express this: a missing start becomes `START_KEYS[0]`, the Serpent, so it would fold the
+  Serpent's +2 luck onto an "empty" tree. A GUI that means "no stars" must send `start: null`, not an absent key with
+  stars attached.
+- `apply_firmament` only ADDS (stats, `statMax`, skills, blow channels). Applying a second tree to a result would stack
+  it on the first, and the port cannot un-fold. So the result carries the tree it folded in under
+  `FORGE_TREE_FIELD = "forgeFirmament"` (`{ start, keys }`; no rule module reads it), and a character that already has
+  that field is refused with `AlreadyCarriesTree`. **A GUI changes a tree by applying the new one to the character it
+  imported**, never to a previous result. A no-sign tree writes no mark, because it folds nothing.
+- A character that is not a record (a `null`, a number, a string) is `NotACharacter` instead of the `Value::set` panic.
+
+Both are Forge-layer rules with no JS call behind them (the JS never applies a tree to a character in this repository),
+so they are local invariants pinned by `tests/gui_boundaries.rs`, not by the parity vectors. The `apply` vectors keep
+checking `analyze`'s own answer for the JS's plan, which is why `tests/forge.rs` prices the JS path
+(`firmament::plan_from_tree` + `real_build::apply_firmament`) rather than this wrapper.
 
 `attribute_values(&tree)` gives the eight attribute totals the tree adds; `attribute_keys()` names them.
 
@@ -156,6 +176,24 @@ reads and which needs the template price tables.
 | `UnknownRecord(String)` | a Legendary id that does not fit this template and group |
 | `NotMainHand` | the piece cannot be held in the main hand (a shield's `LeftOnly`) |
 | `NoWornList` | the character carries no worn list |
+
+**The spec is checked harder than `validatePlan` does.** `validatePlan` is the max-profile checker: it compares a
+line's value against the band's TOP and trusts the record it is handed, and it never asks whether a template is whole or
+a material belongs to the item's group. It is enough for a plan the game rolled, not for a record a GUI sends, so
+`build_item` adds:
+
+| refused | why |
+|---|---|
+| a template that is not a whole number (`102.5`) | it names no table row; it used to truncate onto armour 102 |
+| a material not on the group's own ladder | weapons 0..=9, armour's leather/chain/chain2/iron..daedric, 0 for jewellery and clothing |
+| a line that is not a record | a GUI's malformed line is a fault, not a silent drop |
+| a line whose `value` is not a finite number, or is below 1 | every generated band starts at 1, so no roll makes it |
+
+Two checks are **deliberately not** added, because the golden `gearbuild` corpus prices those shapes and the port must
+keep JS parity: a line below its band's FLOOR, and a line whose affix KIND does not belong to the slot's group (the
+corpus contains a MensClothing piece with an `armor` line). `GearSpec::from_value` likewise refuses a non-array `lines`
+and a non-record line element instead of dropping them. The refusals are `GearFault::Illegal` (a sentence a GUI may
+show) or `GearFault::Spec`; nothing here reaches `analyze`, and no legal spec's item changes.
 
 `EquipPreview` is `{ character, displaced, slot }`:
 
@@ -242,6 +280,12 @@ let after_eff = vitals(&after, &Layer::default(), &after_sky);
 **Nothing is defaulted.** A missing maximum is `Fact::Unknown`, never the normalized build's `max(1, health)` or `0`.
 No path reads a maximum from a build's default, and no unknown becomes a zero; only `Sky::asleep()` (the sky not in
 force) and *explicitly stated* online terms are legitimate zeros.
+
+**`firmament_layer`'s `totals` must be a record.** The vendor reads the live tree's totals object, so a `totals` that
+is `undefined`, `null`, a number, a string or an array is *no tree's totals at all*, and every channel is
+`Fact::Unknown` — the same as any other absent fact. Only a present object's absent channel reads 0, and an explicit
+empty object is the law's own zero sky (a sign with no stars). A GUI that has not loaded a tree passes `Value::Undefined`
+and shows "unknown", never a zero sky; `Value::Obj(vec![])` is for a tree it knows has no stars.
 
 **Health's order** is the vendored one. A save writes the UNLIMITED stored value (`full:systems/save/save.js:342-346`)
 and does not save the lycanthrope's limiter, so this module applies none. The live accessor caps the stored value with
@@ -364,6 +408,83 @@ a GUI that hard-coded `"14512"` anywhere is showing cut numbers and should switc
   V8's spread limit makes the JS throw a `RangeError` (exit 1). The port raises the same `RangeError`
   (`model_blow::JsRangeError`, `MAX_ENUMERATED_BLOWS`) instead of running to an OOM, so it prices exactly the cards
   the JS prices and fails the same way; a legal card (~1,620 blows at 535 points) is ~77x below the cap.
+
+## (9) The checked entry, the caps, and the crashes a record cannot cause
+
+A GUI hands over records it did not write. Three things stand between such a record and a Rust panic or an unbounded
+loop: a checked entry for the scenario, a panic guard for whatever is left, and caps on the counts a hand-made record
+controls. All three are the Rust-only side; on any input the JS prices, no number moves and the golden vectors are
+unchanged.
+
+**`analyze_checked`** is [`analyze`] with a shape check first:
+
+```rust
+use dfo_core::analyze::{analyze, analyze_checked, ScenarioFault};
+
+match analyze_checked(&character, &scenario, &book) {
+    Ok(card) => { /* exactly `analyze`'s answer */ }
+    Err(fault) => { /* show `fault.message()`; nothing was priced */ }
+}
+```
+
+It reports `ScenarioFault::NotAnObject` for a character or scenario that is not a record, `NotARecord` for a present but
+non-record `target`/`weapon`/`wraps`, and `NotAList` for a present but non-list `traits`/`imprints`. This is the
+`{"target": 5}` case: `analyze_card` writes `group`/`affinity` onto the target and would panic on a number. A **typo**
+(`targt`) is simply an absent key and prices the reference foe, exactly as the JS does — only a present, wrong-shaped
+value is a fault. `analyze` itself is unchanged; call it when the record's shape is already known.
+
+**`dfo_core::fault::guard`** turns a panic into a typed answer for a boundary that cannot be pre-checked:
+
+```rust
+use dfo_core::fault::{guard, CoreFault};
+
+match guard(|| analyze(&character, &scenario, &book)) {
+    Ok(card) => { /* priced */ }
+    Err(CoreFault::Range(message)) => { /* the JS's own RangeError text */ }
+    Err(CoreFault::Message(text) | CoreFault::Panic(text)) => { /* a bug; show `text` and report it */ }
+    Err(CoreFault::Unknown) => { /* a non-string panic payload */ }
+}
+```
+
+It uses `catch_unwind`, copies the hook for the call, and puts the previous hook back, so a host's own panic hook keeps
+working afterwards. `JsRangeError` payloads arrive as `CoreFault::Range` with their JS message intact.
+
+**The caps.** Each is checked *before* the loop or allocation it bounds, is far above anything legitimate, and raises
+the JS-shaped `RangeError` (or a typed error) rather than running:
+
+| cap | value | what a hand-made record would otherwise do |
+|---|---|---|
+| `simulate_fight::MAX_FIGHT_SECONDS` | 1e7 s (~116 days) | `maxSeconds: 1e300` spins the loop and the magic rounds forever |
+| `simulate_fight::MAX_FIGHT_BLOWS` | 1e8 | `maxBlows: 1e18` runs to the horizon |
+| `simulate_fight::MAX_FIGHT_SEEDS` | 100,000 | `seeds: 1e12` allocates until the process dies (also `loadout_shortlist`'s `trials`) |
+| `analyze::MAX_MATERIAL_ROWS` | 1,000 | `rank_weapons`' `for (m = 0; m < materials; m++)` prices forever |
+| `model_blow::MAX_ECHO_POWERS` | 20 | `after_share` enumerates `2^n` masks |
+| `model_blow::MAX_ENUMERATED_BLOWS` | 124,500 | the `--gear-lb` spread the JS itself throws on |
+| `analyze`'s array growth | 10,000 | a `skillId` of `1e9` would grow an array to a billion slots |
+| `simulate_fight`'s tier cache | 4,096 | a long durability fight grows the map for the whole run |
+
+The last two change nothing observable: a `skillId` that names no index is a no-op (a JS sparse property no reader
+sees), and a dropped tier is recomputed to the same distribution.
+
+**A malformed record that the JS itself throws on** is priced by the port where "priced" is well defined, and the
+divergence is limited to that input:
+
+- `cws::resolve_cws_cast` replaces a non-array `target.activeEffects` with an empty list (the JS `?? []` keeps the
+  number and then `TypeError`s on `.find`), and answers an empty landing for a non-object target.
+- `probe::fight_summary(&[], _)` is `null` (the JS reads `samples[0].t` and throws).
+- `firmament::plan_summary` sorts a NaN-bearing totals record without panicking (the JS comparator is not a total order
+  there; the JS sort survives it, Rust's does not). A plan's own totals are never NaN, so this only reaches a
+  hand-edited plan.
+- `marginals`/`rank_affixes` treat a fractional or non-numeric `skillId` as "no index" rather than panicking.
+
+**The armour fold counts a piece once.** `sidebar::affix_armor_points` now walks `loot::counted_pieces` and skips a
+claimed `equipSlot` — the vendor's `fillEquipTable`/`countedPieces` rules — so a stale duplicate slot and a second copy
+of one Legendary each add one line, not two. `armor_values` already skipped a claimed slot; this is the same rule on the
+affix side.
+
+`tests/gui_boundaries.rs` and `tests/gui_faults.rs` pin every case above. They are **local invariants**: no vendored JS
+function prices those inputs (the JS throws on most of them), so they pin the guard's shape and the cap's edge, not a
+number the JS produces.
 
 ## How parity is checked
 

@@ -1155,13 +1155,29 @@ fn js_range_error(message: &str) -> ! {
     std::panic::panic_any(JsRangeError(message.to_owned()))
 }
 
+/// The same `RangeError` panic for the tests that pin [`crate::fault::guard`] (and only them): a private function that
+/// never returns, exposed so a test can reach a real JS-shaped crash without a huge card.
+#[doc(hidden)]
+pub fn js_range_error_for_test(message: &str) -> ! {
+    js_range_error(message)
+}
+
 /// The enumeration `damage_model` is about to build, or the JS `RangeError` it would raise (`model.js:1024,1076`).
 fn check_enumeration(adds: f64, rolls: f64) {
+    // A bound the JS's own loop cannot finish: `for (r = lo; r <= hi; r++)` with an infinite `hi` never ends (V8 OOMs),
+    // and a NaN bound never enters it (the JS answers an empty list, which this port reproduces below). Only the
+    // infinite/NaN cases are refused here so a hand-made weapon's `min`/`max` cannot hang the process.
+    if adds.is_nan() || rolls.is_nan() {
+        return;
+    }
+    if adds.is_infinite() || rolls.is_infinite() {
+        js_range_error("RangeError: Maximum call stack size exceeded");
+    }
     // `Array.from({ length: gear.hi - gear.lo + 1 })`: an array length past 2^32-1 is the JS's own `RangeError`.
     if adds > MAX_ADD_ARRAY_LENGTH {
         js_range_error("RangeError: Invalid array length");
     }
-    if adds * rolls > MAX_ENUMERATED_BLOWS {
+    if adds * js_max(rolls, 1.0) > MAX_ENUMERATED_BLOWS {
         js_range_error("RangeError: Maximum call stack size exceeded");
     }
 }
@@ -1242,10 +1258,11 @@ pub fn damage_model(
         None
     };
     // The JS's own limits, before anything is allocated: `Array.from`'s length and the spread's stack. A legal card is
-    // ~1.6k blows, so only a hypothetical `--gear-lb` reaches this.
-    if let Some((add_lo, add_hi)) = gear {
-        check_enumeration(add_hi - add_lo + 1.0, hi - r0 + 1.0);
-    }
+    // ~1.6k blows, so only a hypothetical `--gear-lb` reaches this. The check runs even with no gear: a hand-made weapon
+    // whose `min`/`max` are infinite would otherwise spin the roll loop below forever (the JS would OOM), and a NaN bound
+    // answers an empty list on both sides, which `check_enumeration` lets through.
+    let adds_count = gear.map_or(1.0, |(lo, hi)| hi - lo + 1.0);
+    check_enumeration(adds_count, hi - r0 + 1.0);
     let adds: Vec<f64> = match gear {
         Some((lo, hi)) => {
             let mut out = Vec::new();
@@ -1642,6 +1659,12 @@ pub struct BlowOutcome {
     pub strikes_positive: bool,
 }
 
+/// The most echo powers one blow may carry. `afterShare` enumerates `1 << echoes.length` masks, so the JS hangs (or
+/// throws on a shift past 31) long before a GUI would; a real card carries one or two (the vendor's echo records are
+/// few), and a what-if list is a handful. 20 is 1,048,576 masks, far above any legitimate card, and it is checked
+/// before the enumeration so nothing spins. A longer list raises the JS-shaped `RangeError`.
+pub const MAX_ECHO_POWERS: usize = 20;
+
 pub fn after_share(shared: f64, p: f64, weapon: &Value, opts: &Value) -> Vec<BlowOutcome> {
     let off_hand = on(opts, "offHand");
     let potent = opts.get("potentVs");
@@ -1664,6 +1687,12 @@ pub fn after_share(shared: f64, p: f64, weapon: &Value, opts: &Value) -> Vec<Blo
         v => v.as_str().unwrap_or(""),
     };
     let echoes = opts.get("echoes").items();
+    // `for (let mask = 0; mask < (1 << echoes.length); mask++)` (model.js:1032): every mask is a `Value`, so a long list
+    // is an exponential allocation, and past 31 the JS shift is its own bug (a bit mask is a 32-bit int). Checked before
+    // anything is allocated; a legitimate card carries one or two.
+    if echoes.len() > MAX_ECHO_POWERS {
+        js_range_error("RangeError: too many echo powers on one blow");
+    }
     let mut out = Vec::new();
     for (q, damage) in branches {
         let v = resist_blow(

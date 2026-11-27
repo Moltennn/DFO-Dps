@@ -172,9 +172,16 @@ pub fn gate_outcome(gate: &Value, samples: &[Value]) -> &'static str {
 const MAX_PROBE_PLAYERS: f64 = 1_000_000.0;
 
 /// `fightSummary(samples, opts)` (`:52-191`): the capture's damage figures for one fight.
+///
+/// An EMPTY list is `null`, as `summarizeProbe` answers a fight with no samples: the JS reads `samples[0].t` and throws a
+/// `TypeError` there, so this is a divergence only on an input the JS refuses (a GUI may hand over a capture whose only
+/// fight is empty). See `rust/FORGE-API.md`.
+///
+/// shortcut: an empty fight is `null` rather than a typed fault; upgrade if a GUI must show why a capture had no samples.
 pub fn fight_summary(samples: &[Value], opts: &Value) -> Value {
-    let first = samples.first().expect("a fight holds samples");
-    let last = samples.last().expect("a fight holds samples");
+    let (Some(first), Some(last)) = (samples.first(), samples.last()) else {
+        return Null;
+    };
     let seconds = js_max(
         1e-9,
         (last.get("t").to_number() - first.get("t").to_number()) / 1000.0,

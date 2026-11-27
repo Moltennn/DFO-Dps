@@ -200,6 +200,14 @@ pub fn shortlist_loadouts_with(
             "--trials: at least {MIN_STOCHASTIC_TRIALS} trials are required"
         )));
     }
+    // A sampled shortlist prices every candidate on this many fights; the JS `Array.from` would allocate until V8 throws.
+    // The cap is 100x the shipped plan's 1,000 and far below an allocation that hurts (`simulate_fight::MAX_FIGHT_SEEDS`).
+    if opts.trials > crate::simulate_fight::MAX_FIGHT_SEEDS {
+        return Err(err(format!(
+            "--trials: at most {} trials are priced",
+            crate::simulate_fight::MAX_FIGHT_SEEDS
+        )));
+    }
 
     let universe = eligible_universe_with(opts, profiles)?;
     let k = round_down(opts.k) as usize;

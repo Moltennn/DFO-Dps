@@ -274,8 +274,35 @@ pub fn health_segment(bounds: &[f64], share: f64) -> usize {
         .unwrap_or(bounds.len() - 2)
 }
 
-fn horizon(args: &Value) -> f64 {
-    num(args.get("maxSeconds"), 3600.0)
+/// The horizon a fight may run to, in seconds. The shipped default is 3,600 and the longest vector is 3e6 (a stress
+/// case with a 1e16 pool); a hand-made scenario's `maxSeconds: 1e300` would otherwise spin the loop (and the rounds after
+/// it) forever, because the JS loop exits only on health, the blow budget or the horizon. 1e7 is about 116 days of fight,
+/// far past the 3e6 vector and any legitimate fight, and bounds the magic rounds to 2,000,000.
+pub const MAX_FIGHT_SECONDS: f64 = 1e7;
+
+/// The blow budget a fight may run to. The shipped default is 1,000,000 and a real fight lands a few thousand; the JS
+/// `while (blows < maxBlows)` would otherwise run a hand-made `maxBlows: 1e18` to the horizon. 100x the default.
+pub const MAX_FIGHT_BLOWS: f64 = 100_000_000.0;
+
+pub(crate) fn horizon(args: &Value) -> f64 {
+    let seconds = num(args.get("maxSeconds"), 3600.0);
+    if seconds > MAX_FIGHT_SECONDS {
+        std::panic::panic_any(crate::model_blow::JsRangeError(
+            "RangeError: the fight horizon is past the port's cap".to_owned(),
+        ));
+    }
+    seconds
+}
+
+/// The blow budget, capped the same way (`simulateFight`'s `Math.max(1, Math.floor(num(maxBlows, 1e6)))`).
+pub(crate) fn blow_budget(args: &Value) -> f64 {
+    let blows = js_max(1.0, num(args.get("maxBlows"), 1_000_000.0).floor());
+    if blows > MAX_FIGHT_BLOWS {
+        std::panic::panic_any(crate::model_blow::JsRangeError(
+            "RangeError: the blow budget is past the port's cap".to_owned(),
+        ));
+    }
+    blows
 }
 
 pub fn summarize(values: &[Value], opts: &Value) -> Value {
@@ -354,8 +381,20 @@ fn safe_seed(v: &Value) -> Option<f64> {
     }
 }
 
+/// The largest `trials`/`seeds` count the port will generate. A real shortlist uses 1,000-10,000 (`MIN_STOCHASTIC_TRIALS`
+/// is 1,000), and a capture-run is a handful; the JS `Array.from({ length: n }, ...)` would allocate until V8 throws or the
+/// process dies, so this guard raises the JS `RangeError` instead. It sits far above any legitimate count (100x the
+/// biggest sampled plan the CLI ships) and far below an allocation that would hurt.
+pub const MAX_FIGHT_SEEDS: f64 = 100_000.0;
+
 pub fn paired_fight_seeds(count: &Value, seed: &Value) -> Vec<Value> {
-    let n = js_max(0.0, num(count, 0.0).floor()) as usize;
+    let n = js_max(0.0, num(count, 0.0).floor());
+    if n > MAX_FIGHT_SEEDS {
+        std::panic::panic_any(crate::model_blow::JsRangeError(
+            "RangeError: Invalid array length".to_owned(),
+        ));
+    }
+    let n = n as usize;
     let mut rng = Rng::new(safe_seed(seed).unwrap_or(0.0)).unwrap();
     let stream = rng.stream_str("seeds").unwrap();
     (0..n).map(|_| Num(f64::from(stream.next_u32()))).collect()
@@ -381,11 +420,27 @@ pub struct TierCache {
     next_item: u64,
 }
 
+/// The most tier distributions one fight keeps. Every blow of one (segment, hand, band) shares an entry, so a legal fight
+/// holds a few dozen; a long durability fight adds one per `(epoch, item, band)` triple, and a hand-made scenario with a
+/// huge blow budget could otherwise grow the map for the whole run. Past this the entries of EARLIER epochs are dropped:
+/// a tier is a pure function of its key, so a dropped entry is recomputed to the same distribution (no result changes).
+const MAX_TIER_CACHE: usize = 4096;
+
 pub fn create_tier_cache() -> TierCache {
     TierCache::default()
 }
 
 impl TierCache {
+    /// Make room for a new tier of `epoch`: past the cap, forget the wear keys of earlier epochs (they cannot be asked
+    /// for again - `epoch` only grows - so this is a pure memory bound).
+    fn room(&mut self, epoch: u64) {
+        if self.tiers.len() < MAX_TIER_CACHE {
+            return;
+        }
+        self.tiers
+            .retain(|k, _| !matches!(k, TierKey::Wearing(e, ..) if *e < epoch));
+    }
+
     fn item_id(&mut self, item: &Value) -> Option<u64> {
         if !item.truthy() {
             return None;
@@ -876,7 +931,7 @@ pub fn simulate_fight_cached(
         &args,
     );
     let max_seconds = horizon(&args);
-    let max_blows = js_max(1.0, num(args.get("maxBlows"), 1000000.0).floor());
+    let max_blows = blow_budget(&args);
     let capped = args.get("damageMode").is_str("capped");
     let mut carry = yes(args.get("carry")).then(crate::model_blow::create_carry_state);
     // mutation: equivalent - cache epochs are opaque and only compared for equality within each globally distinct item id.
@@ -939,6 +994,9 @@ pub fn simulate_fight_cached(
             TierKey::Fixed(index, hand)
         };
         use std::collections::hash_map::Entry;
+        if !cache.tiers.contains_key(&key) {
+            cache.room(epoch);
+        }
         let dist = match cache.tiers.entry(key) {
             Entry::Occupied(e) => e.into_mut(),
             Entry::Vacant(e) => {

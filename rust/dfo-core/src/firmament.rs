@@ -802,17 +802,13 @@ pub fn plan_summary(plan: &Value) -> Value {
             ("text", s(&stat_words(key, value))),
         ]));
     }
-    // The JS comparator: the larger absolute value first, then the key; a NaN subtraction is "equal".
-    rows.sort_by(|a, b| {
-        let d = b.get("value").to_number().abs() - a.get("value").to_number().abs();
-        match d.partial_cmp(&0.0) {
-            Some(std::cmp::Ordering::Equal) | None => a
-                .get("key")
-                .to_js_string()
-                .cmp(&b.get("key").to_js_string()),
-            Some(o) => o,
-        }
-    });
+    // The JS comparator (firmament.js:397): the larger absolute value first, then the key; a NaN subtraction is
+    // "equal". That comparator is NOT a total order when a NaN row sits between two finite rows whose keys order the
+    // other way (`NaN - x` and `x - NaN` are both NaN, which JS treats as 0, while the key comparison keeps its order),
+    // and Rust's `sort_by` panics on a cycle. The finite rows are sorted stably with the JS order among themselves and
+    // keep the slots they already hold; each NaN row keeps its generated slot (`analyze::sort_rank_rows`' approach). A
+    // plan's own totals are never NaN, so this only reaches a hand-edited plan (a GUI may show one).
+    sort_summary_rows(&mut rows);
     let nodes: Vec<Value> = plan
         .get("tree")
         .get("keys")
@@ -858,6 +854,27 @@ pub fn plan_summary(plan: &Value) -> Value {
         ("freeStars", Num(0.0f64.max(budget - stars))),
         ("counts", counts),
     ])
+}
+
+/// `planSummary`'s row sort (`firmament.js:397`) without the panic a non-total comparator causes: the finite rows sort
+/// stably in JS order into the slots they already hold, and every NaN row keeps its own slice. See [`plan_summary`].
+fn sort_summary_rows(rows: &mut [Value]) {
+    let finite = |r: &Value| !r.get("value").to_number().is_nan();
+    let slots: Vec<usize> = (0..rows.len()).filter(|i| finite(&rows[*i])).collect();
+    let mut ordered: Vec<Value> = slots.iter().map(|i| rows[*i].clone()).collect();
+    ordered.sort_by(|a, b| {
+        let d = b.get("value").to_number().abs() - a.get("value").to_number().abs();
+        match d.partial_cmp(&0.0) {
+            Some(std::cmp::Ordering::Equal) | None => a
+                .get("key")
+                .to_js_string()
+                .cmp(&b.get("key").to_js_string()),
+            Some(o) => o,
+        }
+    });
+    for (slot, row) in slots.into_iter().zip(ordered) {
+        rows[slot] = row;
+    }
 }
 
 /// A star's own record as the JS returns it (field order, and `text` only when the star has one).

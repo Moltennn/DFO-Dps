@@ -118,13 +118,24 @@ impl GearSpec {
         let Some(rarity) = v.get("rarity").as_str() else {
             return Err(GearFault::Spec("the spec needs a rarity".to_owned()));
         };
-        let lines: Vec<Value> = v
-            .get("lines")
-            .items()
-            .iter()
-            .filter(|a| matches!(a, Obj(_)))
-            .cloned()
-            .collect();
+        let lines: Vec<Value> = match v.get("lines") {
+            Value::Undefined | Null => Vec::new(),
+            Value::Arr(items) => {
+                if let Some(bad) = items.iter().find(|a| !matches!(a, Obj(_))) {
+                    return Err(GearFault::Spec(format!(
+                        "a line must be a record, not {}",
+                        bad.to_js_string()
+                    )));
+                }
+                items.clone()
+            }
+            other => {
+                return Err(GearFault::Spec(format!(
+                    "lines must be a list, not {}",
+                    other.to_js_string()
+                )))
+            }
+        };
         Ok(GearSpec {
             template,
             material,
@@ -170,8 +181,12 @@ impl GearFault {
 
 /// The group a template is built as, read from the game's own tables: a `WEAPONS` row is `Weapons`, a
 /// `SLOT_RULES.jewellery` row is `Jewellery`, the armour rows are `Armor`, and the rest of the slot rules are the two
-/// clothing groups. `None` for a template no table names.
+/// clothing groups. `None` for a template no table names — including a fractional one, which names no row
+/// (`102.5 as i64` used to truncate onto armour 102).
 fn group_of(template: f64) -> Option<&'static str> {
+    if template.trunc() != template {
+        return None;
+    }
     if WEAPONS.iter().any(|(k, _)| *k as f64 == template) {
         return Some("Weapons");
     }
@@ -197,6 +212,75 @@ fn template_name(template: f64) -> Option<&'static str> {
     str_at(ITEM_ENCHANTMENT_NAMES, template)
 }
 
+/// The Forge's own strictness over a spec, checked in [`build_item`] only. `validatePlan` is a max-profile checker: it
+/// compares each line's value against the band's TOP and trusts the record it is handed, and it never asks whether a
+/// template is whole or a material is one the item's group has. That is enough for a plan the game would have rolled and
+/// not enough for a record a GUI sends, so this adds the rest: a whole-number template, a material the group's ladder
+/// holds, and lines that are records with a finite, positive value. Every sentence here is the Forge's, not the JS's
+/// (the JS would mint these records); `rust/FORGE-API.md` lists exactly what is and is not added.
+fn strict_spec(spec: &GearSpec, group: &str) -> Vec<String> {
+    let mut bad = Vec::new();
+    let t = number_to_string(spec.template);
+    if spec.template.trunc() != spec.template {
+        bad.push(format!("{t}: a template is a whole number"));
+    }
+    if !material_fits(group, spec.material) {
+        bad.push(format!(
+            "{t}: material {} is not one a {group} piece takes",
+            number_to_string(spec.material)
+        ));
+    }
+    if spec.rarity == "legendary" {
+        // A Legendary's lines are its record's own; only the record check (`legendaries_for`) judges them.
+        return bad;
+    }
+    for a in &spec.lines {
+        if !matches!(a, Obj(_)) {
+            bad.push(format!("{t}: a line must be a record"));
+            continue;
+        }
+        let id = a.get("id").to_js_string();
+        let value = a.get("value");
+        if !matches!(value, Num(n) if n.is_finite()) {
+            bad.push(format!(
+                "{t}: {id} {} is not a number",
+                value.to_js_string()
+            ));
+            continue;
+        }
+        // Every generated band starts at 1, so a zero or negative line is not one the game rolled. The band's FLOOR and
+        // the kind's `groups` are deliberately NOT enforced: the golden corpus prices lines the JS mints below a floor
+        // and an armour line on clothing, so refusing them would break JS parity (see `rust/FORGE-API.md`). A GUI offers
+        // only the kinds a slot rolls, from the affix registry.
+        if value.to_number() < 1.0 {
+            bad.push(format!(
+                "{t}: {id} {} is not a positive line",
+                value.to_js_string()
+            ));
+        }
+    }
+    bad
+}
+
+/// Whether a material is one the group's own ladder holds (`systems/armorMaterials.js`): the weapon metal 0..=9, an
+/// armour material (leather, chain, chain2, plate iron..daedric), or 0 for jewellery and clothing.
+fn material_fits(group: &str, material: f64) -> bool {
+    use crate::generated::armor_materials::ARMOR_MATERIAL as A;
+    if material.trunc() != material {
+        return false;
+    }
+    match group {
+        "Weapons" => (0.0..=9.0).contains(&material),
+        "Armor" => {
+            material == A.leather
+                || material == A.chain
+                || material == A.chain2
+                || (A.iron..=A.daedric).contains(&material)
+        }
+        _ => material == 0.0,
+    }
+}
+
 /// (1) Build a player item (a NEW `Value`; nothing is mutated).
 ///
 /// The piece is checked by [`crate::gear_profile::validate_plan`] with this one piece, exactly as a max-profile plan is,
@@ -206,6 +290,10 @@ fn template_name(template: f64) -> Option<&'static str> {
 /// The trade `value` is not computed: no battle reads it, and it needs the template price tables.
 pub fn build_item(spec: &GearSpec) -> Result<Value, GearFault> {
     let group = group_of(spec.template).ok_or(GearFault::UnknownTemplate(spec.template))?;
+    legal(Arr(strict_spec(spec, group)
+        .into_iter()
+        .map(|m| s(&m))
+        .collect()))?;
     if spec.rarity == "legendary" {
         let id = spec.record.as_deref().unwrap_or("");
         let record = legendaries_for(&Num(spec.template), &s(group))

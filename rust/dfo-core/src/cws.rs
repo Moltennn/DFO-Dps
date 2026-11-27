@@ -650,8 +650,15 @@ fn dot(a: &Value) -> bool {
     a.get("kind").is_str("continuousDamage")
 }
 
+/// A target's active effects list, made an array if it is not one. A save or a hand-made target can carry a number or a
+/// string where the list belongs; the vendor's `target?.activeEffects ?? []` keeps it and then throws a `TypeError` on
+/// `.find`, i.e. the JS does not price such a target at all. The port replaces the malformed list with an empty one (a
+/// divergence only on an input the JS refuses; see `rust/FORGE-API.md`).
+///
+/// shortcut: a malformed list is treated as an empty one rather than a refusal; upgrade if a GUI needs a typed fault
+/// instead of pricing the target.
 fn active_mut(target: &mut Value) -> &mut Vec<Value> {
-    if target.get("activeEffects").is_nullish() {
+    if !matches!(target.get("activeEffects"), Arr(_)) {
         target.set("activeEffects", Arr(Vec::new()));
     }
     if let Obj(fields) = target {
@@ -659,7 +666,7 @@ fn active_mut(target: &mut Value) -> &mut Vec<Value> {
             return list;
         }
     }
-    panic!("CWS target activeEffects must be an array");
+    unreachable!("activeEffects was just made an array")
 }
 
 #[derive(Default)]
@@ -700,6 +707,11 @@ pub fn resolve_cws_cast(
 ) -> Value {
     let mut out = Landing::default();
     if !spell.truthy() || !target.truthy() {
+        return out.value();
+    }
+    // A primitive target cannot hold the effect list the cast writes (`target.activeEffects = ...` would be a silent
+    // no-op on a primitive, then a `TypeError` on the next read in the JS). There is nothing to hurt, so no landing.
+    if !matches!(target, Obj(_)) {
         return out.value();
     }
     let range_type = integer(spell.get("rangeType")).unwrap_or(0.0);

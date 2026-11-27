@@ -11,9 +11,8 @@ use dfo_core::firmament_law::{
     stars_for, Tree, TreeFault,
 };
 use dfo_core::forge::{
-    apply_tree_to_character, decode_saved_firmament, difference, preview_allocate, preview_refund,
-    preview_respec, totals, tree_fault_of, tree_to_value, AllocateFault, Budget, RefundFault,
-    SavedFirmament,
+    decode_saved_firmament, difference, preview_allocate, preview_refund, preview_respec, totals,
+    tree_fault_of, tree_to_value, AllocateFault, Budget, RefundFault, SavedFirmament,
 };
 use dfo_core::value::Value::{self, Bool, Num, Obj, Str};
 use std::collections::BTreeMap;
@@ -177,11 +176,34 @@ fn forge() {
                 let ch_bytes = dfo_core::value::write(&ch);
                 let book = dfo_core::spells::Spellbook::default();
                 let before = dfo_core::analyze::analyze(&ch, &Obj(vec![]), &book).to_value();
-                let after = match apply_tree_to_character(&ch, &build, &tree) {
-                    Ok(applied) => {
-                        dfo_core::analyze::analyze(&applied, &Obj(vec![]), &book).to_value()
+                // The vector prices what the JS does: `applyFirmament(planFromTree(build, tree))`. The GUI wrapper
+                // (`apply_tree_to_character`) is pinned by `gui_boundaries.rs`; here the shared pricing path stays what
+                // the JS is checked against, including the JS `planFromTree`'s own "no start means the Serpent".
+                let after = match dfo_core::forge::tree_plan(&build, &tree) {
+                    Ok(plan) => dfo_core::analyze::analyze(
+                        &dfo_core::real_build::apply_firmament(&ch, &plan),
+                        &Obj(vec![]),
+                        &book,
+                    )
+                    .to_value(),
+                    Err(_) => {
+                        // The empty sky: the JS `planFromTree` still picks the Serpent, so this arm prices the JS's
+                        // own answer rather than the Forge's "no sign" reading (see `gui_boundaries.rs`).
+                        let mut plan_opts = Obj(vec![]);
+                        plan_opts.set("start", Value::Null);
+                        plan_opts.set("keys", words(&tree.keys));
+                        plan_opts.set("stars", num(0.0));
+                        let preset = dfo_core::firmament::build_by_id(&build)
+                            .cloned()
+                            .expect("a preset id");
+                        let plan = dfo_core::firmament::plan_from_tree(&preset, &plan_opts);
+                        dfo_core::analyze::analyze(
+                            &dfo_core::real_build::apply_firmament(&ch, &plan),
+                            &Obj(vec![]),
+                            &book,
+                        )
+                        .to_value()
                     }
-                    Err(e) => c.fail(&e.message()),
                 };
                 assert_eq!(
                     tree_bytes,

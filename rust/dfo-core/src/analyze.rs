@@ -1545,6 +1545,71 @@ pub fn analyze_with(ch: &Value, args: &Value, edit: &Value, book: &Spellbook) ->
     analyze(ch, &out, book)
 }
 
+/// A scenario field the plain [`analyze`] would crash on rather than price. The checked entry ([`analyze_checked`])
+/// reports it instead; `analyze` on a valid scenario is unchanged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScenarioFault {
+    /// The whole record (the character or the scenario) is not an object.
+    NotAnObject(&'static str),
+    /// A field the card SETS a property on (a target it writes `group`/`affinity` into, an override weapon it writes
+    /// `min`/`max` into) is neither absent nor an object.
+    NotARecord(&'static str),
+    /// A field the card walks as a list is neither absent nor a list.
+    NotAList(&'static str),
+}
+
+impl ScenarioFault {
+    /// A sentence a GUI may show.
+    pub fn message(&self) -> String {
+        match self {
+            ScenarioFault::NotAnObject(what) => format!("{what} is not a record"),
+            ScenarioFault::NotARecord(field) => {
+                format!("the scenario's `{field}` must be a record")
+            }
+            ScenarioFault::NotAList(field) => format!("the scenario's `{field}` must be a list"),
+        }
+    }
+}
+
+/// The scenario keys `analyze_card` writes a property into or walks as a list, in the order they are checked. A typo
+/// (`targt`) is simply absent and prices the reference foe, as the JS does; only a PRESENT but wrong-shaped value is a
+/// fault, because that is the shape the JS `set`/`forEach` throws on and the port would panic on.
+fn scenario_fault(args: &Value) -> Option<ScenarioFault> {
+    for field in ["target", "weapon", "wraps"] {
+        let v = args.get(field);
+        if !(v.is_nullish() || matches!(v, Obj(_))) {
+            return Some(ScenarioFault::NotARecord(field));
+        }
+    }
+    for field in ["traits", "imprints"] {
+        let v = args.get(field);
+        if !(v.is_nullish() || matches!(v, Arr(_))) {
+            return Some(ScenarioFault::NotAList(field));
+        }
+    }
+    None
+}
+
+/// [`analyze`] with a scenario check first: a wrong-shaped `target`/`weapon`/`traits`/`imprints` is a typed
+/// [`ScenarioFault`] instead of the `Value::set` panic a GUI would otherwise inherit (`{"target": 5}` is the reported
+/// case). A valid scenario reaches the same code, so no number moves. See `rust/FORGE-API.md`.
+pub fn analyze_checked(
+    ch: &Value,
+    args: &Value,
+    book: &Spellbook,
+) -> Result<Analysis, ScenarioFault> {
+    if !matches!(ch, Obj(_)) {
+        return Err(ScenarioFault::NotAnObject("the character"));
+    }
+    if !matches!(args, Obj(_)) {
+        return Err(ScenarioFault::NotAnObject("the scenario"));
+    }
+    if let Some(fault) = scenario_fault(args) {
+        return Err(fault);
+    }
+    Ok(analyze(ch, args, book))
+}
+
 // JSON.parse(JSON.stringify(ch)) for plain Value records (no JS toJSON hooks).
 pub fn json_clone(v: &Value) -> Value {
     match v {
@@ -1561,13 +1626,31 @@ pub fn json_clone(v: &Value) -> Value {
     }
 }
 
+/// The most elements `edit_field` will grow an array to. A save's `skills` list has 35 entries and its `stats` eight; a
+/// key naming an index past this is not a field of any record the game writes. In JS, `arr[1e9] = x` attaches a sparse
+/// element (no allocation) that a later read of that same key can see; the port would have to allocate a billion slots,
+/// so it treats such a key as a no-op instead.
+///
+/// shortcut: an index past this reads back absent rather than the value written, a divergence only on an index no
+/// record legitimately uses; raise it only if a real save's array grows past 10,000 entries.
+const MAX_ARRAY_GROWTH: usize = 10_000;
+
 fn edit_field(v: &mut Value, path: &[&str], edit: impl FnOnce(&Value) -> Value) {
     let Some((&key, rest)) = path.split_first() else {
         *v = edit(v);
         return;
     };
     if let Arr(items) = v {
-        let i = crate::value::index_key(key).expect("array field uses an index") as usize;
+        // `arr['1.5'] = x` is an own non-index property in JS: every later read is a numeric index (or a walk of the
+        // elements), so no reader sees it. A key that names no index is therefore a no-op here, not a panic. This is
+        // what a hand-made `skillId` (1.5, "abc", 1e9) reaches through `marginals`/`rank_affixes`.
+        let Some(i) = crate::value::index_key(key) else {
+            return;
+        };
+        let i = i as usize;
+        if i >= MAX_ARRAY_GROWTH {
+            return;
+        }
         if i >= items.len() {
             items.resize(i + 1, Undefined);
         }
@@ -1790,11 +1873,23 @@ fn sort_rank_rows(rows: &mut [Value]) {
     }
 }
 
+/// The most material rows `rank_weapons` will price. `MATERIALS` has ten, a caller's `materials` (the JS `{ materials = 10 }`)
+/// is a count over them, and every vector uses at most 10.1; the JS `for (m = 0; m < materials; m++)` would spin a
+/// hand-made 1e9 forever, so this raises the JS `RangeError` instead. Far above anything legitimate.
+pub const MAX_MATERIAL_ROWS: usize = 1_000;
+
 /// JS:1752. Options use the JS defaults when fields are absent.
 pub fn rank_weapons(ch: &Value, scenario: &Value, opts: &Value, book: &Spellbook) -> Value {
     let mut rows = vec![];
     let mut args = Obj(scenario.entries().to_vec());
     let mats = default(opts.get("materials"), Num(10.0)).to_number();
+    // The JS loop is `for (m = 0; m < materials; m++)`, so a hand-made 1e9 would price forever. A real call uses ten
+    // materials at most (`MATERIALS`); the cap sits far above the legal ladder and past every vector (10.1).
+    if mats > MAX_MATERIAL_ROWS as f64 {
+        std::panic::panic_any(crate::model_blow::JsRangeError(
+            "RangeError: the material ladder is past the port's cap".to_owned(),
+        ));
+    }
     for &(id, template) in crate::generated::data::WEAPONS {
         if template.ammo == Some(true) || template.ranged == Some(true) {
             continue;
