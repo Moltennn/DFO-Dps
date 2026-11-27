@@ -9,6 +9,9 @@
 //! gate prints). A hit is re-run live when the first 8 bytes of `sha256(salt || key)` fall under `DFO_ORACLE_SPOT`;
 //! a mismatch panics with a diff and deletes the entry, so the cache can never hide JS drift. The Rust binary always
 //! runs live; only the JS answer is cached.
+//!
+//! `DFO_ORACLE=snapshot|record` is the other store: the committed answers of `snapshot.rs`, keyed by test and call
+//! number, replayed without Node.
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
@@ -311,14 +314,40 @@ enum CacheMode {
     Off,
     Use,
     Fresh,
+    Snapshot,
+    Record,
 }
 
 fn cache_mode() -> CacheMode {
     match std::env::var("DFO_ORACLE").ok().as_deref() {
         Some("use") => CacheMode::Use,
         Some("fresh") => CacheMode::Fresh,
+        Some("snapshot") => CacheMode::Snapshot,
+        Some("record") => CacheMode::Record,
         _ => CacheMode::Off,
     }
+}
+
+/// The JS answers come from the committed snapshots: nothing may spawn Node.
+pub fn replaying() -> bool {
+    cache_mode() == CacheMode::Snapshot
+}
+
+/// A snapshot recording run: every routed JS call is stored.
+pub fn recording() -> bool {
+    cache_mode() == CacheMode::Record
+}
+
+/// A JS call the helpers above do not cover (a shell pipeline, an unusual env): `args` and `env` are its identity for
+/// the snapshot and the cache, `live` runs it.
+pub fn js_custom(
+    cwd: &Path,
+    root: &Path,
+    args: &[&str],
+    env: &[(&str, &OsStr)],
+    live: &dyn Fn() -> Output,
+) -> Output {
+    run_js(cwd, Some(root), args, env, None, live)
 }
 
 /// `<checkout>/.cache/oracle`, never shared between worktrees unless `DFO_ORACLE_DIR` says so (`.cache/` is gitignored).
@@ -350,7 +379,7 @@ fn spot_selected(key: &str) -> bool {
 }
 
 /// One line per call, appended to `DFO_ORACLE_STATS`; [`oracle_summary`] turns the file into the gate's line.
-fn stats(line: &str) {
+pub(super) fn stats(line: &str) {
     let Some(path) = std::env::var_os("DFO_ORACLE_STATS") else {
         return;
     };
@@ -628,6 +657,20 @@ fn run_js(
     live: &dyn Fn() -> Output,
 ) -> Output {
     let mode = cache_mode();
+    if matches!(mode, CacheMode::Snapshot | CacheMode::Record) {
+        let call = super::snapshot::Call {
+            cwd,
+            root,
+            args,
+            env,
+            stdin,
+        };
+        return if mode == CacheMode::Record {
+            super::snapshot::record(&call, live)
+        } else {
+            super::snapshot::replay(&call)
+        };
+    }
     if mode == CacheMode::Off {
         // The S2 dry run: the key and its verdict only, no entry read or written.
         if std::env::var_os("DFO_ORACLE_STATS").is_some() {
@@ -1503,7 +1546,7 @@ fn self_check() {
     });
 }
 
-fn sha256_hex(data: &[u8]) -> String {
+pub fn sha256_hex(data: &[u8]) -> String {
     hex(&sha256(data))
 }
 

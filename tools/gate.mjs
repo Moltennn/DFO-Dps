@@ -26,6 +26,9 @@
  *   --quick        rust: skip the heavy suites by full path (listed below), print each skipped path; the rest runs in
  *                  full, so this is a fast tier, never a subset of cases within a suite
  *   --no-oracle    rust: DFO_ORACLE=off (no JS-oracle cache; every JS call runs live)
+ *   --snapshots    rust: the CLI tests answer every JS call from rust/dfo-cli/tests/snapshots/ and their PATH holds no
+ *                  `node` (only `sh` and `head`); the full run also fails on a stored answer no test asked for.
+ *                  dfo-cli only: the dfo-core JS probes have no snapshot and run as usual. Record: tools/snapshots.mjs
  *   --spot F       rust: fraction of cache hits re-run against real JS and compared (default 0.05; 0.25 before a push, 1.0 nightly;
  *                  a mismatch fails the gate and deletes the entry). Ignored with --no-oracle
  *   --tests a,b    rust: run only these test targets (e.g. `--tests rank,doctor`); the build still compiles all
@@ -44,9 +47,9 @@
  *   --lines N      how many lines of a failure to show (default 25)
  */
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { availableParallelism, tmpdir } from 'node:os';
-import { dirname, join, relative, resolve } from 'node:path';
+import { delimiter, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
@@ -250,6 +253,40 @@ function oraclePlan() {
   return { off, dir, stats, env };
 }
 
+/** `--snapshots`: the environment of a test process that may not reach Node. */
+function snapshotPlan() {
+  const dir = mkdtempSync(join(tmpdir(), 'gate-nonode-'));
+  for (const name of ['sh', 'head']) {
+    const at = (process.env.PATH ?? '').split(delimiter).map((p) => join(p, name)).find((p) => existsSync(p));
+    if (at) symlinkSync(at, join(dir, name));
+  }
+  const stats = join(dir, 'stats.txt');
+  return { bin: dir, stats, env: { DFO_ORACLE: 'snapshot', DFO_ORACLE_STATS: stats, PATH: dir } };
+}
+
+/** Every call in the MANIFEST was asked for: a removed test or a shortened one cannot leave a stale answer behind.
+ *  The slow planner tier makes its calls only under `--full`. */
+function stepSnapshotCoverage(stats) {
+  const replayed = new Map();
+  for (const line of existsSync(stats) ? readFileSync(stats, 'utf8').split('\n') : []) {
+    const [tag, target, test, index] = line.split(' ');
+    if (tag !== 'snap') continue;
+    replayed.set(target, (replayed.get(target) ?? new Set()).add(`${test} ${index}`));
+  }
+  const manifest = readFileSync(join(rustDir, 'dfo-cli', 'tests', 'snapshots', 'MANIFEST'), 'utf8');
+  const bad = [];
+  let total = 0;
+  for (const line of manifest.split('\n').filter((l) => l && !l.startsWith('#'))) {
+    const [file, , count] = line.split(' ');
+    const target = file.replace(/\.snap$/, '');
+    if (target === 'planners_slow' && !flag('full')) continue;
+    const got = replayed.get(target)?.size ?? 0;
+    total += got;
+    if (got !== Number(count)) bad.push(`${target}: ${got} of ${count} stored calls replayed`);
+  }
+  return report('snapshot coverage', bad.length === 0, `${total} stored calls replayed`, bad.join('\n'));
+}
+
 /** Read the stats file the test binaries wrote: `hit/miss/uncacheable/corrupt/spot` lines, one per JS call. */
 function oracleSummary(path) {
   let text = '';
@@ -343,7 +380,8 @@ async function stepCargoTestParallel(oracleEnv = {}) {
       const started = Date.now();
       const r = await new Promise((res) => {
         const c = spawn(w.exe, ['-q', '--exact', w.test], { cwd: join(rustDir, 'dfo-core'), stdio: ['ignore', 'pipe', 'pipe'],
-          env: { ...process.env, ...oracleEnv } });
+          // `--snapshots` hides Node from the CLI tests only; dfo-core's own JS probes keep the normal environment.
+          env: oracleEnv.PATH && !w.name.startsWith('dfo-cli/') ? process.env : { ...process.env, ...oracleEnv } });
         let out = '';
         c.stdout.on('data', (d) => { out += d; });
         c.stderr.on('data', (d) => { out += d; });
@@ -408,8 +446,13 @@ async function gateRust() {
   if (!stop()) stepVectors();
   if (!stop()) stepCargo('cargo fmt --check', ['fmt', '--check']);
   if (!stop()) stepCargo('cargo clippy', ['clippy', '--all-targets', '--', '-D', 'warnings']);
-  const oracle = oraclePlan();
+  const oracle = flag('snapshots') ? snapshotPlan() : oraclePlan();
   if (!stop()) await stepCargoTestParallel(flag('full') ? { ...oracle.env, PLANNERS_SLOW: '1' } : oracle.env);
+  if (flag('snapshots')) {
+    if (!stop() && !flag('quick') && !opt('tests', undefined)) stepSnapshotCoverage(oracle.stats);
+    rmSync(oracle.bin, { recursive: true, force: true });
+    return;
+  }
   // The line comes after the cargo test step even when it did not run, so a floor of `0` is visible too.
   const s = oracleSummary(oracle.stats);
   if (s) {

@@ -6,6 +6,10 @@
 //! Rust binary always runs live; only the JS side is cached.
 #![allow(dead_code)]
 
+//!
+//! `snapshot.rs` holds the committed answers (`tests/snapshots/`): `DFO_ORACLE=snapshot` replays them without Node.
+
 mod oracle;
+mod snapshot;
 
 pub use oracle::*;

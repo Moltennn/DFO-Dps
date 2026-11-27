@@ -393,6 +393,10 @@ fn corrupt_entries_and_concurrent_writers(base: &Path, cache: &Path) {
 
 #[test]
 fn the_key_covers_its_inputs_and_the_cache_fails_open() {
+    // A test of the live cache (it spawns Node itself), not a differential: it has no snapshot form.
+    if common::replaying() || common::recording() {
+        return;
+    }
     let base = scratch("s3");
     let tree = copied_js_tree(&base);
     let root = fixture(&base);
