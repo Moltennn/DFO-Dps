@@ -1,7 +1,7 @@
-DFO DPS Lab
-===========
+DFO Forge
+=========
 
-This project is an independent, unofficial tool. It is not affiliated with or
+DFO Forge is an independent, unofficial tool. It is not affiliated with or
 endorsed by Bethesda Softworks or ZeniMax Media. The Elder Scrolls and
 Daggerfall are trademarks of ZeniMax Media Inc.
 
@@ -18,12 +18,75 @@ from Daggerfall Unity:
   https://github.com/Interkarma/daggerfall-unity
   License: MIT, Daggerfall Workshop
 
+The Firmament tree and law data (vendor/firmament) and the item templates
+(vendor/enchanting) come from the same MIT snapshot above. The tables in
+rust/dfo-core/src/generated are derived from it by tools/rust-data.mjs, apart
+from js_prototypes.rs (the JavaScript engine's own prototype names) and the
+values read from this project's own src/*.js modules, some of which restate
+Daggerfall Unity's formulas (attributed above).
+
+The rules that the default game build (0.1.14631) changes relative to that
+snapshot were established by reading the shipped 0.1.14631 build, which that
+MIT licence does not cover.
+
 The following upstream notices are preserved:
 
   Daggerfall Unity is an open-source re-implementation of The Elder Scrolls II:
   Daggerfall. It is not affiliated with Bethesda Softworks or ZeniMax Media.
   The Elder Scrolls and Daggerfall are trademarks of ZeniMax Media Inc.
 
-The MIT license text is in LICENSE. The upstream source's own comments and
-attributions are the authority for the formulas; this project only re-expresses
-the parts needed for offline DPS analysis.
+DFO Forge's own MIT license text is in LICENSE. The two upstream MIT notices
+below are reproduced verbatim and in full. The upstream source's own
+comments and attributions are the authority for the formulas; this project
+only re-expresses the parts needed for offline DPS analysis.
+
+------------------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2026 Lattymoy
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+------------------------------------------------------------------------------
+
+Daggerfall Unity
+https://github.com/Interkarma/daggerfall-unity
+
+MIT License
+
+Copyright (c) 2009-2023 Daggerfall Workshop
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
