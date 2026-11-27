@@ -332,6 +332,16 @@ export function genFightFamilies(Out, makeLcg) {
       castCase({...sp, rangeType}, null, t, {casterLevel: 4, hp: 20, casts: 2, ticks: 6, pierce: 10, potencyPct: 5}, script());
     }
   }
+  // B: a DoT entry whose element or flag is nullish. JS reads no element at all (no `spellHasFlags` arm matches, so
+  // no elemental resistance and no race tolerance), never Fire; and a nullish flag falls back to the element's own flag
+  // (`Number.isFinite(null)` is false). Rust's `to_number`/`num_or` used to map both to 0 (Fire / no flags). The target
+  // carries a 100% Fire resistance effect so a Fire reading is visible as a zeroed round.
+  for (const [element, flag] of [[0, null], [null, null], [4, null], [0, 4], [null, 4], [2, undefined], [undefined, undefined], [null, 1]]) {
+    const dot = { kind: 'continuousDamage', effect: effect(4, 10, 0), casterLevel: 1, element, flag,
+      saveScaled: true, roundsRemaining: 3, spellPower: 1 };
+    const t = {...targetFor(20), activeEffects: [dot, {kind: 'elementalResistance', element: 0, chance: 100}]};
+    castCase({...probes[1], effects: [], rangeType: 0}, null, t, {casterLevel: 1, hp: 60, casts: 1, ticks: 3, pierce: 0, potencyPct: 0}, script());
+  }
 
   // Overwrite one decision at a time, keeping the earlier draws and their gates intact.
   for (const [i, sp] of probes.entries()) {

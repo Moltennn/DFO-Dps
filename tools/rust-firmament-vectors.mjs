@@ -7,6 +7,7 @@
  * shape for planFromTree/planSummary. Cases are compared as whole ordered values by the codec.
  */
 import * as F from '../src/firmament.js';
+import * as RB from '../src/realBuild.js';
 import {
   PRICES, STAT_DEFS, blowPct, castCostPct, isPrice, isStart, statDef, statWords, treeStats,
 } from '../vendor/firmament/firmamentLaw.js';
@@ -235,6 +236,31 @@ export function genFirmamentFamilies(Out, makeLcg) {
       put('blowtree', [plan.tree, { skill: build.skill }], blowPct(treeStats(plan.tree), { skill: build.skill }));
     }
     for (const start of START_KEYS) put('plan', [build, { start, stars: 40 }], F.planBuild(build, { start, stars: 40 }));
+  }
+  // P1: the FULL sky's priced trees through planSummary and applyFirmament. A plan built by planBuild carries its
+  // price table on the totals' PRICES symbol; a serialized plan (what a save or a Value round-trip keeps) does not, so
+  // every reader must re-derive the totals from the tree. JS keeps them, so `blow` is 21 where a price-free rebuild
+  // gives the group cap 30. Each build and its own full-sky tree is the case that catches a lost price table.
+  // (A hand-built plan whose `totals` disagrees with its own `tree` is the residual: Rust reads the tree, JS reads the
+  // object it was given. rust/README.md says so; no Rust caller builds one.)
+  const FULL_SKY = [...FIRM_NODES.keys()].filter((k) => !START_KEYS.includes(k));
+  for (const build of F.BUILDS) {
+    const plan = F.planFromTree(build, { start: 'sp.start', keys: FULL_SKY });
+    put('summary', [plan], F.planSummary(plan));
+    // applyFirmament (realBuild.js:36-63) writes `firmamentDamagePct` from blowPct(plan.totals).
+    put('apply', [build, plan], RB.applyFirmament({ name: 'T', level: 45, raceId: 1, stats: {}, skills: {}, career: {}, _mods: { stats: {}, statMax: {}, skills: {} }, _enchantMods: { skillMods: {} } }, plan));
+  }
+  // The same over a SMALL priced tree (`rt.k`'s weaponDmg -4 and `sh.k`'s -5): a hand arithmetic check with the cap.
+  for (const [start, keys] of [['sp.start', ['sh.k']], ['sp.start', ['rt.k']], ['sp.start', ['sh.k', 'rt.k']]]) {
+    for (const build of F.BUILDS) {
+      put('summary', [F.planFromTree(build, { start, keys })], F.planSummary(F.planFromTree(build, { start, keys })));
+    }
+  }
+  // planSummary(planBuild(b, { stars: n })) for n 0..98: every purse's summary (the price table on the planner's own plan).
+  for (const build of F.BUILDS) {
+    for (let n = 0; n <= 98; n += 1) {
+      put('summary', [F.planBuild(build, { stars: n })], F.planSummary(F.planBuild(build, { stars: n })));
+    }
   }
   // planFromTree with a start the sky has not, and with no keys at all
   for (const start of ['nope', '', 'sp.start', 'mg.start']) {

@@ -4,7 +4,7 @@ use crate::generated::{boss_traits::RESIST_SHARE, data::SKILLS, races, spell_tab
 use crate::round::{js_clamp, js_max, js_min, to_int32};
 use crate::save::{effective_skill, skill_value};
 use crate::target;
-use crate::value::{index_key, obj_table_get, Value, Value::Num};
+use crate::value::{add_num, add_number, index_key, obj_table_get, Value, Value::Num};
 
 pub use spell_tables::{CAST_COST_FLOOR, EFFECT_COST_TABLE, MAGIC_ROUND_SECONDS, TARGET_COST_MULT};
 pub const SPELL_RECORD_SIZE: usize = spell_tables::SPELL_RECORD_SIZE as usize;
@@ -159,7 +159,13 @@ pub fn effect_school(e: &Value) -> f64 {
     entry(e).map_or(SKILLS.destruction, |r| r.skill)
 }
 
-fn component(a: f64, b: f64, offset: f64, [base, increase, per]: [f64; 3]) -> f64 {
+fn component(a: f64, b: f64, offset: f64, parts: [&Value; 3]) -> f64 {
+    // `c.offset + c.A * starting + c.B * trunc(increase / per)` with `starting`/`increase` read straight from the
+    // record: a string field makes `c.A * '2'` numeric but `offset + that` a JS `+`, so `offset + ('x' * n)` is a
+    // number here (offset is numeric); a string `starting` only reaches `c.A * starting`, which is numeric. The one
+    // concatenation arm is `offset + ...` where the product is NaN-free; kept numeric, as the JS product is.
+    let [base, increase, per] = parts.map(Value::to_number);
+    let _ = parts;
     (offset + a * base + b * (increase / js_max(1.0, per)).trunc()).trunc()
 }
 
@@ -168,25 +174,39 @@ pub fn effect_cost(e: &Value, skill_of: impl FnOnce(f64) -> f64, online: bool) -
         return (0.0, 0.0);
     };
     let skill = skill_of(row.skill);
-    let get = |k| e.get(k).to_number();
+    let field = |k| e.get(k);
     let mut gold = 0.0;
     if let Some(c) = row.duration {
-        gold += component(c.a, c.b, c.offset, DURATION.map(get));
-    }
-    if let Some(c) = row.chance {
-        gold += component(c.a, c.b, c.offset, CHANCE.map(get));
-    }
-    if let Some(c) = row.magnitude {
-        let [lo, hi, ll, lh, per] = MAGNITUDE.map(get);
         gold += component(
             c.a,
             c.b,
             c.offset,
-            [((lo + hi) / 2.0).trunc(), ((ll + lh) / 2.0).trunc(), per],
+            [field(DURATION[0]), field(DURATION[1]), field(DURATION[2])],
+        );
+    }
+    if let Some(c) = row.chance {
+        gold += component(
+            c.a,
+            c.b,
+            c.offset,
+            [field(CHANCE[0]), field(CHANCE[1]), field(CHANCE[2])],
+        );
+    }
+    if let Some(c) = row.magnitude {
+        let [lo, hi, ll, lh, per] = MAGNITUDE.map(field);
+        gold += component(
+            c.a,
+            c.b,
+            c.offset,
+            [
+                &Num((add_number(lo, hi) / 2.0).trunc()),
+                &Num((add_number(ll, lh) / 2.0).trunc()),
+                per,
+            ],
         );
     }
     if row.duration.is_none() && row.chance.is_none() && row.magnitude.is_none() {
-        gold += component(60.0, 100.0, 160.0, [1.0; 3]);
+        gold += component(60.0, 100.0, 160.0, [&Num(1.0), &Num(1.0), &Num(1.0)]);
     }
     let r = 100.0;
     let sp = if online && skill > r {
@@ -222,18 +242,34 @@ pub enum Mode {
 }
 
 pub fn magnitude_at(e: &Value, level: f64, mode: Mode) -> f64 {
-    let [lo, hi, ll, lh, per] = MAGNITUDE.map(|k| e.get(k).to_number());
+    // `magnitudeAt` (spells.js:244-250). The avg arm writes `(e.magnitudeBaseLow + e.magnitudeBaseHigh) / 2` - a JS
+    // `+`, which CONCATENATES when either field is a string. The min/max arms pick the raw field and then write
+    // `base + plus * Math.floor(...)`, another JS `+`, so `'10' + 0` is `'100'`, not 10.
+    let (low, high) = (e.get(MAGNITUDE[0]), e.get(MAGNITUDE[1]));
+    let (ll, lh) = (e.get(MAGNITUDE[2]), e.get(MAGNITUDE[3]));
+    let per = e.get(MAGNITUDE[4]).to_number();
     let (base, plus) = match mode {
-        Mode::Avg => ((lo + hi) / 2.0, (ll + lh) / 2.0),
-        Mode::Min => (lo, ll),
-        Mode::Max => (hi, lh),
+        Mode::Avg => (add_number(low, high) / 2.0, add_number(ll, lh) / 2.0),
+        Mode::Min => (low.to_number(), ll.to_number()),
+        Mode::Max => (high.to_number(), lh.to_number()),
     };
-    base + plus * (level / js_max(1.0, per)).floor()
+    let base_value = match mode {
+        Mode::Avg => Num(base),
+        Mode::Min => low.clone(),
+        Mode::Max => high.clone(),
+    };
+    // `base + plus * Math.floor(...)`: a string `base` concatenates with the number.
+    add_num(&base_value, plus * (level / js_max(1.0, per)).floor())
 }
 
 pub fn spell_rounds(e: &Value, level: f64) -> f64 {
-    let [base, increase, per] = DURATION.map(|k| e.get(k).to_number());
-    base + increase * js_max(1.0, (level / js_max(1.0, per)).floor())
+    // `e.durationBase + e.durationMod * Math.max(...)`: `durationMod * x` is numeric, so only `durationBase` can be a
+    // string and concatenate.
+    let [base, increase, per] = DURATION.map(|k| e.get(k));
+    add_num(
+        base,
+        increase.to_number() * js_max(1.0, (level / js_max(1.0, per.to_number())).floor()),
+    )
 }
 
 pub fn spell_has_flags(element: f64, check: i32, flags: i32) -> bool {

@@ -25,7 +25,7 @@ use dfo_core::save::{character_label, skill_name};
 use dfo_core::spells::{spell_rotation, Spellbook};
 use dfo_core::value::{number_to_string, Value, Value::Num};
 
-use crate::graph::{bar_chart, multi_graph_page, BarChart, BarSeries, Section};
+use crate::graph::{bar_chart, escape, multi_graph_page, BarChart, BarSeries, Section};
 use crate::spell::debug_name;
 
 /// JS `(Math.round(v * 10) / 10).toFixed(1)`; `-` for a non-finite input (`src/cli.js:386`).
@@ -108,8 +108,9 @@ pub fn ranked(
     list
 }
 
-/// One row of the page table (`src/cli.js:1499`). `sp.name` and `skillName(r.school)` are inserted raw, as the JS does;
-/// the numbers are the JS `${...}` string forms.
+/// One row of the page table (`src/cli.js:1499`). The JS inserts `sp.name` and `skillName(r.school)` raw; this port
+/// escapes them (a custom save spell's name is data, not markup), the documented page-escaping difference. A safe name
+/// renders byte-identically; the numbers are the JS `${...}` string forms.
 fn table_row(e: &Entry) -> String {
     let sp = &e.spell;
     let r = &e.rotation;
@@ -117,8 +118,8 @@ fn table_row(e: &Entry) -> String {
     let dot_rounds = r.get("dotRounds");
     format!(
         "<tr><td class=\"k\">{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
-        sp.get("name").to_js_string(),
-        skill_name(r.get("school")).to_js_string(),
+        escape(&sp.get("name").to_js_string()),
+        escape(&skill_name(r.get("school")).to_js_string()),
         r.get("cost").to_js_string(),
         fmt(r.get("damage").to_number()),
         fmt(r.get("windowDps").to_number()),

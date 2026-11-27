@@ -309,22 +309,46 @@ export function genBlowFamilies(Out, makeLcg) {
     scalar({martialPath:'blademaster'}, null, neutral, {stacks}, 'strength', SKILLS.Dodging, 'overhaul', false);
   }
   // Shipped-build selection (`--game-build`, CHANGELOG-MECHANICS.md GEAR-14631 / BRAND-14631): the same cards under both
-  // builds. '14512' must reproduce the default exactly; '14631' is the drift finding. Appended last, so the bytes of every
-  // case above are unchanged.
+  // builds. The default IS `14631` (`src/model.js:119`), so an omitted option and an explicit `'14631'` are the same
+  // card and `'14512'` is the cut; the pins below make that explicit rather than relying on the default. Appended last,
+  // so the bytes of every case above are unchanged.
   const brand = { kind: 'brand', element: 'fire', flat: 8 };
   const brandPowers = [brand, { kind: 'venom', flat: 8 }, { kind: 'brand', flat: 8 }];
   const resists = [undefined, { career: {} }, { career: { resistanceFlags: 8 } }, { career: { immunityFlags: 8 } }, { career: { resistanceFlags: 8, immunityFlags: 8 } }, { isPlayer: true }];
   for (const gameBuild of ['14512', '14631', undefined]) {
     for (const t of resists) {
+      // A live carry state: `brand`'s flat reads no carry, but the same cards through a carried scenario must match.
       for (const healthShare of [undefined, 0, 0.1, 0.49, 0.5, 1]) {
         const opts = { gameBuild, healthShare, unaware: true, night: true, firstBlow: true };
         model.add('loot', 'n', ref({}), ref(t), ref(opts), V(brandPowers), '=>', V([M.lootPowerTerms(brandPowers, t, opts), M.weaponPowers({}, opts), M.echoChances(brandPowers)]));
       }
     }
   }
-  // The gear add and its guards, through the card and directly. `PLAIN`-like shapes: a real weapon skill, explicit gear.
+  // The axe/blunt half line at the two ratios the 14631 law removed, with the build pinned when it matters.
   const STRUCK_TARGET = enemyTarget(5, { playerLevel: 20, level: 20, exactLevel: true, rolls: () => 0.5 });
   const gearCh = (skill, gear, extra = {}) => ({ online: true, skills: { [skill]: 104 }, _mods: { skills: { [skill]: gear } }, stats: { strength: 50, speed: 50, agility: 50 }, career: { abilityFlagsAndSpellPointsBitfield: 4 }, health: 96, maxHealth: 96, ...extra });
+  for (const gameBuild of ['14512', '14631']) {
+    for (const skill of [SKILLS.Axe, SKILLS.BluntWeapon]) {
+      for (const share of [0.49999999999999994, 0.5, NaN, undefined]) {
+        const ch = gearCh(skill, 100);
+        const w = { ...M.syntheticWeapon(127, 1), skillId: skill, min: 100, max: 100 };
+        const opts = { gameBuild, healthShare: share };
+        model.add('scalar', ref(ch), ref(w), ref(STRUCK_TARGET), ref(opts), V('strength'), V(skill), V('overhaul'), V(true), '=>', V([
+          M.combatStat(ch, 'strength', opts), M.skill(ch, skill, opts), M.racialModifiers(ch, w, 'overhaul', opts),
+          M.martialPace(ch, opts), M.masteryPace(ch, w, opts), M.martialBlowPct(ch, STRUCK_TARGET, opts), M.masteryPct(ch, w, STRUCK_TARGET, opts),
+          M.isBlade(w), M.isBlunt(w), M.weaponToHit(w), M.weaponResistFactor(w, opts.traits), M.conditionMultiplier(w, true), M.SWING_DIRECTIONS,
+        ]));
+      }
+      // the gear add around 727.27 (the 14512 law's 320 / 0.44 cap boundary)
+      for (const gear of [727.26, 727.27, 727.28]) {
+        const ch = gearCh(skill, gear);
+        const w = { ...M.syntheticWeapon(127, 1), skillId: skill, min: 100, max: 100 };
+        const opts = { gameBuild };
+        model.add('damage', ref(ch), ref(w), ref(STRUCK_TARGET), ref(opts), V('StrikeLeft'), V('overhaul'), '=>', V(M.damageModel(ch, w, STRUCK_TARGET, 'StrikeLeft', 'overhaul', opts)));
+      }
+    }
+  }
+  // The gear add and its guards, through the card and directly. `PLAIN`-like shapes: a real weapon skill, explicit gear.
   for (const gameBuild of ['14512', '14631', undefined]) {
     for (const skill of [SKILLS.LongBlade, SKILLS.Axe, SKILLS.BluntWeapon, SKILLS.Archery, SKILLS.ShortBlade, SKILLS.HandToHand]) {
       for (const gear of [0, 0.25, 1, 250, 700, 1000]) {

@@ -154,6 +154,34 @@ fn firmament() {
                 let plan = row.value(&defs);
                 plan_summary(&plan)
             }
+            "apply" => {
+                // `realBuild.js:36-63 applyFirmament` over a bare character: only `_mods` and `firmamentDamagePct`
+                // move, and the blow reads the plan's PRICES table (re-derived from the plan's tree here).
+                let build = row.value(&defs);
+                let plan = row.value(&defs);
+                let ch = Obj(vec![
+                    ("name".into(), Str("T".into())),
+                    ("level".into(), Num(45.0)),
+                    ("raceId".into(), Num(1.0)),
+                    ("stats".into(), Obj(vec![])),
+                    ("skills".into(), Obj(vec![])),
+                    ("career".into(), Obj(vec![])),
+                    (
+                        "_mods".into(),
+                        Obj(vec![
+                            ("stats".into(), Obj(vec![])),
+                            ("statMax".into(), Obj(vec![])),
+                            ("skills".into(), Obj(vec![])),
+                        ]),
+                    ),
+                    (
+                        "_enchantMods".into(),
+                        Obj(vec![("skillMods".into(), Obj(vec![]))]),
+                    ),
+                ]);
+                let _ = build;
+                dfo_core::real_build::apply_firmament(&ch, &plan)
+            }
             "blow" => {
                 let totals = row.value(&defs);
                 let opts = row.value(&defs);
@@ -357,6 +385,7 @@ fn firmament() {
         ("isprice", 200),
         ("offstat", 400),
         ("nodehasoff", 1500),
+        ("apply", 8),
     ] {
         let n = counts.get(kind).copied().unwrap_or(0);
         assert!(n >= floor, "firmament/{kind}: {n} cases, floor {floor}");

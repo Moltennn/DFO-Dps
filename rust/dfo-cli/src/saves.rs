@@ -17,7 +17,6 @@ use std::path::{Path, PathBuf};
 
 use dfo_core::spells::{read_spells_std, spells_by_index_map, Spellbook};
 use dfo_core::value::Value;
-use serde_json::Value as JsonValue;
 
 /// The largest document this will read (a save or a `SaveInfo.txt`): 64 MiB, as the workbench import uses. A real
 /// `SaveData.txt` is a few hundred KiB, so this refuses a runaway file while leaving ordinary saves untouched.
@@ -63,16 +62,28 @@ fn non_empty_env(name: &str) -> Option<String> {
         .map(|v| v.to_string_lossy().into_owned())
 }
 
-/// `path.resolve(p)`: an absolute path, or the working directory joined with a relative one.
+/// `path.resolve(p)`: an absolute path, or the working directory joined with a relative one, with `.` dropped and
+/// `..` folded lexically (Node does not touch the filesystem). A `..` above the root is dropped, as Node clamps it.
 fn absolute(p: &str) -> PathBuf {
     let path = Path::new(p);
-    if path.is_absolute() {
+    let joined = if path.is_absolute() {
         path.to_path_buf()
     } else {
         std::env::current_dir()
             .map(|cwd| cwd.join(path))
             .unwrap_or_else(|_| path.to_path_buf())
+    };
+    let mut out = PathBuf::new();
+    for component in joined.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
     }
+    out
 }
 
 /// `userDataDir(home)` (`src/save.js:17-26`): `DAGGER_USER_DATA`, else the client's platform user-data folder.
@@ -179,42 +190,25 @@ fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, std::io::Error> {
 
 /// `JSON.parse(fs.readFileSync(path))` for the files here, as the JS-like [`Value`] the core reads.
 ///
-/// `serde_json` keeps an object's own key order (`preserve_order`), rejects malformed text, and, like `JSON.parse`,
-/// keeps the last of two duplicate keys. A number too large for an f64 is a parse error where JS gives `Infinity`.
+/// The bytes are decoded with the same lossy UTF-8 fallback Node uses and unpaired surrogate escapes are replaced
+/// (`crate::js_json`); `serde_json` keeps an object's own key order (`preserve_order`), rejects malformed text, and,
+/// like `JSON.parse`, keeps the last of two duplicate keys. A number too large for an f64 is a parse error where JS
+/// gives `Infinity`.
 fn read_json(path: &Path) -> Result<Value, String> {
     let file =
         fs::File::open(path).map_err(|e| format!("could not open the file: {}", e.kind()))?;
-    let mut text = String::new();
-    // `take` bounds the allocation; reading one byte past the limit distinguishes "at the limit" from "over".
+    // The read is bounded; reading one byte past the limit distinguishes "at the limit" from "over".
+    let mut bytes = Vec::new();
     file.take(MAX_SAVE_BYTES + 1)
-        .read_to_string(&mut text)
+        .read_to_end(&mut bytes)
         .map_err(|e| format!("could not read the file: {}", e.kind()))?;
-    if text.len() as u64 > MAX_SAVE_BYTES {
+    if bytes.len() as u64 > MAX_SAVE_BYTES {
         return Err(format!(
             "the file is larger than the {} MiB limit",
             MAX_SAVE_BYTES / (1024 * 1024)
         ));
     }
-    let doc: JsonValue = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    Ok(json_to_value(&doc))
-}
-
-/// `JsonValue` to the core's [`Value`]; `Value::set` puts an integer-like key in JS order.
-fn json_to_value(v: &JsonValue) -> Value {
-    match v {
-        JsonValue::Null => Value::Null,
-        JsonValue::Bool(b) => Value::Bool(*b),
-        JsonValue::Number(n) => Value::Num(n.as_f64().unwrap_or(f64::NAN)),
-        JsonValue::String(s) => Value::Str(s.clone()),
-        JsonValue::Array(items) => Value::Arr(items.iter().map(json_to_value).collect()),
-        JsonValue::Object(map) => {
-            let mut out = Value::Obj(Vec::new());
-            for (k, v) in map {
-                out.set(k, json_to_value(v));
-            }
-            out
-        }
-    }
+    crate::js_json::parse_bytes(&bytes)
 }
 
 /// `statSync(file).mtimeMs`, in milliseconds, computed the way Node does (`sec * 1000 + nsec / 1e6`, which keeps the
@@ -386,7 +380,7 @@ mod tests {
         let json = serde_json::from_str("1.00000000000000011102230246251565404236316680908203126")
             .unwrap();
         assert_eq!(
-            json_to_value(&json),
+            crate::js_json::json_to_value(&json),
             Value::Num(f64::from_bits(1.0f64.to_bits() + 1))
         );
     }

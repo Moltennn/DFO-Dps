@@ -72,8 +72,51 @@ bullets below and in the per-command notes.
 - **Parser wording and `1e400`.** The save and config parser is `serde_json`, so a malformed document's message is not
   V8's. A number past f64 (`1e400`) is a parse error where `JSON.parse` gives `Infinity`. Exit codes match (see
   "The JSON parser" below).
+- **The JSON decode (lossy UTF-8, repaired surrogate escapes).** Node reads a file as UTF-8 with replacement (an invalid
+  byte is U+FFFD) and `JSON.parse` accepts a `\uXXXX` escape for an unpaired surrogate, keeping the lone unit. A
+  `Value::Str` is valid Unicode, so `dfo-cli::js_json` does the same lossy decode and replaces an unpaired surrogate
+  escape with U+FFFD before `serde_json` parses it. A valid pair (`\ud83d\ude00`) and an escaped backslash (`"\\ud800"`,
+  the ten literal characters) are untouched. **Residual difference:** a name carrying a lone surrogate loads on both
+  sides and moves no number, but the JS prints the raw unit where this CLI prints U+FFFD. `tests/save_text_edges.rs`
+  pins both sides loading and every other byte matching.
+- **A malformed record the JS throws on stays lenient.** The JS throws on some hand-edited records this port reads (for
+  example `enchantments: [{ "effects": [null] }]`, whose `e.type` read throws, and a non-array `enchantments`, whose
+  `.map` throws). The port skips the null entry and reads a non-array enchant list as absent, so it prints its card with
+  exit 0 where the JS crashes. Deliberate: a save reader refusing a file the game's own loader tolerates would be the
+  bug. Pinned by `tests/save_text_edges.rs::malformed_records_the_js_throws_on_stay_lenient`.
+- **An inherited name reads as absent, not a panic** (the GUI-facing core especially). A JS property read of a name the
+  receiver inherits (`constructor`, `__proto__`, `toString`, ...) yields a built-in function or object, which a `Value`
+  cannot hold. The port now reads an absent property / table entry, and `loot::power_of` an empty power record (every
+  ported read of a power sees `undefined` on a function, so no number moves). Reachable from hand-edited save data (a
+  weapon `templateIndex: "constructor"`, a `legendary: "constructor"`), where the JS prints its card and this port used to
+  exit 1. `tests/save_text_edges.rs`/`tests/cli_hardening.rs` pin the card. Only the *label* differs where JS prints a
+  function (`skillName("constructor")` is `"constructor"` here; the JS label is the function's text).
+- **A NaN rank row's position is this port's, not V8's.** `rankWeapons` sorts on `b.cappedDps - a.cappedDps || b.dps -
+  a.dps`; a row with a NaN `cappedDps`/`dps` (a save whose `_mods.skills` entry for the weapon skill is a string) makes
+  that comparator non-transitive, so V8's own order among the NaN rows is implementation-defined and Rust's `sort_by`
+  panicked on it. The port sorts the finite rows stably into the slots they held and leaves each NaN row in its generated
+  position: the finite rows are JS's exact order, the NaN rows' positions are the residual. It cannot panic.
+
 - **Number grouping is en-US, pinned.** `grouped_number` always groups with commas; the JS `toLocaleString()` follows the
-  host locale.
+  host locale. A non-finite value prints Intl's own words (`∞`, `-∞`, `NaN`), never a grouped "In,fin,ity".
+- **A `save` argument is resolved like `path.resolve`.** `.` components and `..` segments are folded lexically (Node does
+  not touch the filesystem), so `--save ./Saves/SAVE1/..` and a path with a `..` find the same folder the JS does.
+- **Page escaping beyond the probe.** `spells` escapes a spell's own `name` (and the school label) where the JS inserts
+  `sp.name` raw (`src/cli.js:1524`): a custom save spell's name is data, not markup. A safe name's page is byte-identical;
+  a hostile name is shown as text. The other page writers (`report`, `firmament`, `probe`, `spells`, and the chart
+  labels through `graph`) escape save/capture-derived text; `imprints`, `weapons`/`skills` and `loadout` insert only fixed
+  world-data captions and computed rows.
+- **Two-nullish DoT settings are "no element", not Fire.** A `continuousDamage` entry's `element`/`flag` go through the
+  JS's own `=== 0..4` compares and `Number.isFinite(flag)` fallback (`src/cws.js:486-489`, `src/spells.js:285`); a nullish
+  element matches no `spellHasFlags` arm (no Fire resistance, no race tolerance) and a nullish flag takes the element's
+  own flag. `cws::dot_round` models a non-numeric value as NaN so `to_number`'s `null -> 0` cannot turn it into Fire.
+- **A relay test event's `whole` defaults to true.** `flow.hit(t, { whole: outcome.whole, ... })` (`src/relayFight.js:352`,
+  `src/flowState.js:24`) is a destructuring default, so a supplied event outcome with no `whole` key is a whole blow; the
+  port now reads a nullish `whole` as true (only `false`/`null` is non-whole), as the JS does.
+- **A break runs no visible Breaks payload here.** The only vendored `PAYLOAD.Breaks` arm is SoulBound's
+  (`systems/enchantments.js:828-840`), whose body calls `ctx.spawnFoe` - a host seam the fight's synthetic owner does not
+  carry (`src/durability.js` `makeOwner`), so the JS run is inert there too. The break itself (unequip, the `breaks`
+  record, the survivor promotion) is modelled; a host that spawns a foe is outside these vectors.
 - **The program name is `dfo-forge`.** The `doctor` pin line and the report footer say `dfo-forge`; the unrenamed JS
   reference says `dfo-dps`. The CLI tests normalise exactly that token (`common::product_name`) and compare every other
   byte; `tests/doctor.rs::the_program_name_normalisation_cannot_hide_another_difference` proves another difference still

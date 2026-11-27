@@ -17,10 +17,6 @@
 //! per UTF-16 unit + `;` = a string, `[` items separated by `,` `]` an array, `{` `s`-key `:` value, `,`-separated `}`
 //! an object. `parse(write(v))` is `v` except that a NaN's payload is not kept.
 
-use crate::generated::js_prototypes::{
-    ARRAY_PROTOTYPE_KEYS, BOOLEAN_PROTOTYPE_KEYS, NUMBER_PROTOTYPE_KEYS, OBJECT_PROTOTYPE_KEYS,
-    STRING_PROTOTYPE_KEYS,
-};
 use std::fmt;
 
 /// A JS value. See the module doc for the reads each accessor mirrors.
@@ -70,6 +66,41 @@ pub fn index_key(k: &str) -> Option<u32> {
 /// not).
 fn is_js_space(c: char) -> bool {
     (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}'
+}
+
+/// `a + b` (ECMAScript `+`): string concatenation when either side is a string or an object/array (whose
+/// `ToPrimitive` is a string), else numeric addition. A hand-edited save or a custom spell record may carry a string
+/// effect field, and the JS then CONCATENATES - `'10' + '20'` is `'1020'`, so `(low + high) / 2` is 510, not 15.
+/// `tests/spells.rs` crosses the string-field records.
+pub fn js_plus(a: &Value, b: &Value) -> Value {
+    let to_primitive = |v: &Value| match v {
+        Value::Undefined => "undefined".to_owned(),
+        Value::Null => "null".to_owned(),
+        Value::Bool(_) | Value::Num(_) | Value::Str(_) => v.to_js_string(),
+        Value::Arr(_) | Value::Obj(_) => v.to_js_string(),
+    };
+    let concatenate = !matches!(
+        (a, b),
+        (
+            Value::Bool(_) | Value::Num(_) | Value::Null,
+            Value::Bool(_) | Value::Num(_) | Value::Null
+        )
+    );
+    if concatenate {
+        Value::Str(format!("{}{}", to_primitive(a), to_primitive(b)))
+    } else {
+        Value::Num(a.to_number() + b.to_number())
+    }
+}
+
+/// `js_plus(a, b)` read as a number (the calls' next `+`/`/`/`Math.floor` does exactly that).
+pub fn add_number(a: &Value, b: &Value) -> f64 {
+    js_plus(a, b).to_number()
+}
+
+/// `js_plus(a, Number(b))` read as a number.
+pub fn add_num(a: &Value, b: f64) -> f64 {
+    js_plus(a, &Value::Num(b)).to_number()
 }
 
 /// `Number(string)` (ECMAScript StringToNumber): the empty string is 0; `0x`/`0o`/`0b` integers (no sign); `Infinity`
@@ -294,17 +325,12 @@ impl Value {
                 if self.has(&k) {
                     return self.get(&k).clone();
                 }
-                refuse_inherited(&k, "an object", &[OBJECT_PROTOTYPE_KEYS]);
                 Value::Undefined
             }
             Value::Arr(items) => match index_key(&k) {
                 Some(i) => items.get(i as usize).cloned().unwrap_or(Value::Undefined),
                 None if k == "length" => Value::Num(items.len() as f64),
-                None => {
-                    let names = [OBJECT_PROTOTYPE_KEYS, ARRAY_PROTOTYPE_KEYS];
-                    refuse_inherited(&k, "an array", &names);
-                    Value::Undefined
-                }
+                None => Value::Undefined,
             },
             Value::Str(s) => {
                 let units: Vec<u16> = s.encode_utf16().collect();
@@ -316,23 +342,10 @@ impl Value {
                         None => Value::Undefined,
                     },
                     None if k == "length" => Value::Num(units.len() as f64),
-                    None => {
-                        let names = [OBJECT_PROTOTYPE_KEYS, STRING_PROTOTYPE_KEYS];
-                        refuse_inherited(&k, "a string", &names);
-                        Value::Undefined
-                    }
+                    None => Value::Undefined,
                 }
             }
-            Value::Num(_) => {
-                let names = [OBJECT_PROTOTYPE_KEYS, NUMBER_PROTOTYPE_KEYS];
-                refuse_inherited(&k, "a number", &names);
-                Value::Undefined
-            }
-            Value::Bool(_) => {
-                let names = [OBJECT_PROTOTYPE_KEYS, BOOLEAN_PROTOTYPE_KEYS];
-                refuse_inherited(&k, "a boolean", &names);
-                Value::Undefined
-            }
+            Value::Num(_) | Value::Bool(_) => Value::Undefined,
         }
     }
 
@@ -476,36 +489,31 @@ impl Value {
 }
 
 /// `TABLE[key]` for a table written as a JS object with integer keys (`save.js` `WEAPON_SKILL`, `RACE_NAMES`, and
-/// the equip-rule rows). A property key compares as its string, so `"113"` and `113` both find template 113.
+/// the equip-rule rows). A property key compares as its string, so `"113"` and `113` both find template 113. An
+/// inherited prototype name (`constructor`, `__proto__`, ...) reads as absent, never a panic: the JS would read a
+/// built-in function there, which a `Value` cannot hold (`rust/README.md`, "an inherited name").
 pub fn obj_table_get<T: Copy>(table: &[(i64, T)], key: &Value) -> Option<T> {
     let k = key.to_js_string();
-    if let Some((_, v)) = table.iter().find(|(i, _)| i.to_string() == k) {
-        return Some(*v);
-    }
-    refuse_inherited(&k, "an object table", &[OBJECT_PROTOTYPE_KEYS]);
-    None
+    table
+        .iter()
+        .find(|(i, _)| i.to_string() == k)
+        .map(|(_, v)| *v)
 }
 
 /// `TABLE[key] !== undefined` for an object table (the truthiness some call sites test, e.g. `WEAPONS[t] ? ...`). An
-/// inherited name is refused, as in [`obj_table_get`].
+/// inherited name reads as absent, as in [`obj_table_get`].
 pub fn obj_table_has<T>(table: &[(i64, T)], key: &Value) -> bool {
     let k = key.to_js_string();
-    if table.iter().any(|(i, _)| i.to_string() == k) {
-        return true;
-    }
-    refuse_inherited(&k, "an object table", &[OBJECT_PROTOTYPE_KEYS]);
-    false
+    table.iter().any(|(i, _)| i.to_string() == k)
 }
 
-/// The refusal of a read that JS answers with an inherited member (a function, or an object such as `Object.prototype`
-/// for `__proto__`): a `Value` cannot hold one, so the port panics rather than answer. `names` are the prototype's own
-/// names (the generated `*_PROTOTYPE_KEYS`). Only a name in the list is refused; every other name reads `undefined`.
-pub fn refuse_inherited(k: &str, owner: &str, names: &[&[&str]]) {
-    if names.iter().any(|list| list.contains(&k)) {
-        panic!(
-            "not representable: JS reads the inherited `{k}` of {owner} (a function or an object); a Value cannot hold it"
-        );
-    }
+/// Whether `k` names a member the JS receiver inherits from a built-in prototype (a function, or an object such as
+/// `Object.prototype` for `__proto__`). A `Value` cannot hold one, so the port reads it as an absent property or table
+/// entry (and, for `powerOf`, as an empty power record, which is what every ported read of a power sees). The JS would
+/// read a built-in function there; see `rust/README.md` ("an inherited name") for the residual difference, which is
+/// hand-edited save data only.
+pub fn inherited(k: &str, names: &[&[&str]]) -> bool {
+    names.iter().any(|list| list.contains(&k))
 }
 
 /// `MAP.get(key)` for a `Map` with integer keys (`weapons.js` `WEAPON_SKILL_USED`). A `Map` compares keys by
@@ -808,10 +816,22 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "not representable")]
-    fn an_inherited_read_is_refused_not_answered() {
-        // JS: ({})['constructor'] is the Object function, which a Value cannot hold.
-        let _ = Value::Obj(Vec::new()).prop(&Value::Str("constructor".into()));
+    fn an_inherited_read_is_absent_not_answered() {
+        // JS: ({})['constructor'] is the Object function, which a Value cannot hold. The port reads an absent property,
+        // so a save carrying such a name cannot crash it (rust/README.md, "an inherited name").
+        assert_eq!(
+            Value::Obj(Vec::new()).prop(&Value::Str("constructor".into())),
+            Value::Undefined
+        );
+        assert_eq!(
+            Value::Arr(vec![Value::Num(1.0)]).prop(&Value::Str("toString".into())),
+            Value::Undefined
+        );
+        // An array's own `length` is still the length.
+        assert_eq!(
+            Value::Arr(vec![Value::Num(1.0)]).prop(&Value::Str("length".into())),
+            Value::Num(1.0)
+        );
     }
 
     #[test]

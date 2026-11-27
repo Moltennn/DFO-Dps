@@ -202,7 +202,8 @@ export function genAnalysisFamilies(Out, makeLcg) {
   grid();
   // The shipped-build selector (`--game-build`, CHANGELOG-MECHANICS.md GEAR-14631 / BRAND-14631): full analysis cards
   // under both builds, one gear-heavy theory character over a curbing boss and a plain reference foe, plus brand
-  // powers. Appended last, so every case above keeps its bytes. `14512` must equal the default exactly.
+  // powers. Appended last, so every case above keeps its bytes. The default is `14631` (`src/model.js:119`), so an
+  // omitted option equals an explicit `'14631'`; `'14512'` is the vendored cut.
   for (const gameBuild of ['14512', '14631']) {
     for (const gearLB of [0, 250, 700]) {
       const ch = theoryCharacter({ race: 4, level: 45, blade: 123, rawBlade: 200, rawCrit: 200, gearLB, gearCS: 370, damagePct: 15 });
@@ -220,6 +221,25 @@ export function genAnalysisFamilies(Out, makeLcg) {
     for (const target of [M.referenceFoe(45, 'tough'), { ...M.referenceFoe(45, 'tough'), career: { resistanceFlags: 8 } }]) {
       const extra = { target, health: 4000, gameBuild, swing: 'StrikeLeft', imprints: [brand] };
       put('probe', [ch, extra], M.analyze(ch, { ...extra, standard }));
+    }
+    // Full cards with the hold configurations the gear law touches, each at the pinned build: dual, pair, off-hand, a
+    // bow, and a worn target (the armour path). The card's `terms.gearAdd` and per-hit cap read the build's law.
+    const foe = M.referenceFoe(45, 'tough');
+    const wornTarget = { ...M.referenceFoe(45, 'tough'), armorValues: Array(7).fill(30) };
+    const dualCh = { ...theoryCharacter({ race: 4, level: 45, blade: 123, rawBlade: 200, rawCrit: 200, gearLB: 300, gearCS: 300 }), _dual: true, offWeapon: M.syntheticWeapon(117, 9).item };
+    const bowCh = theoryCharacter({ race: 4, level: 45, blade: 129, rawBlade: 200, rawCrit: 200, gearLB: 300, gearCS: 300 });
+    for (const [label, cardCh, opts] of [
+      ['dual', dualCh, { target: foe, health: 4000, swing: 'StrikeLeft', dual: true, core: 'overhaul' }],
+      ['pair', ch, { target: foe, health: 4000, swing: 'StrikeLeft', pair: true, core: 'overhaul' }],
+      ['offHand', ch, { target: foe, health: 4000, swing: 'StrikeLeft', offHand: true, core: 'overhaul' }],
+      ['bow', bowCh, { target: foe, health: 4000, swing: 'StrikeDown', core: 'overhaul' }],
+      ['wornTarget', ch, { target: wornTarget, health: 4000, swing: 'StrikeLeft', core: 'overhaul' }],
+    ]) {
+      const extra = { ...opts, gameBuild };
+      put('probe', [cardCh, extra], M.analyze(cardCh, { ...extra, standard }));
+      // A live carry state: the carried scenario must price identically at each build.
+      put('probe', [cardCh, { ...extra, carry: true, carryBases: true }], M.analyze(cardCh, { ...extra, carry: true, carryBases: true, standard }));
+      void label;
     }
   }
   const total = out.write();

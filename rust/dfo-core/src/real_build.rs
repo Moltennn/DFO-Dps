@@ -10,7 +10,7 @@ use crate::analyze::{analyze_with, gate_target, reference_foe, Analysis};
 use crate::enchants::ENCHANTMENT_TYPES;
 use crate::encounters::encounter_target;
 use crate::firmament::{build_by_id, plan_build, tree_blow};
-use crate::firmament_law::{blow_pct, effective_value, Totals};
+use crate::firmament_law::{blow_pct, effective_value};
 use crate::generated::data::WEAPONS;
 use crate::generated::planning::SKILL_KEYS;
 use crate::imprints::{imprint_families, imprints_for, power_dps};
@@ -53,14 +53,13 @@ fn num_of(v: &Value) -> f64 {
     v.num_or_default(0.0)
 }
 
-fn totals_of(v: &Value) -> Totals {
-    crate::firmament_law::totals_from_value(v)
-}
-
 /// `applyFirmament`: fold the tree's flat and percent channels into the character, each channel capped together.
+///
+/// The plan's totals are re-derived from its tree through `firmament::plan_totals`, because the JS price table rides a
+/// hidden symbol a serialized plan cannot carry; `blowPct` needs it (a keystone's price is paid AFTER the group cap).
 pub fn apply_firmament(ch: &Value, plan: &Value) -> Value {
     let totals = plan.get("totals");
-    let law = totals_of(totals);
+    let law = crate::firmament::plan_totals(plan);
     let mods = ch.get("_mods");
     let mut stats = sub_object(mods.get("stats"));
     let mut stat_max = sub_object(mods.get("statMax"));

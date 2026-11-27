@@ -145,6 +145,30 @@ export function genSimulateFight(Out, records, standard) {
   put('extraBatch', [dualCh, dualOpts], F.simulateFights(dualCh, { ...dualOpts, standard }));
   const inactiveDual = { ...dualCh, _dual: false };
   put('extraBatch', [inactiveDual, dualOpts], F.simulateFights(inactiveDual, { ...dualOpts, standard }));
+  // A2/A: the fight's worn table, with `characterFromSave`-shaped slotted gear, satisfies durability by object identity,
+  // never by the OVERRIDE's own `equipSlot` (a what-if piece may carry the slot it was minted for - cws.js:217-220).
+  // The reported case: an override weapon whose own slot is 4 must not displace the ring in slot 4 (zeroing its potency).
+  const potencyRing = { group: 'Jewelry', templateIndex: 4, equipSlot: 4, name: 'Ring', material: 9,
+    currentCondition: 100, maxCondition: 100, affixes: [{ id: 'potency', value: 10 }] };
+  const armingSword = { ...item(121, 9, 100), equipSlot: 19 };
+  const dupSword = { ...item(121, 9, 100), equipSlot: 19, name: 'Stale' };
+  const ringCh = { ...plain, worn: [armingSword, potencyRing], weapon: armingSword, offWeapon: null,
+    _mods: { ...plain._mods }, _enchantMods: { skillMods: {} } };
+  const durOpts = { target: { ...opts.target, activeEffects: [] }, health: 300, durability: true, trace: true,
+    maxBlows: 6, maxSeconds: 20, seed: 1, potencyPct: 0, pierce: 0 };
+  for (const [label, actor, extra] of [
+    ['plain slotted', ringCh, {}],
+    ['override with a colliding slot', ringCh, { weapon: { ...ringCh.weapon, item: { ...armingSword, equipSlot: 4 } } }],
+    ['duplicate slot 19', { ...ringCh, worn: [armingSword, potencyRing, dupSword] }, {}],
+  ]) {
+    put('single', [actor, { ...durOpts, ...extra }], result(() => F.simulateFight(actor, { ...durOpts, ...extra, standard })));
+  }
+  // A shielded left hand and a main-hand break that promotes the off hand (the survivor becomes the lead).
+  const shielded = { ...ringCh, worn: [armingSword, { group: 'Weapons', templateIndex: 133, equipSlot: 21, name: 'Buckler',
+    material: 9, currentCondition: 1, maxCondition: 100 }], offWeapon: { group: 'Weapons', templateIndex: 133, equipSlot: 21,
+    name: 'Buckler', material: 9, currentCondition: 1, maxCondition: 100 } };
+  put('single', [shielded, { ...durOpts, health: 900, maxBlows: 20 }], result(() => F.simulateFight(shielded, { ...durOpts, health: 900, maxBlows: 20, standard })));
+
   const one = { ...dualOpts, seeds: undefined, trials: 0, maxSeconds: 0 };
   put('extraBatch', [plain, one], F.simulateFights(plain, { ...one, standard }));
   put('durability', [[{ weaponsBroken: 3, breaks: [], time: 1, condition: {}, conditionPct: {} }]],

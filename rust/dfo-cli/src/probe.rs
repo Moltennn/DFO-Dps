@@ -31,7 +31,6 @@ use std::path::{Component, Path, PathBuf};
 
 use dfo_core::probe::{chart_totals, summarize_probe};
 use dfo_core::value::{number_to_string, Value};
-use serde_json::Value as JsonValue;
 
 use crate::graph::{self, escape, LineChart, Point, Section, Series};
 use crate::{fmt, json, pc, table, CliError};
@@ -254,19 +253,19 @@ fn mtime_ms(path: &Path) -> f64 {
 /// The largest capture read, as `saves::MAX_SAVE_BYTES`: a real capture is a few MiB, a runaway is refused.
 const MAX_CAPTURE_BYTES: u64 = 64 * 1024 * 1024;
 
-/// `JSON.parse(fs.readFileSync(path, 'utf8'))`, read-only. `serde_json` keeps key order and rejects malformed text; a
-/// malformed document's message is the parser's own, so it is not byte-identical to V8's (documented above).
+/// `JSON.parse(fs.readFileSync(path, 'utf8'))`, read-only. The bytes are decoded with Node's lossy UTF-8 fallback and
+/// unpaired surrogate escapes are replaced (`crate::js_json`); `serde_json` keeps key order and rejects malformed text;
+/// a malformed document's message is the parser's own, so it is not byte-identical to V8's (documented above).
 fn read_json(path: &Path) -> Result<Value, String> {
     let file = fs::File::open(path).map_err(|e| node_error(&e, path))?;
-    let mut text = String::new();
+    let mut bytes = Vec::new();
     file.take(MAX_CAPTURE_BYTES + 1)
-        .read_to_string(&mut text)
+        .read_to_end(&mut bytes)
         .map_err(|e| node_error(&e, path))?;
-    if text.len() as u64 > MAX_CAPTURE_BYTES {
+    if bytes.len() as u64 > MAX_CAPTURE_BYTES {
         return Err("capture is larger than the 64 MiB limit".into());
     }
-    let doc: JsonValue = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    Ok(json_to_value(&doc))
+    crate::js_json::parse_bytes(&bytes)
 }
 
 /// Node's own `ENOENT`/`EISDIR` wording (it appends the path and the operation), so the one-line refusal reads like
@@ -283,24 +282,6 @@ fn node_error(e: &std::io::Error, path: &Path) -> String {
             "EISDIR: illegal operation on a directory, read".to_owned()
         }
         _ => e.to_string(),
-    }
-}
-
-/// `JsonValue` to the core's [`Value`]; `Value::set` puts an integer-like key in JS order.
-fn json_to_value(v: &JsonValue) -> Value {
-    match v {
-        JsonValue::Null => Value::Null,
-        JsonValue::Bool(b) => Value::Bool(*b),
-        JsonValue::Number(n) => Value::Num(n.as_f64().unwrap_or(f64::NAN)),
-        JsonValue::String(s) => Value::Str(s.clone()),
-        JsonValue::Array(items) => Value::Arr(items.iter().map(json_to_value).collect()),
-        JsonValue::Object(map) => {
-            let mut out = Value::Obj(Vec::new());
-            for (k, v) in map {
-                out.set(k, json_to_value(v));
-            }
-            out
-        }
     }
 }
 

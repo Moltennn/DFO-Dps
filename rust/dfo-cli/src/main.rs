@@ -93,6 +93,7 @@ mod firmament;
 #[allow(dead_code)]
 mod graph;
 mod imprints;
+mod js_json;
 mod loadout;
 mod probe;
 mod report;
@@ -293,32 +294,43 @@ fn main() -> ExitCode {
     // paths reach here as a panic: the `JsRangeError` a JS `RangeError` raises, and the core's "not representable"
     // refusals (a corrupt save naming an inherited property, or writing a property onto a primitive, which the JS
     // would silently succeed at or throw a `TypeError` on). Both print one line and exit 1 instead of a panic report.
+    // The `objective` branch is the one exception: it catches an `isUsageFailure` error (a `RangeError` included) and
+    // exits 2 with the bare message, so the flag below tells the hook to do that.
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let payload = info.payload();
-        let line = payload
-            .downcast_ref::<dfo_core::model_blow::JsRangeError>()
-            .map(|e| e.0.clone())
-            .or_else(|| {
-                // A corrupt save naming an inherited property (`templateIndex: "constructor"`) makes a read the JS
-                // answers with a function, and a save whose `_mods.statMax` is a primitive makes the JS `TypeError`
-                // on the write. Neither is a port bug: the JS crashes (or prices nonsense), this prints the line and
-                // exits 1 like every other JS crash. Any other panic keeps its report, because that IS a port bug.
-                let text = payload
-                    .downcast_ref::<String>()
-                    .map(String::as_str)
-                    .or_else(|| payload.downcast_ref::<&str>().copied());
-                text.filter(|t| {
-                    t.starts_with("not representable")
-                        || t.starts_with("Value::set on a non-object")
-                })
-                .map(str::to_owned)
-            });
+        if let Some(e) = payload.downcast_ref::<dfo_core::model_blow::JsRangeError>() {
+            // The JS `objective` branch's own `catch` prints `e.message` (no `RangeError: ` prefix) and exits 2.
+            let (line, code) = if RANGE_IS_USAGE.load(std::sync::atomic::Ordering::Relaxed) {
+                (
+                    e.0.strip_prefix("RangeError: ").unwrap_or(&e.0).to_owned(),
+                    2,
+                )
+            } else {
+                (e.0.clone(), 1)
+            };
+            eprintln!("{line}");
+            std::process::exit(code);
+        }
+        let line = {
+            // A corrupt save naming an inherited property (`templateIndex: "constructor"`) makes a read the JS
+            // answers with a function, and a save whose `_mods.statMax` is a primitive makes the JS `TypeError`
+            // on the write. Neither is a port bug: the JS crashes (or prices nonsense), this prints the line and
+            // exits 1 like every other JS crash. Any other panic keeps its report, because that IS a port bug.
+            let text = payload
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| payload.downcast_ref::<&str>().copied());
+            text.filter(|t| {
+                t.starts_with("not representable") || t.starts_with("Value::set on a non-object")
+            })
+            .map(str::to_owned)
+        };
         match line {
-            Some(line) => std::process::exit({
+            Some(line) => {
                 eprintln!("{line}");
-                1
-            }),
+                std::process::exit(1)
+            }
             None => default_hook(info),
         }
     }));
@@ -346,6 +358,10 @@ struct CliError {
     message: String,
     code: u8,
 }
+
+/// Whether the panic hook should print a `RangeError` the way the JS `objective` branch does (message without the
+/// `RangeError: ` prefix, exit 2, `isUsageFailure` treating any `RangeError` as bad input).
+static RANGE_IS_USAGE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn usage(message: impl Into<String>) -> CliError {
     CliError {
@@ -397,7 +413,12 @@ fn run(args: Vec<String>) -> Result<String, CliError> {
             return Err(usage(format!("unexpected positional argument \"{extra}\"")));
         }
         check_output_flags(&command, &parsed)?;
-        return objective(&values);
+        // `src/cli.js:948-957`: the objective branch catches every `isUsageFailure` (a `RangeError` included), prints
+        // its message and exits 2; a stack overflow during pricing is a `RangeError` there too.
+        RANGE_IS_USAGE.store(true, std::sync::atomic::Ordering::Relaxed);
+        let result = objective(&values);
+        RANGE_IS_USAGE.store(false, std::sync::atomic::Ordering::Relaxed);
+        return result;
     }
     if command == "compare" {
         // Extra positionals are ignored by the JS and refused here on purpose, as `build` and `rank` do: a strict
@@ -3458,7 +3479,9 @@ fn weapons_command(
         level: values.num("level", THEORY_LEVEL),
         firmament: values.firmament,
         vampire: values.vampire,
-        race: values.race.clone(),
+        // `const fixedRace = values.race ? String(values.race).toLowerCase() : null` (`src/cli.js:1629`): the branch
+        // lower-cases it, so `--race BRETON` names `breton` on the page and in the `--json` rows.
+        race: values.race.as_deref().map(str::to_lowercase),
         categories: values.categories,
         game_build: values.game_build.clone(),
     };
