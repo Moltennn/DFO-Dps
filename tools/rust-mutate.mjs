@@ -189,8 +189,8 @@ for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { killAll(); proc
 process.on('exit', killAll);
 
 function prepare(w) {
-  // Mirror the repository's depth below the scratch root: the differential oracles resolve the real JS as
-  // `../../../src|tools|vendor` from `rust/dfo-core/tests/...`, so the scratch tree needs the same two levels.
+  // Mirror the repository's depth below the scratch root: a test resolving `../tests/frozen` from
+  // `rust/dfo-core/tests/...` needs the same two levels.
   const base = join(workRoot, `w${w}`);
   const dir = join(base, 'rust');
   mkdirSync(join(dir, 'dfo-core'), { recursive: true });
@@ -214,13 +214,8 @@ function prepare(w) {
   const frozen = join(dir, 'tests', 'frozen');
   rmSync(frozen, { recursive: true, force: true });
   symlinkSync(join(rustDir, 'tests', 'frozen'), frozen);
-  // A differential oracle (`sidebar_oracle.mjs`, `probe_oracle.mjs`) is spawned with cwd = the scratch root and imports
-  // the repository's JS and vendored modules. The oracles only read through these links; no game save is copied.
-  for (const d of ['src', 'tools', 'vendor']) {
-    const target = join(base, d);
-    rmSync(target, { recursive: true, force: true });
-    symlinkSync(join(root, d), target);
-  }
+  // The frozen answers are read from the links above (the dfo-core oracle answers and the CLI snapshots live under
+  // `rust/tests/frozen` and `rust/dfo-cli/tests`), so no JavaScript tree is needed here at all.
   return dir;
 }
 

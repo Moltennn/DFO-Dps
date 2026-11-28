@@ -2,27 +2,49 @@
 //! `test/pricing.test.js` §5 (W-LOOT-CARRY).
 //!
 //! A waiver is not a pass: it asserts a known divergence is STILL present, so a fix fails this test on purpose and the
-//! waiver must be removed and the fix recorded in `CHANGELOG-MECHANICS.md` (`test/harness/waivers.mjs`). The oracle
-//! halves of those JS tests (the vendored `applyHit` replay, the 250,000-blow upstream sample) cannot be ported; they
-//! are listed as lost in `rust/PORTED-TESTS.md`.
+//! waiver must be removed and the fix recorded in `CHANGELOG-MECHANICS.md`. The waiver text (title, detail and
+//! evidence) is committed at `rust/WAIVERS.md`, the Rust-side home of `test/harness/waivers.mjs`; the test below reads
+//! it and fails if an id, its title or a quoted piece of its evidence goes missing, so removing a waiver is noticed. The
+//! `test/*.test.js` names in that text are historical (the JS suite at the revision that still had it). The oracle halves
+//! of those JS tests (the vendored `applyHit` replay, the 250,000-blow upstream sample) cannot be ported; they are
+//! listed as lost in `rust/PORTED-TESTS.md`.
 
 mod ported_common;
 
 use dfo_core::spells::{spells_by_index_map, Spellbook};
 use ported_common::*;
 
-/// `test/harness/waivers.mjs` still declares both ids, so removing a waiver is noticed here.
+/// `rust/WAIVERS.md` still declares both ids with their title and evidence, so removing a waiver is noticed here.
 #[test]
 fn both_waivers_are_still_declared() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
-        .join("..")
-        .join("test")
-        .join("harness")
-        .join("waivers.mjs");
+        .join("WAIVERS.md");
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    for id in ["W-PROC-BUDGET", "W-LOOT-CARRY"] {
-        assert!(text.contains(id), "the waiver {id} is still declared");
+    for (id, title, evidence) in [
+        (
+            "W-PROC-BUDGET",
+            "The explicit card ceiling sums Cast When Strikes damage before the shared relay budget",
+            "710.09 ceiling DPS vs 150 paid DPS",
+        ),
+        (
+            "W-LOOT-CARRY",
+            "The stateless estimates and explicit floor streams omit the held item's fraction",
+            "z was 6.90 when recorded",
+        ),
+    ] {
+        assert!(
+            text.contains(&format!("## {id}\n")),
+            "the waiver {id} is still declared in rust/WAIVERS.md"
+        );
+        assert!(
+            text.contains(title),
+            "the waiver {id} keeps its title"
+        );
+        assert!(
+            text.contains(evidence),
+            "the waiver {id} keeps its quoted evidence ({evidence})"
+        );
     }
 }
 

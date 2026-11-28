@@ -1,14 +1,16 @@
 //! The planners price the shipped build (`--game-build`), DIFFERENTIALLY against the real JS at `14631` (and `14512` as
 //! the cut) - one case per forwarding site `git show 311c991` added.
 //!
-//! `tests/planner_oracle.mjs` drives the JS and prints one case per line (`<kind> <input> => <expected>`, whole ordered
-//! values as codec tokens); every case is replayed here through the port and compared token for token. `planners.rs` next
-//! to this file pins the port's own wiring as local invariants; this file is what proves the numbers, so a dropped
-//! forwarding site fails here rather than passing an `assert_ne!`.
+//! `tests/planner_oracle.mjs` drove the JS and printed one case per line (`<kind> <input> => <expected>`, whole ordered
+//! values as codec tokens) while it existed; its answer is committed to `rust/tests/frozen/oracle/planner.txt.gz` and
+//! every case is replayed here through the port and compared token for token. `planners.rs` next to this file pins the
+//! port's own wiring as local invariants; this file is what proves the numbers, so a dropped forwarding site fails here
+//! rather than passing an `assert_ne!`.
 //!
-//! The oracle is a Node script in this repository and a missing `node` fails the test: a skipped differential proves
-//! nothing. Its output is cached by the generators' content hash (the same key the golden vectors use), so a mutation
-//! sweep re-runs the JS once, not once per mutant. `shortlistLoadouts` samples 1,000 fights per row and lives in
+//! The answer is frozen because the JS is being removed, and a missing, corrupt or short answer fails the test: a skipped
+//! differential proves nothing. Set `DFO_CORE_ORACLE=live` to spawn the script again while `src/` still exists (`node
+//! tools/gate.mjs rust --live` does that for the whole suite); `node tools/oracle-freeze.mjs --check` compares the
+//! committed answer with the live JS. `shortlistLoadouts` samples 1,000 fights per row and lives in
 //! `tests/planner_shortlist.rs`.
 //!
 //! Sites this file is built to kill, one per `git show 311c991` hunk:
@@ -31,103 +33,10 @@ use dfo_core::real_build::{
 use dfo_core::spells::{spells_by_index_map, Spellbook};
 use dfo_core::value::Value::{self, Arr, Num, Str};
 use std::collections::BTreeMap;
-use std::fs;
-use std::path::PathBuf;
-use std::process::Command;
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-}
 
-/// [`repo_root`]/.cache/planner-oracle: `.cache/` is gitignored and shared by a worktree's parallel mutant copies (the
-/// same convention the CLI oracle cache uses), so one sweep generates the JS answer once.
-fn cache_dir() -> PathBuf {
-    let root = repo_root().join(".cache").join("planner-oracle");
-    fs::create_dir_all(&root).expect("the oracle cache directory");
-    root
-}
-
-/// FNV-1a 64 over bytes: no dependency for a cache key, and a collision only costs a stale answer that the `warm` check
-/// below would not catch - so every input the oracle reads is folded in, not a sample.
-fn fnv1a(bytes: &[u8], mut hash: u64) -> u64 {
-    for &b in bytes {
-        hash ^= u64::from(b);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash
-}
-
-/// Every input `tests/planner_oracle.mjs` reads, hashed: the JS modules it imports, the tools they import, its own text
-/// and the spellbook in force. A change to any of them is a cache miss, so a stale answer cannot outlive an edit.
-fn inputs_key() -> String {
-    let root = repo_root();
-    let mut hash = 0xcbf29ce484222325u64;
-    let mut fold = |path: &std::path::Path| {
-        let bytes = fs::read(path).unwrap_or_else(|e| panic!("{path:?}: {e}"));
-        hash = fnv1a(path.to_string_lossy().as_bytes(), hash);
-        hash = fnv1a(&(bytes.len() as u64).to_le_bytes(), hash);
-        hash = fnv1a(&bytes, hash);
-    };
-    let mut dirs = vec![root.join("src"), root.join("tools")];
-    while let Some(dir) = dirs.pop() {
-        let mut entries: Vec<_> = fs::read_dir(&dir)
-            .unwrap_or_else(|e| panic!("{dir:?}: {e}"))
-            .flatten()
-            .map(|e| e.path())
-            .collect();
-        entries.sort();
-        for path in entries {
-            if path.is_dir() {
-                dirs.push(path);
-            } else if path.extension().is_some_and(|e| e == "js" || e == "mjs") {
-                fold(&path);
-            }
-        }
-    }
-    fold(
-        &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests")
-            .join("planner_oracle.mjs"),
-    );
-    // The vectors carry the book in force: the real tier's file is outside the folded trees.
-    fold(&common::vector_path("real_build"));
-    format!("{hash:016x}")
-}
-
-/// The oracle's lines, cached under [`inputs_key`]. A corrupt entry is a miss, never a wrong answer.
+/// The oracle's lines: the committed answer, or the live script under `DFO_CORE_ORACLE=live`.
 fn oracle_lines() -> Vec<String> {
-    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("planner_oracle.mjs");
-    let entry = cache_dir().join(format!("{}.txt", inputs_key()));
-    if let Ok(text) = fs::read_to_string(&entry) {
-        if text.starts_with("# planner oracle") && text.lines().count() > 100 {
-            return text
-                .lines()
-                .filter(|l| !l.is_empty() && !l.starts_with('#'))
-                .map(str::to_owned)
-                .collect();
-        }
-    }
-    let out = Command::new("node")
-        .arg(&script)
-        .current_dir(repo_root())
-        .output()
-        .expect("the planner oracle runs (this repository is a Node project)");
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "oracle {script:?}: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let body = String::from_utf8(out.stdout).expect("the oracle's output is UTF-8");
-    let text = format!("# planner oracle {}\n{body}", inputs_key());
-    fs::write(&entry, &text).expect("the oracle cache is writable");
-    body.lines()
-        .filter(|l| !l.is_empty())
-        .map(str::to_owned)
-        .collect()
+    common::oracle::oracle_lines("planner", "tests/planner_oracle.mjs")
 }
 
 fn s(text: &str) -> Value {

@@ -1,0 +1,4 @@
+# Written by `node tools/oracle-freeze.mjs`: name, script, gzip/raw sha256, raw bytes, non-empty lines.
+oracle planner rust/dfo-core/tests/planner_oracle.mjs 1a79f4b832ae8168b0ced7c2d11ae7baa42fabe873c2df9712ff77ae79234f75 19402fd26832948acc4281acd64abc386a4f999e05a828dd609de7a5d1678c67 17434643 184
+oracle probe rust/dfo-core/tests/probe_oracle.mjs 1292c1462b9de699a27bdf440a6a7dc3ffefa681882a4dcbbbc1831e792b6ff7 85aaf9a5c8724f2bb9499496c646f234b341eeb8d703a1bb8e5b5a7480a01b61 13015868 256
+oracle sidebar rust/dfo-core/tests/sidebar_oracle.mjs f51c105fe9e9e705a7eb115fecea657f41461467a7b9dfc552c83584cbe53418 9a40c13d795429f181690456c62c58b2d7ca8c6d7c8fcc2414ccbabfd0f891f3 2761 67

@@ -344,14 +344,21 @@ fn a_closed_stdout_keeps_the_js_exit_status() {
 }
 
 /// `HOME` unset on Linux: Node's `os.homedir()` reads the OS user database, where a relative path would make save
-/// discovery read the working directory. With `DAGGER_USER_DATA` unset both CLIs list the same saves; with an empty
-/// `HOME` both read that empty path (libuv does not fall back) and find nothing.
+/// discovery read the working directory. The test plants a save under `<cwd>/.config/Daggerfall JavaScript/Saves` in its
+/// own fixture root, so a relative read shows up as that save's unmistakeable name (`PLANTED-CWD-SAVE`) rather than as a
+/// guess about paths; the same root named through `XDG_CONFIG_HOME` proves the plant is loadable at all. With an empty
+/// `HOME` both CLIs read that empty path (libuv does not fall back), which is a RELATIVE path in Node - the empty-HOME
+/// half therefore stays on its unplanted root (a committed snapshot) and is not used for the trap.
+///
+/// The expectation cannot be built by running with `HOME` set to the OS home: `std::env::home_dir()` consults `HOME`
+/// first, so that would replay the same host listing the code under test reads. Frozen instead: the card's own shape and
+/// the plant's absence; only a live run may also compare the host listing with the JS.
 #[test]
 fn home_unset_is_the_os_user_database() {
     let root = temp_root("home");
     let js = common::repo_root().join("bin").join("dfo-dps.js");
     let rust = env!("CARGO_BIN_EXE_dfo-forge");
-    let run = |js_side: bool, home: Option<&str>| {
+    let run = |root: &Path, js_side: bool, home: Option<&str>| {
         let (program, prefix) = if js_side {
             ("node", Some(js.clone()))
         } else {
@@ -363,7 +370,7 @@ fn home_unset_is_the_os_user_database() {
         }
         command
             .arg("saves")
-            .current_dir(&root)
+            .current_dir(root)
             .env_remove("DAGGER_USER_DATA");
         // One locale for both children, as every other differential spawn does.
         for name in [
@@ -389,24 +396,34 @@ fn home_unset_is_the_os_user_database() {
         command.output().expect("the CLI runs")
     };
     for home in [None, Some("")] {
-        let got = run(false, home);
-        // With `HOME` unset both sides read the OS user database, so the answer is the host's own save list: it is
-        // never stored in a snapshot, and the replay checks only that the Rust CLI answers.
-        if home.is_none() && (common::replaying() || common::recording()) {
-            assert_eq!(got.status.code(), Some(0), "rust {home:?}");
-            if common::replaying() {
+        let got = run(&root, false, home);
+        assert_eq!(got.status.code(), Some(0), "rust {home:?}");
+        if home.is_none() {
+            let text = String::from_utf8_lossy(&got.stdout);
+            assert!(
+                text.starts_with("Slot   Save                   Character  Modified\n")
+                    || text == "No saves found.\n",
+                "the saves card's own shape (header or the empty card), got {text:?}"
+            );
+            // The JS half is a host-dependent listing, so it cannot be a committed answer: under replay the frozen
+            // relation above is the expectation, and only a live run may ask the JS at all.
+            if !common::live_js() {
                 continue;
             }
+            let want = run(&root, true, home);
+            assert_eq!(want.status.code(), Some(0), "js {home:?}");
+            assert_eq!(
+                text,
+                String::from_utf8_lossy(&want.stdout),
+                "the save lists differ for HOME unset ({}): {}",
+                js.display(),
+                String::from_utf8_lossy(&want.stderr)
+            );
+            continue;
         }
-        let want = match home {
-            Some(_) => {
-                common::js_custom(&root, &root, &["saves"], &[("HOME", "".as_ref())], &|| {
-                    run(true, home)
-                })
-            }
-            None => run(true, home),
-        };
-        assert_eq!(got.status.code(), Some(0), "rust {home:?}");
+        let want = common::js_custom(&root, &root, &["saves"], &[("HOME", "".as_ref())], &|| {
+            run(&root, true, home)
+        });
         assert_eq!(
             want.status.code(),
             Some(0),
@@ -422,4 +439,47 @@ fn home_unset_is_the_os_user_database() {
         );
     }
     fs::remove_dir_all(&root).expect("cleanup");
+
+    // The trap: a save where a relative read would look for one. On its own root, so the empty-HOME snapshot above (a
+    // relative `.config` in ITS root) keeps its unplanted fixture.
+    let planted_root = temp_root("home-planted");
+    let planted = planted_root
+        .join(".config")
+        .join("Daggerfall JavaScript")
+        .join("Saves")
+        .join("SAVE7");
+    fs::create_dir_all(&planted).expect("planted save folder");
+    fs::write(
+        planted.join("SaveInfo.txt"),
+        r#"{"saveName":"PLANTED-CWD-SAVE","characterName":"Planted"}"#,
+    )
+    .expect("planted save");
+    fs::write(
+        planted.join("SaveData.txt"),
+        r#"{"name":"Planted","level":1,"raceId":1,"race":"Breton","health":10,"maxHealth":10,"stats":{},"skills":[],"items":[]}"#,
+    )
+    .expect("planted save data");
+    // The plant is a real save: naming its folder as the user-data base makes the listing show it, which is what makes
+    // the absence below an assertion about where the CLI looked rather than about a path that could never match.
+    let direct = std::process::Command::new(rust)
+        .arg("saves")
+        .current_dir(&planted_root)
+        .env("XDG_CONFIG_HOME", planted_root.join(".config"))
+        .env_remove("DAGGER_USER_DATA")
+        .output()
+        .expect("the CLI runs");
+    assert!(
+        String::from_utf8_lossy(&direct.stdout).contains("PLANTED-CWD-SAVE"),
+        "the planted save must be loadable ({:?}): {}",
+        planted_root,
+        String::from_utf8_lossy(&direct.stderr)
+    );
+    let got = run(&planted_root, false, None);
+    assert_eq!(got.status.code(), Some(0), "rust HOME unset, planted root");
+    let text = String::from_utf8_lossy(&got.stdout);
+    assert!(
+        !text.contains("PLANTED-CWD-SAVE") && !text.contains("SAVE7"),
+        "HOME unset read the working directory's launcher folder ({planted_root:?}) instead of the OS user database:\n{text}"
+    );
+    fs::remove_dir_all(&planted_root).expect("cleanup");
 }

@@ -1,10 +1,10 @@
 //! Committed JS answers (`tests/snapshots/`), the replay of the differential tests without Node.
 //!
-//! `DFO_ORACLE=snapshot` answers every JS call from `<DFO_SNAPSHOT_DIR>/<test binary>.snap` and never spawns anything.
-//! `DFO_ORACLE=record` runs the real JS and writes one part file per test under `DFO_SNAPSHOT_STAGE`; the committed
-//! files are written only by `node tools/snapshots.mjs record`, from a run in which every test passed (so each stored
-//! answer agreed with the Rust binary, or with the test's own expectation of a deliberate difference). No test run
-//! ever writes `tests/snapshots/`.
+//! With `DFO_ORACLE` unset EVERY JS call is answered from `<DFO_SNAPSHOT_DIR>/<test binary>.snap` and nothing spawns;
+//! `snapshot` forces that. `record` runs the real JS and writes one part file per test under `DFO_SNAPSHOT_STAGE`; the
+//! committed files are written only by `node tools/snapshots.mjs record`, from a run in which every test passed (so each
+//! stored answer agreed with the Rust binary, or with the test's own expectation of a deliberate difference). No test
+//! run ever writes `tests/snapshots/`.
 //!
 //! A call's identity is (test name, call number in that test); its argv, cwd, extra env, stdin and the fixture's file
 //! contents are stored beside the answer and must match on replay, so a stale answer cannot be used for new inputs.
@@ -17,7 +17,8 @@
 //!   - `probe` discovery: the capture lives in the fixture root, whose contents are part of the identity;
 //!   - `firmament` without `--refresh`: the card's `(N cached, M computed)` counts come from the recording machine's
 //!     `.cache/`, so they are stored as zeroes;
-//!   - a call that reads the host itself (`HOME` unset) is never routed here; the test skips its JS half.
+//!   - a call that reads the host itself (`HOME` unset) is never routed here; the test asserts its frozen relation
+//!     instead (unset reads the OS user database's home, never the working directory) and asks the JS only in a live run.
 //!
 //! The pinned empty user-data root is shared by concurrent tests, so its contents are neither identity nor output.
 

@@ -1,12 +1,14 @@
 //! `dfo_core::sidebar`'s PUBLIC composition, differentially against the VENDORED game code.
 //!
-//! `tests/sidebar_oracle.mjs` drives what this repository can actually run (see its header) and prints the vendor's own
+//! `tests/sidebar_oracle.mjs` drove what this repository can actually run (see its header) and printed the vendor's own
 //! answers; each case is replayed here through `import_save` + `firmament_layer` + `vitals`, so a port that composes a
-//! term twice, in the wrong order, with the wrong base, or not at all fails. What the oracle cannot drive (the stubbed
-//! `firmamentTree`, the C# paperdoll rating, `renownBonus`) is stated in its header and NOT pretended to be covered.
-//!
-//! The repo is a Node project and this test spawns `node`; it panics rather than skipping, because a skipped
-//! differential proves nothing.
+//! term twice, in the wrong order, with the wrong base, or not at all fails. The answer is committed to
+//! `rust/tests/frozen/oracle/sidebar.txt.gz`: a missing, corrupt or short answer fails the test, never skips it.
+//! `DFO_CORE_ORACLE=live` spawns the script again while `vendor/` exists (`node tools/oracle-freeze.mjs --check` compares
+//! the two). What the oracle cannot drive (the stubbed `firmamentTree`, the C# paperdoll rating, `renownBonus`) is
+//! stated in its header and NOT pretended to be covered.
+
+mod common;
 
 use dfo_core::sidebar::{
     armor_display_mod, armor_fold_parts, armor_values, even_hp_of, firmament_layer, health_layer,
@@ -14,36 +16,10 @@ use dfo_core::sidebar::{
 };
 use dfo_core::value::Value::{self, Arr, Num, Obj, Str};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
-use std::process::Command;
 
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-}
-
+/// The oracle's lines: the committed answer, or the live script under `DFO_CORE_ORACLE=live`.
 fn oracle_lines() -> Vec<String> {
-    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("sidebar_oracle.mjs");
-    let out = Command::new("node")
-        .arg(&script)
-        .current_dir(repo_root())
-        .output()
-        .expect("the vendored oracle script runs (this repository's Node project)");
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "oracle {script:?}: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout)
-        .expect("the oracle's output is UTF-8")
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(str::to_owned)
-        .collect()
+    common::oracle::oracle_lines("sidebar", "tests/sidebar_oracle.mjs")
 }
 
 fn s(text: &str) -> Value {

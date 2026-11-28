@@ -2,9 +2,9 @@
 
 The everyday command is the Rust CLI: `cargo install --locked --path rust/dfo-cli` installs `dfo-forge` (the product is
 DFO Forge; the crate is `dfo-cli`). `./dfo-forge` in the repository root builds it with `cargo build --release` when
-needed and runs it. The JS CLI (`node bin/dfo-dps.js`) is kept as the differential test reference only; every CLI test
-below spawns it as the oracle, so `node` is needed to run the tests, not to use the tool. Section "R8" below lists the
-known differences from the JS CLI.
+needed and runs it. The JS CLI (`node bin/dfo-dps.js`) was the differential test reference while it existed; the tests
+now replay committed answers instead (`DFO_ORACLE` unset, and `rust/tests/frozen/oracle/` for the dfo-core oracles), so
+running the suite needs no Node. Section "R8" below lists the known differences from the JS CLI.
 
 ## The Forge API (`forge`, `forge_gear`)
 
@@ -25,8 +25,8 @@ second reading, and no input is mutated. `import_save(save, build)` reads the ma
 the worn list from the `character_from_save`-normalized build (real saves carry `items[]`/`equipSlots`, not `worn`), then
 neither input is needed again; a missing maximum is `Unknown`, never a normalized default, and an unknown term is never
 turned into 0. The floor and the Firmament's share read the PERMANENT stats, as the vendor does. It is differentially
-tested: `tests/sidebar.rs` drives `tests/sidebar_oracle.mjs` over the public composition, and the script's header lists
-what this repository cannot execute.
+tested: `tests/sidebar.rs` replays `tests/sidebar_oracle.mjs`'s frozen answer over the public composition, and the
+script's header lists what this repository cannot execute.
 
 ## R8: the CLI — `dfo-forge`
 
@@ -1807,17 +1807,42 @@ node tools/gate.mjs mutate analyze.rs --tests analyze --count 1000 --seed 1 --ti
 Mutation result (seed 1): 323 candidates, 303 killed, 7 invalid, and 13 equivalent survivors
 with local proofs in `analyze.rs`. The mutation gate reports `FAIL` for equivalent survivors too.
 
+## Frozen JS oracles: the dfo-core differentials without Node
+
+`rust/tests/frozen/oracle/` holds the stdout of the three dfo-core scripts (`tests/planner_oracle.mjs`,
+`tests/probe_oracle.mjs`, `tests/sidebar_oracle.mjs`), gzip -9, with a `MANIFEST` pinning each answer's gzip sha256,
+decoded sha256, size and case count. `tests/common/oracle.rs` replays them; `DFO_CORE_ORACLE=live` spawns the scripts
+again while `src/` and `vendor/` exist. A missing, corrupt or short answer fails the test, never skips it.
+
+```
+node tools/oracle-freeze.mjs             # re-record from the live JS
+node tools/oracle-freeze.mjs --check     # fail if a recorded answer would differ (also a gate step)
+node tools/gate.mjs rust --live          # the whole suite against the real JS
+```
+
+`tests/frozen_oracle.rs` damages copies of the answers (missing file, truncated gzip, a byte that moved behind the
+MANIFEST, a short answer, an empty MANIFEST) and proves each one fails loudly.
+
+`node tools/gate.mjs isolated` (or directly `node tools/js-isolation-check.mjs`) is the mechanical proof that the suite
+reads none of the JavaScript: it mirrors `rust/` (without `target/`, the generated `vectors/` and every `.mjs`) and
+`package.json` into `/tmp/opencode/js-isolation`, leaves `tools/` out entirely, replaces `src/`, `bin/`, `test/` and
+`vendor/` with plain files of those names (so any open below them is ENOTDIR), puts a PATH with no `node` in place and
+requires every test to pass.
+
 ## CLI snapshots: the differential tests without Node
 
 `rust/dfo-cli/tests/snapshots/` holds the JS answers of the CLI differential tests, one `<test binary>.snap` per target
 (gzip -9, read transparently by the harness) and a `MANIFEST` with each file's SHA-256 over those compressed bytes. The
-test code is unchanged: where it asks the JS, the harness (`tests/common/snapshot.rs`) answers from the file. The live
-modes (`DFO_ORACLE=off|use|fresh`, spot checks) stay while the JS exists.
+test code is unchanged: where it asks the JS, the harness (`tests/common/snapshot.rs`) answers from the file. This is
+the DEFAULT: `DFO_ORACLE` unset replays the snapshots and the gate's default run keeps `node` off the tests' PATH, so
+nothing in the CLI suite spawns Node. `DFO_ORACLE=live` (or the older `off`) and `use`/`fresh` (with spot checks) stay
+while the JS exists.
 
 ```
-node tools/gate.mjs rust --snapshots     # replay: no `node` on the CLI tests' PATH, and every stored call must be used
-node tools/snapshots.mjs check           # run live against the JS and fail if a stored answer would differ
-node tools/snapshots.mjs record          # regenerate; add --only <targets> to limit it
+node tools/gate.mjs rust                  # replay: no `node` on the tests' PATH, and every stored call must be used
+node tools/gate.mjs rust --live           # the opt-in run against the real JS (needs src/, bin/, vendor/)
+node tools/snapshots.mjs check            # run live against the JS and fail if a stored answer would differ
+node tools/snapshots.mjs record           # regenerate; add --only <targets> to limit it
 node tools/snapshots.mjs record --moved cli_scale,cli_spell::<test> --reason <changelog id>
 ```
 
@@ -1834,8 +1859,11 @@ node tools/snapshots.mjs record --moved cli_scale,cli_spell::<test> --reason <ch
 - No game data: `record` runs with an empty `XDG_CONFIG_HOME`, no `DAGGER_USER_DATA`, and the synthetic `SPELLS.STD`
   (`tools/rust-synth-book.mjs`); a recorded answer naming the home directory aborts the run. The snapshots carry only
   made-up fixture names and spell names.
-- Not covered: the `dfo-core` JS probes (`probe_oracle.mjs`, `sidebar_oracle.mjs`) and the golden vectors; the
-  `HOME`-unset save listing is compared live only, because its answer is the host's own.
+- Not covered: the golden vectors; the `dfo-core` JS probes have their own frozen answers
+  (`rust/tests/frozen/oracle/`, recorded by `tools/oracle-freeze.mjs`, replayed by `tests/common/oracle.rs`) and
+  `DFO_CORE_ORACLE=live` turns them back into live differentials. The `HOME`-unset save listing is a host-dependent
+  answer: the replay asserts the frozen relation instead (unset reads the OS user database's home, never the working
+  directory), and only a live run asks the JS at all.
 
 ## Plan after R2 (historical: every step shipped, kept as the record)
 

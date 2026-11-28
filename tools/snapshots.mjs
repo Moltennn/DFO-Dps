@@ -15,7 +15,7 @@
  * of one tree are byte identical: a test whose JS call writes a page passes `--out` inside its own fixture root, never
  * the shared checkout cwd, whose new files every concurrently recording call would capture.
  *
- * Replay, without Node in the tests' PATH: `node tools/gate.mjs rust --snapshots`.
+ * Replay, without Node in the tests' PATH: `node tools/gate.mjs rust` (the snapshots are the default tier).
  * shortcut: outputs can only be re-recorded while the JS exists; rewriting them from the Rust side is plan stage 7.
  */
 import { spawnSync } from 'node:child_process';

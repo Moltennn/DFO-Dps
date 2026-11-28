@@ -1,17 +1,18 @@
 //! The JS side of the CLI differential tests, and the JS-oracle output cache (design: `oracle-cache/DESIGN.md`).
 //!
-//! Every CLI test spawns `node bin/dfo-dps.js` the same way: one locale, one `HOME`, and `DAGGER_USER_DATA` when the
-//! case reads or writes a user-data tree. Those spawns live here, once, so a test file keeps only its own `same*()`
+//! Every CLI test asks for `node bin/dfo-dps.js` the same way: one locale, one `HOME`, and `DAGGER_USER_DATA` when the
+//! case reads or writes a user-data tree. Those calls live here, once, so a test file keeps only its own `same*()`
 //! assertions and the arguments it runs.
 //!
-//! `DFO_ORACLE=use` reads and writes the cache, `fresh` skips reads and writes it, and `off` (the default) is the plain
-//! spawn. With `DFO_ORACLE_STATS` set, every call appends one line there (see [`oracle_summary`] for the summary the
-//! gate prints). A hit is re-run live when the first 8 bytes of `sha256(salt || key)` fall under `DFO_ORACLE_SPOT`;
-//! a mismatch panics with a diff and deletes the entry, so the cache can never hide JS drift. The Rust binary always
-//! runs live; only the JS answer is cached.
+//! With `DFO_ORACLE` unset the committed snapshots (`snapshot.rs`) answer every JS call and nothing spawns Node, so the
+//! suite runs on the frozen answers. `DFO_ORACLE=live` (the older spelling `off` still works) runs the real JS, either
+//! plain or through the output cache: `use` reads and writes the cache and `fresh` only writes it. With
+//! `DFO_ORACLE_STATS` set, every call appends one line there (see [`oracle_summary`] for the summary the gate prints). A
+//! cache hit is re-run live when the first 8 bytes of `sha256(salt || key)` fall under `DFO_ORACLE_SPOT`; a mismatch
+//! panics with a diff and deletes the entry, so the cache can never hide JS drift. The Rust binary always runs live;
+//! only the JS answer is cached.
 //!
-//! `DFO_ORACLE=snapshot|record` is the other store: the committed answers of `snapshot.rs`, keyed by test and call
-//! number, replayed without Node.
+//! `DFO_ORACLE=record` writes a snapshot stage (`node tools/snapshots.mjs record`); `snapshot` forces the replay.
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
@@ -305,10 +306,11 @@ const ENV_DENY_PREFIX: [&str; 3] = ["CARGO_", "RUST_", "DFO_ORACLE"];
 const PINNED_MTIME: Duration = Duration::from_secs(300);
 
 // ---------------------------------------------------------------------------------------------------------------------
-// The cache: `DFO_ORACLE=use|fresh|off`, one entry per key, atomic tmp+rename, corrupt entries fail open.
+// The cache: `DFO_ORACLE=live|use|fresh`, one entry per key, atomic tmp+rename, corrupt entries fail open.
 
-/// What the environment asks of the cache. `off` (the default) is the plain spawn; `fresh` skips reads and writes an
-/// entry; `use` reads and writes one.
+/// What the environment asks of the cache. With `DFO_ORACLE` unset the committed snapshots answer every JS call, so
+/// the suite needs no Node. `live` (or the older `off`) is the plain spawn with no cache, for a run against the real JS
+/// while it exists; `use`/`fresh` add the output cache, `record` writes a snapshot stage, `snapshot` forces the store.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CacheMode {
     Off,
@@ -324,13 +326,25 @@ fn cache_mode() -> CacheMode {
         Some("fresh") => CacheMode::Fresh,
         Some("snapshot") => CacheMode::Snapshot,
         Some("record") => CacheMode::Record,
-        _ => CacheMode::Off,
+        Some("live" | "off") => CacheMode::Off,
+        Some(other) => {
+            panic!("DFO_ORACLE={other:?}: expected live, use, fresh, snapshot or record")
+        }
+        None => CacheMode::Snapshot,
     }
 }
 
-/// The JS answers come from the committed snapshots: nothing may spawn Node.
+/// The JS answers come from the committed snapshots (the default): nothing spawns Node.
 pub fn replaying() -> bool {
     cache_mode() == CacheMode::Snapshot
+}
+
+/// A run against the real JS, either plain (`live`) or through the output cache: the only modes that may read `src/`.
+pub fn live_js() -> bool {
+    matches!(
+        cache_mode(),
+        CacheMode::Off | CacheMode::Use | CacheMode::Fresh
+    )
 }
 
 /// A snapshot recording run: every routed JS call is stored.

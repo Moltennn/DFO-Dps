@@ -9,7 +9,8 @@
 //! caught by spot 1.0; a corrupt, truncated or swapped entry runs live and is rewritten; and two concurrent writers on
 //! one key leave one valid entry. Everything the test spawns is `node -e` (the cache's `js_batch`), never the CLI.
 //!
-//! One test function: the cache reads process-global `DFO_ORACLE_*` variables, so parallel `#[test]`s would race.
+//! One test function, and `#[ignore]`d: the cache reads process-global `DFO_ORACLE_*` variables, so parallel `#[test]`s
+//! would race, and it needs the live JavaScript (`DFO_ORACLE=live cargo test -p dfo-cli --test oracle_key -- --ignored`).
 
 mod common;
 
@@ -391,11 +392,21 @@ fn corrupt_entries_and_concurrent_writers(base: &Path, cache: &Path) {
     );
 }
 
+/// This is the live cache's own test: it spawns Node and copies `bin/`, `src/`, `vendor/` and `package.json`, so it is
+/// `#[ignore]`d rather than a silent no-op pass. A live run asks for it by name:
+///
+///   DFO_ORACLE=live cargo test -p dfo-cli --test oracle_key -- --ignored
+///
+/// (`node tools/gate.mjs rust --live` sets `DFO_ORACLE` for the suite but does not pass `--ignored`; this test is a
+/// cache-mechanics check, not a differential).
 #[test]
+#[ignore = "live JS cache mechanics: run with DFO_ORACLE=live cargo test -- --ignored"]
 fn the_key_covers_its_inputs_and_the_cache_fails_open() {
-    // A test of the live cache (it spawns Node itself), not a differential: it has no snapshot form.
-    if common::replaying() || common::recording() {
-        return;
+    if !common::live_js() {
+        panic!(
+            "DFO_ORACLE must name a live mode (live, use or fresh): this test copies the JS tree and spawns Node, so the \
+             frozen replay cannot answer it"
+        );
     }
     let base = scratch("s3");
     let tree = copied_js_tree(&base);

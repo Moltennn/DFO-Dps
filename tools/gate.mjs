@@ -3,8 +3,15 @@
  * tools/gate.mjs - the project gates as single commands, with compact output.
  *
  *   node tools/gate.mjs js [--no-game]          npm test, then vendor:verify
- *   node tools/gate.mjs rust                    rust-data --check, frozen --verify, rust-vectors, cargo fmt --check,
- *                                               clippy, cargo test
+ *   node tools/gate.mjs rust                    rust-data --check, frozen --verify, oracle --check, snapshots --check,
+ *                                               rust-vectors, cargo fmt --check, cargo clippy, cargo test (every JS
+ *                                               answer is replayed from the committed snapshots; no Node on the tests'
+ *                                               PATH). `snapshots --check` re-records every CLI answer against the live
+ *                                               JS and takes about 18 minutes while `src/` exists; it steps aside with
+ *                                               it, and is skipped by `--snapshots`, `--quick` and `--tests`.
+ *   node tools/gate.mjs oracle [--write]        compare (or re-record) rust/tests/frozen/oracle: the three dfo-core JS oracles
+ *   node tools/gate.mjs isolated                prove the suite reads no src/, bin/, test/ or vendor/ and spawns no Node:
+ *                                               run it in a mirror whose four trees are marker files and whose PATH has no node
  *   node tools/gate.mjs freeze                  frozen --verify, rust-vectors, then regenerate the sample into a scratch
  *                                               directory and prove it is byte-identical (no file in rust/ is written)
  *   node tools/gate.mjs all                     js, then rust (when rust/ exists on this branch)
@@ -25,19 +32,22 @@
  *   --fresh        rust: regenerate the golden vectors even when their inputs are unchanged (cached by input hash)
  *                  the cache key is content-only and portable between copies of one revision (worktree, `git archive`);
  *                  a vectors directory that is a symlink into another tree is reused but never regenerated through it
- *                  also sets DFO_ORACLE=fresh (skip JS-oracle cache reads, still write entries)
+ *                  also sets DFO_ORACLE=fresh (live JS: skip output-cache reads, still write entries)
+ *   --live         rust: the opt-in run against the real JavaScript. The default replays the committed answers
+ *                  (`rust/dfo-cli/tests/snapshots/` and `rust/tests/frozen/oracle/`) with no Node on the tests' PATH;
+ *                  `--live` spawns `node` instead, so it needs `src/`, `bin/` and `vendor/` and fails once they are gone.
  *   --test-jobs N  rust: how many tests run at once (default about 1.2 x the core count, since a test mostly blocks
  *                  on the child CLI it spawns). The unit is the TEST, not the test binary: one process per test, and
  *                  workers take the next test as each finishes, so the longest suite cannot become the tail.
  *                  Use 1 on memory-constrained hosts
  *   --quick        rust: skip the heavy suites by full path (listed below), print each skipped path; the rest runs in
  *                  full, so this is a fast tier, never a subset of cases within a suite
- *   --no-oracle    rust: DFO_ORACLE=off (no JS-oracle cache; every JS call runs live)
- *   --snapshots    rust: the CLI tests answer every JS call from rust/dfo-cli/tests/snapshots/ and their PATH holds no
- *                  `node` (only `sh` and `head`); the full run also fails on a stored answer no test asked for.
- *                  dfo-cli only: the dfo-core JS probes have no snapshot and run as usual. Record: tools/snapshots.mjs
- *   --spot F       rust: fraction of cache hits re-run against real JS and compared (default 0.05; 0.25 before a push, 1.0 nightly;
- *                  a mismatch fails the gate and deletes the entry). Ignored with --no-oracle
+ *   --no-oracle    rust: the older spelling of --live (a plain spawn, no output cache)
+ *   --snapshots    rust: kept for the old invocations; the committed snapshots are the default now, so this only holds
+ *                  the old PATH restriction (sh and head only). Record: tools/snapshots.mjs
+ *   --spot F       rust: fraction of output-cache hits re-run against real JS and compared (0.05 default; 0.25 before a
+ *                  push, 1.0 nightly; a mismatch fails the gate and deletes the entry). A spot check needs the real JS, so
+ *                  giving --spot selects the live plan (like --live).
  *   --tests a,b    rust: run only these test targets (e.g. `--tests rank,doctor`); the build still compiles all
  *   --oracle-dir D rust: the JS-oracle cache directory (default the primary checkout's `.cache/oracle`, shared by every
  *                  worktree: the key is content-only, so each worktree starts warm instead of paying the cold JS cost)
@@ -59,10 +69,11 @@ import { delimiter, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
-import { vectorPlan } from './vector-cache.mjs';
-
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const rustDir = join(root, 'rust');
+/** True while the JavaScript the generators read still exists. Its absence is the frozen-answer tier: the committed
+ *  sample, snapshots and oracle answers are what the tests replay, so the JS-derived gate steps step aside and say so. */
+const jsPresent = () => existsSync(join(root, 'src', 'save.js'));
 const argv = process.argv.slice(2);
 
 /** Parallel work this run may use. `availableParallelism()` counts ALLOWED cpus; a cgroup quota can be lower, and
@@ -98,7 +109,7 @@ const keepGoing = flag('keep-going');
 // Every child inherits the tier (tools/rust-synth-book.mjs).
 if (flag('real-spells')) process.env.DFO_REAL_SPELLS = '1';
 
-const HELP = `usage: node tools/gate.mjs <js|rust|all|mutate> [options]   (see the header of tools/gate.mjs)`;
+const HELP = `usage: node tools/gate.mjs <js|rust|all|freeze|oracle|isolated|mutate> [options]   (see the header of tools/gate.mjs)`;
 
 const strip = (s) => s.replace(/\u001b\[[0-9;]*m/g, '');
 const first = (text, n = maxLines) => strip(text).split('\n').filter((l) => l.trim()).slice(0, n).join('\n');
@@ -202,8 +213,13 @@ function stepCargo(name, args, parse) {
 
 // ---- fast paths ---------------------------------------------------------------------------------------------------
 /** rust-vectors, unless its inputs are unchanged since the vectors on disk were written (--fresh forces it). The key
- *  and the shared-tree guard live in tools/vector-cache.mjs. */
-function stepVectors() {
+ *  and the shared-tree guard live in tools/vector-cache.mjs, which imports `src/save.js`: it is loaded only when the JS
+ *  exists, so the frozen tier does not need it. */
+async function stepVectors() {
+  if (!jsPresent()) {
+    return report('rust-vectors', true, 'skipped: no src/ (the JS is gone; tests read the committed sample and snapshots)');
+  }
+  const { vectorPlan } = await import('./vector-cache.mjs');
   const vectors = join(rustDir, 'tests', 'vectors');
   const plan = vectorPlan(root, vectors, flag('fresh'));
   if (plan.cached) {
@@ -226,6 +242,18 @@ function stepVectors() {
  *  Cheap (27 MiB) and needs no generated vectors, so it runs before `rust-vectors`. */
 function stepFrozenVerify() {
   return stepNode('frozen --verify', ['tools/vector-freeze.mjs', '--verify'], 'sample matches MANIFEST');
+}
+
+/** The three dfo-core JS oracles (`rust/tests/{planner,probe,sidebar}_oracle.mjs`): their committed answers must be what
+ *  the live JS still prints, so the frozen differential cannot drift while `src/` and `vendor/` exist. */
+function stepOracleCheck() {
+  if (!jsPresent()) {
+    return report('oracle --check', true, 'skipped: no src/ (the frozen answers are the only evidence now)');
+  }
+  if (flag('real-spells')) {
+    return report('oracle --check', true, 'skipped: --real-spells; the frozen answers carry the synthetic book (the tests run live)');
+  }
+  return stepNode('oracle --check', ['tools/oracle-freeze.mjs', '--check'], 'frozen answers match the live JS');
 }
 
 /** Regenerate the sample into a scratch directory from the generated vectors and compare the bytes with the committed
@@ -288,30 +316,50 @@ function sharedOracleDir() {
   return join(root, '.cache', 'oracle');
 }
 
-/** The cache settings the rust gate hands to every test binary (see rust/dfo-cli/tests/common/oracle.rs). `--no-oracle`
- *  runs every JS call live; otherwise `--fresh` writes entries without reading, and the default reuses them at
- *  `--spot` (default 0.05, the push gate 0.25, 1.0 re-runs every hit). */
+/** The cache settings the rust gate hands to every test binary (see rust/dfo-cli/tests/common/oracle.rs). The default is
+ *  the frozen replay: `DFO_ORACLE=snapshot` answers every CLI JS call from `tests/snapshots/`, `DFO_CORE_ORACLE` unset
+ *  replays the dfo-core answers, and PATH holds only `sh` and `head`, so nothing can spawn Node and pass by accident.
+ *  `--live` (or the older `--no-oracle`) spawns the real JS instead: `--no-oracle` runs every call plainly, otherwise
+ *  `--fresh` writes cache entries without reading and the default reuses them at `--spot` (0.05, the push gate 0.25,
+ *  1.0 re-runs every hit). */
 function oraclePlan() {
+  // The frozen replay is the default. Anything that needs the real JS (`--live`, the older `--no-oracle`, `--fresh`, a
+  // `--spot` check, or `--real-spells`, whose book no frozen answer carries) selects the live plan, except that an
+  // explicit `--snapshots` always means the replay.
+  const liveRequested = flag('live') || flag('no-oracle') || flag('fresh') || flag('real-spells')
+    || opt('spot') !== undefined;
+  if (flag('snapshots') || !liveRequested) {
+    const dir = mkdtempSync(join(tmpdir(), 'gate-nonode-'));
+    for (const name of ['sh', 'head']) {
+      const at = (process.env.PATH ?? '').split(delimiter).map((p) => join(p, name)).find((p) => existsSync(p));
+      if (at) symlinkSync(at, join(dir, name));
+    }
+    const stats = join(dir, 'stats.txt');
+    return { off: false, live: false, bin: dir, dir, stats, env: { DFO_ORACLE: 'snapshot', DFO_CORE_ORACLE: 'frozen', DFO_ORACLE_STATS: stats, PATH: dir } };
+  }
   const off = flag('no-oracle');
   const dir = opt('oracle-dir', sharedOracleDir());
   const stats = join(dir, `stats-${process.pid}.txt`);
   rmSync(stats, { force: true });
   mkdirSync(dir, { recursive: true });
   // `off` is set explicitly, so an inherited DFO_ORACLE=use cannot turn the cache back on.
-  const env = off ? { DFO_ORACLE: 'off' } : { DFO_ORACLE: flag('fresh') ? 'fresh' : 'use', DFO_ORACLE_DIR: dir,
-    DFO_ORACLE_SPOT: opt('spot', '0.05'), DFO_ORACLE_STATS: stats, DFO_ORACLE_SALT: randomUUID() };
-  return { off, dir, stats, env };
+  const env = { ...(off ? { DFO_ORACLE: 'off' } : { DFO_ORACLE: flag('fresh') ? 'fresh' : 'use', DFO_ORACLE_DIR: dir,
+    DFO_ORACLE_SPOT: opt('spot', '0.05'), DFO_ORACLE_STATS: stats, DFO_ORACLE_SALT: randomUUID() }), DFO_CORE_ORACLE: 'live' };
+  return { off, live: true, bin: null, dir, stats, env };
 }
 
-/** `--snapshots`: the environment of a test process that may not reach Node. */
-function snapshotPlan() {
-  const dir = mkdtempSync(join(tmpdir(), 'gate-nonode-'));
-  for (const name of ['sh', 'head']) {
-    const at = (process.env.PATH ?? '').split(delimiter).map((p) => join(p, name)).find((p) => existsSync(p));
-    if (at) symlinkSync(at, join(dir, name));
+/** `tools/snapshots.mjs check`: every committed CLI snapshot must equal what the live JS answers now, so the replay tier
+ *  cannot drift while `src/` exists. It runs the dfo-cli binaries live (`DFO_ORACLE=record` into a scratch stage) and
+ *  writes nothing. Skipped by the explicit replay tier (`--snapshots`), by `--quick`, by a `--tests` narrowing, and once
+ *  `src/` is gone. */
+function stepSnapshotsCheck() {
+  if (!jsPresent()) {
+    return report('snapshots --check', true, 'skipped: no src/ (the committed snapshots are the only evidence now)');
   }
-  const stats = join(dir, 'stats.txt');
-  return { bin: dir, stats, env: { DFO_ORACLE: 'snapshot', DFO_ORACLE_STATS: stats, PATH: dir } };
+  if (flag('snapshots')) return report('snapshots --check', true, 'skipped: --snapshots is the replay tier');
+  if (flag('quick') || opt('tests', undefined)) return report('snapshots --check', true, 'skipped: narrowed run');
+  // tools/snapshots.mjs forces its own synthetic book (and drops DFO_REAL_SPELLS), so --real-spells still checks here.
+  return stepNode('snapshots --check', ['tools/snapshots.mjs', 'check'], 'stored CLI answers match the live JS');
 }
 
 /** Every call in the MANIFEST was asked for: a removed test or a shortened one cannot leave a stale answer behind.
@@ -430,8 +478,10 @@ async function stepCargoTestParallel(oracleEnv = {}) {
       const started = Date.now();
       const r = await new Promise((res) => {
         const c = spawn(w.exe, ['-q', '--exact', w.test], { cwd: join(rustDir, 'dfo-core'), stdio: ['ignore', 'pipe', 'pipe'],
-          // `--snapshots` hides Node from the CLI tests only; dfo-core's own JS probes keep the normal environment.
-          env: oracleEnv.PATH && !w.name.startsWith('dfo-cli/') ? process.env : { ...process.env, ...oracleEnv } });
+          // Every suite gets the plan: the frozen replay needs `DFO_CORE_ORACLE` unset and a PATH without Node for the
+          // dfo-core oracles too, and the live plan sets `DFO_CORE_ORACLE=live`. PATH is kept for the Rust CLI's own
+          // children (`sh`, `head`) where the plan installs them.
+          env: { ...process.env, ...oracleEnv } });
         let out = '';
         c.stdout.on('data', (d) => { out += d; });
         c.stderr.on('data', (d) => { out += d; });
@@ -470,6 +520,10 @@ async function stepCargoTestParallel(oracleEnv = {}) {
 const stop = () => !keepGoing && results.some((r) => !r.ok);
 
 function gateJs() {
+  if (!jsPresent()) {
+    console.log('no src/ on this branch: the JavaScript gate has nothing to run (use `node tools/gate.mjs rust`)');
+    return;
+  }
   const env = {};
   if (flag('no-game')) {
     env.HOME = mkdtempSync(join(tmpdir(), 'gate-nohome-'));
@@ -495,20 +549,26 @@ async function gateRust() {
     delete process.env.DAGGER_USER_DATA;
     console.log('(rust gate without game data: XDG_CONFIG_HOME is empty, DAGGER_USER_DATA unset)');
   }
-  stepNode('rust-data --check', ['tools/rust-data.mjs', '--check']);
+  if (!jsPresent()) report('rust-data --check', true, 'skipped: no src/ (the generated files are already committed)');
+  else stepNode('rust-data --check', ['tools/rust-data.mjs', '--check']);
   if (!stop()) stepFrozenVerify();
-  if (!stop()) stepVectors();
+  if (!stop()) stepOracleCheck();
+  if (!stop()) stepSnapshotsCheck();
+  if (!stop()) await stepVectors();
   if (!stop()) {
     // The real tier generates vectors from the game's book, so the committed sample cannot match them: `--check` only
-    // means anything for the synthetic book. Skipped, and said so, rather than failing every real-tier run.
+    // means anything for the synthetic book. Skipped, and said so, rather than failing every real-tier run. Without
+    // `src/` there are no generators to compare with either.
     if (flag('real-spells')) report('frozen --check', true, 'skipped: the real tier does not match the committed sample');
+    else if (!jsPresent()) report('frozen --check', true, 'skipped: no src/ (the committed sample is the only evidence)');
     else stepFrozenCheck();
   }
   if (!stop()) stepCargo('cargo fmt --check', ['fmt', '--check']);
   if (!stop()) stepCargo('cargo clippy', ['clippy', '--all-targets', '--', '-D', 'warnings']);
-  const oracle = flag('snapshots') ? snapshotPlan() : oraclePlan();
+  const oracle = oraclePlan();
   if (!stop()) await stepCargoTestParallel(flag('full') ? { ...oracle.env, PLANNERS_SLOW: '1' } : oracle.env);
-  if (flag('snapshots')) {
+  if (!oracle.live) {
+    // The frozen replay DOES hold a snapshot, so every stored call must have been asked for and nothing may reach Node.
     if (!stop() && !flag('quick') && !opt('tests', undefined)) stepSnapshotCoverage(oracle.stats);
     rmSync(oracle.bin, { recursive: true, force: true });
     return;
@@ -555,20 +615,40 @@ function gateMutate() {
   report(`mutate ${file}`, ok, summary.trim(), survivors || first(r.out));
 }
 
-function gateFreeze() {
+async function gateFreeze() {
   // The gate owns the tier variables: clear inherited ones before its own freeze/audit run.
   for (const v of ['DFO_VECTORS_DIR', 'DFO_FROZEN_DIR', 'DFO_FROZEN_OUT']) delete process.env[v];
   if (!stepFrozenVerify()) return;
   if (flag('write')) {
     // Rewrite the committed sample from the generated vectors, then audit it (hand cases, branch values, size band). The
     // generators must be current first: a stale full set would fold old answers into the sample.
-    if (!stepVectors()) return;
+    if (!(await stepVectors())) return;
     if (!stepNode('frozen write', ['tools/vector-freeze.mjs'], 'sample written')) return;
     stepFrozenAudit();
     return;
   }
   // The sample's record: the same input bytes must produce the same sample bytes.
-  if (stepVectors()) stepFrozenReproduce();
+  if (await stepVectors()) stepFrozenReproduce();
+}
+
+/** The purity proof as a gate step: tools/js-isolation-check.mjs runs the suite in a mirror whose `src/`, `bin/`,
+ *  `test/` and `vendor/` are marker files and whose PATH has no `node`. Extra arguments go to the script (and on to
+ *  `cargo test`), so `--tests a,b` narrows it. */
+function gateIsolated() {
+  const passthrough = argv.slice(1).filter((a) => a !== 'isolated');
+  const r = run(process.execPath, ['tools/js-isolation-check.mjs', ...passthrough], { timeout: 0 });
+  const ok = r.status === 0;
+  const line = strip(r.out).split('\n').filter((l) => /^js-isolation:/.test(l)).pop() ?? '';
+  return report('js isolation', ok, ok ? `${line.replace(/^js-isolation: /, '')} (${r.secs}s)` : `exit ${r.status}`, first(r.out));
+}
+
+/** The three dfo-core JS oracles (`rust/tests/{planner,probe,sidebar}_oracle.mjs`): their committed answers must be what
+ *  the live JS still prints, so the frozen differential cannot drift while `src/` and `vendor/` exist. `--write` records
+ *  them again (an intended JS change), `--check` (the default) writes nothing and fails on a difference. */
+function gateOracle() {
+  const args = ['tools/oracle-freeze.mjs'];
+  if (!flag('write')) args.push('--check');
+  stepNode(flag('write') ? 'oracle write' : 'oracle --check', args, flag('write') ? 'frozen oracle answers written' : 'frozen answers match the live JS');
 }
 
 /** The freeze tool's own audit: every hand-written case kept, every witnessed branch value covered, the size in band. */
@@ -584,7 +664,9 @@ if (!cmd || cmd === '--help' || cmd === '-h') {
 }
 if (cmd === 'js') gateJs();
 else if (cmd === 'rust') await gateRust();
-else if (cmd === 'freeze') gateFreeze();
+else if (cmd === 'freeze') await gateFreeze();
+else if (cmd === 'oracle') gateOracle();
+else if (cmd === 'isolated') gateIsolated();
 else if (cmd === 'all') {
   gateJs();
   if (!stop() && existsSync(rustDir)) await gateRust();

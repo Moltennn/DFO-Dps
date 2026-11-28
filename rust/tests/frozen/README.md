@@ -13,6 +13,10 @@ sha256 b2fd893c4716ca6c8a138ca26f69ecfd14058cecb0b3b3205d98ddcd0d197c93
 `rust/dfo-core/tests/common/mod.rs` reads this directory. Set `DFO_VECTORS_DIR` to read the full generated set instead
 (the opt-in comparison tier), or `DFO_FROZEN_DIR` to read another copy of a sample.
 
+`oracle/` beside this file is a different kind of answer: the frozen stdout of the three dfo-core JavaScript oracles
+(`planner_oracle.mjs`, `probe_oracle.mjs`, `sidebar_oracle.mjs`), with its own `MANIFEST` and README. `tests/common/oracle.rs`
+replays it; it is not a golden vector module and the manifest below does not name it.
+
 ## What is here
 
 One `<module>.txt.gz` per module (gzip -9, the same text format the generators write), plus `MANIFEST`:

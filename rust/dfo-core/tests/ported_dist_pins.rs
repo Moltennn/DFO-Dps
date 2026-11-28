@@ -1,10 +1,13 @@
-//! Ported from `test/build14631.test.js:297-316` (the `dist:` citation pin check), widened to every `dist:` citation in
-//! the repository.
+//! Ported from `test/build14631.test.js:297-316` (the `dist:` citation pin check, at the revision that still had it),
+//! widened to every `dist:` citation in the repository.
 //!
 //! LOCAL INVARIANT (AGENTS.md rule 1, "pin first"): a `dist:<chunk>:<sha16>:<offset>@<version>` citation is valid only
-//! where a record under `vendor/dist-pins/` lists that chunk, its sha256 and its version. The JS check read only its own
-//! file; this one reads every tracked text file outside `vendor/`, so a citation added to a doc or a Rust comment is
-//! checked too. It is by hand until tooling exists — this test *is* that tooling.
+//! where a record under `rust/dist-pins/` lists that chunk, its sha256 and its version. The JS check read only its own
+//! file; this one reads every tracked text file outside `vendor/` - `test/` included while it exists - so a citation
+//! added to a doc, a Rust comment or a JS test is checked too. The pin record is the vendored file copied verbatim
+//! (`rust/BUILD-14631.md` says why), and the three citations that lived only in `test/build14631.test.js` are in that
+//! document now, so the floor of 6 still holds once `test/` is gone. It is by hand until tooling exists — this test
+//! *is* that tooling.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -24,7 +27,9 @@ fn is_text(path: &Path) -> bool {
     )
 }
 
-/// Directories that are never scanned: the pinned build itself, build output, dependency trees and VCS data.
+/// Directories that are never scanned: the pinned build itself, build output, dependency trees, VCS data and a `dist/`
+/// payload. `test/` IS scanned while it exists (its citations must stay pinned too) and simply vanishes with it, so the
+/// floor below is met by the Rust and Markdown homes once it is gone.
 fn skip(name: &str) -> bool {
     matches!(name, "vendor" | "target" | "node_modules" | ".git" | "dist")
 }
@@ -54,7 +59,7 @@ struct Pin {
 
 /// Every `dist-pins/*.json` record, parsed without a JSON dependency: the records are written one field per line.
 fn pins() -> Vec<Pin> {
-    let dir = repo_root().join("vendor").join("dist-pins");
+    let dir = repo_root().join("rust").join("dist-pins");
     let mut out = Vec::new();
     let Ok(entries) = fs::read_dir(&dir) else {
         panic!("the pin records are missing: {}", dir.display());

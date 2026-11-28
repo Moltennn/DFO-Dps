@@ -1,44 +1,22 @@
 //! `dfo_core::probe` against the REAL `src/probe.js`, over synthetic fixtures.
 //!
-//! `tests/probe_oracle.mjs` builds capture-shaped documents (never a real capture), calls the JS module and prints one
-//! line per case; each line is replayed here through the port and compared token for token. A skipped differential proves
-//! nothing, so a missing `node` fails the test.
+//! `tests/probe_oracle.mjs` builds capture-shaped documents (never a real capture), called the JS module and printed
+//! one line per case; its answer is committed to `rust/tests/frozen/oracle/probe.txt.gz` and each line is replayed here
+//! through the port and compared token for token. A missing, corrupt or short answer fails the test, never skips it;
+//! `DFO_CORE_ORACLE=live` spawns the script again while the JS exists (`node tools/oracle-freeze.mjs --check` compares
+//! the two).
+
+mod common;
 
 use dfo_core::{
     probe,
     value::{self, Value},
 };
 use std::collections::BTreeMap;
-use std::path::PathBuf;
-use std::process::Command;
 
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-}
-
+/// The oracle's lines: the committed answer, or the live script under `DFO_CORE_ORACLE=live`.
 fn oracle_lines() -> Vec<String> {
-    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("probe_oracle.mjs");
-    let out = Command::new("node")
-        .arg(&script)
-        .current_dir(repo_root())
-        .output()
-        .expect("the probe oracle script runs (this repository's Node project)");
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "oracle {script:?}: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout)
-        .expect("the oracle's output is UTF-8")
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(str::to_owned)
-        .collect()
+    common::oracle::oracle_lines("probe", "tests/probe_oracle.mjs")
 }
 
 fn parse(token: &str) -> Value {
