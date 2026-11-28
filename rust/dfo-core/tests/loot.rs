@@ -66,10 +66,11 @@ fn loot_readers_match_the_js_vectors() {
         *seen.entry(kind).or_default() += 1;
     }
     for kind in ["rl", "va", "gl", "sg", "so", "sm", "cp", "pio", "po", "fg"] {
+        let min = common::floor("loot", kind);
         let n = seen.get(kind).copied().unwrap_or(0);
         assert!(
-            n >= 2000,
-            "loot.txt: only {n} `{kind}` cases (expected >= 2000)"
+            n >= min,
+            "loot.txt: only {n} `{kind}` cases (expected >= {min})"
         );
     }
 }

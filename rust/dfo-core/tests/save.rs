@@ -117,8 +117,8 @@ fn save_helpers_match_the_js_vectors() {
     for kind in [
         "eff", "msa", "mcs", "smo", "sv", "ls", "rem", "rm", "cl", "sn", "wsk", "pf", "cfs", "cfsa",
     ] {
+        let floor = common::floor("save", kind);
         let n = seen.get(kind).copied().unwrap_or(0);
-        let floor = if kind == "cfsa" { 5 } else { 2000 };
         assert!(
             n >= floor,
             "save.txt: only {n} `{kind}` cases (expected >= {floor})"

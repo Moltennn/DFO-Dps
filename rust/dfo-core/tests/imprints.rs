@@ -14,13 +14,7 @@ fn imprints() {
     let mut profiles = m::Profiles::new(&book);
     common::planning::replay(
         "imprints",
-        &[
-            ("fit", 20),
-            ("power", 2048),
-            ("rank", 90),
-            ("rank_all", 12),
-            ("lookup", 7),
-        ],
+        &["fit", "power", "rank", "rank_all", "lookup"],
         true,
         |k, v, _| match k {
             "fit" => i::imprints_for(&v()),

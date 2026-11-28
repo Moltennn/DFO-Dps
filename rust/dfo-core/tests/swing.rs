@@ -60,12 +60,13 @@ fn swing_matches_js_vectors() {
         c.done();
         *seen.entry(kind).or_default() += 1;
     }
-    for (kind, min) in [
-        ("swing_frame", 1000),
-        ("swing_heft", 200),
-        ("swing_handling", 50),
-        ("classic_strength", 300),
+    for kind in [
+        "swing_frame",
+        "swing_heft",
+        "swing_handling",
+        "classic_strength",
     ] {
+        let min = common::floor("swing", kind);
         let n = seen.get(kind).copied().unwrap_or(0);
         assert!(
             n >= min,

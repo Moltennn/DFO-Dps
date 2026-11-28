@@ -51,15 +51,8 @@ fn value_codec_and_js_reads_match_the_vectors() {
         c.done();
         *seen.entry(kind).or_default() += 1;
     }
-    for (kind, min) in [
-        ("value", 2000),
-        ("tonum", 2000),
-        ("tostr", 2000),
-        ("truthy", 1000),
-        ("prop", 2000),
-        ("seq", 2000),
-        ("svz", 1000),
-    ] {
+    for kind in ["value", "tonum", "tostr", "truthy", "prop", "seq", "svz"] {
+        let min = common::floor("value", kind);
         let n = seen.get(kind).copied().unwrap_or(0);
         assert!(
             n >= min,

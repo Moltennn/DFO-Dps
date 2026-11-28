@@ -3,11 +3,18 @@
  * tools/gate.mjs - the project gates as single commands, with compact output.
  *
  *   node tools/gate.mjs js [--no-game]          npm test, then vendor:verify
- *   node tools/gate.mjs rust                    rust-data --check, rust-vectors, cargo fmt --check, clippy, cargo test
+ *   node tools/gate.mjs rust                    rust-data --check, frozen --verify, rust-vectors, cargo fmt --check,
+ *                                               clippy, cargo test
+ *   node tools/gate.mjs freeze                  frozen --verify, rust-vectors, then regenerate the sample into a scratch
+ *                                               directory and prove it is byte-identical (no file in rust/ is written)
  *   node tools/gate.mjs all                     js, then rust (when rust/ exists on this branch)
- *   node tools/gate.mjs mutate <file> --tests a,b [--count N] [--seed S] [--max-mem SIZE] [--no-mem-cap]
+ *   node tools/gate.mjs mutate <file> --tests a,b [--count N] [--seed S] [--max-mem SIZE] [--no-mem-cap] [--full]
  *                                               tools/rust-mutate.mjs: lists the mutants the tests do NOT kill; every
- *                                               mutant build and test run is memory-capped (tools/mem-cap.mjs)
+ *                                               mutant build and test run is memory-capped (tools/mem-cap.mjs).
+ *                                               The default tier reads the committed frozen sample; --full reads the
+ *                                               generated set, so a sample-only survivor can be checked against it.
+ *                                               An inherited DFO_VECTORS_DIR / DFO_FROZEN_DIR is ignored: the tier
+ *                                               comes from --full alone.
  *   node tools/gate.mjs --help
  *
  * Why this exists: an agent whose shell allowlist is per command cannot run `cd rust && cargo test 2>&1 | grep ...`
@@ -47,8 +54,7 @@
  *   --lines N      how many lines of a failure to show (default 25)
  */
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { availableParallelism, tmpdir } from 'node:os';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';import { availableParallelism, tmpdir } from 'node:os';
 import { delimiter, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -214,6 +220,50 @@ function stepVectors() {
   const ok = stepNode('rust-vectors', ['tools/rust-vectors.mjs'], 'vectors written');
   if (ok) writeFileSync(plan.stamp, `${plan.want}\n`);
   return ok;
+}
+
+/** `--verify` on the committed sample: each `.txt.gz`'s sha256, decoded sha256, size and case count against MANIFEST.
+ *  Cheap (27 MiB) and needs no generated vectors, so it runs before `rust-vectors`. */
+function stepFrozenVerify() {
+  return stepNode('frozen --verify', ['tools/vector-freeze.mjs', '--verify'], 'sample matches MANIFEST');
+}
+
+/** Regenerate the sample into a scratch directory from the generated vectors and compare the bytes with the committed
+ *  one: the record `rust/tests/frozen/README.md` makes must stay true. Expensive (reads all 3.9 GB), so it is the
+ *  `freeze` command's job, not every gate's. */
+function stepFrozenReproduce() {
+  const out = mkdtempSync(join(tmpdir(), 'gate-frozen-'));
+  const r = run(process.execPath, ['tools/vector-freeze.mjs'], { env: { ...process.env, DFO_FROZEN_OUT: out } });
+  if (r.status !== 0) {
+    rmSync(out, { recursive: true, force: true });
+    return report('frozen reproduce', false, `exit ${r.status}`, first(r.out));
+  }
+  const committed = join(rustDir, 'tests', 'frozen');
+  const names = readdirSync(committed).filter((f) => f.endsWith('.txt.gz')).sort();
+  const bad = [];
+  for (const name of names) {
+    const a = readFileSync(join(committed, name));
+    let b;
+    try { b = readFileSync(join(out, name)); } catch { bad.push(`${name}: not regenerated`); continue; }
+    if (!a.equals(b)) bad.push(`${name}: bytes differ`);
+  }
+  const manifest = readFileSync(join(committed, 'MANIFEST'), 'utf8');
+  const fresh = readFileSync(join(out, 'MANIFEST'), 'utf8');
+  if (manifest !== fresh) bad.push('MANIFEST differs');
+  for (const name of readdirSync(out).filter((f) => f.endsWith('.txt.gz'))) {
+    if (!names.includes(name)) bad.push(`${name}: regenerated but not committed`);
+  }
+  rmSync(out, { recursive: true, force: true });
+  return report('frozen reproduce', bad.length === 0,
+    bad.length ? `${bad.length} difference(s)` : `${names.length} modules byte-identical to the committed sample (${r.secs}s)`,
+    bad.join('\n'));
+}
+
+/** `--check` on the sample: prove the committed sample is what the generators' output would produce now. This is the
+ *  gate's JavaScript-drift check: without it a change to `src/` would leave the sample passing against answers the JS no
+ *  longer gives. Cheap enough to run on every rust gate (it streams the generated text once). */
+function stepFrozenCheck() {
+  return stepNode('frozen --check', ['tools/vector-freeze.mjs', '--check'], 'sample matches the generators');
 }
 
 /** Measured seconds per test binary from an earlier `--record-timings` run; missing entries keep the build order. */
@@ -435,6 +485,9 @@ async function gateRust() {
     results.push({ name: 'rust', ok: false });
     return;
   }
+  // The gate owns which vectors its tests read: an inherited tier variable would silently point the sample tests at a
+  // full set (or a scratch copy), so the run would prove the wrong thing. Clear them here and let the steps set them.
+  for (const v of ['DFO_VECTORS_DIR', 'DFO_FROZEN_DIR', 'DFO_FROZEN_OUT']) delete process.env[v];
   if (flag('no-game')) {
     // Linux user-data base (`src/save.js` userDataDir): an empty one, so no child finds a launcher config. HOME stays,
     // cargo and rustup live under it.
@@ -443,7 +496,14 @@ async function gateRust() {
     console.log('(rust gate without game data: XDG_CONFIG_HOME is empty, DAGGER_USER_DATA unset)');
   }
   stepNode('rust-data --check', ['tools/rust-data.mjs', '--check']);
+  if (!stop()) stepFrozenVerify();
   if (!stop()) stepVectors();
+  if (!stop()) {
+    // The real tier generates vectors from the game's book, so the committed sample cannot match them: `--check` only
+    // means anything for the synthetic book. Skipped, and said so, rather than failing every real-tier run.
+    if (flag('real-spells')) report('frozen --check', true, 'skipped: the real tier does not match the committed sample');
+    else stepFrozenCheck();
+  }
   if (!stop()) stepCargo('cargo fmt --check', ['fmt', '--check']);
   if (!stop()) stepCargo('cargo clippy', ['clippy', '--all-targets', '--', '-D', 'warnings']);
   const oracle = flag('snapshots') ? snapshotPlan() : oraclePlan();
@@ -471,15 +531,19 @@ async function gateRust() {
 function gateMutate() {
   const file = argv[1];
   if (!file || file.startsWith('--')) {
-    console.error('usage: node tools/gate.mjs mutate <file under rust/dfo-core/src> --tests a,b [--count N] [--seed S]');
+    console.error('usage: node tools/gate.mjs mutate <file under rust/dfo-core/src> --tests a,b [--count N] [--seed S] [--full]');
     process.exit(2);
   }
+  // The gate owns the tier: an inherited variable must not decide whether the sweep compares against the sample or the
+  // full set (`--full` is the only way to get the full set).
+  for (const v of ['DFO_VECTORS_DIR', 'DFO_FROZEN_DIR', 'DFO_FROZEN_OUT']) delete process.env[v];
   const passthrough = ['--tests', 'count', 'seed', 'timeout', 'jobs', 'max-mem'].flatMap((k) => {
     const name = k.replace(/^--/, '');
     const v = opt(name, undefined);
     return v === undefined ? [] : [`--${name}`, v];
   });
   if (flag('no-mem-cap')) passthrough.push('--no-mem-cap');
+  if (flag('full')) passthrough.push('--full');
   const r = run(process.execPath, ['tools/rust-mutate.mjs', file, ...passthrough]);
   const text = strip(r.out);
   const summary = text.split('\n').find((l) => new RegExp(`^${file.replace('.', '\\.')}:`).test(l)) ?? first(r.out, 6);
@@ -491,6 +555,27 @@ function gateMutate() {
   report(`mutate ${file}`, ok, summary.trim(), survivors || first(r.out));
 }
 
+function gateFreeze() {
+  // The gate owns the tier variables: clear inherited ones before its own freeze/audit run.
+  for (const v of ['DFO_VECTORS_DIR', 'DFO_FROZEN_DIR', 'DFO_FROZEN_OUT']) delete process.env[v];
+  if (!stepFrozenVerify()) return;
+  if (flag('write')) {
+    // Rewrite the committed sample from the generated vectors, then audit it (hand cases, branch values, size band). The
+    // generators must be current first: a stale full set would fold old answers into the sample.
+    if (!stepVectors()) return;
+    if (!stepNode('frozen write', ['tools/vector-freeze.mjs'], 'sample written')) return;
+    stepFrozenAudit();
+    return;
+  }
+  // The sample's record: the same input bytes must produce the same sample bytes.
+  if (stepVectors()) stepFrozenReproduce();
+}
+
+/** The freeze tool's own audit: every hand-written case kept, every witnessed branch value covered, the size in band. */
+function stepFrozenAudit() {
+  return stepNode('frozen audit', ['tools/vector-freeze.mjs', '--audit'], 'sample audit passed');
+}
+
 // ---- main -------------------------------------------------------------------------------------------------------
 const cmd = argv[0];
 if (!cmd || cmd === '--help' || cmd === '-h') {
@@ -499,6 +584,7 @@ if (!cmd || cmd === '--help' || cmd === '-h') {
 }
 if (cmd === 'js') gateJs();
 else if (cmd === 'rust') await gateRust();
+else if (cmd === 'freeze') gateFreeze();
 else if (cmd === 'all') {
   gateJs();
   if (!stop() && existsSync(rustDir)) await gateRust();

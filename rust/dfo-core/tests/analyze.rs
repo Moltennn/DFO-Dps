@@ -62,7 +62,7 @@ const KINDS: &[&str] = &[
 /// own families: one file, several `#[test]`s, which libtest runs in parallel.
 fn replay(
     families: &[&str],
-    floors: &[(&str, usize)],
+    floors: &[&str],
     check: impl Fn(&str, &mut common::Case, &common::Defs, &Spellbook) -> Value,
 ) {
     let defs = Default::default();
@@ -104,10 +104,11 @@ fn replay(
         *counts.entry(kind).or_insert(0) += 1;
     }
     assert!(book.is_some());
-    for (family, floor) in floors {
+    for &family in floors {
+        let floor = common::floor("analysis", family);
         assert!(
-            counts.get(*family).copied().unwrap_or(0) >= *floor,
-            "missing vectors: {family}"
+            counts.get(family).copied().unwrap_or(0) >= floor,
+            "missing vectors: {family} (expected >= {floor})"
         );
     }
 }
@@ -116,12 +117,7 @@ fn replay(
 fn targets() {
     replay(
         &["ref", "boss", "gate", "relay"],
-        &[
-            ("ref", 2000),
-            ("boss", 2000),
-            ("gate", 2000),
-            ("relay", 2000),
-        ],
+        &["ref", "boss", "gate", "relay"],
         |kind, c, defs, book| {
             let mut v = || c.value(defs);
             let (level, opts, ch, mut extra, actual_target, overlays) =
@@ -151,7 +147,7 @@ fn targets() {
 fn bosses_and_refusals() {
     replay(
         &["body_level", "boss_defaults", "refusal"],
-        &[("refusal", 4), ("body_level", 1), ("boss_defaults", 4)],
+        &["refusal", "body_level", "boss_defaults"],
         |kind, c, defs, _| {
             let mut v = || c.value(defs);
             match kind {
@@ -177,7 +173,7 @@ fn bosses_and_refusals() {
 fn ranks_and_probes() {
     replay(
         &["ranks", "probe"],
-        &[("ranks", 28), ("probe", 200)],
+        &["ranks", "probe"],
         |kind, c, defs, book| {
             let mut v = || c.value(defs);
             match kind {

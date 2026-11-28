@@ -9,13 +9,13 @@ fn gear_profile() {
     common::planning::replay(
         "gear_profile",
         &[
-            ("all", 1),
-            ("slot", 2000),
-            ("exalt", 10),
-            ("totals", 100),
-            ("budget", 2000),
-            ("validate", 2000),
-            ("constants", 1),
+            "all",
+            "slot",
+            "exalt",
+            "totals",
+            "budget",
+            "validate",
+            "constants",
         ],
         false,
         |k, v, _| match k {

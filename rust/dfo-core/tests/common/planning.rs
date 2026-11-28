@@ -25,7 +25,7 @@ pub fn fixture_book() -> Spellbook {
 
 pub fn replay(
     name: &str,
-    floors: &[(&str, usize)],
+    kinds: &[&str],
     needs_book: bool,
     mut check: impl FnMut(&str, &mut dyn FnMut() -> Value, Option<&Spellbook>) -> Value,
 ) {
@@ -63,10 +63,11 @@ pub fn replay(
         row.done();
         *counts.entry(k).or_insert(0) += 1;
     }
-    for &(k, floor) in floors {
+    for &k in kinds {
+        let floor = super::floor(name, k);
         assert!(
             counts.get(k).copied().unwrap_or(0) >= floor,
-            "missing vectors: {name}/{k}: {counts:?}"
+            "missing vectors: {name}/{k}: {counts:?} (expected >= {floor})"
         );
     }
 }

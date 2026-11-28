@@ -215,9 +215,10 @@ fn differential() {
         "catalogue",
         "boss",
     ] {
+        let min = common::floor("spells", family);
         assert!(
-            counts.get(family).copied().unwrap_or(0) >= 2000,
-            "{family}: missing vectors"
+            counts.get(family).copied().unwrap_or(0) >= min,
+            "{family}: missing vectors (expected >= {min})"
         );
     }
     assert_eq!(counts["stock"], 1);

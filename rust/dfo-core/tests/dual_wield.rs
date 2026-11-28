@@ -4,7 +4,7 @@ use dfo_core::{dual_wield::*, value::Value};
 #[test]
 fn hands_match_js() {
     let (defs, cases) = common::load_with_defs("dual_wield");
-    assert!(cases.len() >= 2000);
+    assert!(cases.len() >= common::floor("dual_wield", "hands"));
     for mut c in cases {
         assert_eq!(c.kind, "hands");
         let args = c.value(&defs);

@@ -151,7 +151,8 @@ fn forge_gear() {
         c.done();
         *counts.entry(kind).or_insert(0) += 1;
     }
-    for (kind, floor) in [("gearbuild", 80), ("gearwear", 30), ("gearequip", 20)] {
+    for kind in ["gearbuild", "gearwear", "gearequip"] {
+        let floor = common::floor("forge_gear", kind);
         let n = counts.get(kind).copied().unwrap_or(0);
         assert!(n >= floor, "forge_gear/{kind}: {n} cases, floor {floor}");
     }

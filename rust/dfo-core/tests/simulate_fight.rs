@@ -148,5 +148,33 @@ fn seeded_fights() {
         check(&c, "result", &want, &got);
         c.done();
     }
-    assert!(configs >= 200 && trials >= 2000 && reused >= 100 && schedules >= 14 && seeds >= 13);
+    // Each family floor is the sample's own count in MANIFEST: the batch kind selects the configs, every batch runs its
+    // 10 trials, every reuse case replays its 3 seeds, and the rest are case counts. No number is copied by hand.
+    let batch = common::floor("simulate_fight", "batch");
+    let reuse = common::floor("simulate_fight", "reuse");
+    const TRIALS_PER_BATCH: usize = 10;
+    const SEEDS_PER_REUSE: usize = 3;
+    assert!(
+        configs >= batch,
+        "only {configs} batch configs (expected >= {batch})"
+    );
+    assert!(
+        trials >= TRIALS_PER_BATCH * configs,
+        "only {trials} trials for {configs} batches"
+    );
+    assert!(
+        reused >= SEEDS_PER_REUSE * reuse,
+        "only {reused} reused rows (expected >= {})",
+        SEEDS_PER_REUSE * reuse
+    );
+    let schedules_min = common::floor("simulate_fight", "schedule");
+    assert!(
+        schedules >= schedules_min,
+        "only {schedules} schedules (expected >= {schedules_min})"
+    );
+    let seeds_min = common::floor("simulate_fight", "seeds");
+    assert!(
+        seeds >= seeds_min,
+        "only {seeds} seed cases (expected >= {seeds_min})"
+    );
 }

@@ -19,6 +19,8 @@
  *   --max-mem per-worker memory cap, e.g. 2G, 512M or 300 (MiB). Default: half of RAM split equally between the workers.
  *             Every cargo run (build and test binary) is capped; a mutant that hits the cap is killed and reported as
  *             `killed (memory cap ...)`. Only that one run dies: the cap is a separate cgroup, not the session's.
+ *   --full    read the full generated vectors (`rust/tests/vectors/`) instead of the committed frozen sample: the
+ *             comparison tier that proves the sample catches what the whole set catches.
  *   --no-mem-cap  run with no memory cap at all. Without it the gate refuses to run when no cap mechanism works.
  *   --list    print the candidate mutants and exit
  *
@@ -44,7 +46,7 @@ const flag = (name, def) => {
   return i < 0 ? def : args[i + 1];
 };
 /** Flags that take no value, so the word after them is not theirs. */
-const BOOLEAN_FLAGS = new Set(['--list', '--no-mem-cap']);
+const BOOLEAN_FLAGS = new Set(['--list', '--no-mem-cap', '--full']);
 const file = args.find((a, i) => !a.startsWith('--') && !(i > 0 && args[i - 1].startsWith('--') && !BOOLEAN_FLAGS.has(args[i - 1])));
 if (!file) {
   console.error('usage: node tools/rust-mutate.mjs <file under rust/dfo-core/src> --tests a,b [--count N] [--seed S] [--lines a-b,c] [--jobs J] [--timeout S] [--max-mem SIZE] [--no-mem-cap] [--list]');
@@ -135,6 +137,15 @@ if (listOnly) {
 // Parallel pool. Each worker owns a private COPY of the crate (own source, own target dir; the generated vectors are
 // symlinked), so mutants run side by side and the real source tree is never touched: a killed run leaves nothing to
 // restore. Tests are built with opt-level 2 (about 3x faster than debug for these numeric vector loops).
+/** True when the sweep reads the opt-in full generated set instead of the committed frozen sample. */
+const full = args.includes('--full');
+// The tier comes from --full alone: an inherited DFO_VECTORS_DIR / DFO_FROZEN_DIR would decide it silently.
+for (const v of ['DFO_VECTORS_DIR', 'DFO_FROZEN_DIR', 'DFO_FROZEN_OUT']) delete process.env[v];
+if (full) {
+  // The committed sample is the default tier; `--full` compares against every generated case (`rust/tests/vectors`).
+  process.env.DFO_VECTORS_DIR = join(rustDir, 'tests', 'vectors');
+}
+console.log(`vectors: ${full ? `full generated set (${join('rust', 'tests', 'vectors')})` : 'committed frozen sample (rust/tests/frozen)'}`);
 const mutantTimeoutS = Number(flag('timeout', 180));
 const workRoot = join(homedir(), '.cache', 'dfo-mut');
 const cargoArgs = ['test', '-q', ...tests.flatMap((t) => ['--test', t]), '--lib'];
@@ -199,6 +210,10 @@ function prepare(w) {
   const link = join(dir, 'tests', 'vectors');
   rmSync(link, { recursive: true, force: true });
   symlinkSync(join(rustDir, 'tests', 'vectors'), link);
+  // The committed sample the tests read by default (DFO_VECTORS_DIR unset), with its MANIFEST.
+  const frozen = join(dir, 'tests', 'frozen');
+  rmSync(frozen, { recursive: true, force: true });
+  symlinkSync(join(rustDir, 'tests', 'frozen'), frozen);
   // A differential oracle (`sidebar_oracle.mjs`, `probe_oracle.mjs`) is spawned with cwd = the scratch root and imports
   // the repository's JS and vendored modules. The oracles only read through these links; no game save is copied.
   for (const d of ['src', 'tools', 'vendor']) {

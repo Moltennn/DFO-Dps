@@ -114,7 +114,7 @@ const KNOWN: &[&str] = &[
 fn replay(
     kinds: &[&str],
     only: std::ops::Range<usize>,
-    floors: &[(&str, usize)],
+    floors: &[&str],
     check: impl Fn(&str, &mut dyn FnMut() -> Value, &mut Profiles<'_>) -> Value,
 ) {
     let defs = Default::default();
@@ -169,9 +169,12 @@ fn replay(
         *counts.entry(kind).or_insert(0) += 1;
     }
     assert!(book.is_some(), "real_build: the spellbook row is missing");
-    for (kind, floor) in floors {
-        let n = counts.get(*kind).copied().unwrap_or(0);
-        assert!(n >= *floor, "real_build/{kind}: {n} cases, floor {floor}");
+    for &kind in floors {
+        // A ranged replay checks one case per `#[test]` (a `shortlist` case costs ~17 s), so its floor is the MANIFEST
+        // count capped by what the range can select.
+        let floor = common::floor("real_build", kind).min(only.len());
+        let n = counts.get(kind).copied().unwrap_or(0);
+        assert!(n >= floor, "real_build/{kind}: {n} cases, floor {floor}");
     }
 }
 
@@ -180,12 +183,7 @@ fn stages_loadouts_sampled_apply() {
     replay(
         &["stage", "loadouts", "sampled", "apply"],
         0..usize::MAX,
-        &[
-            ("stage", 24),
-            ("loadouts", 4),
-            ("sampled", 120),
-            ("apply", 12),
-        ],
+        &["stage", "loadouts", "sampled", "apply"],
         |kind, v, profiles| match kind {
             "stage" => {
                 let o = v();
@@ -237,7 +235,7 @@ macro_rules! shortlist_case {
             replay(
                 &["shortlist"],
                 $index..$index + 1,
-                &[("shortlist", 1)],
+                &["shortlist"],
                 |kind, v, profiles| {
                     assert_eq!(kind, "shortlist");
                     let opts = ShortlistOpts::from_value(&v());
@@ -260,7 +258,7 @@ fn shortlist_err() {
     replay(
         &["shortlist-err"],
         0..usize::MAX,
-        &[("shortlist-err", 17)],
+        &["shortlist-err"],
         |kind, v, profiles| match kind {
             "shortlist-err" => {
                 let opts = ShortlistOpts::from_value(&v());

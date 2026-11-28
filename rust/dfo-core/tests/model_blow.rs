@@ -290,9 +290,10 @@ fn model_matches_js() {
         "scalar", "cadence", "hit", "damage", "live", "loot", "outcomes", "misc", "weapon",
         "resist",
     ] {
+        let min = common::floor("model_blow", k);
         assert!(
-            seen.get(k).copied().unwrap_or(0) >= 2000,
-            "short {k} family"
+            seen.get(k).copied().unwrap_or(0) >= min,
+            "short {k} family (expected >= {min})"
         );
     }
 }

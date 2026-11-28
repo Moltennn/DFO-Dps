@@ -13,6 +13,7 @@ import { ELEMENT_TRAITS } from '../vendor/upstream/a3eb1605/src/systems/bossTrai
 import { HAND_WRAPS_TEMPLATE } from '../vendor/upstream/a3eb1605/src/characters/handWrapsIds.js';
 import { resistBlow } from '../src/bossTraits.js';
 import { encodeValue as V } from './rust-codec.mjs';
+import { sweep } from './rust-sweep.mjs';
 import { outcomeVectors } from './rust-outcome-vectors.mjs';
 
 const bits = new DataView(new ArrayBuffer(8));
@@ -56,6 +57,7 @@ export function genBlowFamilies(Out, makeLcg) {
     targets.push(equipArmour(t, [armourPiece(102, material), armourPiece(109, 512)]));
   }
   const tiers = outcomeVectors(Out);
+  sweep(() => {
   for (let i = 0; i < 256; i++) {
     const blade = tpls[i % tpls.length];
     const raw = [99, 100, 101, 102, 110, 200, 1000, NaN][(i >> 1) % 8];
@@ -141,6 +143,7 @@ export function genBlowFamilies(Out, makeLcg) {
       put(dur, 'break', [worn, main, off, same, amount], [broke, held, !!owner.equip.slots[EQUIP_SLOTS.RightHand], !!owner.equip.slots[EQUIP_SLOTS.LeftHand], !!owner.weapon, other]);
     }
   }
+  });
   // Direct probes supplement the crossed cards: isolate the exact comparison from other terms.
   const scalar = (ch, w, t, opts, name, id, core, sharp) => {
     model.add('scalar', ref(ch), ref(w), ref(t), ref(opts), V(name), V(id), V(core), V(sharp), '=>', V([

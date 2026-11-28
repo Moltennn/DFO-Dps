@@ -73,24 +73,25 @@ fn round_matches_js_vectors() {
         *seen.entry(kind).or_default() += 1;
     }
     // A truncated vector file must not pass: every kind has a floor on its case count.
-    for (kind, min) in [
-        ("unity_round", 1000),
-        ("fround", 1000),
-        ("trunc", 1000),
-        ("floor", 1000),
-        ("math_round", 1000),
-        ("uint32", 1000),
-        ("int32", 1000),
-        ("is_integer", 1000),
-        ("is_safe_integer", 1000),
-        ("rem", 300),
-        ("max", 100),
-        ("min", 100),
-        ("clamp", 300),
-        ("imul", 300),
-        ("finite_or", 40),
-        ("or_default", 40),
+    for kind in [
+        "unity_round",
+        "fround",
+        "trunc",
+        "floor",
+        "math_round",
+        "uint32",
+        "int32",
+        "is_integer",
+        "is_safe_integer",
+        "rem",
+        "max",
+        "min",
+        "clamp",
+        "imul",
+        "finite_or",
+        "or_default",
     ] {
+        let min = common::floor("round", kind);
         let n = seen.get(kind).copied().unwrap_or(0);
         assert!(
             n >= min,

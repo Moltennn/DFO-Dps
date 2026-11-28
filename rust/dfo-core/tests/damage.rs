@@ -51,14 +51,16 @@ fn damage_matches_js_vectors() {
         c.done();
         *seen.entry(kind).or_default() += 1;
     }
-    for (kind, min) in [
-        ("damage_modifier", 400),
-        ("pcaao_damage_modifier", 400),
-        ("apply_pct", 1000),
-        ("carried_pct", 1000),
-        ("carried_firmament", 1000),
-        ("condition_multiplier", 1000),
+    for kind in [
+        "damage_modifier",
+        "pcaao_damage_modifier",
+        "apply_pct",
+        "carried_pct",
+        "carried_firmament",
+        "condition_multiplier",
     ] {
+        // The floor is the sample's own count for the kind (MANIFEST), never a copied number: a truncated file fails.
+        let min = common::floor("damage", kind);
         let n = seen.get(kind).copied().unwrap_or(0);
         assert!(
             n >= min,

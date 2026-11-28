@@ -363,30 +363,31 @@ fn firmament() {
         *counts.entry(kind).or_insert(0) += 1;
     }
     assert!(nodes_checked, "firmament: the node table row is missing");
-    // Every plan walk, summary and law read is proved by its own cases; the floors are the generated domain sizes.
-    for (kind, floor) in [
-        ("plan", 500),
-        ("summary", 90),
-        ("fromtree", 60),
-        ("blow", 200),
-        ("castcost", 160),
-        ("effective", 45),
-        ("words", 4000),
-        ("statdef", 120),
-        ("isstart", 130),
-        ("buildbyid", 30),
-        ("treestats", 12),
-        ("treeprices", 12),
-        ("statsparts", 12),
-        ("blowtree", 20),
-        ("castcosttree", 6),
-        ("smallstats", 300),
-        ("skillnames", 5),
-        ("isprice", 200),
-        ("offstat", 400),
-        ("nodehasoff", 1500),
-        ("apply", 8),
+    // Every plan walk, summary and law read is proved by its own cases; each floor is MANIFEST's own count.
+    for kind in [
+        "plan",
+        "summary",
+        "fromtree",
+        "blow",
+        "castcost",
+        "effective",
+        "words",
+        "statdef",
+        "isstart",
+        "buildbyid",
+        "treestats",
+        "treeprices",
+        "statsparts",
+        "blowtree",
+        "castcosttree",
+        "smallstats",
+        "skillnames",
+        "isprice",
+        "offstat",
+        "nodehasoff",
+        "apply",
     ] {
+        let floor = common::floor("firmament", kind);
         let n = counts.get(kind).copied().unwrap_or(0);
         assert!(n >= floor, "firmament/{kind}: {n} cases, floor {floor}");
     }

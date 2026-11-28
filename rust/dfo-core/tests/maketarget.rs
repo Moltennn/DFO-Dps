@@ -600,22 +600,23 @@ fn check_target(c: &Case, exp: &str, got: Result<Target, dfo_core::mint::Refused
     }
 }
 
-/// The per-family floor (the case count a family must reach; a truncated file fails).
-const FLOORS: &[(&str, &[&str], usize)] = &[
-    ("mint", &["mint"], 2000),
-    ("make", &["make"], 2000),
-    ("enemy", &["enemy", "stand"], 2000),
-    ("gear", &["gear"], 2000),
-    ("scalar", &["mrm", "tgo", "erow", "cidx", "iscl"], 2000),
-    ("classic", &["classic"], 2000),
-    ("rri", &["rri"], 2000),
+/// The kinds each family covers (each family's floor is the sum of those kinds' `MANIFEST` counts: a truncated file
+/// fails, and no number is copied by hand).
+const FAMILIES: &[(&str, &[&str])] = &[
+    ("mint", &["mint"]),
+    ("make", &["make"]),
+    ("enemy", &["enemy", "stand"]),
+    ("gear", &["gear"]),
+    ("scalar", &["mrm", "tgo", "erow", "cidx", "iscl"]),
+    ("classic", &["classic"]),
+    ("rri", &["rri"]),
     // The boundary families (tools/rust-vectors.mjs, boundary probes): each is a floor against truncation only.
-    ("bclassic", &["bclassic"], 1000),
-    ("brri", &["brri"], 1000),
-    ("borcish", &["borcish"], 1000),
-    ("bgear", &["bgear"], 1000),
-    ("benemy", &["benemy"], 1000),
-    ("bpoison", &["bpoison"], 1000),
+    ("bclassic", &["bclassic"]),
+    ("brri", &["brri"]),
+    ("borcish", &["borcish"]),
+    ("bgear", &["bgear"]),
+    ("benemy", &["benemy"]),
+    ("bpoison", &["bpoison"]),
 ];
 
 #[test]
@@ -853,13 +854,14 @@ fn maketarget_matches_js_vectors() {
     }
 
     // A truncated file must not pass: each family has a floor on its case count.
-    for (family, kinds, min) in FLOORS {
+    for (family, kinds) in FAMILIES {
         let n: usize = kinds
             .iter()
             .map(|k| seen.get(*k).copied().unwrap_or(0))
             .sum();
+        let min = common::floor_sum("maketarget", kinds);
         assert!(
-            n >= *min,
+            n >= min,
             "maketarget.txt: only {n} `{family}` cases (kinds {kinds:?}, expected >= {min})"
         );
     }

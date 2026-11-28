@@ -8,13 +8,7 @@ use dfo_core::{
 fn theory() {
     common::planning::replay(
         "theory",
-        &[
-            ("character", 3136),
-            ("fists", 3129),
-            ("blade", 3128),
-            ("refusal", 7),
-            ("constants", 1),
-        ],
+        &["character", "fists", "blade", "refusal", "constants"],
         false,
         |k, v, _| match k {
             "character" => t::theory_character(&v()).unwrap(),

@@ -43,7 +43,7 @@ const KINDS: &[&str] = &[
 /// which libtest runs in parallel.
 fn replay(
     kinds: &[&str],
-    floors: &[(&str, usize)],
+    floors: &[&str],
     check: impl Fn(&str, &mut common::Case, &common::Defs, &Spellbook, &mut Profiles<'_>) -> Value,
 ) {
     let defs = Default::default();
@@ -91,37 +91,34 @@ fn replay(
         *counts.entry(kind).or_insert(0) += 1;
     }
     assert!(book.is_some(), "enchant_plan: the spellbook row is missing");
-    for (kind, floor) in floors {
-        let n = counts.get(*kind).copied().unwrap_or(0);
-        assert!(n >= *floor, "enchant_plan/{kind}: {n} cases, floor {floor}");
+    for &kind in floors {
+        let floor = common::floor("enchant_plan", kind);
+        let n = counts.get(kind).copied().unwrap_or(0);
+        assert!(n >= floor, "enchant_plan/{kind}: {n} cases, floor {floor}");
     }
 }
 
 #[test]
 fn gear() {
-    replay(
-        &["gear"],
-        &[("gear", 200)],
-        |kind, row, defs, _, _| match kind {
-            "gear" => {
-                // A `b1` token before `=>` marks a template the JS refuses: `Err` must become `null`, not a panic.
-                let opts = row.value(defs);
-                let refused = row.peek() == Some("b1");
-                if refused {
-                    row.word();
-                }
-                if refused {
-                    match E::gear_pieces(&opts) {
-                        Err(_) => Null,
-                        Ok(v) => v,
-                    }
-                } else {
-                    E::gear_pieces(&opts).expect("gearPieces accepts a known template")
-                }
+    replay(&["gear"], &["gear"], |kind, row, defs, _, _| match kind {
+        "gear" => {
+            // A `b1` token before `=>` marks a template the JS refuses: `Err` must become `null`, not a panic.
+            let opts = row.value(defs);
+            let refused = row.peek() == Some("b1");
+            if refused {
+                row.word();
             }
-            other => panic!("unexpected enchant_plan kind {other}"),
-        },
-    );
+            if refused {
+                match E::gear_pieces(&opts) {
+                    Err(_) => Null,
+                    Ok(v) => v,
+                }
+            } else {
+                E::gear_pieces(&opts).expect("gearPieces accepts a known template")
+            }
+        }
+        other => panic!("unexpected enchant_plan kind {other}"),
+    });
 }
 
 /// `best`, `apply`, `plan` and `matrix` share one `Profiles` cache, and each family warms it for the next. Kept in one
@@ -130,7 +127,7 @@ fn gear() {
 fn plans() {
     replay(
         &["best", "apply", "plan", "matrix"],
-        &[("best", 12), ("plan", 100), ("matrix", 5)],
+        &["best", "plan", "matrix"],
         |kind, row, defs, book, profiles| match kind {
             "best" => {
                 let family = row.value(defs);
@@ -173,7 +170,7 @@ fn lines_and_pure_functions() {
             "skillid",
             "name",
         ],
-        &[("line", 200)],
+        &["line"],
         |kind, row, defs, _, _| match kind {
             "sortdps" => {
                 let mut list = row.value(defs).items().to_vec();

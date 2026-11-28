@@ -296,9 +296,10 @@ fn differential() {
         "rows",
         "bills",
     ] {
+        let min = common::floor("fight", kind);
         assert!(
-            counts.get(kind).copied().unwrap_or_default() >= 2000,
-            "missing {kind} cases"
+            counts.get(kind).copied().unwrap_or_default() >= min,
+            "missing {kind} cases (expected >= {min})"
         );
     }
 }

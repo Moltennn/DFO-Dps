@@ -8,6 +8,7 @@ import { pairedFightSeeds } from '../src/simulateFight.js';
 import { spellsByIndexMap } from '../src/spells.js';
 import { theoryCharacter } from '../src/theory.js';
 import { encodeValue as V } from './rust-codec.mjs';
+import { sweep } from './rust-sweep.mjs';
 
 export function genRelayFight(Out, records, standard) {
   const direct = records.find(sp => sp.index === 242).effects[0];
@@ -26,6 +27,7 @@ export function genRelayFight(Out, records, standard) {
   const item = (template, material) => syntheticWeapon(template, material).item;
   const dot = { kind: 'continuousDamage', effect: records.find(sp => sp.index === 241).effects[0], caster: null,
     casterLevel: 10, roundsRemaining: 2, spellPower: 10, element: 4, flag: 16, saveScaled: false, spell: 'Already active', index: 241 };
+  sweep(() => {
   for (let i = 0; i < 216; i++) {
     const level = 1 + i % 65;
     const template = templates[i % templates.length];
@@ -61,6 +63,7 @@ export function genRelayFight(Out, records, standard) {
       put('reuse', [ch, args], () => reuse);
     }
   }
+  });
   const ch = theoryCharacter({ level: 35, blade: 121, rawBlade: 160 });
   ch.weapon = { ...item(121, 9), enchantments: [{ type: 2, param: 240 }, { type: 2, param: 241 }, { type: 2, param: 9999 }], rarity: 'legendary', legendary: 'anseis-edge' };
   const target = gateTarget(35, { traits: ['flameproof', 'spellproof'] });

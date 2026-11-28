@@ -14,7 +14,7 @@ const KINDS: &[&str] = &[
 /// Stream `maxprofile` for `kinds` only, with the fixture spellbook row first and a private profile cache per test.
 fn replay(
     kinds: &[&str],
-    floors: &[(&str, usize)],
+    floors: &[&str],
     mut check: impl FnMut(&str, &mut dyn FnMut() -> Value, &Spellbook, &mut m::Profiles<'_>) -> Value,
 ) {
     // Keep the replay's caller-owned cache tied to one copy of the explicit stock book.
@@ -57,17 +57,18 @@ fn replay(
         row.done();
         *counts.entry(k).or_insert(0) += 1;
     }
-    for &(k, floor) in floors {
+    for &k in floors {
+        let floor = common::floor("maxprofile", k);
         assert!(
             counts.get(k).copied().unwrap_or(0) >= floor,
-            "missing vectors: maxprofile/{k}: {counts:?}"
+            "missing vectors: maxprofile/{k}: {counts:?} (expected >= {floor})"
         );
     }
 }
 
 #[test]
 fn build() {
-    replay(&["build"], &[("build", 3129)], |k, v, _, _| match k {
+    replay(&["build"], &["build"], |k, v, _, _| match k {
         "build" => m::build_max(&v(), &v()).unwrap(),
         other => panic!("unexpected vector kind {other}"),
     });
@@ -75,7 +76,7 @@ fn build() {
 
 #[test]
 fn run() {
-    replay(&["run"], &[("run", 3129)], |k, v, book, _| match k {
+    replay(&["run"], &["run"], |k, v, book, _| match k {
         "run" => {
             let mut ch = m::build_max(&v(), &v()).unwrap();
             for (k, x) in v().entries() {
@@ -130,13 +131,7 @@ fn a_warm_frontier_cache_answers_as_a_fresh_one() {
 fn legal() {
     replay(
         &["frontier", "legal", "max", "plan", "refusal"],
-        &[
-            ("frontier", 115),
-            ("legal", 346),
-            ("max", 92),
-            ("plan", 1),
-            ("refusal", 2),
-        ],
+        &["frontier", "legal", "max", "plan", "refusal"],
         |k, v, _, profiles| match k {
             "frontier" => profiles.legal_frontier(&v(), &v()).unwrap().clone(),
             "legal" => profiles.legal_gear(&v(), &v()).unwrap(),

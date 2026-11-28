@@ -9,6 +9,7 @@ import { eliteRng } from '../vendor/upstream/a3eb1605/src/systems/eliteFoes.js';
 import { fightingClimb } from '../vendor/upstream/a3eb1605/src/systems/spell/spellPower.js';
 import { encodeValue as V } from './rust-codec.mjs';
 import { readSpellBook } from './rust-synth-book.mjs';
+import { sweep } from './rust-sweep.mjs';
 
 export function genSpellFamilies(Out, makeLcg) {
   const { path, bytes, records: stock } = readSpellBook('rust-spell-vectors');
@@ -158,6 +159,7 @@ export function genSpellFamilies(Out, makeLcg) {
       enchant(item, chars[0], { group: ['undead', 'daedra', 'humanoid', 'animal'][param] }, {});
     }
   }
+  sweep(() => {
   for (let i = 0; i < 2688; i++) {
     const raw = Buffer.from(Array.from({ length: S.SPELL_RECORD_SIZE + i % 5 }, () => int(256)));
     const off = i % 5;
@@ -226,6 +228,7 @@ export function genSpellFamilies(Out, makeLcg) {
     put('boss', [boss, name, mobile, id, damage, bossOpts, seed], [eliteRng(seed)(), B.bossTraitsOf(boss), B.relayBossTraits(name, mobile), B.relayTraitsFor(id), B.elementTraitOf(bossOpts.element),
       B.bossStrike(boss, damage, bossOpts), B.resistBlow(boss.bossTraits, damage, bossOpts), B.resistSpell(boss.bossTraits, damage, bossOpts.element)]);
   }
+  });
   console.log(`spells: ${Object.entries(counts).map(([k, n]) => `${k} ${n}`).join(', ')}`);
   return { spells: out.write() };
 }

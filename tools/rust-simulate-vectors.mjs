@@ -3,6 +3,7 @@ import { referenceFoe, syntheticWeapon } from '../src/model.js';
 import { theoryCharacter } from '../src/theory.js';
 import { character, simCharacter, weapon } from '../test/harness/fixtures.mjs';
 import { encodeValue as V } from './rust-codec.mjs';
+import { sweep } from './rust-sweep.mjs';
 
 export function genSimulateFight(Out, records, standard) {
   const out = new Out('simulate_fight', 'R6b seeded full rows and batch summaries', true);
@@ -15,6 +16,7 @@ export function genSimulateFight(Out, records, standard) {
   const rows = [240, 241, 242, 244, 9999];
   const chars = [];
   const cases = [];
+  sweep(() => {
   for (let i = 0; i < 216; i++) {
     const level = 1 + i % 23;
     const ch = theoryCharacter({ level, blade: templates[i % templates.length], rawBlade: 105 + i % 78, race: 1 + i % 8, online: !!(i & 4) });
@@ -54,6 +56,7 @@ export function genSimulateFight(Out, records, standard) {
       put('with', [ch, { ...opts, seed: first.seed }, edit], first.with(edit));
     }
   }
+  });
   for (const [n, seed] of [[0, 0], [-1, 7], [1, 0], [2, -1], [5, 2 ** 32], [31, -(2 ** 40)], [9, Number.MAX_SAFE_INTEGER],
     ['4.9', '13'], [null, 1], [2.9, 0.5], [NaN, 2], [7, Number.MIN_SAFE_INTEGER], [10, 2 ** 53]]) {
     put('seeds', [n, seed], F.pairedFightSeeds(n, seed));
@@ -231,6 +234,16 @@ export function genSimulateFight(Out, records, standard) {
     }
   }
   if (!breakOnTie) throw new Error('R6b: no weapon break at the lethal round tie');
+  // The dot tier's `hp == 0` kill flag, its post-round break, and the same-round tail: one seed whose round drops the
+  // fight to exactly 0 hp keeps the three exact-zero comparisons observable.
+  {
+    const actor = { ...tieCh, worn: [], weapon: { ...tieWeapon, maxCondition: 100, currentCondition: 5, enchantments: [] } };
+    for (let seed = 0; seed < 64; seed++) {
+      const input = { ...lethalTieArgs, seed, maxSeconds: 5 };
+      const row = probe(actor, input);
+      if (row.ttk === 5 && row.killSource === 'dot') { emit(actor, input, row); break; }
+    }
+  }
   const missingCondition = { ...light, weapon: { ...light.weapon, currentCondition: undefined } };
   find(missingCondition, short, row => {
     const hit = row.trace[0];

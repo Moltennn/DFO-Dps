@@ -203,18 +203,19 @@ fn rng_matches_js_vectors() {
         long_sequences >= 6,
         "rng.txt: only {long_sequences} sequences of 10000 draws (expected >= 6)"
     );
-    for (kind, min) in [
-        ("init", 600),
-        ("seed_check", 15),
-        ("name_check", 20),
-        ("seq", 200),
-        ("floats", 5),
-        ("ints", 40),
-        ("int_bad", 8),
-        ("state", 20),
-        ("restore_draws", 12),
-        ("trace", 100),
+    for kind in [
+        "init",
+        "seed_check",
+        "name_check",
+        "seq",
+        "floats",
+        "ints",
+        "int_bad",
+        "state",
+        "restore_draws",
+        "trace",
     ] {
+        let min = common::floor("rng", kind);
         let n = seen.get(kind).copied().unwrap_or(0);
         assert!(
             n >= min,

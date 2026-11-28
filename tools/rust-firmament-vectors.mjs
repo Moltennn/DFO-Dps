@@ -14,6 +14,7 @@ import {
 import { smallStats } from '../vendor/firmament/firmamentTree.js';
 import { FIRM_ADJ, FIRM_NODES, SIGNS, SERPENT, START_KEYS } from '../vendor/firmament/firmamentTree.js';
 import { encodeValue as V } from './rust-codec.mjs';
+import { sweep } from './rust-sweep.mjs';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -159,12 +160,14 @@ export function genFirmamentFamilies(Out, makeLcg) {
     }
   }
   // random budgets and starts over every preset (the domain is 8 builds x 23 purses x 7 starts; the sweep fills it)
+  sweep(() => {
   for (let i = 0; i < 200; i++) {
     const build = pick(F.BUILDS);
     const stars = pick(widgets);
     const start = i % 3 === 0 ? pick(START_KEYS) : null;
     put('plan', [build, { stars, start }], F.planBuild(build, { stars, start }));
   }
+  });
   // ---- planFromTree / planKey / planSummary on the plans' own trees, and on synthetic ones ---------------
   const plans = F.BUILDS.map((b) => F.planBuild(b, {}));
   for (const [i, plan] of plans.entries()) {

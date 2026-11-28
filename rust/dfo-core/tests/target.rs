@@ -817,16 +817,18 @@ fn target_matches_js_vectors() {
             .iter()
             .map(|k| seen.get(*k).copied().unwrap_or(0))
             .sum();
+        let min = common::floor_sum("target", kinds);
         assert!(
-            n >= 2000,
-            "target.txt: only {n} cases in the `{family}` family (expected >= 2000)"
+            n >= min,
+            "target.txt: only {n} cases in the `{family}` family (expected >= {min})"
         );
     }
     // The RRI mixed-switch family (22 templates x the 8 switch mixes): it alone differs between `group == "Weapons"`
     // and its negation, so losing it silently would hand the comparison back a free pass.
     let rri = seen.get("rri_class").copied().unwrap_or(0);
+    let min = common::floor("target", "rri_class");
     assert!(
-        rri >= 176,
-        "target.txt: only {rri} `rri_class` cases (expected >= 176)"
+        rri >= min,
+        "target.txt: only {rri} `rri_class` cases (expected >= {min})"
     );
 }

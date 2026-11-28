@@ -53,10 +53,11 @@ fn gear_lines_match_the_js_vectors() {
         *seen.entry(kind).or_default() += 1;
     }
     for kind in ["laid", "ril", "vil", "wdp", "bl", "fl", "sf"] {
+        let min = common::floor("gear", kind);
         let n = seen.get(kind).copied().unwrap_or(0);
         assert!(
-            n >= 2000,
-            "gear.txt: only {n} `{kind}` cases (expected >= 2000)"
+            n >= min,
+            "gear.txt: only {n} `{kind}` cases (expected >= {min})"
         );
     }
 }
@@ -90,10 +91,11 @@ fn sockets_match_the_js_vectors() {
         *seen.entry(kind).or_default() += 1;
     }
     for kind in ["scount", "saff", "pgem", "psock"] {
+        let min = common::floor("sockets", kind);
         let n = seen.get(kind).copied().unwrap_or(0);
         assert!(
-            n >= 2000,
-            "sockets.txt: only {n} `{kind}` cases (expected >= 2000)"
+            n >= min,
+            "sockets.txt: only {n} `{kind}` cases (expected >= {min})"
         );
     }
 }

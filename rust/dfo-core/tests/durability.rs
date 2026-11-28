@@ -64,5 +64,6 @@ fn wear_matches_js_and_consumes_the_same_rolls() {
         );
         c.done();
     }
-    assert!(wear_cases >= 2000 && break_cases >= 2000);
+    assert!(wear_cases >= common::floor("durability", "wear"));
+    assert!(break_cases >= common::floor("durability", "break"));
 }

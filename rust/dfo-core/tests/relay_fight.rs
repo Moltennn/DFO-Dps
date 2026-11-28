@@ -119,5 +119,28 @@ fn relay_vectors() {
         check(&c, "result", &want, &got);
         c.done();
     }
-    assert!(configs >= 200 && trials >= 2000 && reused >= 100 && scripts >= 100);
+    // Each floor is MANIFEST's own count for the kind: the batch kind selects the configs (each running its 10 trials),
+    // every reuse case replays its 3 seeds, and the script kind is a case count. No number is copied by hand.
+    let batches = common::floor("relay_fight", "batch");
+    let reuse_cases = common::floor("relay_fight", "reuse");
+    const TRIALS_PER_BATCH: usize = 10;
+    const SEEDS_PER_REUSE: usize = 3;
+    let scripts_min = common::floor("relay_fight", "script");
+    assert!(
+        configs >= batches,
+        "only {configs} batch configs (expected >= {batches})"
+    );
+    assert!(
+        trials >= TRIALS_PER_BATCH * configs,
+        "only {trials} trials for {configs} batches"
+    );
+    assert!(
+        reused >= SEEDS_PER_REUSE * reuse_cases,
+        "only {reused} reused rows (expected >= {})",
+        SEEDS_PER_REUSE * reuse_cases
+    );
+    assert!(
+        scripts >= scripts_min,
+        "only {scripts} scripts (expected >= {scripts_min})"
+    );
 }

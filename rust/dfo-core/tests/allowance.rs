@@ -340,16 +340,17 @@ fn allowance_matches_js_vectors() {
         "allowance.txt: only {boundary_hits} shield-end boundary cases ran a shield"
     );
     assert!(kills >= 50, "allowance.txt: only {kills} simulated kills");
-    for (kind, min) in [
-        ("ref_of", 90),
-        ("law", 90),
-        ("spec", 200),
-        ("streams", 150),
-        ("steady", 150),
-        ("simulate", 150),
-        ("simulate_shield_end", 8),
-        ("run", 100),
+    for kind in [
+        "ref_of",
+        "law",
+        "spec",
+        "streams",
+        "steady",
+        "simulate",
+        "simulate_shield_end",
+        "run",
     ] {
+        let min = common::floor("allowance", kind);
         let n = seen.get(kind).copied().unwrap_or(0);
         assert!(
             n >= min,

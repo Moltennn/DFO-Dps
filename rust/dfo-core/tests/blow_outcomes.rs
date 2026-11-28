@@ -202,6 +202,10 @@ fn blow_outcomes_match_js() {
     let mut full = None;
     let mut fight = None;
     let mut carry = None;
+    // Every `build` record the sample keeps must carry its answers: a record whose `full` row is missing would leave the
+    // `blow_outcomes` parity untested for that build, so the test fails on it here. `pending_build` is the line of a
+    // build whose `full` row has not been seen yet; it is cleared when that row arrives.
+    let mut pending_build: Option<(usize, bool)> = None;
     for mut c in common::stream("blow_outcomes") {
         let kind = c.kind.clone();
         assert!(KINDS.contains(&kind.as_str()), "unknown family {kind}");
@@ -210,6 +214,21 @@ fn blow_outcomes_match_js() {
             "build" | "full" | "fight" | "carry" | "sample_fight" | "sample_carry" | "trace"
         ) {
             continue;
+        }
+        if kind == "build" {
+            if let Some((line, had_full)) = pending_build {
+                assert!(
+                    had_full,
+                    "blow_outcomes:{}: build record has no `full` result row",
+                    line
+                );
+            }
+            pending_build = Some((c.line, false));
+        }
+        if kind == "full" {
+            if let Some((line, _)) = pending_build {
+                pending_build = Some((line, true));
+            }
         }
         match kind.as_str() {
             "build" => {
@@ -272,6 +291,12 @@ fn blow_outcomes_match_js() {
         c.done();
         *seen.entry(kind).or_insert(0) += 1;
     }
+    if let Some((line, had_full)) = pending_build {
+        assert!(
+            had_full,
+            "blow_outcomes:{line}: build record has no `full` result row"
+        );
+    }
     for k in [
         "full",
         "fight",
@@ -280,9 +305,10 @@ fn blow_outcomes_match_js() {
         "sample_carry",
         "trace",
     ] {
+        let min = common::floor("blow_outcomes", k);
         assert!(
-            seen.get(k).copied().unwrap_or(0) >= 2000,
-            "short {k} family"
+            seen.get(k).copied().unwrap_or(0) >= min,
+            "short {k} family (expected >= {min})"
         );
     }
 }
@@ -377,9 +403,10 @@ fn blow_outcomes_raw_and_errors_match_js() {
         *seen.entry(kind).or_insert(0) += 1;
     }
     for k in ["sample_raw", "merge_raw"] {
+        let min = common::floor("blow_outcomes", k);
         assert!(
-            seen.get(k).copied().unwrap_or(0) >= 2000,
-            "short {k} family"
+            seen.get(k).copied().unwrap_or(0) >= min,
+            "short {k} family (expected >= {min})"
         );
     }
     for k in ["bad_hand", "bad_kind", "tolerance"] {

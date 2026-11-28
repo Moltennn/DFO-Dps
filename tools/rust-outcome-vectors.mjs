@@ -4,6 +4,7 @@ import {
 import { weaponOf, SWING_DIRECTIONS, createCarryState } from '../src/model.js';
 import { makeTarget } from '../src/target.js';
 import { encodeValue as V } from './rust-codec.mjs';
+import { sweep } from './rust-sweep.mjs';
 import { readFileSync } from 'node:fs';
 
 const dv = new DataView(new ArrayBuffer(8));
@@ -102,6 +103,11 @@ export function outcomeVectors(Out) {
   }
   record({stats:{strength:0}}, {target:neutral, core:'classic', swing:'neutral', carry:true,
     loot:{flat:10}, potentVs:5}, true);
+  // health absent at the curbing gate (`>` and `>=` on 0 differ): the default 0 must not read as positive. No hitCap,
+  // so the curbing cap (which needs health > 0) is the only source of a positive cap.
+  record(ch, {weapon:small, target:{...neutral, hitCap:undefined}, swing:'neutral', traits:['curbing']}, true);
+  // A `flow` power with no `max`: the 1 default is FlowStacks' fallback and is read into the tier.
+  record(ch, {weapon:small, target:neutral, swing:'neutral', carry:true, imprints:[{kind:'flow', pct:5}]}, true);
   record(ch, {weapon:{...small, min:4, max:3}, target:neutral, swing:null, carry:1, offHand:1});
   record(ch, {weapon:{...small, bonusDamage:NaN}, target:neutral, core:'classic', swing:'neutral', carry:true}, true);
   const heavy = {...small, min:200, max:200};
@@ -116,6 +122,7 @@ export function outcomeVectors(Out) {
   }
   return {
     build(i, ch, it, targets) {
+      sweep(() => {
       for (let j = 0; j < 8; j++) {
         const k = i * 8 + j;
         const t = targets[(i + 19 * j) % targets.length];
@@ -146,11 +153,22 @@ export function outcomeVectors(Out) {
         record(actor, args, true);
         if (i % 16 === 0) record(actor, {...args, carry: false});
       }
+      });
     },
     write() {
       emit('tolerance', TOLERANCE);
       for (const hand of [null, false, '', 'left', 0]) emit('bad_hand', hand, checked(() => blowOutcomes({}, {hand})));
       emit('bad_kind', checked(() => createBlowSampler(blowOutcomes({}))), checked(() => mergeToCarryTier(blowOutcomes({}))));
+      // The off-hand-with-a-parent weapon arm, which resets `potentVs` to 0 (blow_outcomes.rs:362): a build whose
+      // `weapon` is one-handed and whose `offWeapon` is set, asked for the off hand with `dual` on, keeps the off
+      // hand's damage and a 0 potency. Without this probe the sample drops every case that reaches that reset.
+      const offArm = { ...small, min: 5, max: 5, conditionPercent: 100 };
+      const dualCh = { stats: { strength: 50 }, skills: { 19: 45 },
+        offWeapon: { ...offArm, templateIndex: 113, material: 9, maxCondition: 100, currentCondition: 100 } };
+      for (const potentVs of [0, 5, -2]) {
+        record(dualCh, { weapon: { ...offArm, templateIndex: 121, material: 9 }, target: neutral, core: 'classic',
+          swing: 'neutral', carry: true, hand: 'off', dual: true, offHand: true, potentVs }, true);
+      }
       const row = (p, idx, fields = {}) => ({p, direction:'StrikeLeft', directionIndex:0, facing:false,
         backstab:false, crit:false, hit:true, whole:true, part:0, roll:idx, preFinish:0, card:0,
         blow:idx, echoDamage:0, damage:idx, claim:idx, cappedDamage:idx, echoMask:0, echoHits:0,

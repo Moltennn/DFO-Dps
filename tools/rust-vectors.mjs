@@ -26,7 +26,7 @@
  *   - Each kind is documented where its generator is written below.
  */
 import { spawn } from 'node:child_process';
-import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { availableParallelism, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -91,9 +91,10 @@ import { genFightFamilies } from './rust-fight-vectors.mjs';
 import { genPlanningFamilies } from './rust-planning-vectors.mjs';
 import { genFirmamentFamilies } from './rust-firmament-vectors.mjs';
 import { genPlannerFamilies } from './rust-planner-vectors.mjs';
-import { useSpellbook } from './rust-synth-book.mjs';
+import { useSpellbook, realSpells } from './rust-synth-book.mjs';
 import { genForgeFamilies } from './rust-forge-vectors.mjs';
 import { genForgeGearFamilies } from './rust-forge-gear-vectors.mjs';
+import { inSweep, sweep } from './rust-sweep.mjs';
 
 export { encodeValue };
 
@@ -172,6 +173,9 @@ class Out {
     this.lines = [];
     this.note = note;
     this.path = join(outDir, `${module}.txt`);
+    // Case indices the generator wrote by hand (not from a seeded sweep): `tools/vector-freeze.mjs` keeps every one of
+    // them and only strides the rest. `hand()` marks them; `write()` records them in `<module>.hand` beside the text.
+    this.hand = [];
     if (streaming) {
       mkdirSync(outDir, { recursive: true });
       this.fd = openSync(this.path, 'w');
@@ -181,6 +185,7 @@ class Out {
     }
   }
   add(...tokens) {
+    if (!inSweep()) this.hand.push(this.count === undefined ? this.lines.length : this.count);
     const line = tokens.join(' ');
     if (this.count === undefined) this.lines.push(line);
     else {
@@ -203,13 +208,14 @@ class Out {
     ];
   }
   write() {
+    mkdirSync(outDir, { recursive: true });
+    writeFileSync(join(outDir, `${this.module}.hand`), `${[...new Set(this.hand)].sort((a, b) => a - b).join('\n')}\n`);
     if (this.count !== undefined) {
       this.flush();
       closeSync(this.fd);
       openOutputs.delete(this);
       return this.count;
     }
-    mkdirSync(outDir, { recursive: true });
     writeFileSync(this.path, `${[...this.header(), ...this.lines].join('\n')}\n`);
     return this.lines.length;
   }
@@ -846,6 +852,7 @@ function genRelay() {
   scenario(1, 500, true, undefined, null, [[0.5, 10], [2, 10]]);
 
   // random
+  sweep(() => {
   for (let i = 0; i < 220; i++) {
     const level = R.chance(0.1) ? R.range(-3, 70) : R.int(1, 60);
     const law = allowanceLaw(level);
@@ -866,6 +873,7 @@ function genRelay() {
     }
     scenario(level, share, fresh, shieldUntil, useLaw, claims);
   }
+  });
   return out.write();
 }
 
@@ -1213,6 +1221,7 @@ function genTarget() {
   // A: career tolerance and the elemental share
   const FLAGS = [0, 1, 2, 3, 4, 5, 8, 16, 17, 32, 33, 64, 96, 128, 255, -1, 1.5, NaN, Infinity, 1e9, -0];
   const ELEMENTS = ['fire', 'Fire', 'FROST', 'shock', 'Poison', 'magic', 'MAGIC', '', 'constructor', '__proto__', 'toString', 'fire ', 'Ice', 'i̇gnis', 'Kold'];
+  sweep(() => {
   for (let i = 0; i < 2400; i++) {
     const c = R.chance(0.1) ? null : { resistanceFlags: byte(), immunityFlags: byte(), lowToleranceFlags: byte(), criticalWeaknessFlags: byte(), attackModifierFlags: byte() };
     const flag = R.pick(FLAGS);
@@ -1433,6 +1442,9 @@ function genTarget() {
     const it = armourPiece(tmpl, { material: mat, condition: cond });
     out.add('armour_piece', O(it.maxCondition), F(cond), '=>', F(it.currentCondition));
   }
+  });
+  // Every case from here to the `shieldBeats` block is a literal hand-written boundary probe (exact percentages, exact
+  // materials, exact maxima), so it stays OUTSIDE `sweep()` and the freezer keeps all of it.
   // armourPiece's condition branch is `pct <= 5` on the *truncated* percentage: a piece minted at 6% is the first that
   // takes the 1.35 arm and 5% the 1.5 arm, both exact integer percentages.
   for (const [tmpl, mat, cond] of [[102, 0, 0.05], [102, 0, 0.06], [109, 0, 0.05], [109, 256, 0.06]]) {
@@ -3026,11 +3038,13 @@ function genSaveFamily() {
     }
   }
   for (const idx of focusedIdx) add('cfs', `@${idx}`, encodeValue({}), '=>', encodeValue(read(saves.get(idx), {})));
+  sweep(() => {
   for (let i = 0; i < 2400; i++) {
     const pick = saveIdx[R.u32() % saveIdx.length];
     const oi = optsIdx[R.u32() % optsIdx.length];
     add('cfs', `@${pick}`, `@${oi}`, '=>', encodeValue(read(saves.get(pick), optsByIdx.get(oi))));
   }
+  });
   // The analysis parity: a save the model can price (the random ones carry absurd stats that make `analyze` itself
   // throw), and the character `characterFromSave` builds from it must answer the card `analyze` answers for a saved
   // character. The Rust side runs its own `analyze` over the character it built, with an empty spellbook.
@@ -3355,7 +3369,8 @@ if (only.length) {
   if (unknown.length) throw new Error(`--only: unknown families ${unknown.join(',')} (known: ${GROUPS.map(([g]) => g).join(',')})`);
 }
 
-/** Run the named groups in this process, in GROUPS order (their LCGs are seeded per group, so the order cannot matter). */
+/** Run the named groups in this process, in GROUPS order (their LCGs are seeded per group, so the order cannot matter).
+ *  Returns the module names it wrote. */
 async function runGroups(names) {
   const counts = {};
   let ran = 0;
@@ -3370,13 +3385,40 @@ async function runGroups(names) {
   // An empty run must fail: it would leave the tree's vectors untouched and a green gate would prove nothing.
   if (!ran) throw new Error('rust-vectors: no family ran (nothing was written)');
   for (const [k, v] of Object.entries(counts)) console.log(`${k}: ${v} lines -> ${join(outDir, `${k}.txt`)}`);
+  return Object.keys(counts);
+}
+
+/** Delete `<module>.txt` files in the output directory that this revision no longer writes: a module renamed between
+ *  revisions would otherwise leave its old file behind, and `tools/vector-freeze.mjs` (which samples every `.txt` it
+ *  finds) would fold the stale module into the committed sample. Only a full run may do this: `--only` owns a subset.
+ *  Only a file whose first line is the generator header is deleted, so a stray hand-placed `.txt` is left alone. */
+const GENERATOR_HEADER = '# dfo-core golden vectors | generator: tools/rust-vectors.mjs';
+function pruneStale(written) {
+  const keep = new Set(written.map((m) => `${m}.txt`));
+  for (const f of readdirSync(outDir)) {
+    if (!f.endsWith('.txt') || keep.has(f)) continue;
+    const path = join(outDir, f);
+    let first = '';
+    try {
+      first = readFileSync(path, { encoding: 'utf8', flag: 'r' }).split('\n', 1)[0];
+    } catch {
+      continue;
+    }
+    if (!first.startsWith(GENERATOR_HEADER)) {
+      console.log(`kept ${f}: not a generated vector file (no generator header)`);
+      continue;
+    }
+    rmSync(path, { force: true });
+    console.log(`pruned stale module ${f} (not written by this revision)`);
+  }
 }
 
 /** Measured seconds per group on this tree (only the order matters, and it is stable: fight and planning share the
  *  long simulation, the rest are seconds). Longest first, so the pool's tail is a short group, not a 60 s one. */
 const GROUP_SECONDS = { fight: 66, planning: 66, planner: 59, blow: 25, analysis: 25, firmament: 8, maketarget: 6, spells: 6, forge: 2 };
 
-/** One child per group at a time, `size` of them; a group's files are written by exactly one process. */
+/** One child per group at a time, `size` of them; a group's files are written by exactly one process. Returns the
+ *  module names the children reported writing. */
 async function runPool(names, size) {
   const queue = [...names].sort((a, b) => (GROUP_SECONDS[b] ?? 0) - (GROUP_SECONDS[a] ?? 0));
   const kids = [];
@@ -3397,10 +3439,26 @@ async function runPool(names, size) {
   }));
   const bad = kids.filter((r) => r.status !== 0);
   if (bad.length) throw new Error(`rust-vectors: group(s) failed: ${bad.map((r) => `${r.name} exit ${r.status}`).join(', ')}`);
+  // Each child printed `"<module>: N lines -> <path>"` per file it wrote; that is the set a full run owns.
+  return kids.flatMap((r) => [...r.out.matchAll(/^(\S+): \d+ lines -> /gm)].map((m) => m[1]));
 }
 
 // Before any family runs: the implicit `standardSpells()` must read the same book the `book` rows carry.
 useSpellbook();
 const names = only.length ? only : GROUPS.map(([name]) => name);
-if (jobs <= 1 || names.length <= 1) await runGroups(names);
-else await runPool(names, jobs);
+// A stamp beside the vectors records WHICH book they were made from. The frozen sample only ever ships the synthetic
+// book (the game's `SPELLS.STD` cannot be committed), so the freeze tool refuses a set stamped `real`; a missing stamp
+// is a set written before this check and is refused too. Only a FULL run may write it: an `--only` run into a directory
+// holding a different stamp must not relabel the mixed set. The directory is created first: on a fresh checkout it does
+// not exist yet.
+if (!only.length) {
+  mkdirSync(outDir, { recursive: true });
+  writeFileSync(join(outDir, '.spellbook'), `${realSpells() ? 'real' : 'synthetic'}\n`);
+}
+if (jobs <= 1 || names.length <= 1) {
+  const written = await runGroups(names);
+  if (!only.length) pruneStale(written);
+} else {
+  const written = await runPool(names, jobs);
+  if (!only.length) pruneStale(written);
+}

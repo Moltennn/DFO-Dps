@@ -9,3 +9,7 @@ license = "MIT"
 publish = false
 
 [dependencies]
+
+[dev-dependencies]
+# `tests/common/mod.rs` reads the committed sample, `rust/tests/frozen/*.txt.gz` (gzip -9).
+flate2 = "1.1"

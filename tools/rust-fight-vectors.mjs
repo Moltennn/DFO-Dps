@@ -12,6 +12,7 @@ import { effectCastingCost } from '../vendor/upstream/a3eb1605/src/systems/absor
 import { encodeValue as V } from './rust-codec.mjs';
 import { genSimulateFight } from './rust-simulate-vectors.mjs';
 import { genRelayFight } from './rust-relay-vectors.mjs';
+import { sweep } from './rust-sweep.mjs';
 
 const bits = new DataView(new ArrayBuffer(8));
 function adjacent(x, delta) {
@@ -135,6 +136,7 @@ export function genFightFamilies(Out, makeLcg) {
     return log;
   }
 
+  sweep(() => {
   for (let i = 0; i < 2048; i++) {
     const ch = mkChar(i);
     ch.weapon = {...weapon(i), enchantments: [row(pick(records).index)]};
@@ -222,6 +224,7 @@ export function genFightFamilies(Out, makeLcg) {
     }
     put('bills', [item, t, ch, i % 2 ? 1 : 270, thrown.log], [result, blade]);
   }
+  });
 
   // R1: the cast's magnitude with a STRING or BOOLEAN effect field. `rollMagnitude` and `magnitudeRoll` follow the JS
   // chain: `?? 0` on the raw field, every `+` is ECMAScript `+` (so `'10' + 20` is `'1020'`). The numeric fields are
@@ -398,7 +401,7 @@ export function genFightFamilies(Out, makeLcg) {
         Math.floor(chance), Math.ceil(chance - 20) - 1]);
       for (const [index] of log) for (const value of new Set([...bounds].flatMap(b => [b - 1, b, b + 1].flatMap(j => edges(j, 100))))) {
         const values = base.slice(); values[index] = value;
-        castCase(sp, ch, t, opts, values, emit);
+        sweep(() => castCase(sp, ch, t, opts, values, emit));
       }
     }
   }

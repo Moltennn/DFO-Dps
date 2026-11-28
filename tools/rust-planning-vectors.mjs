@@ -10,6 +10,7 @@ import { readSpellBook } from './rust-synth-book.mjs';
 import { perfectSockets } from '../src/sockets.js';
 import { AFFIX_KINDS, AFFIX_RANGES } from '../vendor/upstream/a3eb1605/src/systems/loot/lootRarity.js';
 import { encodeValue as V } from './rust-codec.mjs';
+import { sweep } from './rust-sweep.mjs';
 
 const templates = Object.keys(WEAPONS).map(Number);
 const races = [...Object.keys(T.THEORY_RACES), ...Object.values(T.THEORY_RACES), 'DARKELF', 'unknown', 0, -0, 9, NaN, null];
@@ -37,6 +38,7 @@ export function genPlanningFamilies(Out, makeLcg) {
     T.GEAR_MASTERY_POINTS, T.GEAR_LB_LINES, T.GEAR_CS_LINES, T.GEAR_SKILL_LINES, T.GEAR_H2H_LINES]);
   put(gear, 'constants', [], [G.SKILL_IDS, Object.values(G.SKILL_BAND_TOP), Object.values(G.AFFIX_DAMAGE_TOP), G.EXALTED_SKILL_FLOOR]);
   put(gear, 'all', [], G.allRecords());
+  sweep(() => {
   for (let i = 0; i < 8 * levels.length * templates.length; i++) {
     const blade = templates[i % templates.length];
     const raceIndex = Math.floor(i / templates.length) % 8;
@@ -64,6 +66,7 @@ export function genPlanningFamilies(Out, makeLcg) {
     const edits = i % 7 ? {} : { _pair: i % 14 === 0, _dual: true, online: false };
     put(profiles, 'run', [blade, safe, edits, run], M.maxRun({ ...max, ...edits }, run));
   }
+  });
   for (const blade of [null, 'unknown', 0, 112, 564, 123.5, NaN]) {
     try { T.theoryCharacter({ blade }); throw new Error('expected refusal'); }
     catch (e) { if (e.message === 'expected refusal') throw e; put(theory, 'refusal', [{ blade }], e.message); }
@@ -179,6 +182,7 @@ export function genPlanningFamilies(Out, makeLcg) {
   }
   const raw = referenceFoe(45, 'tough');
   const breach = gateTarget(45);
+  sweep(() => {
   for (let i = 0; i < 2048; i++) {
     const t = pick(maxTemplate);
     const o = { gearSkill: i % 729, gearCrit: i % 536, damagePct: i % 41, firmament: !!(i & 4) };
@@ -188,6 +192,7 @@ export function genPlanningFamilies(Out, makeLcg) {
     const base = M.maxRun(M.buildMax(t, o), { target });
     put(imprints, 'power', [p, t, o, target, conditional, capped], I.powerDps(p, base, conditional, { capped }));
   }
+  });
   console.log('rust-planning-vectors:', counts);
   return Object.fromEntries([theory, gear, profiles, imprints].map(out => [out.module, out.write()]));
 }

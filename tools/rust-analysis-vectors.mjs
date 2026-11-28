@@ -9,6 +9,7 @@ import { allowanceSpec } from '../src/allowance.js';
 import { CURB_SHARE, WARD_SHARE } from '../src/data.js';
 import { ENCHANTMENT_TYPES as E } from '../vendor/upstream/a3eb1605/src/systems/enchantments.js';
 import { encodeValue as V } from './rust-codec.mjs';
+import { sweep } from './rust-sweep.mjs';
 
 const bits = new DataView(new ArrayBuffer(8));
 function around(x) {
@@ -77,7 +78,7 @@ export function genAnalysisFamilies(Out, makeLcg) {
   const ref = (level, opts) => M.referenceFoe(level, opts);
   const boss = (_, opts) => M.bossTarget(opts);
   const gate = (level, opts) => M.gateTarget(level, opts);
-  const grid = () => { for (const [kind, make] of [['ref', ref], ['boss', boss], ['gate', gate], ['relay', (_, supplied) => supplied]]) {
+  const grid = () => sweep(() => { for (const [kind, make] of [['ref', ref], ['boss', boss], ['gate', gate], ['relay', (_, supplied) => supplied]]) {
     for (let i = 0; i < 2048; i++) {
       const level = pick([undefined, -1, ...around(1), 2, 9, 10, 21, 30, 45, ...around(60), 70, NaN, '31']);
       const health = pick([0, -1, 500, 10000, ...around(0.5 / CURB_SHARE), ...around(1.5 / CURB_SHARE), ...around(0.5 / WARD_SHARE), ...around(1.5 / WARD_SHARE)]);
@@ -109,7 +110,7 @@ export function genAnalysisFamilies(Out, makeLcg) {
       const result = M.analyze(ch, { ...extra, target: actualTarget, standard });
       put(kind, [level, makeOpts, ch, extra, actualTarget && !worn ? null : actualTarget, overlays], [target, result]);
     }
-  } };
+  } });
 
   const probe = (ch, opts) => put('probe', [ch, opts], M.analyze(ch, { ...opts, standard }));
   const sword = { ...M.syntheticWeapon(117, 5).item, enchantments: [{type: E.CastWhenStrikes, param: 241}] };
@@ -129,6 +130,9 @@ export function genAnalysisFamilies(Out, makeLcg) {
     const curbing = Math.max(1, Math.round(health * CURB_SHARE));
     for (const hitCap of around(curbing)) probe(ch, { ...focal, health, target: { ...target, hitCap, bossTraits: ['curbing', 'warded'] } });
   }
+  // `health` absent at the curbing gate (`>` and `>=` on 0 differ): the default 0 must not read as positive. No hitCap,
+  // so the curbing cap is the only positive cap that could appear.
+  probe(ch, { ...focal, target: { ...target, hitCap: undefined, bossTraits: ['curbing'] } });
   for (const chance of [0, 1, 100].flatMap(around)) {
     for (const uptime of [0, 1].flatMap(around)) {
       for (const watchful of [false, true]) probe(ch, { ...focal, target: { ...target, watchful }, backstabChance: chance, backstabUptime: uptime });
